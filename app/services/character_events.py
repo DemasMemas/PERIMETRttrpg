@@ -23,13 +23,16 @@ def forget_subscription(sid, character_id=None):
         _subscriptions.pop(sid, None)
 
 
-def emit_character_update(payload, *, skip_sid=None):
+def emit_character_update(payload, *, skip_sid=None, snapshot_projector=None):
     character_id = payload['character_id']
     character = db.session.get(LobbyCharacter, character_id)
     if character is None:
         return
     if 'data' in payload.get('updates', {}):
-        payload = {**payload, 'updates': {**payload['updates'], 'data': character.data_snapshot()}}
+        snapshot = character.data_snapshot()
+        if snapshot_projector is not None:
+            snapshot = snapshot_projector(snapshot)
+        payload = {**payload, 'updates': {**payload['updates'], 'data': snapshot}}
     room = f'character_{character_id}'
     participants = list(socketio.server.manager.get_participants('/', room))
     for sid, _ in participants:

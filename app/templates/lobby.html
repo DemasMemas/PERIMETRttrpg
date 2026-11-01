@@ -298,7 +298,7 @@
                         <div class="world-object-options">
                             <label>Цвет <input id="world-object-color" type="color" value="#2d5a27"></label>
                             <label>Масштаб <input id="world-object-scale" type="range" min="0.2" max="2" step="any" value="1"> <input type="number" class="world-number-input" id="world-object-scale-number" data-world-number="world-object-scale" min="0.2" max="2" step="any" value="1" aria-label="Масштаб"><output hidden id="world-object-scale-value">1.00</output></label>
-                            <label id="world-object-rotation-option">Поворот <input id="world-object-rotation" type="range" min="0" max="359" step="any" value="0"> <input type="number" class="world-number-input" id="world-object-rotation-number" data-world-number="world-object-rotation" min="0" max="359" step="any" value="0" aria-label="Поворот, °"><output hidden id="world-object-rotation-value">0°</output></label>
+                            <label id="world-object-rotation-option">Поворот <input id="world-object-rotation" type="range" min="0" max="359" step="any" value="0"> <input type="number" class="world-number-input" id="world-object-rotation-number" data-world-number="world-object-rotation" min="0" max="359.99999999999994" step="any" value="0" aria-label="Поворот, °"><output hidden id="world-object-rotation-value">0°</output></label>
                             <label id="world-object-active-base-option" hidden><input id="world-object-active-base" type="checkbox"> Действующая база (охраняемая зона)</label>
                         </div>
                         <div id="world-fence-options" class="world-object-options" hidden>
@@ -352,7 +352,7 @@
                             </label>
                             <label id="world-selection-rotation-option">Поворот, °
                                 <input id="world-selection-rotation" type="range" min="0" max="359" step="1" value="0">
-                                <input id="world-selection-rotation-number" class="world-number-input" type="number" data-world-number="world-selection-rotation" min="0" max="359" step="any" value="0" aria-label="Поворот выбранного объекта">
+                                <input id="world-selection-rotation-number" class="world-number-input" type="number" data-world-number="world-selection-rotation" min="0" max="359.99999999999994" step="any" value="0" aria-label="Поворот выбранного объекта">
                             </label>
                             <label id="world-selection-active-option" hidden><input id="world-selection-active" type="checkbox"> Действующая / охраняемая зона</label>
                             <button id="world-selection-details" type="button" class="btn btn-secondary btn-sm">Точные параметры</button>
@@ -476,7 +476,7 @@
 
                         <label>Поворот:</label>
                         <input type="range" id="object-rotation" min="0" max="359" step="any" value="0" style="width: 100%;" oninput="updateObjectRotation(this.value)">
-                        <input type="number" class="world-number-input" id="object-rotation-number" data-world-number="object-rotation" min="0" max="359" step="any" value="0" aria-label="Поворот, °"><span hidden id="object-rotation-value" style="text-align: right;">0°</span>
+                        <input type="number" class="world-number-input" id="object-rotation-number" data-world-number="object-rotation" min="0" max="359.99999999999994" step="any" value="0" aria-label="Поворот, °"><span hidden id="object-rotation-value" style="text-align: right;">0°</span>
                     </div>
 
                     <button class="btn btn-primary" onclick="addObjectToTile()">➕ Добавить объект</button>

@@ -1,7 +1,16 @@
 // Read-only export of the saved Pripyat is mounted in an isolated test database.
 const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path');
-module.exports=async({page,request,token,lobby,base,connect,debugPort})=>{
-    const fixture=JSON.parse(fs.readFileSync(process.env.VTT_PRIPYAT_FIXTURE||'tmp/pripyat-regression.json','utf8'));
+module.exports=async({page,request,token,lobby,base,connect,debugPort,safeSession})=>{
+    const fixturePath=safeSession?path.resolve(__dirname,'../tmp/pripyat-regression.json'):process.env.VTT_PRIPYAT_FIXTURE||'tmp/pripyat-regression.json';
+    const artifactDir=safeSession?safeSession.artifacts:'tmp/pripyat-ui';
+    const fixture=JSON.parse(fs.readFileSync(fixturePath,'utf8'));
+    if (safeSession && process.env.VTT_SAFE_SCENARIO === 'surface') {
+        // Меняется только копия в памяти; исходный экспорт остаётся неизменным.
+        for (const row of fixture.tiles_data) for (const [x,terrain] of [[42,'snow'],[43,'sand'],[44,'swamp']]) row[x].terrain=terrain;
+        fixture.objects.push({type:'tree',name:'№102 проверочный куст',tile_x:45,tile_y:48,properties:{
+            visual_asset:'nature_bush_green',passable:true,dimensions:{width:.8,depth:.8,height:1.3}}});
+        fs.writeFileSync(path.join(safeSession.artifacts,'surface-fixture.json'),JSON.stringify({modifiedColumns:{42:'snow',43:'sand',44:'swamp'},bush:[45,48],originalUnchanged:true},null,2));
+    }
     const baseline=process.env.VTT_PRIPYAT_BASELINE==='1',api=`/lobbies/${lobby.id}`;
     const loc=await request(api+'/locations',{...fixture,objects:undefined,world_tile_x:8,world_tile_z:8},token);
     const url=api+'/locations/'+loc.id;
@@ -14,6 +23,23 @@ module.exports=async({page,request,token,lobby,base,connect,debugPort})=>{
     await page.evaluate(`(async()=>{window.L=await import('/static/js/locationScene.js');window.T=await import('three');await enterLocation(${loc.id})})()`);
     await page.until(`window.locationControls&&document.getElementById('scene-loading-screen').classList.contains('is-hidden')`,'Pripyat loaded');
     await page.evaluate(`L.setLocationEditMode(false);window.contextEvents=[];window.addEventListener('contextmenu',e=>contextEvents.push({prevented:e.defaultPrevented,target:e.target.tagName}),false)`);
+    if (safeSession && process.env.VTT_SAFE_SCENARIO === 'climb') {
+        await require('./vertical_climb.browser.cjs')({page,request,token,lobby,base,connect,debugPort,safeSession,location:loc,actor,player});
+        await require('./movement_walls.browser.cjs')({page,request,token,lobby,base,connect,debugPort,safeSession,fixture,location:loc,actor,player});
+        return;
+    }
+    if (safeSession && process.env.VTT_SAFE_SCENARIO === 'psi') {
+        await require('./psi_turn_phases.browser.cjs')({page,request,token,lobby,base,connect,debugPort,safeSession,location:loc,actor,player});
+        return;
+    }
+    if (safeSession && process.env.VTT_SAFE_SCENARIO === 'walls') {
+        await require('./movement_walls.browser.cjs')({page,request,token,lobby,base,connect,debugPort,safeSession,fixture,location:loc,actor,player});
+        return;
+    }
+    if(safeSession&&['movement','surface'].includes(process.env.VTT_SAFE_SCENARIO)){
+        await require('./movement_regression.browser.cjs')({page,request,token,lobby,base,connect,debugPort,safeSession,fixture,location:loc,actor,player});
+        return;
+    }
     const results={routes:[]};
     for(const [name,x,y] of [['short',46,48],['long',60,48],['obstacles',22,36]]){
         const result=await page.evaluate(`(async()=>{const t=performance.now(),r=await fetch('${url}/movement-preview',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+localStorage.getItem('access_token')},body:JSON.stringify({character_id:${actor.id},x:${x},y:${y},floor_level:0})}),data=await r.json();return {name:'${name}',ms:performance.now()-t,route:data.route}})()`);
@@ -54,8 +80,8 @@ module.exports=async({page,request,token,lobby,base,connect,debugPort})=>{
             const p=await aim(x,1,z);
             results.repeated.push(await page.evaluate(`(async()=>{const t=performance.now();L.updateFacingPreview(${p.x},${p.y});await new Promise(r=>{const check=()=>L.previewComplete()?r():requestAnimationFrame(check);requestAnimationFrame(check)});return performance.now()-t})()`));
         }
-        fs.mkdirSync('tmp/pripyat-ui',{recursive:true});
-        fs.writeFileSync('tmp/pripyat-ui/facing.png',Buffer.from((await page.call('Page.captureScreenshot',{format:'png'})).data,'base64'));
+        fs.mkdirSync(artifactDir,{recursive:true});
+        fs.writeFileSync(path.join(artifactDir,'facing.png'),Buffer.from((await page.call('Page.captureScreenshot',{format:'png'})).data,'base64'));
         results.continuous=await page.evaluate(`(async()=>{previewRenderSamples=[];const canvas=document.querySelector('#location-canvas canvas'),r=canvas.getBoundingClientRect(),t=performance.now();for(let i=0;i<24;i++){const a=i*Math.PI/12,p=new T.Vector3(41.5+5*Math.cos(a),1,48.5+5*Math.sin(a)).project(locationControls.object);for(let j=0;j<9;j++)canvas.dispatchEvent(new MouseEvent('mousemove',{bubbles:true,clientX:r.left+(p.x+1)*r.width/2,clientY:r.top+(1-p.y)*r.height/2}));await new Promise(requestAnimationFrame);}await new Promise(done=>{const check=()=>L.previewComplete()?done():requestAnimationFrame(check);requestAnimationFrame(check)});return {events:216,ms:performance.now()-t,renders:previewRenderSamples.length,maxHandlerMs:Math.max(...previewRenderSamples)}})()`);
     }
     await page.call('Input.dispatchKeyEvent',{type:'keyDown',key:'Escape',code:'Escape'});
@@ -93,7 +119,7 @@ module.exports=async({page,request,token,lobby,base,connect,debugPort})=>{
                     assert.deepEqual(await client.evaluate('L.previewTiles()'),await client.evaluate(`L.expectedPreview(${actor.id},${x+3},${y})`),name+' sight matches shared rules');
                     assert.equal(await client.evaluate('L.visibilitySnapshot()'),snapshot,'preview cannot reveal objects or write fog memory');
                     if(client===peer&&name==='open')assert.equal(await peer.evaluate(`L.characterVisible(${hiddenTarget.id})`),false,'future cone must not reveal the target before confirmation');
-                    if(['interior','upper'].includes(name))fs.writeFileSync(`tmp/pripyat-ui/${client===page?'gm':'player'}-${name}.png`,Buffer.from((await client.call('Page.captureScreenshot',{format:'png'})).data,'base64'));
+                    if(['interior','upper'].includes(name))fs.writeFileSync(path.join(artifactDir,`${client===page?'gm':'player'}-${name}.png`),Buffer.from((await client.call('Page.captureScreenshot',{format:'png'})).data,'base64'));
                     await client.call('Input.dispatchKeyEvent',{type:'keyDown',key:'Escape',code:'Escape'});
                     assert.equal(await client.evaluate('L.previewDiagnostics().count'),0);
                     results.sightCases.push({...state,role:client===page?'gm':'player'});
@@ -136,7 +162,7 @@ module.exports=async({page,request,token,lobby,base,connect,debugPort})=>{
         results.renderSamples=await page.evaluate('previewRenderSamples');
     }
     console.log('PRIPYAT_UI '+JSON.stringify({context:results.context,preview:results.preview}));
-    const out=path.resolve('tmp/pripyat-ui');fs.mkdirSync(out,{recursive:true});
+    const out=path.resolve(artifactDir);fs.mkdirSync(out,{recursive:true});
     fs.writeFileSync(path.join(out,process.env.VTT_PRIPYAT_LEGACY==='1'?'legacy.json':baseline?'before.json':'after.json'),JSON.stringify(results,null,2));
     fs.writeFileSync(path.join(out,baseline?'before.png':'after.png'),Buffer.from((await page.call('Page.captureScreenshot',{format:'png'})).data,'base64'));
     if(!baseline){assert.ok(results.context.length>=2);assert.ok(results.context.every(e=>e.prevented),'all gameplay right clicks prevent native menu');}

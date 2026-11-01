@@ -750,6 +750,10 @@ export const Server = {
         });
     },
 
+    async restorePlayerCharacter(lobbyId, characterId) {
+        return apiFetch(`/lobbies/${lobbyId}/characters/${characterId}/restore-player`, {method:'POST'});
+    },
+
     async removeCharacterAddiction(lobbyId, characterId, addictionKey) {
         return apiFetch(`/lobbies/${lobbyId}/characters/${characterId}/addictions/${encodeURIComponent(addictionKey)}`, {
             method: 'DELETE',

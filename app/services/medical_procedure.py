@@ -545,6 +545,8 @@ def minimum_consumable_payment(actor_data, target_data, selection, lobby_id=None
             ((target_data or {}).get('health') or {}), direct, application,
         )
         canonical_application = requirements['canonical_application']
+        if not direct.get('not_consumed'):
+            _validated_uses(item, requirements['required_uses'], template)
     if direct is None:
         # Compatibility for old/custom client-calculated actions. Retrieval is
         # still authoritative; imported consumables always use their profile.
@@ -568,8 +570,8 @@ def minimum_consumable_payment(actor_data, target_data, selection, lobby_id=None
     }
 
 
-def _consume_uses(parent, index, amount, template):
-    item = parent[index]
+def _validated_uses(item, amount, template):
+    # Общая проверка количества: без изменения предмета и без броска.
     try:
         quantity = max(0, int(item.get('quantity') or 0))
         maximum = max(1, int(item.get('maxUses') or (template.attributes or {}).get('uses') or 1))
@@ -580,6 +582,12 @@ def _consume_uses(parent, index, amount, template):
     available = max(0, (quantity - 1) * maximum + uses) if quantity else 0
     if available < remaining:
         raise ValidationError(f'Недостаточно зарядов: требуется {remaining}')
+    return quantity, maximum, uses, remaining
+
+
+def _consume_uses(parent, index, amount, template):
+    item = parent[index]
+    quantity, maximum, uses, remaining = _validated_uses(item, amount, template)
     while remaining > 0:
         spent = min(uses, remaining)
         uses -= spent
@@ -1048,6 +1056,8 @@ class MedicalProcedureService:
         required_uses = requirements['required_uses']
         base_difficulty = requirements['base_difficulty']
         requires_roll = requirements['requires_roll']
+        if not direct.get('not_consumed'):
+            _validated_uses(item, required_uses, template)
         generic_self = application.get('kind') == 'self'
         procedure_context = {
             'blood_packet': _blood_test_context(actor_data, application, actor.lobby_id),

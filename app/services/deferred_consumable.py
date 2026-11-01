@@ -8,7 +8,7 @@ from sqlalchemy.orm.attributes import flag_modified
 
 from app.extensions import db
 from app.models import CharacterInteractionRequest, DeferredCombatAction, LocationCharacter, LocationCombatState
-from app.services.exceptions import ConflictError, PermissionDenied, ValidationError
+from app.services.exceptions import ConflictError, PermissionDenied, ServiceError, ValidationError
 from app.services.magazine import inventory_slot
 
 
@@ -20,10 +20,7 @@ def _same_effect(entry, selected):
     return all(entry.get(key) == selected.get(key) for key in ('type', 'area', 'source'))
 
 
-def validate_selection(actor, user_id, selection):
-    from app.services.combat import CombatService
-    from app.services.character_interaction import CharacterInteractionService
-
+def _selection_source(actor, selection):
     if not isinstance(selection, dict) or set(selection) - {
         'source', 'application', 'target_character_id', 'treatment_request_id', 'server_authoritative',
         'server_operation',
@@ -42,19 +39,13 @@ def validate_selection(actor, user_id, selection):
     target_id = selection.get('target_character_id')
     if type(target_id) is not int:
         raise ValidationError('Не указан пациент')
-    consent = None
     request_id = selection.get('treatment_request_id')
     if request_id is not None and (type(request_id) is not int or request_id <= 0):
         raise ValidationError('Некорректное согласие на лечение')
-    if target_id == actor.character_id:
-        target = actor
-        if selection.get('treatment_request_id'):
-            raise ValidationError('Для лечения себя не требуется согласие другого персонажа')
-    elif selection.get('treatment_request_id'):
-        _, _, target = CharacterInteractionService._pair(actor.location_id, user_id, actor.id, target_id)
-        consent = CharacterInteractionService.validate_treatment(selection['treatment_request_id'], actor, target)
-    else:
-        _, target, _ = CombatService._validate_incapacitated_interaction(actor.location_id, user_id, actor.id, target_id)
+    return target_id, request_id
+
+
+def _selection_application(actor, target, selection):
     application = selection.get('application')
     if not isinstance(application, dict) or not isinstance(application.get('kind'), str) or application['kind'] not in {
         'self', 'bleeding', 'wound', 'injury', 'blood_type_test',
@@ -82,7 +73,51 @@ def validate_selection(actor, user_id, selection):
             current = next((entry for entry in health.get('effects', []) if _same_effect(entry, effect)), None)
             if not current or any(current.get(key) != effect.get(key) for key in ('type', 'area')) or current.get('closed') or current.get('suppressed'):
                 raise ConflictError('Выбранная травма изменилась или уже вылечена. Отмените старую процедуру.')
+
+
+def validate_selection(actor, user_id, selection):
+    from app.services.combat import CombatService
+    from app.services.character_interaction import CharacterInteractionService
+
+    target_id, request_id = _selection_source(actor, selection)
+    consent = None
+    if target_id == actor.character_id:
+        target = actor
+        if selection.get('treatment_request_id'):
+            raise ValidationError('Для лечения себя не требуется согласие другого персонажа')
+    elif selection.get('treatment_request_id'):
+        _, _, target = CharacterInteractionService._pair(actor.location_id, user_id, actor.id, target_id)
+        consent = CharacterInteractionService.validate_treatment(selection['treatment_request_id'], actor, target)
+    else:
+        _, target, _ = CombatService._validate_incapacitated_interaction(actor.location_id, user_id, actor.id, target_id)
+    _selection_application(actor, target, selection)
     return target, consent
+
+
+def _validate_saved_selection(actor, selection):
+    """Проверка сохранённых данных; не заменяет авторизацию публичного запроса."""
+    from app.services.combat import CombatService
+    from app.services.character_interaction import CharacterInteractionService
+
+    target_id, request_id = _selection_source(actor, selection)
+    if target_id == actor.character_id:
+        target = actor
+        if request_id:
+            raise ConflictError('Для лечения себя не требуется согласие другого персонажа')
+    else:
+        target = LocationCharacter.query.filter_by(
+            location_id=actor.location_id, character_id=target_id,
+        ).first()
+        if not target or not target.character:
+            raise ConflictError('Пациент покинул локацию')
+        if not CombatService._is_adjacent(actor, target):
+            raise ConflictError('Пациент больше не находится рядом')
+        if request_id:
+            CharacterInteractionService.validate_treatment(request_id, actor, target)
+        elif CombatService._location_character_condition(target)['state'] == 'active':
+            raise ConflictError('Пациенту снова требуется согласие на лечение')
+    _selection_application(actor, target, selection)
+    return target
 
 
 def required_payment(actor, user_id, selection):
@@ -131,8 +166,15 @@ def resolve_ready(action_id, user_id, *, location_id=None):
     meta = ((actor.character.data or {}).get('health') or {}).get('combatMeta') or {}
     if row.status != 'ready' or not state or state.current_location_character_id != actor.id or meta.get('completedPendingActionId') != row.id:
         raise ConflictError('Процедура ещё не оплачена, завершена, отменена или сейчас не ход врача')
-    CombatService.ensure_character_can_act(actor)
-    target, consent = validate_selection(actor, user_id, row.payload['selection'])
+    actor_id, action_id = actor.id, row.id
+    try:
+        CombatService.ensure_character_can_act(actor)
+        target, consent = validate_selection(actor, user_id, row.payload['selection'])
+    except ServiceError:
+        db.session.rollback()
+        from app.services.deferred_action import cancel_failed_action
+        cancel_failed_action(actor_id, action_id, user_id)
+        raise
     return row, actor, target, consent
 
 
@@ -154,6 +196,22 @@ def prepare_medicine_roll(row):
         and selection.get('server_operation') != 'general'
         and 'medicine_roll' not in row.payload
     ):
+        from app.services.medical_procedure import minimum_consumable_payment
+
+        actor = db.session.get(LocationCharacter, row.location_character_id)
+        if not actor or not actor.character:
+            raise ConflictError('Врач больше не находится в локации')
+        # Авторизация уже проверена при старте/запросе хода. Здесь только
+        # актуальность сохранённых данных, без выбора другого пользователя.
+        try:
+            target = _validate_saved_selection(actor, selection)
+            minimum_consumable_payment(
+                actor.character.data or {}, target.character.data or {},
+                selection, actor.character.lobby_id,
+            )
+        except ServiceError as error:
+            raise ConflictError(str(error)) from error
+
         # Draw only after full payment, once for every browser and network retry.
         row.payload = {**row.payload, 'medicine_roll': random.randint(1, 20)}
         flag_modified(row, 'payload')

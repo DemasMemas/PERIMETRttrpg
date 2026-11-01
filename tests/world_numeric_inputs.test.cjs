@@ -63,7 +63,10 @@ test('every world slider has a bounded number input and retains exact fractions'
         assert.equal(range.type, 'range');
         const offset = Number(number.dataset.offset || 0);
         assert.equal(Number(range.min) + offset, Number(number.min));
-        assert.equal(Number(range.max) + offset, Number(number.max));
+        if (range.id.endsWith('rotation')) {
+            assert.equal(Number(range.max), 359);
+            assert.equal(Number(number.max), 359.99999999999994);
+        } else assert.equal(Number(range.max) + offset, Number(number.max));
         if (offset || number.step === '1') continue;
         const value = String(Number(range.min) + 0.123456);
         type(range.id, value);
@@ -73,6 +76,18 @@ test('every world slider has a bounded number input and retains exact fractions'
         range.value = String(Number(range.max) - 0.234567);
         fire(range);
         assert.equal(Number(number.value), Number(range.value));
+    }
+});
+
+test('rotation number fields retain 359.5 through change and blur while sliders stay bounded', () => {
+    const { context, elements, type, fire } = harness();
+    for (const id of ['world-object-rotation', 'world-selection-rotation', 'object-rotation']) {
+        const number = type(id, '359.5');
+        fire(number, 'change');
+        fire(number, 'blur');
+        assert.equal(context.getWorldNumericValue(id), 359.5);
+        assert.equal(Number(number.value), 359.5);
+        assert.equal(Number(elements.get(id).max), 359);
     }
 });
 

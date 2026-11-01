@@ -30,7 +30,6 @@ import { showNotification } from './utils.js';
 
 import { initWorldNumericInputs, syncWorldNumber, getWorldNumericValue } from './worldNumericInputs.js';
 import { initDirectWorldObjectEditor } from './worldObjectEditor.js';
-import { worldObjectMouseTransform } from './worldObjectSelection.js';
 import { WORLD_VEGETATION_TYPES, planWorldVegetationBrush, vegetationStrokeCenters } from './worldVegetationBrush.js';
 
 const CHUNK_SIZE = 32;
@@ -341,6 +340,7 @@ export function selectWorldObject(type) {
 }
 
 export function cancelWorldObjectPlacement() {
+    window.stopMapRotationHold?.();
     if(window.isWorldRoadRouteTool?.()&&roadRouteTool.active)return roadRouteTool.cancel();
     if(window.isWorldFenceLineTool?.() && fenceLineTool.active)return fenceLineTool.cancel();
     if (window.isLocationActive || !AppState.isGM || !AppState.editMode || window.worldEditorTool !== 'objects'
@@ -353,13 +353,23 @@ export function cancelWorldObjectPlacement() {
     return true;
 }
 
-export function rotateWorldObjectPlacement(direction) {
+export function getWorldObjectRotationContext() {
+    if (window.isLocationActive || !AppState.isGM || !AppState.editMode || window.worldEditorTool !== 'objects'
+        || !selectedWorldObject || roadLinkActive || choosingExistingObjectTarget
+        || window.isWorldRoadRouteTool?.() || window.isWorldFenceLineTool?.()
+        || document.getElementById('tile-edit-modal')?.style.display === 'flex') return null;
+    return selectedWorldObject;
+}
+window.getWorldObjectRotationContext = getWorldObjectRotationContext;
+
+export function rotateWorldObjectPlacement(direction, fraction = 1) {
     if(window.isWorldRoadRouteTool?.())return false;
     if(window.isWorldFenceLineTool?.())return false;
     if (window.isLocationActive || !AppState.isGM || !AppState.editMode || window.worldEditorTool !== 'objects'
         || !selectedWorldObject || roadLinkActive || choosingExistingObjectTarget
         || document.getElementById('tile-edit-modal')?.style.display === 'flex') return false;
-    const rotation = worldObjectMouseTransform('rotate', worldObjectSettings(), direction * 30).rotation;
+    if (![-1, 1].includes(direction) || !Number.isFinite(fraction) || fraction <= 0) return false;
+    const rotation = ((Number(worldObjectSettings().rotation || 0) - direction * fraction * 15) % 360 + 360) % 360;
     syncWorldNumber('world-object-rotation', rotation);
     updateWorldObjectPreview(getHoveredTile());
     return true;
@@ -420,7 +430,7 @@ async function connectRoadAtTile(tile) {
 
 function worldObjectSettings() {
     const scale = Math.max(0.2, Math.min(2, Number(document.getElementById('world-object-scale')?.value) || 1));
-    const rotation = Math.max(0, Math.min(359, Number(document.getElementById('world-object-rotation')?.value) || 0));
+    const rotation = ((getWorldNumericValue('world-object-rotation') || 0) % 360 + 360) % 360;
     const scaleOutput = document.getElementById('world-object-scale-value');
     const rotationOutput = document.getElementById('world-object-rotation-value');
     if (scaleOutput) scaleOutput.textContent = String(scale);

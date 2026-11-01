@@ -1,4 +1,5 @@
 from types import SimpleNamespace
+from copy import deepcopy
 
 import pytest
 
@@ -14,6 +15,19 @@ def test_ranged_hit_zone_boundaries_follow_rules():
     assert CombatService._random_hit_zone(14) == "abdomen"
     assert CombatService._random_hit_zone(19) == "chest"
     assert CombatService._random_hit_zone(20) == "head"
+
+
+@pytest.mark.parametrize('height,difficulty',[(.99,4),(1,8),(3.99,8),(4,10),(6.99,10),(7,12),
+    (9.99,12),(10,14),(12.99,14),(13,16),(15.99,16),(16,18),(20,18),(20.99,18),(21,20),(21.99,20)])
+def test_fall_fractional_height_uses_floor_and_correct_twenty_meter_boundary(monkeypatch,height,difficulty):
+    monkeypatch.setattr(combat_module,'flag_modified',lambda *args:None)
+    monkeypatch.setattr(combat_module.random,'randint',lambda *args:20)
+    monkeypatch.setattr(CombatService,'_target_armor',staticmethod(lambda *args:(0,[])))
+    monkeypatch.setattr(CombatService,'_apply_attack_damage',staticmethod(lambda *args,**kwargs:{'zones':{}}))
+    target=SimpleNamespace(character=SimpleNamespace(data={'health':{'current':700,'effects':[]}}),posture='standing')
+    result=CombatService.resolve_fall(target,height)
+    assert result['height']==height and result['classified_height']==int(height)
+    assert result['difficulty']==difficulty
 
 
 def test_mutant_innate_protection_and_attack_cost_are_used():
@@ -214,7 +228,7 @@ def test_psi_state_recovers_once_at_end_of_round(monkeypatch):
     assert result[0]['after'] == 19
 
 
-def test_psi_crisis_without_weapon_resets_state_and_applies_reset_damage(monkeypatch):
+def test_psi_increase_waits_for_turn_end_and_reset_damage_causes_pain(monkeypatch):
     monkeypatch.setattr(
         CombatService,
         '_psi_defense_profile',
@@ -231,12 +245,14 @@ def test_psi_crisis_without_weapon_resets_state_and_applies_reset_damage(monkeyp
     }
 
     result = CombatService._increase_psy_state(data, 1, 'test')
-
-    assert result['crisis']['triggered'] is True
-    assert result['crisis']['suicide_attempt']['failure_reason'] == 'no_suitable_weapon'
-    assert result['crisis']['reset_damage'] == 500
+    assert result['crisis'] is None
+    assert data['health']['psyState'] == 50
+    assert data['health']['current'] == 700
+    crisis = CombatService._resolve_psi_crisis(data,round_number=1)
+    assert crisis['reset_damage'] == 500
     assert data['health']['psyState'] == 0
     assert data['health']['current'] == 200
+    assert data['health']['painLevel'] == 10
     assert data['health']['zones']['head']['current'] == 50
 
 
@@ -268,8 +284,10 @@ def test_successful_psi_suicide_shot_kills_without_reset_damage(monkeypatch):
         data, 1, 'test', loc_char=loc_char,
     )
 
-    assert result['crisis']['suicide_succeeded'] is True
-    assert result['crisis']['reset_damage'] == 0
+    assert result['crisis'] is None
+    assert CombatService._character_condition(data)['state'] != 'dead'
+    attempt = CombatService._resolve_psi_suicide_attempt(data,loc_char)
+    assert attempt['success'] is True
     assert data['health']['psyState'] == 50
     assert CombatService._character_condition(data)['state'] == 'dead'
     assert data['weapons'][0]['ammo'] == 0
@@ -291,10 +309,10 @@ def test_psi_suicide_jam_causes_reset_instead_of_death(monkeypatch):
         weapon_braced=False, braced_weapon_index=None,
     )
 
+    attempt = CombatService._resolve_psi_suicide_attempt(data,loc_char)
+    assert attempt['failure_reason'] == 'weapon_jammed'
+    assert data['health']['psyState'] == 50 and data['health']['current'] == 700
     crisis = CombatService._resolve_psi_crisis(data, loc_char)
-
-    assert crisis['suicide_succeeded'] is False
-    assert crisis['suicide_attempt']['failure_reason'] == 'weapon_jammed'
     assert crisis['reset_damage'] == 500
     assert data['health']['psyState'] == 0
     assert data['weapons'][0]['ammo'] == 1
@@ -303,6 +321,7 @@ def test_psi_suicide_jam_causes_reset_instead_of_death(monkeypatch):
 def test_psi_suicide_shot_fails_when_ear_protection_is_not_penetrated(monkeypatch):
     monkeypatch.setattr(combat_module.random, 'randint', lambda start, end: 10)
     data = {
+        'activeWeaponIndex': 0,
         'weapons': [{
             'name': 'Пистолет', 'category': 'firearm', 'ammo': 1,
             'durability': 100, 'maxDurability': 100,
@@ -355,11 +374,258 @@ def test_death_from_psi_reset_transforms_character_into_zombie(monkeypatch):
         data, 1, 'test', loc_char=loc_char,
     )
 
-    assert result['crisis']['transformed']['mutant_type'] == 'Зомбированный'
+    assert result['crisis'] is None
+    crisis = CombatService._resolve_psi_crisis(data,loc_char)
+    assert crisis['transformed']['mutant_type'] == 'Зомбированный'
     assert character.data['basic']['mutant_type'] == 'Зомбированный'
     assert character.data['inventory']['pockets'][0]['name'] == 'КПК'
     assert loc_char.controlled_by == 1
     assert loc_char.posture == 'prone'
+
+
+@pytest.fixture
+def psi_turn_game(client,create_user,auth_headers):
+    from app.extensions import db
+    from test_character_interactions import _setup_pair
+    pair = _setup_pair(client,create_user,auth_headers)
+    for actor in (pair['actor_location'],pair['target_location']):
+        value = deepcopy(actor.character.data)
+        value['health'] = {'current':700,'max':700,'psyState':0,'effects':[],
+            'zones':{'head':{'current':50,'max':50},'chest':{'current':150,'max':150}}}
+        actor.character.data = value
+    db.session.commit()
+    return pair
+
+
+def _give_psi_weapon(actor,*,psy=50,attacks=None,damage=20,firearm=False):
+    from app.extensions import db
+    value = deepcopy(actor.character.data)
+    value['health']['psyState'] = psy
+    value['activeWeaponIndex'] = 0
+    value['weapons'] = [{'name':'Проверочное оружие','category':'firearm' if firearm else 'melee_weapon',
+        'ammo':2,'durability':100,'maxDurability':100,
+        'attributes':{'damage':damage,'armor_piercing':20,'allowed_attacks':attacks or ['Рубящий']}}]
+    actor.character.data = value
+    actor.drawn_weapon_index = 0
+    db.session.commit()
+
+
+def _end_psi_turn(client,pair,auth_headers,actor):
+    url = f"/lobbies/{pair['lobby'].id}/locations/{pair['location'].id}/combat/end_turn"
+    response = client.post(url,headers=auth_headers(pair['actor_user']),json={'location_character_id':actor.id})
+    assert response.status_code == 200,response.get_json()
+    return response.get_json()
+
+
+def test_entering_real_anomaly_causes_pain_including_extra_at_150(client,psi_turn_game,auth_headers):
+    from app.extensions import db
+    pair = psi_turn_game
+    actor,target = pair['actor_location'],pair['target_location']
+    target.pos_x = 4
+    actor.facing_x,actor.facing_y = 1,0
+    actor.movement_points_current = 10
+    tiles = [[{'terrain':'grass','height':0,'objects':[]} for _ in range(6)] for _ in range(6)]
+    tiles[1][2]['objects'] = [{'type':'anomaly','anomalyKey':'morozilnik'}]
+    pair['location'].grid_width = pair['location'].grid_height = 6
+    pair['location'].tiles_data = tiles
+    db.session.commit()
+    moved,_,_ = CombatService.move_character(pair['location'].id,pair['actor_user']['id'],
+        actor.character_id,3,1,movement_mode='walk')
+    assert (moved.pos_x,moved.pos_y) == (2,1)
+    assert actor.character.data['health']['combatMeta']['activeAnomaly']['key'] == 'morozilnik'
+    assert actor.character.data['health']['current'] == 700
+    _end_psi_turn(client,pair,auth_headers,actor)
+    db.session.expire_all()
+    health = actor.character.data['health']
+    assert health['current'] == 550
+    assert health['painLevel'] == 4  # 2 за накопленные 150 и ещё 2 за одно попадание.
+    assert health['combatMeta']['damageTakenThisRound'] == 150
+
+
+def test_three_real_psion_strikes_reset_only_at_victims_own_end(client,psi_turn_game,auth_headers,monkeypatch):
+    from app.extensions import db
+    from app.services.world_rules import mutant_character_data,mutant_profile
+    pair = psi_turn_game
+    psion,victim = pair['actor_location'],pair['target_location']
+    psion.character.data = mutant_character_data(mutant_profile('Псионик'))
+    psion.facing_x,psion.facing_y = 1,0
+    _give_psi_weapon(victim,psy=0)
+    # Начальное условие: ГМ добавил 4 ОД, чтобы оплатить три настоящие атаки по 3 ОД.
+    CombatService.adjust_resources(pair['location'].id,pair['actor_user']['id'],psion.id,action_points=4)
+    monkeypatch.setattr('app.services.combat.random.randint',lambda *_:20)
+    url = f"/lobbies/{pair['lobby'].id}/locations/{pair['location'].id}/combat"
+    for expected in (20,40,60):
+        response = client.post(url+'/action',headers=auth_headers(pair['actor_user']),json={
+            'location_character_id':psion.id,'action_key':'mutant_psy_attack',
+            'weapon_index':0,'target_character_id':victim.character_id,
+        })
+        assert response.status_code == 200,response.get_json()
+        db.session.expire_all()
+        assert victim.character.data['health']['psyState'] == expected
+        assert victim.character.data['health']['current'] == 700
+        assert not victim.character.data['health'].get('combatMeta',{}).get('lastPsiTurnStart')
+    assert psion.action_points_current == 0
+    started = _end_psi_turn(client,pair,auth_headers,psion)
+    assert started['current_location_character_id'] == victim.id
+    assert victim.character.data['health']['psyState'] == 60
+    assert victim.character.data['health']['current'] == 680
+    assert victim.character.data['health']['zones']['head']['current'] == 30
+    finished = _end_psi_turn(client,pair,auth_headers,victim)
+    assert finished['psy_crisis']['reset_damage'] == 600
+    db.session.expire_all()
+    assert victim.character.data['health']['psyState'] == 0
+    assert victim.character.data['health']['current'] == 80
+    assert victim.character.data['health']['painLevel'] == 10
+
+
+def test_psi_received_during_own_turn_resets_only_at_own_end_and_causes_pain(client,psi_turn_game,auth_headers):
+    from app.extensions import db
+    from sqlalchemy.orm.attributes import flag_modified
+    pair = psi_turn_game
+    actor = pair['actor_location']
+    _give_psi_weapon(actor,psy=49)
+    value = actor.character.data
+    gained = CombatService._increase_psy_state(value,1,'test',loc_char=actor,apply_protection=False)
+    actor.character.data = deepcopy(value)
+    flag_modified(actor.character,'data')
+    db.session.commit()
+    assert gained['after'] == 50 and gained['crisis'] is None
+    assert actor.character.data['health']['current'] == 700
+    assert 'lastPsiTurnStart' not in actor.character.data['health'].get('combatMeta',{})
+    result = _end_psi_turn(client,pair,auth_headers,actor)
+    db.session.expire_all()
+    health = actor.character.data['health']
+    assert health['psyState'] == 0 and health['current'] == 200
+    assert health['painLevel'] == 10
+    assert health['zones']['head']['current'] == 50
+    assert result['psy_crisis']['reset_damage'] == 500
+    assert pair['target_character'].data['health']['current'] == 700
+
+
+def test_psi_received_outside_turn_attacks_at_start_then_waits_until_own_end(client,psi_turn_game,auth_headers):
+    from app.extensions import db
+    pair = psi_turn_game
+    target = pair['target_location']
+    _give_psi_weapon(target,damage=20)
+    result = _end_psi_turn(client,pair,auth_headers,pair['actor_location'])
+    db.session.expire_all()
+    health = target.character.data['health']
+    assert health['psyState'] == 50 and health['current'] == 680
+    assert health['zones']['head']['current'] == 30
+    assert target.action_points_current == 5 and target.free_actions_current == 1
+    assert result['psy_turn_start']['attack_type'] == 'Рубящий'
+    # Чтение состояния и перезагрузка не являются началом нового хода.
+    for _ in range(2):
+        CombatService.get_state(pair['location'].id,pair['actor_user']['id'])
+    assert target.character.data['health']['current'] == 680
+    _end_psi_turn(client,pair,auth_headers,target)
+    db.session.expire_all()
+    assert target.character.data['health']['psyState'] == 0
+    assert target.character.data['health']['current'] == 180
+    assert target.character.data['health']['painLevel'] == 10
+
+
+@pytest.mark.parametrize('attacks,selected,damage',[
+    (['Вспарывающий','Режущий','Колющий','Рубящий'],'Рубящий',20),
+    (['Режущий','Колющий'],'Колющий',25),
+    (['Вспарывающий','Режущий'],'Режущий',15),
+    (['Вспарывающий'],'Вспарывающий',27),
+])
+def test_psi_melee_uses_attack_priority_real_damage_and_ignores_helmet(psi_turn_game,attacks,selected,damage):
+    from app.extensions import db
+    actor = psi_turn_game['actor_location']
+    _give_psi_weapon(actor,attacks=attacks)
+    value = deepcopy(actor.character.data)
+    helmet = {'name':'Шлем','durability':100,'protection':{'physical':100},'attributes':{'protection_zones':['head','ears']}}
+    value['equipment'] = {'helmet':deepcopy(helmet)}
+    actor.character.data = value
+    db.session.commit()
+    result = CombatService._resolve_psi_turn_start(actor,1)
+    assert result['attack_type'] == selected and result['damage'] == damage
+    assert result['ignores_armor'] is True and result['success'] is False
+    assert actor.character.data['health']['zones']['head']['current'] == 50-damage
+    assert actor.character.data['health']['current'] == 700-damage
+    assert actor.character.data['equipment']['helmet'] == helmet
+
+
+@pytest.mark.parametrize('damage,dead',[(49,False),(50,True),(100,True)])
+def test_psi_melee_survival_depends_on_damage(psi_turn_game,damage,dead):
+    actor = psi_turn_game['actor_location']
+    _give_psi_weapon(actor,damage=damage)
+    result = CombatService._resolve_psi_turn_start(actor,1)
+    assert result['success'] is dead
+    assert (CombatService._character_condition(actor.character.data)['state']=='dead') is dead
+
+
+@pytest.mark.parametrize('drawn,attacks,natural',[(None,['Рубящий'],False),(0,['Дробящий','Круговая атака'],False),(0,['Рубящий'],True)])
+def test_psi_does_not_draw_a_spare_weapon_or_use_natural_weapons(drawn,attacks,natural):
+    value = {'weapons':[
+        {'name':'Оружие в руке','category':'melee_weapon','attributes':{'allowed_attacks':attacks,'natural_weapon':natural}},
+        {'name':'Нож в инвентаре','category':'melee_weapon','attributes':{'allowed_attacks':['Рубящий']}}]}
+    assert CombatService._psi_suicide_weapon(value,SimpleNamespace(drawn_weapon_index=drawn)) == (None,None,None)
+
+
+def test_psi_round_recovery_does_not_erase_pending_threshold(psi_turn_game):
+    actor = psi_turn_game['actor_location']
+    _give_psi_weapon(actor)
+    assert CombatService._apply_end_of_round_psi_recovery([actor]) == []
+    assert actor.character.data['health']['psyState'] == 50
+
+
+@pytest.mark.parametrize('psy,damage',[(49,None),(50,500),(55,550),(51.25,512.5)])
+def test_psi_reset_uses_all_current_points_and_preserves_fraction(psy,damage):
+    value = {'health':{'current':700,'max':700,'psyState':psy,'effects':[]}}
+    result = CombatService._resolve_psi_crisis(value,round_number=4)
+    if damage is None:
+        assert result is None and value['health']['current']==700
+    else:
+        assert result['reset_damage']==damage
+        assert value['health']['current']==700-damage
+        assert value['health']['psyState']==0
+        assert value['health']['painLevel']==10
+
+
+def test_psi_reset_shares_round_pain_accumulator_with_other_hits():
+    value = {'health':{'current':700,'max':700,'psyState':50,'effects':[],'painLevel':1,
+        'combatMeta':{'damagePainRound':4,'damageTakenThisRound':100,'damagePainAppliedThisRound':1}}}
+    CombatService._resolve_psi_crisis(value,round_number=4)
+    meta = value['health']['combatMeta']
+    assert meta['damagePainRound']==4 and meta['damageTakenThisRound']==600
+    assert meta['damagePainAppliedThisRound']==11
+
+
+def test_psi_combat_start_attacks_only_first_actual_turn_and_jam_is_free(client,psi_turn_game,auth_headers,monkeypatch):
+    from app.extensions import db
+    pair = psi_turn_game
+    CombatService.end_combat(pair['location'].id,pair['actor_user']['id'])
+    for actor in (pair['actor_location'],pair['target_location']):
+        _give_psi_weapon(actor,firearm=True)
+    monkeypatch.setattr(CombatService,'_roll_weapon_jam',staticmethod(lambda *args:{'triggered':True}))
+    actor,target = pair['actor_location'],pair['target_location']
+    CombatService.start_combat(pair['location'].id,pair['actor_user']['id'],
+        location_character_ids=[actor.id,target.id],initiator_location_character_id=actor.id,initiator_first=True)
+    db.session.expire_all()
+    assert actor.character.data['health']['combatMeta']['lastPsiTurnStart']['attempt']['failure_reason'] == 'weapon_jammed'
+    assert actor.action_points_current == 5 and actor.free_actions_current == 1
+    assert actor.character.data['health']['current'] == 700
+    assert target.character.data['health']['current'] == 700
+    assert 'lastPsiTurnStart' not in target.character.data['health'].get('combatMeta',{})
+    assert actor.character.data['weapons'][0]['ammo'] == 2
+
+
+def test_psi_reset_does_not_happen_when_reaction_ends(client,psi_turn_game,auth_headers):
+    from app.extensions import db
+    from app.models import LocationCombatState
+    pair = psi_turn_game
+    actor,target = pair['actor_location'],pair['target_location']
+    _give_psi_weapon(actor)
+    state = LocationCombatState.query.filter_by(location_id=pair['location'].id).one()
+    state.reaction_return_location_character_id = target.id
+    db.session.commit()
+    result = _end_psi_turn(client,pair,auth_headers,actor)
+    assert result['reaction_returned'] is True
+    assert actor.character.data['health']['psyState'] == 50
+    assert actor.character.data['health']['current'] == 700
 
 
 def test_mutant_natural_hit_and_bite_are_opportunity_attack_options():
@@ -2664,8 +2930,64 @@ def test_damage_pain_uses_round_total_and_large_single_hit_thresholds():
     assert CombatService._damage_pain_requirement(50, 50) == 1
     assert CombatService._damage_pain_requirement(149, 100) == 1
     assert CombatService._damage_pain_requirement(150, 100) == 2
-    assert CombatService._damage_pain_requirement(151, 151) == 2
-    assert CombatService._damage_pain_requirement(201, 201) == 3
+    assert CombatService._damage_pain_requirement(151, 151) == 4
+    assert CombatService._damage_pain_requirement(201, 201) == 5
+
+
+@pytest.mark.parametrize('damage, expected', [
+    (0, 0), (49, 0), (50, 1), (149, 1), (150, 4), (151, 4),
+    (200, 4), (201, 5), (249, 5), (250, 6), (300, 6), (301, 8), (350, 9),
+])
+def test_damage_pain_adds_round_total_and_only_the_highest_single_wound_tier(damage, expected):
+    assert CombatService._damage_pain_requirement(damage, damage) == expected
+
+
+@pytest.mark.parametrize('hits, expected', [
+    ([25, 25], 1), ([50, 50, 50], 2), ([150], 4), ([150, 150], 7), ([151, 151], 7),
+    ([250, 10], 6), ([10, 250], 6), ([350], 9),
+])
+def test_damage_pain_counts_each_wound_without_repaying_round_total(hits, expected):
+    data = {'health': {'effects': []}}
+    for damage in hits:
+        CombatService._apply_damage_pain(data, damage, 1, 'combat_damage')
+    assert data['health']['painLevel'] == expected
+    assert data['health']['combatMeta']['damageTakenThisRound'] == sum(hits)
+    assert data['health']['combatMeta']['damagePainAppliedThisRound'] == expected
+
+
+def test_damage_pain_starts_new_round_without_removing_existing_pain():
+    data = {'health': {'effects': []}}
+    CombatService._apply_damage_pain(data, 50, 1, 'combat_damage')
+    CombatService._apply_damage_pain(data, 50, 2, 'explosion')
+    assert data['health']['painLevel'] == 2
+    assert data['health']['combatMeta']['damageTakenThisRound'] == 50
+    assert data['health']['combatMeta']['damagePainAppliedThisRound'] == 1
+
+
+@pytest.mark.parametrize('trait, damage, expected', [
+    ('Неуязвим к боли', 350, 0),
+    ('Урон, необходимый для получения уровня боли 2х', 500, 6),
+])
+def test_damage_pain_preserves_mutant_immunity_and_thresholds(trait, damage, expected):
+    data = {'mutant': {'traits': [trait]}, 'health': {'painLevel': 0, 'effects': []}}
+    CombatService._apply_damage_pain(data, damage, 1, 'explosion')
+    assert data['health']['painLevel'] == expected
+
+
+def test_attack_and_general_damage_share_round_pain_accumulator(monkeypatch):
+    monkeypatch.setattr(combat_module, 'flag_modified', lambda *args, **kwargs: None)
+    monkeypatch.setattr(CombatService, 'apply_stress_trigger', lambda *args, **kwargs: None)
+    target = SimpleNamespace(character=SimpleNamespace(data={
+        'health': {'current': 700, 'effects': [], 'zones': {}},
+    }), hp_zones={})
+    CombatService._apply_attack_damage(
+        target, 25, 'chest', {}, round_number=1, allow_bleeding=False, trauma_checks=0,
+    )
+    CombatService._apply_general_damage(target, 25, round_number=1)
+    health = target.character.data['health']
+    assert health['combatMeta']['damageTakenThisRound'] == 50
+    assert health['combatMeta']['damagePainAppliedThisRound'] == 1
+    assert health['painLevel'] == 1
 
 
 def test_limb_damage_at_three_and_five_limits_creates_catastrophic_injuries(monkeypatch):
@@ -3795,3 +4117,133 @@ def test_zombification_controller_overrides_character_owner():
     assert CombatService._can_end_turn_for_character(loc_char, 5) is False
     assert CombatService._can_end_turn_for_character(loc_char, 9) is True
     assert CombatService._can_end_turn_for_character(loc_char, 5, is_gm=True) is True
+
+
+@pytest.mark.parametrize('condition', [
+    {'effects': [{'type': 'death'}]},
+    {'effects': [{'type': 'unconsciousness'}]},
+    {'current': 0, 'max': 100},
+    {'organs': {'brain': {'current': 0}}},
+    {'intoxication': 100},
+])
+@pytest.mark.parametrize('amount,force_manifest', [(1, False), (1, True), (0, True)])
+def test_dead_or_unconscious_stress_trigger_returns_before_rng(monkeypatch, condition, amount, force_manifest):
+    from copy import deepcopy
+
+    def unexpected_call(*args, **kwargs):
+        pytest.fail('Заблокированный стресс не должен менять данные или бросать RNG')
+
+    monkeypatch.setattr(combat_module.random, 'randint', unexpected_call)
+    monkeypatch.setattr(combat_module, 'flag_modified', unexpected_call)
+    health = {'stress': 4, **deepcopy(condition)}
+    health.setdefault('effects', []).append({'id': 'old', 'type': 'stress_effect'})
+    target = SimpleNamespace(character=SimpleNamespace(data={'health': health}))
+    before = deepcopy(target.character.data)
+    result = CombatService.apply_stress_trigger(target, amount, trigger='damage', force_manifest=force_manifest)
+    assert result['blocked'] is True
+    assert result['manifested'] is False
+    assert result['before'] == result['after'] == 4
+    assert target.character.data == before
+
+
+@pytest.mark.parametrize('condition_type', ['death', 'unconsciousness'])
+def test_unconscious_stress_reduction_ignores_force_manifest(monkeypatch, condition_type):
+    def unexpected_rng(*args):
+        pytest.fail('Снижение стресса не должно вызывать проявление')
+
+    monkeypatch.setattr(combat_module.random, 'randint', unexpected_rng)
+    monkeypatch.setattr(combat_module, 'flag_modified', lambda *args: None)
+    target = SimpleNamespace(character=SimpleNamespace(data={'health': {
+        'stress': 4, 'effects': [{'type': condition_type}, {'id': 'old', 'type': 'stress_effect'}],
+    }}))
+    result = CombatService.apply_stress_trigger(target, -1, force_manifest=True)
+    assert result['before'] == 4
+    assert result['after'] == 3
+    assert not result.get('manifested')
+    assert any(item.get('id') == 'old' and item.get('active', True)
+               for item in target.character.data['health']['effects'])
+
+
+@pytest.mark.parametrize('effect', [
+    {'type': 'death', 'active': False},
+    {'type': 'unconsciousness', 'active': False},
+    {'type': 'death', 'remaining': 0},
+    {'type': 'unconsciousness', 'remaining': -1},
+    {'type': 'shock'}, {'type': 'stress_stupor'},
+])
+def test_inactive_conditions_and_stupor_do_not_block_new_stress(monkeypatch, effect):
+    monkeypatch.setattr(combat_module, 'flag_modified', lambda *args: None)
+    target = SimpleNamespace(character=SimpleNamespace(data={'health': {'stress': 4, 'effects': [effect]}}))
+    result = CombatService.apply_stress_trigger(target, 1, check_manifestation=False)
+    assert result['blocked'] is False
+    assert result['after'] == 5
+
+
+def test_conscious_character_can_still_have_forced_stress_manifestation(monkeypatch):
+    monkeypatch.setattr(combat_module.random, 'randint', lambda *args: 1)
+    monkeypatch.setattr(combat_module, 'flag_modified', lambda *args: None)
+    target = SimpleNamespace(character=SimpleNamespace(data={'health': {'stress': 0, 'effects': []}}))
+    result = CombatService.apply_stress_trigger(target, 1, force_manifest=True)
+    assert result['after'] == 1
+    assert result['manifested'] is True
+    assert target.character.data['health']['effects'][-1]['source'] == 'stress_manifestation'
+
+
+@pytest.mark.parametrize('condition_type', ['death', 'unconsciousness'])
+@pytest.mark.parametrize('action', ['approve', 'replace'])
+def test_pending_stress_manifestation_cannot_be_applied_while_unconscious(monkeypatch, condition_type, action):
+    from copy import deepcopy
+
+    def unexpected_rng(*args):
+        pytest.fail('Отложенное проявление не должно бросать RNG')
+
+    monkeypatch.setattr(combat_module.random, 'randint', unexpected_rng)
+    target = SimpleNamespace(posture='standing', character=SimpleNamespace(data={'health': {
+        'stress': 4, 'effects': [{'type': condition_type}, {
+            'id': 'pending', 'type': 'stress_effect', 'source': 'stress_manifestation',
+            'gmPending': True, 'stress_table': 'stress', 'stress_roll': 1,
+        }],
+    }}))
+    before = deepcopy(target.character.data)
+    with pytest.raises(ValidationError, match='Нельзя применить'):
+        CombatService.resolve_stress_effect(target, 'pending', action, replacement='Укрыться')
+    assert target.character.data == before
+    assert target.posture == 'standing'
+
+
+
+def test_mutant_stress_immunity_still_precedes_forced_manifestation(monkeypatch):
+    def unexpected_rng(*args):
+        pytest.fail('Иммунитет мутанта не должен вызывать RNG')
+
+    monkeypatch.setattr(combat_module.random, 'randint', unexpected_rng)
+    monkeypatch.setattr(combat_module, 'flag_modified', lambda *args: None)
+    target = SimpleNamespace(character=SimpleNamespace(data={
+        'is_mutant': True, 'health': {'stress': 4, 'effects': [{'type': 'stress_effect'}]},
+    }))
+    result = CombatService.apply_stress_trigger(target, 1, force_manifest=True)
+    assert result['immune'] is True
+    assert result['blocked'] is True
+    assert target.character.data['health']['stress'] == 0
+    assert not any(item['type'] == 'stress_effect'
+                   for item in target.character.data['health']['effects'])
+
+
+@pytest.mark.parametrize("requests", [(1, 2), (2, 1), (1, 1, 1)])
+def test_fire_rate_exact_cumulative_boundary_is_atomic_and_next_round_resets(requests):
+    from copy import deepcopy
+
+    meta = {}
+    weapon = {"fireRate": 3}
+    for shots in requests:
+        CombatService._validate_weapon_fire_rate(meta, 7, 0, weapon, shots)
+        CombatService._record_weapon_shots(meta, 7, 0, shots)
+    assert CombatService._weapon_round_shots(meta, 7, 0) == 3
+    before_rejection = deepcopy(meta)
+    with pytest.raises(ValidationError, match="скорострельность"):
+        CombatService._validate_weapon_fire_rate(meta, 7, 0, weapon, 1)
+    assert meta == before_rejection
+    assert CombatService._validate_weapon_fire_rate(meta, 7, 1, weapon, 3)["fired"] == 0
+    assert CombatService._validate_weapon_fire_rate(meta, 8, 0, weapon, 3)["fired"] == 0
+    assert CombatService._record_weapon_shots(meta, 8, 0, 1) == 1
+    assert CombatService._weapon_round_shots(meta, 8, 0) == 1

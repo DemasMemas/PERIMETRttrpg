@@ -248,7 +248,7 @@ def test_hatch_action_validates_reach_lock_and_controls_and_persists_movement(cl
     assert client.patch(url,headers=auth_headers(stranger),json=payload).status_code==403
     assert client.patch(url,headers=headers,json=payload).status_code==200
     moved,cost,_=CombatService.move_character(location.id,gm['id'],actor.character_id,5,5,floor_level=1)
-    assert cost==3 and moved.floor_level==1
+    assert cost==pytest.approx(2.4) and moved.floor_level==1
     target=SimpleNamespace(pos_x=5,pos_y=5,floor_level=0,posture='standing')
     assert CombatService._cover_analysis(location.id,moved,target)['grade']=='none'
     assert CombatService.physical_position(moved)['height']==pytest.approx(3.435)
@@ -307,9 +307,12 @@ def test_drop_applies_existing_fall_rules_and_saves_landing(storey_game):
                           properties=obj('hatch',5,5,0,1,1,.08,is_open=True).properties)
     db.session.add(portal);actor.pos_y=4;db.session.commit()
     terrain=deepcopy(location.tiles_data)
+    plan=CombatService._object_drop_plan(location,actor,portal)
+    assert plan
+    x,y=plan['landing']['x'],plan['landing']['y']
     with patch('app.services.combat.random.randint',return_value=1):
-        moved,cost,state=CombatService.move_character(location.id,gm['id'],actor.character_id,5,5,special_action='drop_down',object_id=portal.id)
-    assert moved.floor_level==-1 and (moved.pos_x,moved.pos_y)==(5,5)
+        moved,cost,state=CombatService.move_character(location.id,gm['id'],actor.character_id,x,y,special_action='drop_down',object_id=portal.id)
+    assert moved.floor_level==-1 and (moved.pos_x,moved.pos_y)==(x,y)
     assert cost==0 and state
     assert moved._movement_fall['height']==pytest.approx(2.4)
     assert moved._movement_fall['success'] is False

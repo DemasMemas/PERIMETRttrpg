@@ -11,13 +11,14 @@ from app.models import Location, LocationCharacter, LocationCombatState, LobbyPa
 from app.services.lighting_rules import location_is_dark
 from app.models.templates import ItemTemplate
 from app.services.exceptions import NotFoundError, PermissionDenied, ValidationError
-from app.services.effects import advance_timed_effects, apply_effect_to_health, apply_expired_effects_to_health, apply_periodic_effects_to_health, normalize_character_effects, normalize_effect_list, sync_health_derived_statuses, tick_effects
+from app.services.effects import health_blocks_new_stress, advance_timed_effects, apply_effect_to_health, apply_expired_effects_to_health, apply_periodic_effects_to_health, normalize_character_effects, normalize_effect_list, sync_health_derived_statuses, tick_effects
 from app.services.artifact_effects import artifact_passive_profile
 from app.services.magazine import validate_magazine_selection, install_magazine
 from app.services.deferred_action import (
     durable_combat_action, snapshot_action_arguments, remember_action,
     update_action_payment, serialize_deferred_action, preserve_action_payment,
     cancel_actor_actions,
+    cancel_unavailable_actions,
     ensure_no_deferred_action,
 )
 from app.services.anomaly_profiles import anomaly_profile
@@ -620,20 +621,15 @@ class CombatService:
 
     @staticmethod
     def _line_object_entry(shooter, target, obj):
-        width, depth = CombatService._object_dimensions(obj)
+        from app.services.movement_geometry import WallBox
+        width, depth = CombatService._object_dimensions(obj,axis_aligned=False)
         properties = obj.properties or {}
         center_x = float(obj.tile_x) + 0.5 + float(properties.get('offset_x', 0) or 0)
         center_y = float(obj.tile_y) + 0.5 + float(properties.get('offset_z', 0) or 0)
-        bounds = (
-            center_x - width / 2,
-            center_x + width / 2,
-            center_y - depth / 2,
-            center_y + depth / 2,
-        )
-        start_x = float(shooter.pos_x) + 0.5
-        start_y = float(shooter.pos_y) + 0.5
-        end_x = float(target.pos_x) + 0.5
-        end_y = float(target.pos_y) + 0.5
+        box = WallBox(center_x,center_y,width,depth,float(properties.get('rotation',0) or 0),0)
+        bounds = (-width/2,width/2,-depth/2,depth/2)
+        start_x,start_y = box.local((float(shooter.pos_x)+.5,float(shooter.pos_y)+.5))
+        end_x,end_y = box.local((float(target.pos_x)+.5,float(target.pos_y)+.5))
         dx = end_x - start_x
         dy = end_y - start_y
         lower, upper = 0.0, 1.0
@@ -653,13 +649,20 @@ class CombatService:
             upper = min(upper, second)
             if lower > upper:
                 return None
-        if lower <= 0.01 or lower >= 0.99:
+        if lower <= 1e-9 or lower >= 1-1e-9:
             return None
         return lower
 
     @staticmethod
     def _cover_analysis(location_id, shooter, target):
-        from app.services.location_navigation import level_of, contains
+        from app.services.location_navigation import level_of, contains, surface, ground, opening_at
+        from app.services.terrain_los import TerrainMesh
+        location = db.session.get(Location, location_id)
+        objects = LocationObject.query.filter_by(location_id=location_id).all()
+        def base_height(actor):
+            level = getattr(actor, 'floor_level', 0) or 0
+            node = surface(location, objects, math.floor(actor.pos_x), math.floor(actor.pos_y), level)
+            return node['height'] if node else ground(location, math.floor(actor.pos_x), math.floor(actor.pos_y)) + level * 2.4
         shooter_level = getattr(shooter, 'floor_level', 0) or 0
         target_level = getattr(target, 'floor_level', 0) or 0
         shooter_eye = {'standing': 1.65, 'sitting': 1.05, 'prone': 0.35}[
@@ -679,8 +682,8 @@ class CombatService:
                 'chest': 0.3, 'left_arm': 0.3, 'right_arm': 0.3, 'head': 0.4,
             },
         }[CombatService._posture_key(target)]
-        shooter_eye += shooter_level * 2.4
-        zone_heights = {zone: height + target_level * 2.4 for zone, height in zone_heights.items()}
+        shooter_eye += base_height(shooter)
+        zone_heights = {zone: height + base_height(target) for zone, height in zone_heights.items()}
         blocked = {}
         smoke = CombatService._smoke_blocks_line(location_id, shooter, target)
         if smoke:
@@ -695,13 +698,21 @@ class CombatService:
                     'physical_protection': 0,
                     'smoke': True,
                 }
-        objects = LocationObject.query.filter_by(location_id=location_id).all()
+        terrain = TerrainMesh(location.tiles_data)
+        for zone, target_height in zone_heights.items():
+            hit = terrain.first_hit((shooter.pos_x+.5, shooter_eye, shooter.pos_y+.5),
+                                    (target.pos_x+.5, target_height, target.pos_y+.5),
+                                    lambda hit: not opening_at(objects, 0, hit['x'], hit['z']))
+            if hit and (zone not in blocked or hit['t'] < blocked[zone]['distance_factor']):
+                blocked[zone] = {'terrain': True, 'object_id': None, 'object_name': 'Рельеф',
+                    'object_height': hit['height'], 'distance_factor': hit['t'],
+                    'max_hp': 0, 'hp': 0, 'physical_protection': 0}
         doors = [item for item in objects if item.type == 'door' or (item.type == 'window' and (item.properties or {}).get('is_open'))]
         for obj in objects:
             if obj.type == 'hatch' and (obj.properties or {}).get('is_open'):
                 continue
-            if obj.type in {'floor', 'ceiling', 'roof', 'hatch'} and shooter_level != target_level:
-                plane = level_of(obj) * 2.4 + float((obj.properties or {}).get('elevation', 0) or 0)
+            if obj.type in {'floor', 'ceiling', 'roof', 'hatch'}:
+                plane = ground(location, obj.tile_x, obj.tile_y) + level_of(obj) * 2.4 + float((obj.properties or {}).get('elevation', 0) or 0)
                 for zone, target_height in zone_heights.items():
                     delta = target_height - shooter_eye
                     t = (plane - shooter_eye) / delta if abs(delta) > .00001 else -1
@@ -721,7 +732,7 @@ class CombatService:
             entry = CombatService._line_object_entry(shooter, target, obj)
             if entry is None:
                 continue
-            bottom = level_of(obj) * 2.4 + float((obj.properties or {}).get('elevation', 0) or 0)
+            bottom = ground(location, obj.tile_x, obj.tile_y) + level_of(obj) * 2.4 + float((obj.properties or {}).get('elevation', 0) or 0)
             height = bottom + CombatService._object_height(obj)
             for zone, target_height in zone_heights.items():
                 ray_height = shooter_eye + (target_height - shooter_eye) * entry
@@ -1148,6 +1159,36 @@ class CombatService:
         }
 
     @staticmethod
+    def _movement_direction_profile(loc_char, path):
+        facing_x = CombatService._coerce_float(getattr(loc_char, 'facing_x', 0), 0)
+        facing_y = CombatService._coerce_float(getattr(loc_char, 'facing_y', 1), 1)
+        if math.hypot(facing_x, facing_y) <= 1e-9:
+            facing_x, facing_y = 0, 1
+        forward, backward = False, False
+        points = path.get('path') or []
+        for before, after in zip(points, points[1:]):
+            dx, dy = after[0] - before[0], after[1] - before[1]
+            length = math.hypot(dx, dy) * math.hypot(facing_x, facing_y)
+            if length <= 1e-9:
+                continue
+            if (dx * facing_x + dy * facing_y) / length >= .5 - 1e-9:
+                forward = True
+            else:
+                backward = True
+        return forward, backward
+
+    @staticmethod
+    def _effective_movement_mode(loc_char, path, movement_mode):
+        forward, backward = CombatService._movement_direction_profile(loc_char, path)
+        if movement_mode == 'walk' and backward:
+            if forward:
+                raise ValidationError('Маршрут смешивает ходьбу вперёд и спиной/боком. Разделите его или сначала измените направление взгляда.')
+            return 'backward_sideways'
+        if movement_mode in {'run', 'sprint'} and backward:
+            raise ValidationError('Для бега в этом направлении сначала измените направление взгляда; спиной/боком доступна ходьба.')
+        return movement_mode
+
+    @staticmethod
     def _validate_backward_sideways_path(loc_char, path):
         facing_x = CombatService._coerce_int(getattr(loc_char, 'facing_x', 0), 0)
         facing_y = CombatService._coerce_int(getattr(loc_char, 'facing_y', 1), 1)
@@ -1159,9 +1200,10 @@ class CombatService:
         for previous, current in zip(tiles, tiles[1:]):
             if not isinstance(previous, (list, tuple)) or not isinstance(current, (list, tuple)):
                 raise ValidationError("Invalid movement path")
-            step_x = CombatService._coerce_int(current[0], 0) - CombatService._coerce_int(previous[0], 0)
-            step_y = CombatService._coerce_int(current[1], 0) - CombatService._coerce_int(previous[1], 0)
-            if step_x * facing_x + step_y * facing_y > 0:
+            step_x = CombatService._coerce_float(current[0], 0) - CombatService._coerce_float(previous[0], 0)
+            step_y = CombatService._coerce_float(current[1], 0) - CombatService._coerce_float(previous[1], 0)
+            length = math.hypot(step_x, step_y) * math.hypot(facing_x, facing_y)
+            if length > 1e-9 and (step_x * facing_x + step_y * facing_y) / length >= .5 - 1e-9:
                 raise ValidationError("В режиме движения спиной или боком нельзя идти вперёд")
 
     @staticmethod
@@ -1198,6 +1240,29 @@ class CombatService:
         return blocked_until > 0 and current_round <= blocked_until
 
     @staticmethod
+    def _jump_profile(character_data, movement_mode='walk', available_ap=None):
+        if movement_mode not in MOVEMENT_MODES:
+            raise ValidationError('Unknown movement mode')
+        running = movement_mode in {'run', 'sprint'}
+        strength_modifier = CombatService._base_skill_modifier(character_data, 'skills.physical.strength')
+        base_distance = 2 + .2 * strength_modifier
+        return {
+            'base_distance': round(base_distance, 10),
+            'max_distance': round(base_distance * (2 if running else 1), 10),
+            'strength_modifier': strength_modifier,
+            'agility_modifier': CombatService._skill_modifier(character_data, 'skills.physical.agility'),
+            'difficulty': 6 if running else 10,
+            'action_points': 2,
+            'has_action_points': available_ap is None or available_ap >= 2,
+            'running': running,
+            'failure_1_to_3': 'midpoint' if running else 'unstable_edge',
+            'failure_4_or_more': 'midpoint',
+            'execution_available': False,
+            'needs_rules': ['unstable_edge_position_and_state'],
+            'blocked_by': ['fractional_position_support'],
+        }
+
+    @staticmethod
     def _movement_route_cost(path, movement_mode, posture='standing'):
         mode = MOVEMENT_MODES.get(movement_mode)
         if not mode:
@@ -1205,13 +1270,13 @@ class CombatService:
         posture_profile = POSTURES.get(posture, POSTURES['standing'])
         route = path if isinstance(path, dict) else {}
         route_tiles = route.get('path') if isinstance(route.get('path'), list) else []
-        distance = max(0, len(route_tiles) - 1)
-        raw_cost = max(0, CombatService._coerce_int(route.get('cost'), distance))
-        climb_cost = max(0, CombatService._coerce_int(route.get('climb_cost'), 0))
+        distance = max(0, CombatService._coerce_float(route.get('distance'),len(route_tiles)-1))
+        raw_cost = max(0, CombatService._coerce_float(route.get('cost'), distance))
+        climb_cost = max(0, CombatService._coerce_float(route.get('climb_cost'), 0))
         travel_cost = max(0, raw_cost - climb_cost)
         divisor = mode['movement_divisor']
         adjusted_travel_cost = travel_cost * posture_profile['movement_multiplier']
-        movement_cost = 0 if divisor is None else math.ceil(adjusted_travel_cost / divisor)
+        movement_cost = 0 if divisor is None else adjusted_travel_cost / divisor
         return {
             'distance': distance,
             'movement_points': movement_cost + climb_cost,
@@ -1294,7 +1359,7 @@ class CombatService:
 
         return {
             'initiative_bonus': CombatService._coerce_int(initiative_bonus, 0),
-            'movement_points': max(0, CombatService._coerce_int(movement_points, movement_gain * max(1, CombatService._coerce_int(free_actions, DEFAULT_FREE_ACTIONS)))),
+            'movement_points': max(0, CombatService._coerce_float(movement_points, movement_gain * max(1, CombatService._coerce_int(free_actions, DEFAULT_FREE_ACTIONS)))),
             'action_points': max(0, CombatService._coerce_int(action_points, DEFAULT_ACTION_POINTS)),
             'free_actions': max(0, CombatService._coerce_int(free_actions, DEFAULT_FREE_ACTIONS)),
             'movement_penalty': movement_penalty,
@@ -1371,15 +1436,14 @@ class CombatService:
             if exoskeleton['powered']:
                 armor_penalty = 5
                 weight_penalty = 0
-        total = max(
-            0,
+        total = (
             CombatService._coerce_int(armor_penalty, 0)
             + CombatService._coerce_int(helmet_penalty, 0)
             + weight_penalty
             + temporary_penalty
             + limb_penalty
             + intoxication_penalty
-            + artifact_penalty,
+            + artifact_penalty
         )
         return {
             'total': total,
@@ -1872,9 +1936,16 @@ class CombatService:
                 'blocked': True,
                 'immune': True,
             }
-        meta = health.setdefault('combatMeta', {})
         before = max(0, CombatService._coerce_int(health.get('stress'), 0))
         amount = CombatService._coerce_int(amount, 0)
+        stress_unavailable = health_blocks_new_stress(health)
+        if stress_unavailable and amount >= 0:
+            return {
+                'before': before, 'after': before, 'trigger': trigger,
+                'blocked': True, 'manifested': False,
+                'attack_stress_block_chance': 0, 'attack_stress_block_roll': None,
+            }
+        meta = health.setdefault('combatMeta', {})
         blocked = amount > 0 and CombatService._coerce_int(meta.get('stressBlockTurns'), 0) > 0
         active_effects = [
             effect for effect in normalize_effect_list(health.get('effects') or [])
@@ -1920,7 +1991,7 @@ class CombatService:
             sync_health_derived_statuses(health)
             loc_char.character.data = data
             flag_modified(loc_char.character, 'data')
-        if not check_manifestation or (not force_manifest and (amount <= 0 or blocked)):
+        if stress_unavailable or not check_manifestation or (not force_manifest and (amount <= 0 or blocked)):
             return result
         will_bonus = CombatService._skill_modifier(data, 'skills.physical.will')
         difficulty = 5 + level * 2
@@ -2063,6 +2134,8 @@ class CombatService:
             raise NotFoundError('Stress effect not found')
         if not effect.get('gmPending'):
             raise ValidationError('Stress effect has already been resolved')
+        if action in {'approve', 'replace'} and health_blocks_new_stress(health):
+            raise ValidationError('Нельзя применить проявление стресса к мёртвому или бессознательному персонажу')
         if action == 'skip':
             effect.update({'active': False, 'gmPending': False, 'gmSkipped': True})
         elif action == 'replace':
@@ -2944,13 +3017,15 @@ class CombatService:
         return min(1.0, (20 + 5 * weight) / 100)
 
     @staticmethod
+    def _character_distance(first,second):
+        return max(0,math.hypot(first.pos_x-second.pos_x,first.pos_y-second.pos_y)-.5)
+
+    @staticmethod
     def _is_adjacent(first, second):
         if (getattr(first, 'floor_level', 0) or 0) != (getattr(second, 'floor_level', 0) or 0):
             return False
-        return max(
-            abs(first.pos_x - second.pos_x),
-            abs(first.pos_y - second.pos_y),
-        ) == 1
+        same_id = getattr(first,'id',None) is not None and getattr(first,'id',None)==getattr(second,'id',None)
+        return first is not second and not same_id and CombatService._character_distance(first,second) <= 1+1e-9
 
     @staticmethod
     def _gunpoint_meta(loc_char):
@@ -3160,11 +3235,20 @@ class CombatService:
         return bool((data or {}).get('health', {}).get('combatMeta', {}).get('movementEvasion'))
 
     @staticmethod
-    def _movement_distance_limit(movement_mode, posture='standing', evading=False):
-        maximum = (
-            POSTURES[posture]['walk_max_distance']
-            if movement_mode == 'walk' else MOVEMENT_MODES[movement_mode]['max_distance']
-        )
+    def _movement_distance_limit(movement_mode, posture='standing', evading=False, movement_penalty=0):
+        base = max(0,DEFAULT_CONVERSION_BASE-movement_penalty)
+        if movement_mode == 'correction':
+            maximum = 3
+        elif movement_mode == 'run':
+            maximum = 2*base
+        elif movement_mode == 'sprint':
+            maximum = 3*base
+        elif posture == 'prone':
+            maximum = math.ceil(base/3)
+        elif posture == 'sitting' or movement_mode == 'backward_sideways':
+            maximum = math.floor(base/2)
+        else:
+            maximum = base
         reduction = {'walk': 3, 'run': 5, 'sprint': 7}.get(movement_mode, 0) if evading else 0
         return max(0, maximum - reduction)
 
@@ -3683,43 +3767,43 @@ class CombatService:
         }
 
     @staticmethod
+    def _psi_suicide_melee_attack(weapon):
+        attributes = CombatService._template_attributes(weapon)
+        attacks = attributes.get('allowed_attacks')
+        if not isinstance(attacks,list) or not attacks:
+            attacks = [attributes.get('melee_damage_type') or attributes.get('attack_type') or weapon.get('attackType')]
+        for tokens in (('руб','chop','slash'),('кол','pierc','thrust'),('реж','cut'),('всп','rip')):
+            for attack in attacks:
+                name = str(attack or '').casefold()
+                if not any(token in name for token in ('круг','circular','crush','дроб')) and any(token in name for token in tokens):
+                    return attack
+        return None
+
+    @staticmethod
     def _psi_suicide_weapon(character_data, loc_char=None):
         data = character_data if isinstance(character_data, dict) else {}
         weapons = data.get('weapons') if isinstance(data.get('weapons'), list) else []
-        index = CombatService._coerce_int(
-            getattr(loc_char, 'drawn_weapon_index', -1), -1,
-        ) if loc_char is not None else -1
-        ordered = []
-        if 0 <= index < len(weapons) and isinstance(weapons[index], dict):
-            ordered.append((index, weapons[index]))
-        ordered.extend(
-            (weapon_index, weapon)
-            for weapon_index, weapon in enumerate(weapons)
-            if isinstance(weapon, dict) and weapon_index != index
-        )
-        for weapon_index, weapon in ordered:
+        index = CombatService._coerce_int(getattr(loc_char,'drawn_weapon_index',None)
+            if loc_char is not None else data.get('activeWeaponIndex'),-1)
+        # В модели один активный слот оружия. Не достаём другое оружие из инвентаря.
+        if 0 <= index < len(weapons) and isinstance(weapons[index],dict):
+            weapon = weapons[index]
+            attributes = CombatService._template_attributes(weapon)
+            if attributes.get('natural_weapon') or str(weapon.get('name') or '').strip().casefold() in {'кулаки','кулак','fists','unarmed'}:
+                return None,None,None
             template = CombatService._weapon_template(weapon)
             category = str(
                 (template.category if template else None)
                 or weapon.get('category') or ''
             ).strip().casefold()
             if category in {'firearm', 'weapon', 'ranged_weapon'}:
-                return weapon_index, weapon, 'gunshot'
-            profile = CombatService._weapon_damage_profile(weapon)
-            attributes = CombatService._template_attributes(weapon)
-            attack_names = ' '.join(
-                str(value or '') for value in attributes.get('allowed_attacks') or []
-            ).casefold()
-            damage_type = str(profile.get('melee_damage_type') or '').casefold()
-            if any(
-                token in f'{damage_type} {attack_names}'
-                for token in ('реж', 'руб', 'кол', 'slash', 'pierc')
-            ):
-                return weapon_index, weapon, 'cut_throat'
+                return index, weapon, 'gunshot'
+            if CombatService._psi_suicide_melee_attack(weapon):
+                return index, weapon, 'cut_throat'
         return None, None, None
 
     @staticmethod
-    def _resolve_psi_suicide_attempt(character_data, loc_char=None):
+    def _resolve_psi_suicide_attempt(character_data, loc_char=None, *, round_number=0):
         data = character_data if isinstance(character_data, dict) else {}
         weapon_index, weapon, kind = CombatService._psi_suicide_weapon(
             data, loc_char,
@@ -3734,11 +3818,22 @@ class CombatService:
             'weapon_index': weapon_index, 'weapon': weapon.get('name'),
         }
         if kind == 'cut_throat':
-            apply_effect_to_health(data.setdefault('health', {}), {
-                'type': 'death', 'name': 'Смерть',
-                'source': 'psy_state_suicide', 'area': 'head', 'tick': 'manual',
-            })
-            result['success'] = True
+            attack_type = CombatService._psi_suicide_melee_attack(weapon)
+            profile = CombatService._weapon_damage_profile(weapon,attack_type)
+            if not profile.get('skip_strength_scaling'):
+                profile['damage'] *= max(0,1+.1*CombatService._skill_modifier(data,'skills.physical.strength'))
+            damage = max(0,round(profile['damage']))
+            result.update(attack_type=attack_type,damage=damage,zone='head',ignores_armor=True)
+            if loc_char is None:
+                raise ValidationError('Для исполнения удара нужен персонаж локации')
+            health = CombatService._apply_attack_damage(loc_char,damage,'head',profile,
+                round_number=round_number,trauma_checks=0,stress_trigger='psy_state_suicide')
+            data = loc_char.character.data
+            if damage > 0 and (health['zones']['head']['current'] <= 0 or health['current'] <= 0):
+                apply_effect_to_health(health,{'type':'death','name':'Смерть','source':'psy_state_suicide','area':'head','tick':'manual'})
+            result['success'] = CombatService._character_condition(data)['state'] == 'dead'
+            if not result['success']:
+                result['failure_reason'] = 'insufficient_damage'
             return result
 
         if CombatService._weapon_jam_effects(weapon)['blocks_fire']:
@@ -3812,7 +3907,7 @@ class CombatService:
         if behind_armor_damage and loc_char is not None:
             CombatService._apply_attack_damage(
                 loc_char, behind_armor_damage, 'head', profile,
-                round_number=0, allow_bleeding=False, trauma_checks=0,
+                round_number=round_number, allow_bleeding=False, trauma_checks=0,
                 head_impact={
                     'part': 'ear', 'direction': 'side', 'armor_zone': 'ears',
                     'damage_head': False, 'damage_head_if_penetrated': True,
@@ -3833,6 +3928,12 @@ class CombatService:
         if not profile:
             return None
         zombie_data = mutant_character_data(profile)
+        original_data=deepcopy(previous_data)
+        original_data.pop('psiZombification',None)
+        zombie_data['psiZombification']={
+            'source':'psi_crisis','previousData':original_data,
+            'previousController':getattr(loc_char,'controlled_by',None),
+        }
         for key in ('inventory', 'equipment'):
             if isinstance(previous_data.get(key), (dict, list)):
                 zombie_data[key] = deepcopy(previous_data[key])
@@ -3856,7 +3957,8 @@ class CombatService:
         return {'mutant_type': 'Зомбированный', 'controlled_by_gm': lobby is not None}
 
     @staticmethod
-    def _resolve_psi_crisis(character_data, loc_char=None):
+    def _resolve_psi_crisis(character_data, loc_char=None, *, round_number=0):
+        """Сброс после порога — только в конце собственного обычного хода."""
         data = character_data if isinstance(character_data, dict) else {}
         health = data.setdefault('health', {})
         psy_state = max(
@@ -3865,18 +3967,12 @@ class CombatService:
                 health.get('psyState', health.get('psy_state')), 0,
             ),
         )
-        if psy_state < 50:
+        if psy_state < 50 or CombatService._character_condition(data)['state'] == 'dead':
             return None
-
-        suicide_attempt = CombatService._resolve_psi_suicide_attempt(
-            data, loc_char,
-        )
-        health = data.setdefault('health', {})
-        suicide_succeeded = bool(suicide_attempt.get('success'))
         maximum = max(0, CombatService._coerce_float(health.get('max'), 700))
         reset_damage = 0
         transformed = None
-        if not suicide_succeeded:
+        if psy_state >= 50:
             health['psyState'] = 0
             health['psy_state'] = 0
             reset_damage = psy_state * 10
@@ -3884,6 +3980,9 @@ class CombatService:
                 0,
                 CombatService._coerce_float(health.get('current'), maximum) - reset_damage,
             )
+            CombatService._apply_damage_pain(data,reset_damage,round_number,'psy_state_reset')
+            health.setdefault('combatMeta',{})['injuryRound'] = round_number
+            sync_health_derived_statuses(health)
             if health['current'] <= 0:
                 apply_effect_to_health(health, {
                     'type': 'death', 'name': 'Смерть',
@@ -3897,11 +3996,28 @@ class CombatService:
         return {
             'triggered': True,
             'psy_state': psy_state,
-            'suicide_attempt': suicide_attempt,
-            'suicide_succeeded': suicide_succeeded,
+            'suicide_attempt': None,
+            'suicide_succeeded': False,
             'reset_damage': reset_damage,
             'transformed': transformed,
         }
+
+    @staticmethod
+    def _resolve_psi_turn_start(loc_char, round_number):
+        if not loc_char.character or not isinstance(loc_char.character.data,dict):
+            return None
+        data = loc_char.character.data
+        health = data.setdefault('health',{})
+        if CombatService._coerce_float(health.get('psyState',health.get('psy_state')),0) < 50 or CombatService._character_condition(data)['state'] == 'dead':
+            return None
+        attempt = CombatService._resolve_psi_suicide_attempt(data,loc_char,round_number=round_number)
+        # Общий обработчик ранения может заменить верхний словарь данных.
+        data = loc_char.character.data
+        data.setdefault('health',{}).setdefault('combatMeta',{})['lastPsiTurnStart'] = {
+            'round':round_number,'attempt':attempt,
+        }
+        flag_modified(loc_char.character,'data')
+        return attempt
 
     @staticmethod
     def _increase_psy_state(character_data, amount, source, loc_char=None, apply_protection=True):
@@ -3922,7 +4038,6 @@ class CombatService:
         after = max(0, round(before + received, 2))
         health['psyState'] = after
         health['psy_state'] = after
-        crisis = CombatService._resolve_psi_crisis(data, loc_char) if after >= 50 else None
         stored_after = CombatService._coerce_float(
             health.get('psyState', health.get('psy_state')), 0,
         )
@@ -3936,7 +4051,7 @@ class CombatService:
             'prevented': round(incoming - received, 2) if incoming > 0 else 0,
             'defense': defense,
             'source': source,
-            'crisis': crisis,
+            'crisis': None,
         }
 
     @staticmethod
@@ -5644,8 +5759,36 @@ class CombatService:
         accumulated = max(0, CombatService._coerce_float(accumulated_damage, 0))
         single_hit = max(0, CombatService._coerce_float(single_hit_damage, 0))
         accumulated_pain = 0 if accumulated < 50 else 1 + math.floor((accumulated - 50) / 100)
-        single_hit_pain = 3 if single_hit > 200 else (2 if single_hit > 150 else 0)
-        return max(accumulated_pain, single_hit_pain)
+        single_hit_pain = 5 if single_hit > 300 else (3 if single_hit > 200 else (2 if single_hit >= 150 else 0))
+        return accumulated_pain + single_hit_pain
+
+    @staticmethod
+    def _apply_damage_pain(character_data, damage, round_number, source):
+        """Начислить прирост раундовой боли и усиление именно этого ранения."""
+        if damage <= 0:
+            return
+        health = character_data.setdefault('health', {})
+        meta = health.setdefault('combatMeta', {})
+        if meta.get('damagePainRound') != round_number:
+            meta['damagePainRound'] = round_number
+            meta['damageTakenThisRound'] = 0
+            meta['damagePainAppliedThisRound'] = 0
+        previous_damage = CombatService._coerce_float(meta.get('damageTakenThisRound'), 0)
+        accumulated = previous_damage + damage
+        profile = CombatService._mutant_pain_profile(character_data)
+        multiplier = profile['threshold_multiplier']
+        # Уже начисленная накопительная часть не оплачивается повторно.
+        # Ступень отдельного ранения, напротив, применяется к каждому ранению.
+        pain_delta = 0 if profile['immune'] else max(0,
+            CombatService._damage_pain_requirement(accumulated / multiplier, damage / multiplier)
+            - CombatService._damage_pain_requirement(previous_damage / multiplier, 0)
+        )
+        if pain_delta:
+            apply_effect_to_health(health, {'type': 'pain', 'value': pain_delta, 'source': source})
+        meta['damageTakenThisRound'] = accumulated
+        meta['damagePainAppliedThisRound'] = (
+            CombatService._coerce_int(meta.get('damagePainAppliedThisRound'), 0) + pain_delta
+        )
 
     @staticmethod
     def _apply_attack_damage(
@@ -5821,27 +5964,7 @@ class CombatService:
                     # The manifestation check is resolved after this damage is recorded.
                     meta['pendingDamageStressTrigger'] = True
                 meta['damageStressRound'] = current_round
-            if meta.get('damagePainRound') != current_round:
-                meta['damagePainRound'] = current_round
-                meta['damageTakenThisRound'] = 0
-                meta['damagePainAppliedThisRound'] = 0
-            accumulated = CombatService._coerce_float(meta.get('damageTakenThisRound'), 0) + damage
-            previous_pain = CombatService._coerce_int(meta.get('damagePainAppliedThisRound'), 0)
-            required_pain = (
-                0
-                if mutant_pain['immune']
-                else CombatService._damage_pain_requirement(
-                    accumulated / mutant_pain['threshold_multiplier'],
-                    damage / mutant_pain['threshold_multiplier'],
-                )
-            )
-            pain_delta = max(0, required_pain - previous_pain)
-            if pain_delta:
-                apply_effect_to_health(health, {
-                    'type': 'pain', 'value': pain_delta, 'source': 'combat_damage'
-                })
-            meta['damageTakenThisRound'] = accumulated
-            meta['damagePainAppliedThisRound'] = max(previous_pain, required_pain)
+            CombatService._apply_damage_pain(data, damage, current_round, 'combat_damage')
         if zone_current_before > 0 and zone_data['current'] <= 0:
             disabled_zone_pain = {
                 'left_arm': 4,
@@ -6369,11 +6492,7 @@ class CombatService:
             if meta.get('damageStressRound') != current_round:
                 meta['damageStressRound'] = current_round
                 meta['pendingExplosionStress'] = True
-            required_pain = CombatService._damage_pain_requirement(damage, damage)
-            if required_pain:
-                apply_effect_to_health(health, {
-                    'type': 'pain', 'value': required_pain, 'source': source,
-                })
+            CombatService._apply_damage_pain(data, damage, current_round, source)
         sync_health_derived_statuses(health)
         resulting_condition = CombatService._character_condition(data)
         if resulting_condition['state'] in {'pain_shock', 'critical', 'dead'}:
@@ -6884,6 +7003,7 @@ class CombatService:
     def resolve_fall(target, height_meters, *, round_number=0, damage_multiplier=1.0):
         """Resolve impact damage from a fall using the table from the combat rules."""
         height = max(0.0, CombatService._coerce_float(height_meters, 0))
+        classified_height = math.floor(height)
         fall_table = (
             (1, 4, 0, 5, False, False),
             (4, 8, 0, 30, False, False),
@@ -6897,7 +7017,7 @@ class CombatService:
         difficulty = success_damage = failure_damage = 0
         success_shock = failure_shock = False
         for upper_bound, difficulty, success_damage, failure_damage, success_shock, failure_shock in fall_table:
-            if height < upper_bound:
+            if classified_height < upper_bound:
                 break
         attacker_data = target.character.data if target and target.character else {}
         agility_bonus = CombatService._skill_modifier(
@@ -6964,6 +7084,7 @@ class CombatService:
             target.braced_weapon_index = None
         return {
             'height': height,
+            'classified_height': classified_height,
             'difficulty': difficulty,
             'roll': roll,
             'agility_bonus': agility_bonus,
@@ -7605,6 +7726,9 @@ class CombatService:
                 else None
             )
             if cover_zone:
+                if cover_zone.get('terrain'):
+                    result.update({'zone': zone, 'damage': 0, 'combined_damage': 0, 'blocked_by_terrain': True})
+                    return result
                 cover = db.session.get(LocationObject, cover_zone.get('object_id'))
                 cover_profile = CombatService._cover_profile(cover) if cover else None
                 if cover and cover_profile and random.randint(1, 100) <= cover_profile['mesh_hit_chance']:
@@ -8957,7 +9081,7 @@ class CombatService:
                     health.get('psyState', health.get('psy_state')), 0,
                 ),
             )
-            if before <= 0:
+            if before <= 0 or before >= 50:
                 continue
             after = max(0, round(before - 1, 2))
             health['psyState'] = after
@@ -9060,7 +9184,7 @@ class CombatService:
 
         try:
             height = float(raw_height)
-            if height > 0:
+            if math.isfinite(height) and height >= 0:
                 return height
         except (TypeError, ValueError):
             pass
@@ -9080,7 +9204,7 @@ class CombatService:
         return 1.5
 
     @staticmethod
-    def _object_dimensions(obj):
+    def _object_dimensions(obj, axis_aligned=True):
         if isinstance(obj, dict):
             obj_type = obj.get('type') or obj.get('object_type') or ''
             properties = obj.get('properties') or {}
@@ -9115,6 +9239,8 @@ class CombatService:
             rotation = float(properties.get('rotation', 0) or 0)
         except (TypeError, ValueError):
             rotation = 0.0
+        if not axis_aligned:
+            return max(.01,width),max(.01,depth)
         cosine = abs(math.cos(rotation))
         sine = abs(math.sin(rotation))
         return max(0.1, width * cosine + depth * sine), max(0.1, width * sine + depth * cosine)
@@ -9156,6 +9282,13 @@ class CombatService:
             return False
         wall_props = wall.properties or {}
         door_props = door.properties or {}
+
+        def building_id(properties):
+            value = properties.get('building_id')
+            return None if value is None else str(value).strip() or None
+
+        if building_id(wall_props) != building_id(door_props):
+            return False
         wall_bottom = float(wall_props.get('elevation', 0) or 0)
         portal_bottom = float(door_props.get('elevation', 0) or 0)
         if door.type == 'window':
@@ -9241,23 +9374,27 @@ class CombatService:
             obj_type = getattr(obj, 'type', '') or ''
             properties = getattr(obj, 'properties', {}) or {}
 
-        low_climb_types = {'table', 'chair', 'chest', 'box', 'military_crate', 'barrier'}
-        high_climb_types = {'fence'}
-        too_high_types = {'tree', 'rock', 'house', 'tent', 'wall', 'shelf'}
         height = CombatService._object_height(obj)
 
         # Anomalies trap a character through combat rules, not collision.
         if obj_type == 'anomaly':
             return {'blocked': False, 'climb_cost': 0}
 
-        if properties.get('passable') is True or obj_type in {'campfire', 'torch', 'fire_barrel', 'poster', 'floor', 'ladder', 'hatch', 'floor_opening'}:
+        if obj_type in {'campfire', 'torch', 'wall_torch', 'ceiling_bulb', 'wall_bulb', 'ground_item', 'fire_barrel', 'poster', 'floor', 'stairs', 'ladder', 'hatch', 'floor_opening'}:
             return {'blocked': False, 'climb_cost': 0}
 
+        category = properties.get('traversal_category','auto')
+        if not isinstance(category,str):
+            category='auto'
+        if category in {'passable','low','high','blocked'}:
+            return {'blocked':category=='blocked','climb_cost':{'low':5,'high':12}.get(category,0)}
+        if properties.get('passable') is True:
+            return {'blocked':False,'climb_cost':0}
         if obj_type == 'door':
             if properties.get('is_open'):
                 return {'blocked': False, 'climb_cost': 0}
             if properties.get('climbable'):
-                return {'blocked': False, 'climb_cost': max(1, CombatService._coerce_int(properties.get('climb_cost'), 12))}
+                return {'blocked': False, 'climb_cost': max(1, CombatService._coerce_float(properties.get('climb_cost'), 12))}
             return {'blocked': True, 'climb_cost': 0}
 
         if obj_type == 'window':
@@ -9266,25 +9403,28 @@ class CombatService:
         if properties.get('blocks_movement') is False or properties.get('block_movement') is False:
             return {'blocked': False, 'climb_cost': 0}
 
-        if properties.get('climbable') or obj_type in low_climb_types or height <= 1.05:
-            climb_cost = properties.get('climb_cost')
-            if climb_cost is None:
-                climb_cost = 5
-            return {'blocked': False, 'climb_cost': max(1, CombatService._coerce_int(climb_cost, 5))}
+        if height < .5:
+            return {'blocked':False,'climb_cost':0}
+        # Старое явное climbable сохраняется как переопределение ГМа.
+        if height >= 2 and not properties.get('climbable'):
+            return {'blocked':True,'climb_cost':0}
+        base = 5 if height < 1 else 12
+        return {'blocked':False,'climb_cost':max(1,CombatService._coerce_float(properties.get('climb_cost'),base))}
 
-        if obj_type in high_climb_types or (height > 1.05 and height <= 1.6):
-            climb_cost = properties.get('climb_cost')
-            if climb_cost is None:
-                climb_cost = 12
-            return {'blocked': False, 'climb_cost': max(1, CombatService._coerce_int(climb_cost, 12))}
+    @staticmethod
+    def _climb_payment_profile(character_data, climbs):
+        bonus = CombatService._skill_modifier(character_data or {},'skills.physical.agility')
+        return {'movement_points':sum(max(0,item['base_cost']-bonus) for item in climbs),
+                'action_points':sum(3 if item.get('category')=='high' else 1 for item in climbs),
+                'agility_bonus':bonus}
 
-        if properties.get('blocks_movement') is True or properties.get('block_movement') is True:
-            return {'blocked': True, 'climb_cost': 0}
-
-        if obj_type in too_high_types or height > 1.8:
-            return {'blocked': True, 'climb_cost': 0}
-
-        return {'blocked': True, 'climb_cost': 0}
+    @staticmethod
+    def _object_climb_event(obj):
+        props = obj.get('properties',{}) if isinstance(obj,dict) else obj.properties or {}
+        category = props.get('traversal_category')
+        if not isinstance(category,str) or category not in {'low','high'}:
+            category = 'high' if CombatService._object_height(obj)>=1 else 'low'
+        return {'base_cost':CombatService._object_movement_profile(obj)['climb_cost'],'category':category}
 
     @staticmethod
     def _anomaly_key_from_object(obj):
@@ -9702,11 +9842,95 @@ class CombatService:
         return result
 
     @staticmethod
+    def _object_drop_plan(location, character, portal):
+        from app.services.location_navigation import drop_route
+        objects = LocationObject.query.filter_by(location_id=location.id).all()
+        geometry = CombatService._movement_wall_geometry(location, objects)
+        geometry.add_characters(c for c in CombatService._unique_location_characters(
+            LocationCharacter.query.filter_by(location_id=location.id).all())
+            if c.character_id != character.character_id)
+        plan = drop_route(location,objects,(character.pos_x,character.pos_y,character.floor_level or 0),
+                          portal,None,geometry=geometry)
+        if not plan:
+            return None
+        landing=plan['landing']
+        return {**plan,'special_action':'drop_down','object_id':portal.id,
+                'floor_level':landing['level'],'path':[(p['x'],p['y']) for p in plan['surfaces']],
+                'distance':sum(math.hypot(b['x']-a['x'],b['y']-a['y']) for a,b in zip(plan['surfaces'],plan['surfaces'][1:])),
+                'climbs':[],'climb_cost':0,'cost':0}
+
+    @staticmethod
+    def _embedded_movement_object(obj, tile_x, tile_y):
+        from types import SimpleNamespace
+        props = dict(obj.get('properties') or {})
+        dimensions = props.get('dimensions', obj.get('dimensions'))
+        if isinstance(dimensions,(list,tuple)) and len(dimensions)==3:
+            dimensions = dict(zip(('width','depth','height'),dimensions))
+        kind = obj.get('type',obj.get('object_type',''))
+        if not dimensions and kind=='tree':
+            # Тот же preset tree, что в locationAssetCatalog.js и applyDecorSize.
+            scale=CombatService._coerce_float(obj.get('scale'),1)
+            dimensions=dict(width=.92*scale,depth=.92*scale,height=1.72*scale)
+        props.update(level=props.get('level',obj.get('level',0)),
+                     offset_x=CombatService._coerce_float(obj.get('x'),0),
+                     offset_z=CombatService._coerce_float(obj.get('z'),0),
+                     rotation=math.radians(CombatService._coerce_float(obj.get('rotation'),0)),
+                     elevation=CombatService._coerce_float(obj.get('elevation'),0))
+        if dimensions:
+            props['dimensions']=dimensions
+        return SimpleNamespace(type=kind,tile_x=tile_x,tile_y=tile_y,properties=props)
+
+    @staticmethod
+    def _movement_wall_geometry(location, objects):
+        from app.services.location_navigation import level_of,ground,STOREY_HEIGHT
+        from app.services.movement_geometry import WallGeometry, wall_boxes, tree_trunk_box
+        entries = [(o, o) for o in objects]
+        for y, row in enumerate(getattr(location, 'tiles_data', None) or []):
+            if not isinstance(row, list):
+                continue
+            for x, tile in enumerate(row):
+                if not isinstance(tile, dict):
+                    continue
+                for obj in tile.get('objects') or []:
+                    if isinstance(obj, dict):
+                        entries.append((obj, CombatService._embedded_movement_object(obj,x,y)))
+        doors = [o for _, o in entries if o.type == 'door' and (o.properties or {}).get('is_open')]
+        boxes, handled, climbs, portals = [], set(), [], []
+        for original, wall in entries:
+            if wall.type in {'stairs','ladder','hatch','floor_opening'}:
+                continue
+            profile = CombatService._object_movement_profile(wall)
+            if profile['blocked'] or profile['climb_cost']:
+                openings = [door for door in doors if CombatService._door_is_in_wall(door, wall)]
+                handled.add(id(original))
+                size=CombatService._object_dimensions(wall,axis_aligned=False)
+                trunk=tree_trunk_box(wall,size)
+                parts = [trunk] if trunk is not None else wall_boxes(wall,openings,size=size)
+                if profile['blocked']:
+                    boxes.extend(parts)
+                else:
+                    props=wall.properties or {}
+                    event = {**CombatService._object_climb_event(wall),
+                        'top_height':ground(location,wall.tile_x,wall.tile_y)+level_of(wall)*STOREY_HEIGHT
+                            +CombatService._coerce_float(props.get('elevation'),0)+CombatService._object_height(wall)+.035}
+                    climbs.extend((box,profile['climb_cost'],event) for box in parts)
+                for door in openings:
+                    props = door.properties or {}
+                    x,y = door.tile_x+float(props.get('offset_x',0) or 0),door.tile_y+float(props.get('offset_z',0) or 0)
+                    angle = float((wall.properties or {}).get('rotation',0) or 0)
+                    depth = CombatService._object_dimensions(wall,axis_aligned=False)[1]
+                    shift = depth/2+.25+.01+.02
+                    portals.extend((x+math.sin(angle)*s,y+math.cos(angle)*s,level_of(door)) for s in (-shift,0,shift))
+        return WallGeometry(boxes,handled,climbs,portals)
+
+    @staticmethod
     def _build_movement_map(
         location,
         moving_character_id=None,
         ignored_character_ids=None,
         floor_level=None,
+        wall_geometry=None,
+        continuous=False,
     ):
         from app.services.location_navigation import level_of
         if floor_level is None:
@@ -9721,6 +9945,9 @@ class CombatService:
         if moving_character_id is not None:
             ignored_ids.add(CombatService._coerce_int(moving_character_id, -1))
 
+        location_objects = LocationObject.query.filter_by(location_id=location.id).all()
+        if wall_geometry is None:
+            wall_geometry = CombatService._movement_wall_geometry(location, location_objects)
         tiles = location.tiles_data if isinstance(location.tiles_data, list) else []
         for y, row in enumerate(tiles):
             if not isinstance(row, list):
@@ -9734,6 +9961,8 @@ class CombatService:
                     profile = CombatService._object_movement_profile(obj)
                     if not profile['blocked'] and profile['climb_cost'] <= 0:
                         continue
+                    if wall_geometry is not None and wall_geometry.handles(obj) and (profile['blocked'] or continuous):
+                        continue
                     footprint_source = {
                         **obj,
                         'tile_x': obj.get('tile_x', obj.get('x', x)),
@@ -9746,13 +9975,14 @@ class CombatService:
                         elif profile['climb_cost'] > 0 and footprint_tile not in blocked_tiles:
                             climb_cost_tiles[footprint_tile] = max(climb_cost_tiles.get(footprint_tile, 0), profile['climb_cost'])
 
-        location_objects = LocationObject.query.filter_by(location_id=location.id).all()
         open_doors = [obj for obj in location_objects if obj.type == 'door' and (obj.properties or {}).get('is_open')]
         for obj in location_objects:
             if level_of(obj) != floor_level or obj.type in {'stairs', 'ladder', 'hatch', 'floor_opening'}:
                 continue
             profile = CombatService._object_movement_profile(obj)
             if not profile['blocked'] and profile['climb_cost'] <= 0:
+                continue
+            if wall_geometry is not None and wall_geometry.handles(obj) and (profile['blocked'] or continuous):
                 continue
             doorway_tiles = set()
             if obj.type == 'wall':
@@ -9768,9 +9998,16 @@ class CombatService:
                 elif profile['climb_cost'] > 0 and coords not in blocked_tiles:
                     climb_cost_tiles[coords] = max(climb_cost_tiles.get(coords, 0), profile['climb_cost'])
 
+        if wall_geometry is not None and not continuous:
+            blocked_tiles.update(wall_geometry.blocked_cells(floor_level))
+            for coords in blocked_tiles:
+                climb_cost_tiles.pop(coords, None)
+
         for character in CombatService._unique_location_characters(
             LocationCharacter.query.filter_by(location_id=location.id).all()
         ):
+            if continuous:
+                continue
             if (getattr(character, 'floor_level', 0) or 0) != floor_level:
                 continue
             if CombatService._coerce_int(character.character_id, -1) in ignored_ids:
@@ -9782,11 +10019,26 @@ class CombatService:
 
     @staticmethod
     def _find_climb_landing(location, object_item, actor_character):
+        from app.services.location_navigation import surface,level_of,pose
+        from app.services.movement_geometry import WallBox,CHARACTER_RADIUS
         occupied_tiles = CombatService._object_footprint_tiles(object_item)
         if not occupied_tiles:
             return None
 
-        blocked_tiles, climb_cost_tiles = CombatService._build_movement_map(location, actor_character.character_id)
+        level = actor_character.floor_level or 0
+        objects = LocationObject.query.filter_by(location_id=location.id).all()
+        origin = surface(location,objects,actor_character.pos_x,actor_character.pos_y,level)
+        if not origin or level_of(object_item)!=level:
+            return None
+        cx,cy,_,_,angle=pose(object_item)
+        width,depth=CombatService._object_dimensions(object_item,axis_aligned=False)
+        local_x,local_y=WallBox(cx,cy,width,depth,angle,level).local((actor_character.pos_x+.5,actor_character.pos_y+.5))
+        if math.hypot(max(0,abs(local_x)-width/2),max(0,abs(local_y)-depth/2))-CHARACTER_RADIUS>1+1e-9:
+            return None
+        geometry = CombatService._movement_wall_geometry(location,[o for o in objects if o.id!=object_item.id])
+        geometry.add_characters(c for c in CombatService._unique_location_characters(
+            LocationCharacter.query.filter_by(location_id=location.id).all()) if c.character_id!=actor_character.character_id)
+        blocked_tiles, climb_cost_tiles = CombatService._build_movement_map(location, actor_character.character_id,floor_level=level)
         actor_x = actor_character.pos_x
         actor_y = actor_character.pos_y
         nearest_object_distance = min(
@@ -9827,12 +10079,133 @@ class CombatService:
         for tx, ty in candidate_tiles:
             if tx == actor_x and ty == actor_y:
                 continue
+            if (tx+.5-center_x)*actor_vector_x+(ty+.5-center_y)*actor_vector_y<=0:
+                continue
             if (tx, ty) in blocked_tiles:
                 continue
             if climb_cost_tiles.get((tx, ty), 0) > 0:
                 continue
+            start,end = (actor_x,actor_y,level),(tx,ty,level)
+            landing = surface(location,objects,*end)
+            if not landing or abs(landing['height']-origin['height'])>=1:
+                continue
+            if not geometry.can_traverse(start,end) or geometry.climb_edge_events(start,end):
+                continue
             return tx, ty
         return None
+
+    @staticmethod
+    def _vertical_movement_plan(location,actor,x,y,level):
+        """Явный подъём или спуск между соседними опорами; обычный путь их не заменяет."""
+        from app.services.location_navigation import surface,opening_at
+        if math.hypot(x-actor.pos_x,y-actor.pos_y)>1.5+1e-9:
+            return None
+        objects = LocationObject.query.filter_by(location_id=location.id).all()
+        start = (actor.pos_x,actor.pos_y,actor.floor_level or 0)
+        end = (x,y,level)
+        a,b = surface(location,objects,*start),surface(location,objects,*end)
+        if not a or not b or a['stair'] or b['stair']:
+            return None
+        if start[2]!=level:
+            upper = max(start[2],level)
+            crossing = (x,y) if start[2]>level else (actor.pos_x,actor.pos_y)
+            if surface(location,objects,*crossing,upper) and not opening_at(objects,upper,crossing[0]+.5,crossing[1]+.5):
+                return None
+            if any(surface(location,objects,*crossing,middle) and not opening_at(objects,middle,crossing[0]+.5,crossing[1]+.5)
+                   for middle in range(min(start[2],level)+1,upper)):
+                return None
+        elif surface(location,objects,(start[0]+x)/2,(start[1]+y)/2,level) is None:
+            return None
+        delta = b['height']-a['height']
+        if not (1<=delta<2 or delta<=-1):
+            return None
+        geometry = CombatService._movement_wall_geometry(location,objects)
+        geometry.add_characters(c for c in CombatService._unique_location_characters(
+            LocationCharacter.query.filter_by(location_id=location.id).all()) if c.character_id!=actor.character_id)
+        if not geometry.can_traverse(start,end) or geometry.climb_edge_events(start,end) or geometry.climb_at(end):
+            return None
+        distance = math.hypot(x-actor.pos_x,y-actor.pos_y) or abs(delta)
+        climbs = [{'base_cost':12,'category':'high'}] if delta>0 else []
+        return {'path':[(actor.pos_x,actor.pos_y),(x,y)],'distance':distance,
+                'cost':12 if delta>0 else 0,'climb_cost':12 if delta>0 else 0,'climbs':climbs,
+                'special_action':'climb_up' if delta>0 else 'descend','floor_level':level,
+                'height_change':delta,'surfaces':[{k:n[k] for k in ('x','y','level','height')} for n in (a,b)]}
+
+    @staticmethod
+    def _object_climb_plan(location,actor,obj):
+        from app.services.location_navigation import surface,level_of
+        profile = CombatService._object_movement_profile(obj)
+        if obj.type in {'stairs','ladder'} or level_of(obj)!=(actor.floor_level or 0) or profile['blocked'] or profile['climb_cost']<=0:
+            return None
+        landing = CombatService._find_climb_landing(location,obj,actor)
+        if not landing:
+            return None
+        objects = LocationObject.query.filter_by(location_id=location.id).all()
+        a,b = (surface(location,objects,x,y,actor.floor_level or 0)
+               for x,y in ((actor.pos_x,actor.pos_y),landing))
+        top = max(a['height'],b['height'])+CombatService._object_height(obj)+max(0,CombatService._coerce_float((obj.properties or {}).get('elevation'),0))
+        return {'path':[(actor.pos_x,actor.pos_y),landing],'distance':math.hypot(landing[0]-actor.pos_x,landing[1]-actor.pos_y),
+                'cost':profile['climb_cost'],'climb_cost':profile['climb_cost'],'climbs':[CombatService._object_climb_event(obj)],
+                'special_action':'climb','object_id':obj.id,'floor_level':actor.floor_level or 0,
+                'surfaces':[{k:a[k] for k in ('x','y','level','height')},
+                            {'x':a['x'],'y':a['y'],'level':a['level'],'height':top},
+                            {'x':b['x'],'y':b['y'],'level':b['level'],'height':top},
+                            {k:b[k] for k in ('x','y','level','height')}]}
+
+    @staticmethod
+    def _validate_special_movement_distance(actor,location,state,distance):
+        if not state or state.status!='active':
+            return
+        mode = actor.movement_mode_this_turn if actor.movement_mode_this_turn not in {None,'correction'} else 'walk'
+        maximum = CombatService._movement_distance_limit(mode,CombatService._posture_key(actor),
+            CombatService._movement_evasion_active(actor),CombatService._movement_penalty(actor))
+        if (actor.movement_distance_this_turn or 0)+distance>maximum+1e-9:
+            raise ValidationError('Превышен общий лимит перемещения за ход')
+
+    @staticmethod
+    def _pay_climb(actor,profile,payment,state):
+        if not state or state.status!='active':
+            return 0
+        if not isinstance(payment,str) or payment not in {'movement','action'}:
+            raise ValidationError('Выберите оплату перелезания: ОП или ОД')
+        field = 'movement_points_current' if payment=='movement' else 'action_points_current'
+        cost = profile['movement_points' if payment=='movement' else 'action_points']
+        if getattr(actor,field)+1e-9<cost:
+            raise ValidationError('Не хватает ОП' if payment=='movement' else 'Не хватает ОД')
+        setattr(actor,field,max(0,round(getattr(actor,field)-cost,9)))
+        return cost if payment=='movement' else 0
+
+    @staticmethod
+    def _movement_surface_costs(location, objects=(), ignores_terrain=False):
+        from app.services.location_navigation import level_of
+        if ignores_terrain:
+            return {}
+        vegetation = {f'nature_{species}_{state}' for species in ('bush', 'tall_grass')
+                      for state in ('green', 'dry', 'dead')}
+        costs, all_objects = {}, list(objects)
+        for y, row in enumerate(getattr(location, 'tiles_data', None) or []):
+            if not isinstance(row, list):
+                continue
+            for x, tile in enumerate(row):
+                if not isinstance(tile, dict):
+                    continue
+                if tile.get('terrain') in {'snow', 'sand', 'swamp'}:
+                    costs[x, y, 0] = 2
+                all_objects.extend({**o, 'tile_x': x, 'tile_y': y}
+                                   for o in tile.get('objects') or [] if isinstance(o, dict))
+        entries = [(o, o.get('type') if isinstance(o, dict) else o.type,
+                    (o.get('properties') if isinstance(o, dict) else o.properties) or {})
+                   for o in all_objects]
+        # Пол использует собственную поверхность, не грунт под ним.
+        for obj, kind, properties in entries:
+            if kind == 'floor':
+                for x, y in CombatService._object_footprint_tiles(obj):
+                    costs.pop((x, y, level_of(obj)), None)
+        for obj, kind, properties in entries:
+            if kind == 'bush' or properties.get('visual_asset') in vegetation:
+                for x, y in CombatService._object_footprint_tiles(obj):
+                    costs[x, y, level_of(obj)] = 2
+        return costs
 
     @staticmethod
     def _find_movement_path(
@@ -9847,120 +10220,59 @@ class CombatService:
         start_level=None,
         end_level=None,
     ):
-        from app.services.location_navigation import find_path, level_of
+        from app.services.location_navigation import find_path
         from flask import has_app_context
         actor = LocationCharacter.query.filter_by(location_id=location.id, character_id=moving_character_id).first() if moving_character_id is not None and has_app_context() else None
+        if actor and getattr(actor, 'grapple_target_id', None) and companion_offset is None:
+            captive = LocationCharacter.query.filter_by(id=actor.grapple_target_id, location_id=location.id).first()
+            if captive:
+                companion_offset = (captive.pos_x - actor.pos_x, captive.pos_y - actor.pos_y)
+                ignored_character_ids = [*(ignored_character_ids or []), actor.character_id, captive.character_id]
         start_level = (getattr(actor, 'floor_level', 0) or 0) if start_level is None else start_level
         end_level = start_level if end_level is None else end_level
         objects = LocationObject.query.filter_by(location_id=location.id).all() if has_app_context() else []
-        if start_level or end_level or any(level_of(o) or o.type in {'stairs', 'ladder'} for o in objects):
-            maps = {}
-            def movement_map(level):
-                if level not in maps:
-                    maps[level] = CombatService._build_movement_map(location, moving_character_id, ignored_character_ids, floor_level=level)
-                return maps[level]
-            result = find_path(location, objects, (start_x, start_y, start_level), (end_x, end_y, end_level), movement_map)
-            if result and companion_offset:
-                if any(a['x'] == b['x'] and a['y'] == b['y'] and a['level'] != b['level']
-                       for a,b in zip(result['surfaces'],result['surfaces'][1:])):
-                    return None
+        wall_geometry = CombatService._movement_wall_geometry(location, objects)
+        ignores_terrain = bool(actor and actor.character and CombatService._mutant_has_trait(actor.character.data or {}, 'Полёт'))
+        terrain_costs = CombatService._movement_surface_costs(location, objects, ignores_terrain=ignores_terrain)
+        ignored = set(ignored_character_ids or []) | {moving_character_id}
+        if has_app_context():
+            wall_geometry.add_characters(c for c in CombatService._unique_location_characters(
+                LocationCharacter.query.filter_by(location_id=location.id).all()
+            ) if c.character_id not in ignored)
+        maps = {}
+        def movement_map(level):
+            if level not in maps:
+                maps[level] = CombatService._build_movement_map(
+                    location,moving_character_id,ignored_character_ids,floor_level=level,
+                    wall_geometry=wall_geometry,continuous=True,
+                )
+            return maps[level]
+        def can_traverse(a,b):
+            if not wall_geometry.can_traverse(a,b):
+                return False
+            if companion_offset:
+                a = (a[0]+companion_offset[0],a[1]+companion_offset[1],a[2])
+                b = (b[0]+companion_offset[0],b[1]+companion_offset[1],b[2])
+                if not all(0<=point[0]<location.grid_width and 0<=point[1]<location.grid_height for point in (a,b)):
+                    return False
+                if not wall_geometry.can_traverse(a,b):
+                    return False
+                blocked,costs = movement_map(b[2])
+                cell = (math.floor(b[0]+.5),math.floor(b[1]+.5))
+                if cell in blocked or costs.get(cell,0):
+                    return False
                 from app.services.location_navigation import surface
-                for node in result['surfaces']:
-                    cx, cy = node['x'] + companion_offset[0], node['y'] + companion_offset[1]
-                    blocked, costs = movement_map(node['level'])
-                    if not (0 <= cx < location.grid_width and 0 <= cy < location.grid_height) or (cx, cy) in blocked or costs.get((cx, cy), 0) or not surface(location, objects, cx, cy, node['level']):
-                        return None
-            return result
-        if start_x == end_x and start_y == end_y:
-            return {'cost': 0, 'path': [(start_x, start_y)], 'climb_cost': 0}
-
-        blocked_tiles, climb_cost_tiles = CombatService._build_movement_map(
-            location,
-            moving_character_id,
-            ignored_character_ids,
-        )
-        width = location.grid_width
-        height = location.grid_height
-
-        def in_bounds(x, y):
-            return 0 <= x < width and 0 <= y < height
-
-        def step_cost(x, y):
-            if (x, y) in blocked_tiles:
-                return None
-            return 1 + max(0, climb_cost_tiles.get((x, y), 0))
-
-        def companion_can_occupy(x, y):
-            if not companion_offset:
-                return True
-            companion_x = x + companion_offset[0]
-            companion_y = y + companion_offset[1]
-            return bool(
-                in_bounds(companion_x, companion_y)
-                and (companion_x, companion_y) not in blocked_tiles
-                and climb_cost_tiles.get((companion_x, companion_y), 0) <= 0
-            )
-
-        def heuristic(x, y):
-            return max(abs(end_x - x), abs(end_y - y))
-
-        if (
-            climb_cost_tiles.get((end_x, end_y), 0) > 0
-            or not companion_can_occupy(end_x, end_y)
-        ):
-            return None
-
-        directions = [
-            (1, 0), (-1, 0), (0, 1), (0, -1),
-            (1, 1), (1, -1), (-1, 1), (-1, -1),
-        ]
-
-        open_heap = [(0, 0, 0, start_x, start_y)]
-        came_from = {}
-        best_cost = {(start_x, start_y): 0}
-        counter = 1
-
-        while open_heap:
-            _, _, current_cost, x, y = heapq.heappop(open_heap)
-            if current_cost != best_cost.get((x, y)):
-                continue
-            if x == end_x and y == end_y:
-                path = [(x, y)]
-                cursor = (x, y)
-                while cursor in came_from:
-                    cursor = came_from[cursor]
-                    path.append(cursor)
-                path.reverse()
-                climb_cost_total = sum(climb_cost_tiles.get(step, 0) for step in path[1:])
-                return {'cost': current_cost, 'path': path, 'climb_cost': climb_cost_total}
-
-            for dx, dy in directions:
-                nx = x + dx
-                ny = y + dy
-                if not in_bounds(nx, ny):
-                    continue
-
-                move_cost = step_cost(nx, ny)
-                if move_cost is None or not companion_can_occupy(nx, ny):
-                    continue
-                if nx == end_x and ny == end_y and climb_cost_tiles.get((nx, ny), 0) > 0:
-                    continue
-
-                new_cost = current_cost + move_cost
-                if new_cost >= best_cost.get((nx, ny), float('inf')):
-                    continue
-
-                best_cost[(nx, ny)] = new_cost
-                came_from[(nx, ny)] = (x, y)
-                heapq.heappush(open_heap, (
-                    new_cost + heuristic(nx, ny), counter, new_cost, nx, ny,
-                ))
-                counter += 1
-
-        return None
+                if not surface(location,objects,*b) or wall_geometry.climb_at(b):
+                    return False
+            return True
+        return find_path(location,objects,(start_x,start_y,start_level),(end_x,end_y,end_level),
+                         movement_map,terrain_costs=terrain_costs,can_traverse=can_traverse,
+                         geometry=wall_geometry,continuous=True)
 
     @staticmethod
     def _prepare_character_for_turn(loc_char):
+        if getattr(loc_char, 'character', None) and isinstance(loc_char.character.data, dict):
+            cancel_unavailable_actions(loc_char)
         if getattr(loc_char, 'character', None) and isinstance(loc_char.character.data, dict):
             turn_data = loc_char.character.data
             if CombatService._mutant_has_trait(turn_data, 'Возможность разгона'):
@@ -10128,6 +10440,8 @@ class CombatService:
             'character_id': character.id if character else None,
             'name': character.name if character else None,
             'is_mutant': is_mutant,
+            'ignores_difficult_surface': CombatService._mutant_has_trait(data, 'Полёт'),
+            'jump_preview': None if is_mutant else CombatService._jump_profile(data, loc_char.movement_mode_this_turn or 'walk', loc_char.action_points_current or 0),
             'mutant_type': CombatService._mutant_profile_name(data) if is_mutant else '',
             'is_npc': is_npc(data),
             'gm_hidden': bool(loc_char.gm_hidden),
@@ -10152,6 +10466,7 @@ class CombatService:
             'movement_points_max': loc_char.movement_points_max if loc_char.movement_points_max is not None else profile['movement_points'],
             'movement_points_current': loc_char.movement_points_current or 0,
             'movement_penalty': profile['movement_penalty'],
+            'climb_agility_bonus': CombatService._skill_modifier(data,'skills.physical.agility'),
             'pending_action': (
                 health.get('combatMeta', {}).get('pendingAction')
                 if isinstance(health.get('combatMeta'), dict)
@@ -11264,9 +11579,15 @@ class CombatService:
         state.current_location_character_id = ordered_chars[first_actionable_index].id
         state.pending_explosives = []
         state.area_effects = []
+        first_character = ordered_chars[first_actionable_index]
+        psi_start = CombatService._resolve_psi_turn_start(first_character,1)
+        CombatService._sync_location_effects_from_character(first_character)
         db.session.commit()
-
-        return CombatService._serialize_state(location, state)
+        if not CombatService._can_take_combat_turn(first_character):
+            return CombatService.end_turn(location_id,user_id,location_character_id=first_character.id,_continue_pending=True)
+        payload = CombatService._serialize_state(location,state)
+        payload['psy_turn_start'] = psi_start
+        return payload
 
     @staticmethod
     def end_turn(
@@ -11388,6 +11709,9 @@ class CombatService:
             location,
             current_character,
         )
+        psi_crisis = CombatService._resolve_psi_crisis(current_character.character.data,current_character,round_number=ending_round)
+        if psi_crisis:
+            flag_modified(current_character.character,'data')
         CombatService._resolve_bleeding_check(current_character)
         pain_shock_check = CombatService._resolve_pain_shock_check(
             current_character,
@@ -11455,6 +11779,7 @@ class CombatService:
             psy_recovery = []
         state.turn_index = next_index
         state.current_location_character_id = next_character_id
+        psi_start = CombatService._resolve_psi_turn_start(next_character,state.round_number)
         CombatService._prepare_character_for_turn(next_character)
         CombatService._sync_location_effects_from_character(next_character)
         db.session.commit()
@@ -11518,6 +11843,8 @@ class CombatService:
         payload['detonations'] = detonations
         payload['area_updates'] = area_updates
         payload['psy_end_turn'] = psy_end_turn
+        payload['psy_crisis'] = psi_crisis
+        payload['psy_turn_start'] = psi_start
         payload['psy_recovery'] = psy_recovery
         return payload
 
@@ -11618,6 +11945,7 @@ class CombatService:
                 raise NotFoundError("Next character not found")
             state.turn_index = next_index
             state.current_location_character_id = next_character_id
+            CombatService._resolve_psi_turn_start(next_character,state.round_number)
             CombatService._prepare_character_for_turn(next_character)
             CombatService._sync_location_effects_from_character(next_character)
         else:
@@ -11685,7 +12013,7 @@ class CombatService:
         values = {
             'action_points': max(0, CombatService._coerce_int(action_points, 0)),
             'free_actions': max(0, CombatService._coerce_int(free_actions, 0)),
-            'movement_points': max(0, CombatService._coerce_int(movement_points, 0)),
+            'movement_points': max(0, CombatService._coerce_float(movement_points, 0)),
         }
         if not any(values.values()):
             raise ValidationError("Reserve at least one resource for a reaction")
@@ -11839,7 +12167,7 @@ class CombatService:
         state.current_location_character_id = character.id
         character.action_points_current = max(0, CombatService._coerce_int(reserve.get('action_points'), 0))
         character.free_actions_current = max(0, CombatService._coerce_int(reserve.get('free_actions'), 0))
-        character.movement_points_current = max(0, CombatService._coerce_int(reserve.get('movement_points'), 0))
+        character.movement_points_current = max(0, CombatService._coerce_float(reserve.get('movement_points'), 0))
         meta['reactionActive'] = reserve
         character.character.data = data
         flag_modified(character.character, 'data')
@@ -11902,7 +12230,7 @@ class CombatService:
 
         action_points = max(0, CombatService._coerce_int(action_points, 0))
         free_actions = max(0, CombatService._coerce_int(free_actions, 0))
-        movement_points = max(0, CombatService._coerce_int(movement_points, 0))
+        movement_points = max(0, CombatService._coerce_float(movement_points, 0))
 
         deferred = action_points > character.action_points_current
         if deferred and not allow_deferred:
@@ -11984,7 +12312,7 @@ class CombatService:
             raise PermissionDenied("It is not this character's turn")
         CombatService.ensure_character_can_act(character)
         action_points = max(-10, min(10, CombatService._coerce_int(action_points, 0)))
-        movement_points = max(-50, min(50, CombatService._coerce_int(movement_points, 0)))
+        movement_points = max(-50, min(50, CombatService._coerce_float(movement_points, 0)))
         character.action_points_current = max(0, character.action_points_current + action_points)
         character.movement_points_current = max(0, character.movement_points_current + movement_points)
         CombatService._release_invalid_grapples(location_id)
@@ -12039,9 +12367,7 @@ class CombatService:
             'action_points': 1,
             'target_character_id': target.character_id,
             'target_zone': target_zone,
-            'target_distance': CombatService._point_distance(
-                character.pos_x, character.pos_y, target.pos_x, target.pos_y,
-            ),
+            'target_distance': CombatService._character_distance(character,target),
             'hit_difficulty': 1,
             'automatic_firearm_hit': True,
             'shooting_disadvantage': False,
@@ -13172,7 +13498,7 @@ class CombatService:
                 3
                 if (
                     character.movement_mode_this_turn in {'run', 'sprint'}
-                    and (character.movement_distance_this_turn or 0) >= 3
+                    and (character.movement_distance_this_turn or 0)-(character.correction_distance_this_turn or 0) >= 3
                 )
                 else 0
             )
@@ -13820,8 +14146,8 @@ class CombatService:
                     )
                     if template and template.category != 'weapon':
                         raise ValidationError("Only a firearm can use a butt attack")
-            distance = max(abs(character.pos_x - target.pos_x), abs(character.pos_y - target.pos_y))
-            if not circular_attack and distance != 1:
+            distance = CombatService._character_distance(character,target)
+            if not circular_attack and not CombatService._is_adjacent(character,target):
                 raise ValidationError("Цель атаки ближнего боя должна находиться на соседней клетке")
             if (
                 CombatService._mutant_has_trait(data, 'Миролюбивый')
@@ -14085,10 +14411,7 @@ class CombatService:
                 if not range_target or range_target.id == character.id:
                     raise ValidationError("Target character not found")
             target_distance = (
-                max(
-                    abs(character.pos_x - range_target.pos_x),
-                    abs(character.pos_y - range_target.pos_y),
-                )
+                CombatService._character_distance(character,range_target)
                 if range_target
                 else (
                     max(
@@ -14153,9 +14476,8 @@ class CombatService:
                     range_target.character.data if range_target.character else {},
                     'Полёт',
                 )
-                and CombatService._coerce_float(
-                    range_target.movement_distance_this_turn, 0,
-                ) > 0
+                and CombatService._coerce_float(range_target.movement_distance_this_turn,0)
+                    - CombatService._coerce_float(range_target.correction_distance_this_turn,0) > 0
                 and range_target.movement_mode_this_turn != 'correction'
             ):
                 base_shooting_disadvantage = True
@@ -15706,6 +16028,7 @@ class CombatService:
         movement_mode=None,
         evasion=None,
         floor_level=None,
+        climb_payment=None,
     ):
         location = CombatService._get_location(location_id)
         is_gm = CombatService._ensure_access(location, user_id)
@@ -15758,26 +16081,27 @@ class CombatService:
                 raise ValidationError('Release the grapple before jumping down')
             if CombatService._posture_key(character) != 'standing':
                 raise ValidationError('Stand up before jumping down')
-            from app.services.location_navigation import drop_route
             portal = LocationObject.query.filter_by(id=object_id,location_id=location_id).first() if type(object_id) is int else None
             if not portal:
                 raise NotFoundError('Opening not found')
             if not is_gm and (portal.properties or {}).get('gm_hidden'):
                 raise PermissionDenied('Hidden opening cannot be used')
-            if type(new_x) is not int or type(new_y) is not int or floor_level is not None and type(floor_level) is not int:
+            if any(isinstance(v,bool) or not isinstance(v,(int,float)) or not math.isfinite(v) for v in (new_x,new_y)) or floor_level is not None and type(floor_level) is not int:
                 raise ValidationError('Invalid jump landing')
-            objects = LocationObject.query.filter_by(location_id=location_id).all()
-            plan = drop_route(location,objects,(character.pos_x,character.pos_y,character.floor_level or 0),portal,
-                              lambda level:CombatService._build_movement_map(location,character.character_id,floor_level=level))
+            plan = CombatService._object_drop_plan(location,character,portal)
             if not plan:
                 raise ValidationError('No clear downward passage or landing')
             landing = plan['landing']
-            if (new_x,new_y) != (landing['x'],landing['y']) or floor_level is not None and floor_level != landing['level']:
+            if abs(new_x-landing['x'])>1e-8 or abs(new_y-landing['y'])>1e-8 or floor_level is not None and floor_level != landing['level']:
                 raise ValidationError('Invalid jump landing')
+            approach = sum(math.hypot(b['x']-a['x'],b['y']-a['y']) for a,b in zip(plan['surfaces'],plan['surfaces'][1:]))
+            travelled = approach+(plan['height'] if plan['height']<=2+1e-9 else 0)
+            CombatService._validate_special_movement_distance(character,location,state,travelled)
             if state and state.status == 'active':
                 if character.action_points_current < 1:
                     raise ValidationError('Not enough action points')
                 character.action_points_current -= 1
+                character.movement_distance_this_turn = (character.movement_distance_this_turn or 0)+travelled
             previous_position = (character.pos_x,character.pos_y)
             character.pos_x,character.pos_y,character.floor_level = landing['x'],landing['y'],landing['level']
             character._movement_surfaces = plan['surfaces']
@@ -15785,7 +16109,8 @@ class CombatService:
             character.weapon_braced = False
             character.braced_weapon_index = None
             CombatService._clear_aim(character)
-            character._movement_fall = CombatService.resolve_fall(character,plan['height'],round_number=max(0,state.round_number or 0) if state else 0)
+            character._movement_fall = (None if plan['height'] <= 2+1e-9 else
+                CombatService.resolve_fall(character,plan['height'],round_number=max(0,state.round_number or 0) if state else 0))
             if active_anomaly:
                 CombatService._leave_anomaly(character)
             if state and state.status == 'active':
@@ -15799,42 +16124,49 @@ class CombatService:
             db.session.commit()
             return character,0,CombatService.get_state(location_id,user_id)
 
-        if special_action == 'climb':
+        if special_action in {'climb','climb_up','descend'}:
             if grapple_captive:
                 raise ValidationError("A character cannot climb while holding a grapple")
             if CombatService._posture_key(character) != 'standing':
                 raise ValidationError("Stand up before climbing")
-            climb_object = None
-            if object_id is not None:
-                climb_object = LocationObject.query.filter_by(
-                    id=object_id,
-                    location_id=location_id,
-                ).first()
-            if not climb_object:
-                raise NotFoundError("Object not found")
-
-            from app.services.location_navigation import level_of
-            if climb_object.type in {'stairs', 'ladder'} or level_of(climb_object) != (getattr(character, 'floor_level', 0) or 0):
-                raise ValidationError('Use ordinary movement on the same-floor stair route')
-
-            landing = CombatService._find_climb_landing(location, climb_object, character)
-            if not landing:
-                raise ValidationError("No landing tile")
-
-            profile = CombatService._object_movement_profile(climb_object)
-            climb_cost = max(1, profile.get('climb_cost') or 0)
-            ap_cost = 3 if climb_cost >= 12 else 1
-
-            if state and state.status == 'active':
-                if character.movement_points_current >= climb_cost:
-                    character.movement_points_current -= climb_cost
-                elif character.action_points_current >= ap_cost:
-                    character.action_points_current -= ap_cost
-                else:
-                    raise ValidationError("Not enough movement points")
-
+            if any(isinstance(v,bool) or not isinstance(v,(int,float)) or not math.isfinite(v) for v in (new_x,new_y)):
+                raise ValidationError('Некорректная точка перемещения')
+            target_level = (character.floor_level or 0) if floor_level is None else floor_level
+            if type(target_level) is not int or not (0<=new_x<=location.grid_width-1 and 0<=new_y<=location.grid_height-1):
+                raise ValidationError('Некорректная точка перемещения')
+            if special_action=='climb':
+                obj = LocationObject.query.filter_by(id=object_id,location_id=location_id).first() if type(object_id) is int else None
+                if not obj or (obj.properties or {}).get('gm_hidden') and not is_gm:
+                    raise NotFoundError('Препятствие недоступно')
+                plan = CombatService._object_climb_plan(location,character,obj)
+            else:
+                plan = CombatService._vertical_movement_plan(location,character,new_x,new_y,target_level)
+            if not plan or plan['special_action']!=special_action:
+                raise ValidationError('Нет допустимого подъёма, спуска или места приземления')
+            landing = plan['path'][-1]
+            if abs(new_x-landing[0])>1e-8 or abs(new_y-landing[1])>1e-8 or target_level!=plan['floor_level']:
+                raise ValidationError('Точка приземления изменилась. Обновите предпросмотр')
+            CombatService._validate_special_movement_distance(character,location,state,plan['distance'])
+            climb_cost = 0
+            if special_action=='descend':
+                if state and state.status=='active':
+                    if character.action_points_current<1:
+                        raise ValidationError('Для спуска требуется 1 ОД')
+                    character.action_points_current-=1
+            else:
+                profile = CombatService._climb_payment_profile(character.character.data,plan['climbs'])
+                climb_cost = CombatService._pay_climb(character,profile,climb_payment,state)
             previous_position = (character.pos_x, character.pos_y)
             character.pos_x, character.pos_y = landing
+            character.floor_level = plan['floor_level']
+            character._movement_surfaces = plan['surfaces']
+            character.cover_object_id = None
+            character.weapon_braced = False
+            character.braced_weapon_index = None
+            if state and state.status=='active':
+                character.movement_distance_this_turn = (character.movement_distance_this_turn or 0)+plan['distance']
+            if special_action=='descend' and -plan['height_change']>2+1e-9:
+                character._movement_fall = CombatService.resolve_fall(character,-plan['height_change'],round_number=state.round_number if state else 0)
             anomaly_changed = False
             if not state or state.status != 'active':
                 anomaly_changed = CombatService._sync_anomaly_after_relocation(
@@ -15853,12 +16185,16 @@ class CombatService:
             return character, climb_cost, state_payload
 
         try:
-            new_x = int(new_x)
-            new_y = int(new_y)
+            if isinstance(new_x,bool) or isinstance(new_y,bool):
+                raise ValueError()
+            new_x = float(new_x)
+            new_y = float(new_y)
+            if not math.isfinite(new_x) or not math.isfinite(new_y):
+                raise ValueError()
         except (TypeError, ValueError):
             raise ValidationError("Invalid coordinates")
 
-        if not (0 <= new_x < location.grid_width and 0 <= new_y < location.grid_height):
+        if not (0 <= new_x <= location.grid_width-1 and 0 <= new_y <= location.grid_height-1):
             raise ValidationError("Out of bounds")
 
         companion_offset = (
@@ -15922,6 +16258,7 @@ class CombatService:
         climb_cost = path.get('climb_cost', 0)
         if state and state.status == 'active':
             movement_mode = str(movement_mode or '').lower()
+            movement_mode = CombatService._effective_movement_mode(character, path, movement_mode)
             mode = MOVEMENT_MODES.get(movement_mode)
             if not mode:
                 raise ValidationError("Choose a movement mode")
@@ -15959,39 +16296,54 @@ class CombatService:
                 flight_cost = (
                     0
                     if divisor is None
-                    else math.ceil(
-                        terrain_distance
-                        * posture_profile['movement_multiplier']
-                        / divisor
-                    )
+                    else terrain_distance * posture_profile['movement_multiplier'] / divisor
                 )
                 route_cost['movement_points'] = flight_cost + route_cost['climb_cost']
             distance = route_cost['distance']
             movement_cost = route_cost['movement_points']
+            climb_action_points = 0
+            if route_cost['climb_cost']>0:
+                if not isinstance(climb_payment,str) or climb_payment not in {'movement','action'}:
+                    raise ValidationError('Выберите оплату перелезания: ОП или ОД')
+                climbs = path.get('climbs') or [{'base_cost':route_cost['climb_cost'],
+                    'category':'high' if route_cost['climb_cost']>=12 else 'low'}]
+                climb_profile = CombatService._climb_payment_profile(character_data,climbs)
+                movement_cost -= route_cost['climb_cost']
+                if climb_payment=='movement':
+                    movement_cost += climb_profile['movement_points']
+                else:
+                    climb_action_points = climb_profile['action_points']
             if distance <= 0:
                 return character, 0, CombatService._serialize_state(location, state)
 
             used_mode = character.movement_mode_this_turn
-            if used_mode and used_mode != movement_mode:
+            if used_mode == 'correction':
+                used_mode = None
+            correction_used = character.correction_distance_this_turn or 0
+            if used_mode and used_mode != movement_mode and movement_mode != 'correction':
                 raise ValidationError("Movement modes cannot be mixed in one turn")
-            selecting_mode = not used_mode
+            selecting_mode = correction_used <= 1e-9 if movement_mode == 'correction' else not used_mode
             evading = CombatService._movement_evasion_active(character) if used_mode else evasion is True
             if used_mode and evasion is not None and bool(evasion) != evading:
                 raise ValidationError('Уклонение нельзя менять после начала движения в этом ходу')
             if evading and movement_mode not in {'walk', 'run', 'sprint'}:
                 raise ValidationError('Уклонение доступно при ходьбе, беге и спринте')
-            mode_action_points = mode['action_points'] if selecting_mode else 0
+            mode_action_points = (mode['action_points'] if selecting_mode else 0)+climb_action_points
             artifact_profile = artifact_passive_profile(character_data)
             if selecting_mode and movement_mode in {'run', 'sprint'}:
                 mode_action_points += artifact_profile['strenuous_action_cost']
             mode_free_actions = mode['free_actions'] if selecting_mode else 0
+            used_distance = character.movement_distance_this_turn or 0
+            penalty = CombatService._movement_penalty(character)
+            max_distance = CombatService._movement_distance_limit(movement_mode, posture, evading, penalty)
             if movement_mode == 'correction':
-                used_distance = character.correction_distance_this_turn or 0
-            else:
-                used_distance = character.movement_distance_this_turn or 0
-
-            max_distance = CombatService._movement_distance_limit(movement_mode, posture, evading)
-            if used_distance + distance > max_distance:
+                if correction_used+distance > 3+1e-9:
+                    raise ValidationError('Корректировка ограничена 3 метрами за ход')
+                # Без выбранного основного режима корректировка доступна на 3 м
+                # независимо от штрафа. При выборе режима её путь уже входит в общий счётчик.
+                max_distance = (CombatService._movement_distance_limit(used_mode,posture,evading,penalty)
+                                if used_mode else max(3,used_distance+3-correction_used))
+            if used_distance + distance > max_distance + 1e-9:
                 raise ValidationError(
                     f"{mode['label']} distance is limited to {max_distance} meters per turn"
                 )
@@ -16000,17 +16352,8 @@ class CombatService:
             if character.free_actions_current < mode_free_actions:
                 raise ValidationError("Not enough free actions")
 
-            if movement_cost <= character.movement_points_current:
-                character.movement_points_current -= movement_cost
-            elif (
-                route_cost['climb_cost'] > 0
-                and character.movement_points_current >= movement_cost - route_cost['climb_cost']
-            ):
-                ap_cost = 3 if route_cost['climb_cost'] >= 10 else 1
-                if character.action_points_current < mode_action_points + ap_cost:
-                    raise ValidationError("Not enough movement points")
-                character.movement_points_current -= movement_cost - route_cost['climb_cost']
-                character.action_points_current -= ap_cost
+            if movement_cost <= character.movement_points_current+1e-9:
+                character.movement_points_current = max(0,round(character.movement_points_current-movement_cost,9))
             else:
                 raise ValidationError("Not enough movement points")
 
@@ -16020,11 +16363,10 @@ class CombatService:
             character.character.data = character_data
             flag_modified(character.character, 'data')
             if movement_mode == 'correction':
-                character.movement_mode_this_turn = movement_mode
-                character.correction_distance_this_turn = used_distance + distance
+                character.correction_distance_this_turn = correction_used + distance
             else:
                 character.movement_mode_this_turn = movement_mode
-                character.movement_distance_this_turn = used_distance + distance
+            character.movement_distance_this_turn = used_distance + distance
 
             if movement_mode == 'run':
                 superior_runner = CombatService._mutant_has_trait(
@@ -16073,17 +16415,10 @@ class CombatService:
             grapple_captive.weapon_braced = False
             grapple_captive.braced_weapon_index = None
             CombatService._clear_aim(grapple_captive)
+        # Перемещение не заменяет отдельное действие поворота и не раскрывает
+        # сектор за спиной бесплатным изменением взгляда.
         path_tiles = path.get('path') or []
-        preserve_facing = bool(
-            state and state.status == 'active' and movement_mode == 'backward_sideways'
-        )
-        if len(path_tiles) >= 2 and not preserve_facing:
-            before_x, before_y = path_tiles[-2]
-            character.facing_x = 0 if new_x == before_x else (1 if new_x > before_x else -1)
-            character.facing_y = 0 if new_y == before_y else (1 if new_y > before_y else -1)
-        elif (new_x != previous_x or new_y != previous_y) and not preserve_facing:
-            character.facing_x = 0 if new_x == previous_x else (1 if new_x > previous_x else -1)
-            character.facing_y = 0 if new_y == previous_y else (1 if new_y > previous_y else -1)
+        character._movement_mode = movement_mode
         CombatService._sync_grapple_facing(character)
         character.cover_object_id = None
         character.weapon_braced = False

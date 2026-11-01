@@ -199,6 +199,9 @@ export function initMapEditorQuickMenu({ isEnabled, isLocation, selectTool, loca
 
         if (!isLocation() && ['KeyQ', 'KeyE'].includes(event.code)
             && window.rotateWorldObjectPlacement?.(event.code === 'KeyE' ? 1 : -1)) {
+            window.startMapRotationHold?.(event,
+                (direction, fraction) => window.rotateWorldObjectPlacement(direction, fraction),
+                () => window.getWorldObjectRotationContext?.());
             closeMapEditorQuickMenu();
             event.preventDefault();
             event.stopImmediatePropagation();
@@ -207,6 +210,10 @@ export function initMapEditorQuickMenu({ isEnabled, isLocation, selectTool, loca
 
         if (isLocation() && ['KeyQ', 'KeyE'].includes(event.code)
             && window.rotateLocationPlacement?.(event.code === 'KeyE' ? 1 : -1)) {
+            window.startMapRotationHold?.(event,
+                (direction, fraction) => window.rotateLocationPlacement(direction, fraction),
+                () => window.getLocationRotationContext?.(),
+                commit => window.finishLocationRotationHold?.(commit));
             closeMapEditorQuickMenu();
             event.preventDefault();
             event.stopImmediatePropagation();

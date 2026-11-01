@@ -801,7 +801,8 @@ function clearAllTemplatesCache() {
 }
 
 function getRequiredXp(level) {
-    return level < 11 ? 1 : level - 10;
+    // Цена определяется достигаемым значением: 12 → 13 стоит 3 XP.
+    return Math.max(1, Number(level) + 1 - 10);
 }
 
 function getSkillByPath(path) {
@@ -819,7 +820,7 @@ function checkAndLevelUpSkill(skill, skillPath) {
         const required = getRequiredXp(skill.base);
         if (skill.xp >= required) {
             skill.xp -= required;
-            skill.base += 1;
+            skill.base = Number(skill.base) + 1;
             showNotification(`Навык ${skillPath.split('.').pop()} повышен до ${skill.base}!`, 'system');
         } else {
             break;
@@ -2986,12 +2987,17 @@ window.editTemplate = async function(templateId, category) {
 
 function normalizeDailyNeeds(rawNeeds = {}) {
     const needs = rawNeeds && typeof rawNeeds === 'object' ? rawNeeds : {};
+    const missedDays = needs.missedDays && typeof needs.missedDays === 'object' ? needs.missedDays : {};
     const sleptToday = needs.sleptToday === true || String(needs.sleptToday).toLowerCase() === 'true';
     return {
         day: Math.max(1, Number(needs.day || 1)),
         mealsToday: Math.max(0, Math.min(3, Number(needs.mealsToday || 0))),
         drinksToday: Math.max(0, Math.min(3, Number(needs.drinksToday || 0))),
         sleptToday,
+        missedDays: Object.fromEntries(['food', 'water', 'sleep'].map(key => {
+            const days = Number(missedDays[key]);
+            return [key, Number.isFinite(days) ? Math.max(0, Math.floor(days)) : 0];
+        })),
         lastDay: needs.lastDay && typeof needs.lastDay === 'object' ? needs.lastDay : null,
     };
 }
@@ -3711,10 +3717,10 @@ window.endStressEffect = function(index) {
 // ========== 4. ВКЛАДКА "НАВЫКИ" ==========
 async function renderSkillsTab(data) {
     const container = document.getElementById('sheet-tab-skills');
-    const skills = data.skills || {};
-    const physical = skills.physical || {};
-    const social = skills.social || {};
-    const other = skills.other || {};
+    const skills = data.skills ||= {};
+    const physical = skills.physical ||= {};
+    const social = skills.social ||= {};
+    const other = skills.other ||= {};
     const specialized = skills.specialized || {};
 
     // Загружаем шаблоны особых черт
@@ -3775,21 +3781,21 @@ async function renderSkillsTab(data) {
             <div>
                 <h4>Физические</h4>
                 ${physicalSkills.map(s => {
-                    const skillObj = physical[s.key] || { base: 5, bonus: 0 };
+                    const skillObj = physical[s.key] ||= { base: 5, bonus: 0, xp: 0 };
                     return renderSkillRow(s.label, skillObj.base, skillObj.bonus, skillObj.xp || 0, `physical.${s.key}`);
                 }).join('')}
             </div>
             <div>
                 <h4>Социальные</h4>
                 ${socialSkills.map(s => {
-                    const skillObj = social[s.key] || { base: 5, bonus: 0 };
+                    const skillObj = social[s.key] ||= { base: 5, bonus: 0, xp: 0 };
                     return renderSkillRow(s.label, skillObj.base, skillObj.bonus, skillObj.xp || 0, `social.${s.key}`);
                 }).join('')}
             </div>
             <div>
                 <h4>Прочие</h4>
                 ${otherSkills.map(s => {
-                    const skillObj = other[s.key] || { base: 5, bonus: 0 };
+                    const skillObj = other[s.key] ||= { base: 5, bonus: 0, xp: 0 };
                     return renderSkillRow(s.label, skillObj.base, skillObj.bonus, skillObj.xp || 0, `other.${s.key}`);
                 }).join('')}
             </div>

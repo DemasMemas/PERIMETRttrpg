@@ -192,6 +192,7 @@ def handle_move_in_location(data):
             movement_mode,
             evasion=data.get('evasion'),
             floor_level=data.get('floor_level'),
+            climb_payment=data.get('climb_payment'),
         )
     except ServiceError as exc:
         db.session.rollback()
@@ -222,7 +223,7 @@ def handle_move_in_location(data):
             'path': getattr(moved_character, '_movement_surfaces', []),
             'fall': getattr(moved_character, '_movement_fall', None),
             'movement_cost': cost,
-            'movement_mode': movement_mode,
+            'movement_mode': getattr(moved_character, '_movement_mode', movement_mode),
         },
         room=f"location_{location_id}",
     )

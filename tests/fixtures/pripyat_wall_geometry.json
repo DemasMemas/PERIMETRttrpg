@@ -1,0 +1,65 @@
+{
+  "source": "pripyat-regression.json / SHIFT03-NAV-GEOMETRY",
+  "grid_width": 72,
+  "grid_height": 72,
+  "objects": [
+    {
+      "sourceIndex": 2,
+      "type": "wall",
+      "tile_x": 10,
+      "tile_y": 5,
+      "properties": {
+        "building_id": "pripyat-0",
+        "dimensions": {
+          "width": 8,
+          "depth": 0.1999999999999993,
+          "height": 2.4
+        },
+        "rotation": 0,
+        "offset_x": -0.5,
+        "offset_z": -0.5,
+        "level": 0,
+        "elevation": 0
+      }
+    },
+    {
+      "sourceIndex": 3,
+      "type": "door",
+      "tile_x": 7,
+      "tile_y": 5,
+      "properties": {
+        "building_id": "pripyat-0",
+        "dimensions": {
+          "width": 1,
+          "depth": 0.18,
+          "height": 2
+        },
+        "rotation": 0,
+        "offset_x": -0.5,
+        "offset_z": -0.5,
+        "level": 0,
+        "elevation": 0,
+        "is_open": true
+      }
+    },
+    {
+      "sourceIndex": 4,
+      "type": "wall",
+      "tile_x": 6,
+      "tile_y": 6,
+      "properties": {
+        "building_id": "pripyat-0",
+        "dimensions": {
+          "width": 2,
+          "depth": 0.2,
+          "height": 2.4
+        },
+        "rotation": -1.5707963267948966,
+        "offset_x": -0.5,
+        "offset_z": -0.5,
+        "level": 0,
+        "elevation": 0
+      }
+    }
+  ]
+}

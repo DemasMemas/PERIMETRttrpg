@@ -1,3 +1,5 @@
+import { terrainLineHit, terrainOpeningAt } from './terrainLineOfSight.js';
+import { buildMovementSurfaceCosts, ordinaryHeightTransitionAllowed } from './movementSurfaceCosts.js';
 import { syncWorldNumber } from './worldNumericInputs.js';
 import { setLocalMapSceneContext } from './mapSceneContext.js';
 import { combatMenuPresentation } from './combatMenuPresentation.js';
@@ -261,6 +263,7 @@ let editorRotateMode = false;
 let editorRotateAngle = 0;
 let editorRotateHotkeyPending = false;
 let editorHotkeyRotationQueue = Promise.resolve();
+let editorHeldRotation = null;
 let editorGroupRotatePivot = null;
 let editorGroupRotateStartBearing = null;
 let editorGroupRotateWithPivot = false;
@@ -729,7 +732,7 @@ const LOW_CLIMB_OBJECT_TYPES = new Set(['table', 'chair', 'chest', 'box', 'milit
 const HIGH_CLIMB_OBJECT_TYPES = new Set(['fence']);
 const TOO_HIGH_OBJECT_TYPES = new Set(['tree', 'rock', 'house', 'tent', 'wall', 'shelf']);
 const PASSABLE_OBJECT_TYPES = new Set(['campfire', 'torch', 'wall_torch', 'fire_barrel',
-    'ceiling_bulb', 'wall_bulb', 'ground_item', 'anomaly', 'poster', 'floor']);
+    'ceiling_bulb', 'wall_bulb', 'ground_item', 'anomaly', 'poster', 'floor', 'stairs', 'ladder', 'hatch', 'floor_opening']);
 const THROWABLE_OBJECT_WEIGHTS = {
     chair: 5,
     box: 10,
@@ -810,6 +813,9 @@ function updateLocationCameraMovement(deltaSeconds) {
 }
 
 function getTileHeight(tileX, tileZ) {
+    if (!Number.isFinite(tileX) || !Number.isFinite(tileZ)) return 1.0;
+    tileX = Math.floor(tileX+.5);
+    tileZ = Math.floor(tileZ+.5);
     if (!currentLocationData) return 1.0;
     if (tileZ < 0 || tileZ >= currentLocationData.tiles_data.length) return 1.0;
     const row = currentLocationData.tiles_data[tileZ];
@@ -880,8 +886,12 @@ function createPreviewLine(color) {
         transparent: true,
         opacity: 0.95,
         depthTest: false,
+        depthWrite: false,
     });
     const line = new THREE.Line(geometry, material);
+    // Геометрия меняется при каждом наведении; старый boundingSphere скрывал
+    // новый маршрут при поворотах камеры.
+    line.frustumCulled = false;
     line.renderOrder = 999;
     return line;
 }
@@ -1106,6 +1116,23 @@ function hasStoreyNavigation() {
     return (currentLocationData?.objects || []).some(o => structureLevel(o) !== 0 || ['stairs','ladder'].includes(o.type));
 }
 
+function hasPreciseWallNavigation() {
+    return (currentLocationData?.objects || []).some(o => o.type === 'wall')
+        || (currentLocationData?.tiles_data || []).some(row => Array.isArray(row)
+            && row.some(tile => (tile?.objects || []).some(o => (o.type || o.object_type) === 'wall')));
+}
+
+function movementPointerPosition(point) {
+    return {
+        x: Math.max(0,Math.min((currentLocationData?.grid_width || 1)-1,Number((point.x-.5).toFixed(1)))),
+        y: Math.max(0,Math.min((currentLocationData?.grid_height || 1)-1,Number((point.z-.5).toFixed(1)))),
+    };
+}
+
+function formatMovementNumber(value) {
+    return Number.isFinite(Number(value)) ? String(Number(Number(value).toFixed(1))) : '—';
+}
+
 function getMovementPointerPoint(clientX, clientY, entry) {
     navigationPointer = {x:clientX,y:clientY};
     movementTargetLevel = entry.floorLevel || 0;
@@ -1120,6 +1147,10 @@ function getMovementPointerPoint(clientX, clientY, entry) {
         while (root.parent && !root.userData.locationObject) root = root.parent;
         movementTargetLevel = structureLevel(root.userData.locationObject);
         return hits[0].point;
+    }
+    if (terrainHit) {
+        movementTargetLevel = 0;
+        return terrainHit.point;
     }
     return point;
 }
@@ -1209,7 +1240,9 @@ function buildRoutePoints(startX, startY, endX, endY, movingCharacterId = null) 
         }
     };
 
-    routePath.forEach(([x, y], index) => {
+    if (path.surfaces?.length&&routePath.length===path.path.length) {
+        path.surfaces.forEach(point=>pushPoint(point.x+.5,point.height+.4,point.y+.5));
+    } else routePath.forEach(([x, y], index) => {
         pushPoint(x + 0.5, (path.surfaces?.[index]?.height ?? getTileHeight(x, y)) + 0.4, y + 0.5);
     });
 
@@ -1220,68 +1253,111 @@ function buildRoutePoints(startX, startY, endX, endY, movingCharacterId = null) 
         return sum + Math.max(0, Number(profile.climbCost) || 0);
     }, 0);
     return {
+        ...path,
         points,
         path: routePath,
-        floor_level: path.surfaces?.[routePath.length-1]?.level ?? movementTargetLevel,
+        floor_level: path.floor_level ?? path.surfaces?.at(-1)?.level ?? movementTargetLevel,
         cost: path.surfaces ? path.cost : routePath.slice(1).reduce((sum, [x, y]) => {
             const profile = getTileMovementProfile(x, y, movingCharacterId);
-            return sum + 1 + Math.max(0, Number(profile.climbCost) || 0);
+            return sum + (profile.travelCost || 1) + Math.max(0, Number(profile.climbCost) || 0);
         }, 0),
         climbCost: path.climb_cost ?? climbCost,
-        distance: Math.max(0, routePath.length - 1),
+        distance: path.distance ?? routePath.slice(1).reduce((sum,point,index)=>sum+Math.hypot(point[0]-routePath[index][0],point[1]-routePath[index][1]),0),
         trappedByAnomaly: routePath.length < path.path.length,
     };
 }
 
+function resolveMovementType(movementType, route) {
+    if (combatState?.status !== 'active' || !Array.isArray(route?.path)) return { mode: movementType, reason: '' };
+    const current = combatState.current_character || {};
+    let fx = Number(current.facing_x) || 0, fy = Number(current.facing_y ?? 1) || 0;
+    if (!Math.hypot(fx, fy)) fy = 1;
+    let forward = false, backward = false;
+    route.path.slice(1).forEach((point, index) => {
+        const before = route.path[index], dx = point[0] - before[0], dy = point[1] - before[1];
+        const length = Math.hypot(dx, dy) * Math.hypot(fx, fy);
+        if (!length) return;
+        if ((dx * fx + dy * fy) / length >= .5 - 1e-9) forward = true;
+        else backward = true;
+    });
+    if (movementType === 'walk' && backward) return {
+        mode: 'backward_sideways',
+        reason: forward ? 'Маршрут смешивает ходьбу вперёд и спиной/боком. Разделите его или сначала измените направление взгляда.' : '',
+    };
+    if (['run', 'sprint'].includes(movementType) && backward) return {
+        mode: movementType, reason: 'Для бега в этом направлении сначала измените направление взгляда; спиной/боком доступна ходьба.',
+    };
+    if (movementType === 'backward_sideways' && forward) return { mode: movementType, reason: 'Этот режим допускает только шаги спиной или боком' };
+    return { mode: movementType, reason: '' };
+}
+
+function getClimbPaymentProfile(route) {
+    const raw=Number(route?.climbCost ?? route?.climb_cost)||0;
+    const climbs=route?.climbs?.length?route.climbs:raw>0?[{base_cost:raw,category:raw>=12?'high':'low'}]:[];
+    const bonus=Number(route?.climb_agility_bonus ?? combatState?.current_character?.climb_agility_bonus)||0;
+    return {movementPoints:climbs.reduce((sum,item)=>sum+Math.max(0,Number(item.base_cost)-bonus),0),
+        actionPoints:climbs.reduce((sum,item)=>sum+(item.category==='high'?3:1),0),hasClimbs:climbs.length>0};
+}
+
 function getMovementModeRouteCost(route, movementType = 'walk') {
+    movementType = resolveMovementType(movementType, route).mode;
     const mode = COMBAT_MOVEMENT_TYPES[movementType] || COMBAT_MOVEMENT_TYPES.walk;
     const posture = combatState?.current_character?.posture || 'standing';
     const postureProfile = COMBAT_POSTURES[posture] || COMBAT_POSTURES.standing;
     if (!route) return { movementPoints: Infinity, distance: Infinity };
-    const climbCost = Math.max(0, Number(route.climbCost) || 0);
-    const travelCost = Math.max(0, (Number(route.cost) || 0) - climbCost);
+    const rawClimbCost = Math.max(0, Number(route.climbCost ?? route.climb_cost) || 0);
+    const climbProfile=getClimbPaymentProfile(route);
+    const climbCost=route.climbPayment==='action'?0:climbProfile.movementPoints;
+    const travelCost = combatState?.current_character?.ignores_difficult_surface
+        ? Math.max(0, Number(route.distance) || 0)
+        : Math.max(0, (Number(route.cost) || 0) - rawClimbCost);
     const travelMovementPoints = mode.divisor === null
         ? 0
-        : Math.ceil((travelCost * postureProfile.movementMultiplier) / mode.divisor);
+        : (travelCost * postureProfile.movementMultiplier) / mode.divisor;
     const movementPoints = travelMovementPoints + climbCost;
     return {
         movementPoints,
         travelMovementPoints,
         climbCost,
+        hasClimbs:climbProfile.hasClimbs,
+        selectedClimbActionPoints:route.climbPayment==='action'?climbProfile.actionPoints:0,
         distance: Math.max(0, Number(route.distance) || 0),
     };
 }
 
 function getMovementModeAvailability(movementType, route = null, evasion = armedMovementEvasion) {
+    if (route?.special_action) return getSpecialMovementAvailability(route);
+    const direction = resolveMovementType(movementType, route);
+    movementType = direction.mode;
     const mode = COMBAT_MOVEMENT_TYPES[movementType] || COMBAT_MOVEMENT_TYPES.walk;
     const current = combatState?.current_character || {};
     const posture = current.posture || 'standing';
-    const postureProfile = current.posture_modifiers || {};
-    const baseMaxDistance = movementType === 'walk'
-        ? Number(postureProfile.walk_max_distance) || COMBAT_POSTURES[posture]?.walkMaxDistance || mode.maxDistance
-        : mode.maxDistance;
+    const base = Math.max(0,10-(Number(current.movement_penalty)||0));
+    const distanceLimit = (type) => type === 'correction' ? 3 : type === 'run' ? 2*base : type === 'sprint' ? 3*base
+        : posture === 'prone' ? Math.ceil(base/3) : posture === 'sitting' || type === 'backward_sideways' ? Math.floor(base/2) : base;
     const round = Math.max(1, Number(combatState?.round_number) || 1);
-    const usedMode = current.movement_mode_this_turn || null;
+    const usedMode = current.movement_mode_this_turn === 'correction' ? null : current.movement_mode_this_turn || null;
+    const correctionUsed = Number(current.correction_distance_this_turn)||0;
     const evading = usedMode ? Boolean(current.movement_evasion) : evasion;
     const evasionReduction = evading ? ({ walk: 3, run: 5, sprint: 7 }[movementType] || 0) : 0;
-    const maxDistance = Math.max(0, baseMaxDistance - evasionReduction);
-    const selectingMode = !usedMode;
-    const modeActionPoints = selectingMode ? mode.actionPoints : 0;
-    const modeFreeActions = selectingMode ? mode.freeActions : 0;
-    const usedDistance = movementType === 'correction'
-        ? Number(current.correction_distance_this_turn) || 0
-        : Number(current.movement_distance_this_turn) || 0;
+    const usedDistance = Number(current.movement_distance_this_turn)||0;
+    const maxDistance = movementType === 'correction'
+        ? Math.min(usedDistance+3-correctionUsed,usedMode ? distanceLimit(usedMode) : Infinity)
+        : Math.max(0,distanceLimit(movementType)-evasionReduction);
+    const selectingMode = movementType === 'correction' ? correctionUsed <= 1e-9 : !usedMode;
     const routeCost = getMovementModeRouteCost(route, movementType);
+    const modeActionPoints = (selectingMode ? mode.actionPoints : 0)+(routeCost.selectedClimbActionPoints||0);
+    const modeFreeActions = selectingMode ? mode.freeActions : 0;
     const availableMovement = Number(current.movement_points_current) || 0;
-    const climbActionPoints = routeCost.climbCost >= 10 ? 3 : 1;
+    const climbActionPoints = getClimbPaymentProfile(route).actionPoints;
     const usesClimbAction = Boolean(
         route
-        && routeCost.climbCost > 0
+        && !route.climbPayment && routeCost.hasClimbs
         && routeCost.movementPoints > availableMovement
         && routeCost.travelMovementPoints <= availableMovement
         && (Number(current.action_points_current) || 0) >= modeActionPoints + climbActionPoints
     );
-    let reason = '';
+    let reason = direction.reason;
     const routeMovesForward = movementType === 'backward_sideways'
         && Array.isArray(route?.path)
         && route.path.slice(1).some((tile, index) => {
@@ -1290,14 +1366,17 @@ function getMovementModeAvailability(movementType, route = null, evasion = armed
             const stepY = Number(tile?.[1]) - Number(previous?.[1]);
             const facingX = Number(current.facing_x) || 0;
             const facingY = Number(current.facing_y ?? 1) || 0;
-            return stepX * facingX + stepY * facingY > 0;
+            const length = Math.hypot(stepX, stepY) * Math.hypot(facingX, facingY);
+            return length > 1e-9 && (stepX * facingX + stepY * facingY) / length >= .5 - 1e-9;
         });
 
-    if (evading && !['walk', 'run', 'sprint'].includes(movementType)) {
+    if (reason) {
+        // Сначала ошибка направления, затем ограничения ресурсов.
+    } else if (evading && !['walk', 'run', 'sprint'].includes(movementType)) {
         reason = 'Уклонение доступно при ходьбе, беге и спринте';
     } else if (routeMovesForward) {
         reason = 'Этот режим допускает только шаги спиной или боком';
-    } else if (usedMode && usedMode !== movementType) {
+    } else if (usedMode && usedMode !== movementType && movementType !== 'correction') {
         reason = 'В этом ходу уже выбран другой вид движения';
     } else if (routeCost.climbCost > 0 && posture !== 'standing') {
         reason = 'Перед перелезанием нужно встать';
@@ -1325,11 +1404,11 @@ function getMovementModeAvailability(movementType, route = null, evasion = armed
         reason = 'Нужно 1 СД';
     } else if (usedDistance >= maxDistance) {
         reason = 'Лимит дистанции в этом ходу исчерпан';
-    } else if (route && usedDistance + routeCost.distance > maxDistance) {
+    } else if (route && usedDistance + routeCost.distance > maxDistance+1e-9) {
         reason = `Превышен лимит ${maxDistance} м`;
     } else if (
         route
-        && routeCost.movementPoints > availableMovement
+        && routeCost.movementPoints > availableMovement+1e-9
         && !usesClimbAction
     ) {
         reason = 'Недостаточно ОП';
@@ -1337,15 +1416,72 @@ function getMovementModeAvailability(movementType, route = null, evasion = armed
 
     return {
         allowed: !reason,
+        movementType,
         reason,
         usedDistance,
         remainingDistance: Math.max(0, maxDistance - usedDistance),
         usesClimbAction,
-        climbActionPoints: usesClimbAction ? climbActionPoints : 0,
+        climbActionPoints: usesClimbAction ? climbActionPoints : (routeCost.selectedClimbActionPoints||0),
         modeActionPoints,
         modeFreeActions,
         ...routeCost,
     };
+}
+
+function getSpecialMovementAvailability(route) {
+    const current=combatState?.current_character||{};
+    const base=getMovementModeAvailability(current.movement_mode_this_turn==='correction'?'walk':current.movement_mode_this_turn||'walk',{
+        ...route,special_action:null,path:[],climbs:[],climbCost:0,climb_cost:0,cost:0,
+    },Boolean(current.movement_evasion));
+    const profile=getClimbPaymentProfile(route);
+    const descending=route.special_action==='descend';
+    const actionPoints=descending?1:route.climbPayment==='action'?profile.actionPoints:0;
+    const movementPoints=descending||route.climbPayment==='action'?0:profile.movementPoints;
+    let reason=current.posture&&current.posture!=='standing'?'Перед подъёмом или спуском нужно встать':base.reason;
+    if (!reason&&Number(current.action_points_current||0)<actionPoints) reason=`Нужно ${actionPoints} ОД`;
+    if (!reason&&Number(current.movement_points_current||0)+1e-9<movementPoints) reason='Недостаточно ОП';
+    if (reason&&!route.climbPayment&&!descending&&profile.hasClimbs) {
+        const alternate=getSpecialMovementAvailability({...route,climbPayment:'action'});
+        if (alternate.allowed) return alternate;
+    }
+    return {...base,allowed:!reason,reason,movementPoints,travelMovementPoints:0,
+        modeActionPoints:actionPoints,modeFreeActions:0,climbActionPoints:actionPoints};
+}
+
+function chooseTraversalPayment(route,movementType='walk') {
+    if (combatState?.status!=='active'&&route.special_action!=='descend') return Promise.resolve('movement');
+    return new Promise(resolve=>{
+        document.getElementById('traversal-payment-modal')?.dispatchEvent(new Event('cancel'));
+        const modal=document.createElement('div');
+        modal.id='traversal-payment-modal';
+        modal.style.cssText='position:fixed;inset:0;z-index:100020;display:flex;align-items:center;justify-content:center;background:#0009';
+        const panel=document.createElement('div');
+        panel.style.cssText='background:#292b23;color:#eee8d5;padding:20px;border:1px solid #8b8d63;border-radius:8px;max-width:420px;display:grid;gap:12px';
+        const title=document.createElement('strong');
+        const descending=route.special_action==='descend';
+        title.textContent=descending?(Number(route.height_change)<-2?'Сойти с края: будет проверка падения':'Управляемый спуск без проверки')
+            :route.special_action==='climb_up'?'Оплата подъёма':route.special_action?'Оплата перелезания':'Оплата перемещения с перелезанием';
+        panel.appendChild(title);
+        const finish=value=>{modal.remove();document.removeEventListener('keydown',escape);resolve(value);};
+        const escape=event=>{if(event.key==='Escape')finish(null);};
+        for(const payment of descending?['action']:['movement','action']) {
+            const selected={...route,climbPayment:payment};
+            const available=getMovementModeAvailability(movementType,selected);
+            const button=document.createElement('button');button.type='button';button.className='btn btn-secondary';button.dataset.traversalPayment=payment;
+            const costs=[];
+            if(available.modeActionPoints)costs.push(`${available.modeActionPoints} ОД`);
+            if(available.movementPoints||payment==='movement')costs.push(`${formatMovementNumber(available.movementPoints)} ОП`);
+            if(available.modeFreeActions)costs.push(`${available.modeFreeActions} СД`);
+            button.textContent=combatState?.status!=='active'?'Спуститься':costs.join(' + ');
+            button.disabled=combatState?.status==='active'&&!available.allowed;
+            if(button.disabled)button.title=available.reason;
+            button.onclick=()=>finish(payment);panel.appendChild(button);
+        }
+        const cancel=document.createElement('button');cancel.type='button';cancel.className='btn btn-secondary';cancel.textContent='Отмена';cancel.onclick=()=>finish(null);
+        panel.appendChild(cancel);modal.appendChild(panel);document.body.appendChild(modal);
+        document.addEventListener('keydown',escape);modal.addEventListener('cancel',()=>finish(null),{once:true});
+        modal.addEventListener('pointerdown',event=>{if(event.target===modal)finish(null);});
+    });
 }
 
 function updateMovementPreview(clientX, clientY) {
@@ -1364,8 +1500,7 @@ function updateMovementPreview(clientX, clientY) {
 
     const point = getMovementPointerPoint(clientX, clientY, entry);
     if (!point) return;
-    const targetX = Math.max(0, Math.min((currentLocationData?.grid_width || 1) - 1, Math.floor(point.x)));
-    const targetY = Math.max(0, Math.min((currentLocationData?.grid_height || 1) - 1, Math.floor(point.z)));
+    const {x:targetX,y:targetY} = movementPointerPosition(point);
     const targetKey = `${targetX}:${targetY}:${movementTargetLevel}`;
     const startX = movementPreviewStartX ?? entry.posX;
     const startY = movementPreviewStartY ?? entry.posY;
@@ -1391,8 +1526,8 @@ function updateMovementPreview(clientX, clientY) {
     }
     const available = combatState?.current_character?.movement_points_current ?? 0;
     const movementType = armedMovementType || 'walk';
-    const movementMode = COMBAT_MOVEMENT_TYPES[movementType] || COMBAT_MOVEMENT_TYPES.walk;
     const availability = getMovementModeAvailability(movementType, route);
+    const movementMode = COMBAT_MOVEMENT_TYPES[availability.movementType] || COMBAT_MOVEMENT_TYPES[movementType] || COMBAT_MOVEMENT_TYPES.walk;
     const isCombatActive = combatState?.status === 'active';
     const previewKey = navigationPreviewKey(startX,startY,targetX,targetY,movementPreviewCharacterId,movementTargetLevel);
     const calculating = !route && navigationPreviewRequests.has(previewKey);
@@ -1414,12 +1549,12 @@ function updateMovementPreview(clientX, clientY) {
 
     const hint = ensureMovementPreviewHint();
     const costLabel = availability.usesClimbAction
-        ? `ОП ${availability.travelMovementPoints}/${available} + ${availability.climbActionPoints} ОД`
-        : `ОП ${cost}/${available}`;
+        ? `ОП ${formatMovementNumber(availability.travelMovementPoints)}/${formatMovementNumber(available)} + ${availability.climbActionPoints} ОД`
+        : `ОП ${formatMovementNumber(cost)}/${formatMovementNumber(available)}`;
     hint.textContent = calculating ? 'Расчёт маршрута…' : previewFailed ? 'Не удалось проверить маршрут. Выберите точку повторно.' : route
         ? isCombatActive
-            ? `${movementMode.label}: ${availability.distance} м · ${costLabel}${availability.reason ? ` · ${availability.reason}` : ''}`
-            : `Движение: ${route.distance} м`
+            ? `${movementMode.label}: ${formatMovementNumber(availability.distance)} м · ${costLabel}${availability.reason ? ` · ${availability.reason}` : ''}`
+            : `Движение: ${formatMovementNumber(route.distance)} м`
         : 'Путь заблокирован';
     hint.style.left = `${clientX + 14}px`;
     hint.style.top = `${clientY + 14}px`;
@@ -1594,8 +1729,7 @@ function commitMovementPreview(clientX, clientY) {
     const point = getMovementPointerPoint(clientX, clientY, entry);
     if (!point) return false;
 
-    const targetX = Math.max(0, Math.min((currentLocationData?.grid_width || 1) - 1, Math.floor(point.x)));
-    const targetY = Math.max(0, Math.min((currentLocationData?.grid_height || 1) - 1, Math.floor(point.z)));
+    const {x:targetX,y:targetY} = movementPointerPosition(point);
     const startX = movementPreviewStartX ?? entry.posX;
     const startY = movementPreviewStartY ?? entry.posY;
     const route = buildRoutePoints(startX, startY, targetX, targetY, movementPreviewCharacterId);
@@ -1620,19 +1754,27 @@ function commitMovementPreview(clientX, clientY) {
         return false;
     }
 
-    if (window.socket && window.currentLocationId) {
+    const characterId=movementPreviewCharacterId;
+    const emitMove=payment=>{
+        if (!window.socket||!window.currentLocationId) return;
         window.socket.emit('move_in_location', {
             token: localStorage.getItem('access_token'),
             location_id: window.currentLocationId,
-            character_id: movementPreviewCharacterId,
+            character_id: characterId,
             x: targetX,
             y: targetY,
             floor_level: route.floor_level,
-            movement_mode: movementType,
+            movement_mode: availability.movementType || movementType,
+            special_action:route.special_action,
+            object_id:route.object_id,
+            climb_payment:payment,
             evasion: combatState?.current_character?.movement_mode_this_turn
                 ? Boolean(combatState.current_character.movement_evasion) : armedMovementEvasion,
         });
-    }
+    };
+    if (route.special_action||getClimbPaymentProfile(route).hasClimbs) {
+        chooseTraversalPayment(route,movementType).then(payment=>{if(payment)emitMove(payment);});
+    } else emitMove(null);
     clearMovementPreview();
     armedMoveCharacterId = null;
     armedMovementType = null;
@@ -3007,6 +3149,16 @@ function showCombatActionMenu(clientX, clientY, characterId) {
         });
     }
     if (window.isGM) {
+        menuItems.push({
+            label: 'Перенос ГМа',
+            key: 'gm_relocation',
+            icon: '✥',
+            title: 'Поставить персонажа в любую точку выбранного этажа без маршрута и расхода ОД/ОП. Esc или ПКМ — отмена.',
+            angle: 158,
+            ringRadius: 165,
+            allowAlways: true,
+            action: () => beginGmCharacterRelocation(characterId),
+        });
         if (characterEntry?.isMutant || characterEntry?.isNpc) {
             menuItems.push({
                 label: characterEntry.gmHidden ? 'Показать' : 'Скрыть',
@@ -3907,7 +4059,7 @@ function showPostureMenu(characterId) {
                     <div style="font-size:19px; font-weight:800;">Смена положения</div>
                     <div style="margin-top:3px; opacity:0.7; font-size:12px;">
                         ${isCombatActive
-                            ? `Сейчас: ${COMBAT_POSTURES[currentPosture]?.label || 'Стоя'} · ОД ${character.action_points_current ?? 0} · ОП ${character.movement_points_current ?? 0}`
+                            ? `Сейчас: ${COMBAT_POSTURES[currentPosture]?.label || 'Стоя'} · ОД ${character.action_points_current ?? 0} · ОП ${formatMovementNumber(character.movement_points_current ?? 0)}`
                             : `Сейчас: ${COMBAT_POSTURES[currentPosture]?.label || 'Стоя'} · вне боя бесплатно`}
                     </div>
                 </div>
@@ -4549,7 +4701,7 @@ function showMovementTypeMenu(characterId, evasion = false) {
                 <div>
                     <div style="font-size:19px; font-weight:800;">Выберите вид движения</div>
                     <div style="margin-top:3px; opacity:0.7; font-size:12px;">
-                        ОД ${current.action_points_current ?? 0} · СД ${current.free_actions_current ?? 0} · ОП ${current.movement_points_current ?? 0}
+                        ОД ${current.action_points_current ?? 0} · СД ${current.free_actions_current ?? 0} · ОП ${formatMovementNumber(current.movement_points_current ?? 0)}
                     </div>
                 </div>
                 <button type="button" class="movement-type-close" style="
@@ -4606,7 +4758,7 @@ function showMovementTypeMenu(characterId, evasion = false) {
                 <strong style="display:block; font-size:15px;">${mode.label}</strong>
                 <span style="display:block; margin-top:5px; font-size:12px; opacity:0.78;">${movementSummary}</span>
                 <span style="display:block; margin-top:3px; font-size:12px; opacity:0.78;">
-                    ${resourceCost} · осталось ${availability.remainingDistance} м
+                    ${resourceCost} · осталось ${formatMovementNumber(availability.remainingDistance)} м
                 </span>
                 ${availability.reason ? `<span style="display:block; margin-top:6px; font-size:11px; color:#ffb0a8;">${availability.reason}</span>` : ''}
             </span>
@@ -5856,7 +6008,7 @@ function getVisionObjectIndex() {
             minX:pose.x-hx,maxX:pose.x+hx,minZ:pose.z-hz,maxZ:pose.z+hz,
             openings:portals.map(portal=>doorOnWall(portal,object)).filter(Boolean)});
     }
-    return visionObjectIndex = {location:currentLocationData,version:movementMapVersion,cells,walls,portals,floors};
+    return visionObjectIndex = {location:currentLocationData,version:movementMapVersion,cells,walls,portals,floors,terrainCache:new Map()};
 }
 
 function getVisionBlockerHeight(x, y, rayHeight) {
@@ -5868,14 +6020,8 @@ function getVisionBlockerHeight(x, y, rayHeight) {
     const locationObjects = (index.cells.get(`${x}:${y}`) || []).filter((object) => {
         const bottom = getTileHeight(object.tile_x, object.tile_y) + structureLevelOffset(object) + Number(object.properties?.elevation || 0);
         if (rayHeight < bottom || rayHeight > bottom + getFogObjectHeight(object)) return false;
-        if (object.type !== 'wall') return true;
-        return !index.portals.some(portal => {
-            if (!tileHasObjectFootprint(portal, x, y)) return false;
-            const opening = doorOnWall(portal, object);
-            if (!opening) return false;
-            const bottom = getTileHeight(object.tile_x, object.tile_y) + structureLevelOffset(object) + Number(object.properties?.elevation || 0) + opening.bottom;
-            return rayHeight >= bottom && rayHeight <= bottom + opening.height;
-        });
+        // Стены и проёмы проверяются точным lightPathOpen ниже, а не всем AABB клетки.
+        return object.type !== 'wall';
     });
     const height = [...tileObjects, ...locationObjects].reduce(
         (height, object) => Math.max(height, getTileHeight(x, y) + structureLevelOffset(object) + Number(object.properties?.elevation || 0) + getFogObjectHeight(object)),
@@ -5892,18 +6038,24 @@ function visionEyeHeight(entry) {
 }
 
 function hasLineOfSight(sourceX, sourceY, targetX, targetY, sourceHeight = null, targetHeight = null) {
-    let x = sourceX;
-    let y = sourceY;
-    const dx = Math.abs(targetX - sourceX);
-    const sx = sourceX < targetX ? 1 : -1;
-    const dy = -Math.abs(targetY - sourceY);
-    const sy = sourceY < targetY ? 1 : -1;
+    if (![sourceX,sourceY,targetX,targetY].every(Number.isFinite)) return false;
+    let x = Math.floor(sourceX+.5);
+    let y = Math.floor(sourceY+.5);
+    const endX = Math.floor(targetX+.5), endY = Math.floor(targetY+.5);
+    const dx = Math.abs(endX-x);
+    const sx = x < endX ? 1 : -1;
+    const dy = -Math.abs(endY-y);
+    const sy = y < endY ? 1 : -1;
     let error = dx + dy;
     const totalSteps = Math.max(dx, -dy, 1);
     const fromHeight = sourceHeight ?? (getTileHeight(sourceX, sourceY) + 1.65);
     const toHeight = targetHeight ?? (getTileHeight(targetX, targetY) + 1.65);
+    if (terrainLineHit(currentLocationData?.tiles_data || [],
+        [sourceX+.5,fromHeight,sourceY+.5], [targetX+.5,toHeight,targetY+.5],
+        getVisionObjectIndex().terrainCache,
+        hit => !terrainOpeningAt(currentLocationData?.objects || [],0,hit.x,hit.z))) return false;
     let steps = 0;
-    while (x !== targetX || y !== targetY) {
+    while (x !== endX || y !== endY) {
         const twiceError = 2 * error;
         if (twiceError >= dy) {
             error += dy;
@@ -5918,7 +6070,7 @@ function hasLineOfSight(sourceX, sourceY, targetX, targetY, sourceHeight = null,
         const blockerHeight = getVisionBlockerHeight(x, y, rayHeight);
         // A low obstacle only hides what is physically below its top edge.
         if (Number.isFinite(blockerHeight) && blockerHeight >= rayHeight) {
-            return x === targetX && y === targetY;
+            return x === endX && y === endY;
         }
     }
     return lightPathOpen(
@@ -7078,14 +7230,11 @@ function renderCombatHud() {
             ${currentVisible ? `<div>Положение: <strong>${combatState.current_character?.posture_label || 'Стоя'}</strong></div>
             <div>ОД: ${combatState.current_character?.action_points_current ?? 0}/${combatState.current_character?.action_points_max ?? 0}</div>
             <div>СД: ${combatState.current_character?.free_actions_current ?? 0}/${combatState.current_character?.free_actions_max ?? 0}</div>
-            <div>ОП: ${combatState.current_character?.movement_points_current ?? 0}/${combatState.current_character?.movement_points_max ?? 0}</div>` : ''}
+            <div>ОП: ${formatMovementNumber(combatState.current_character?.movement_points_current ?? 0)}/${formatMovementNumber(combatState.current_character?.movement_points_max ?? 0)}</div>` : ''}
             ${deferredCharacters.map(character => `<div style="margin-top:6px;padding:8px;border:1px solid rgba(255,255,255,.15);border-radius:8px;">
                 <strong>${escapeHtml(character.name)}: ${escapeHtml(character.deferred_action.label)}</strong>
-                <div>${character.deferred_action.status === 'ready' ? 'Оплачено; ожидает завершения' : `Осталось оплатить: ${character.deferred_action.remaining_action_points} ОД`}</div>
-                ${character.deferred_action.status === 'ready' && (character.deferred_action.server_executable || character.deferred_action.client_executable) && character.location_character_id === combatState.current_character?.location_character_id
-                    ? '<button type="button" class="btn btn-sm btn-secondary combat-deferred-retry">Завершить</button>' : ''}
-                ${!character.deferred_action.server_executable && !character.deferred_action.client_executable ? '<div>Старое действие без сохранённого выбора магазина. Отмените его и начните заново.</div>' : ''}
-                <button type="button" class="btn btn-sm btn-secondary combat-deferred-cancel" data-character="${character.location_character_id}" data-action="${escapeHtml(character.deferred_action.id)}" title="Без возврата уже потраченных ОД">Отменить действие</button>
+                <div>${character.deferred_action.status === 'ready' ? 'Завершается…' : `Осталось оплатить: ${character.deferred_action.remaining_action_points} ОД`}</div>
+                ${character.deferred_action.status !== 'ready' ? `<button type="button" class="btn btn-sm btn-secondary combat-deferred-cancel" data-character="${character.location_character_id}" data-action="${escapeHtml(character.deferred_action.id)}" title="Без возврата уже потраченных ОД">Отменить действие</button>` : ''}
             </div>`).join('')}
             ${combatState.current_character?.movement_evasion ? '<div>Уклонение на ходу: <strong>СЛ стрельбы по вам +2</strong></div>' : ''}
             ${aimedTarget ? `<div>Прицел: <strong>${aimedTarget.name || 'цель'}</strong> · Точность +${combatState.current_character?.aim_accuracy_bonus || 0}</div>` : ''}
@@ -7140,14 +7289,14 @@ function renderCombatHud() {
     `;
     ensureCombatHudDragging();
     combatHud.querySelector('.combat-start-requests-btn')?.addEventListener('click', showCombatStartRequestMenu);
-    combatHud.querySelector('.combat-deferred-retry')?.addEventListener('click', () => resumeCompletedCombatAction(combatState, true));
     combatHud.querySelectorAll('.combat-deferred-cancel').forEach(button => {
         button.onclick = async () => {
             button.disabled = true;
             try {
-                await Server.cancelDeferredCombatAction(window.currentLobbyId, getCurrentLocationId(), {
+                const state = await Server.cancelDeferredCombatAction(window.currentLobbyId, getCurrentLocationId(), {
                     location_character_id: Number(button.dataset.character), action_id: button.dataset.action,
                 });
+                setCombatState(state);
             } catch (error) {
                 showNotification(error.message || 'Не удалось отменить действие', 'system');
                 button.disabled = false;
@@ -7321,7 +7470,15 @@ export function setCombatState(state) {
     }
     syncCombatAreaVisuals(combatState);
     (combatState?.characters || []).forEach((character) => {
-        const entry = getCharacterModelEntry(character.character_id);
+        let entry = getCharacterModelEntry(character.character_id);
+        if(entry && typeof character.is_mutant==='boolean' && Boolean(entry.isMutant)!==character.is_mutant){
+            addCharacterToLocation(character.character_id,character.name,character.owner_id,character.owner_username,
+                character.x,character.y,character.hp_zones,character.effects,character.controlled_by,
+                character.team_name,character.team_color,character.facing_x,character.facing_y,
+                character.is_mutant,character.is_npc,character.gm_hidden,character.mutant_type,
+                character.posture,character.prone_on_back,character.floor_level,character.height);
+            entry=getCharacterModelEntry(character.character_id);
+        }
         if (entry) {
             entry.hpZones = character.hp_zones;
             entry.effects = character.effects;
@@ -7449,6 +7606,8 @@ window.addEventListener('must-do-retry-registered', event => {
 
 const resumeSavedCombatAction = createDeferredActionResumer({
     send: payload => Server.performLocationCombatAction(window.currentLobbyId, getCurrentLocationId(), payload),
+    cancel: payload => Server.cancelDeferredCombatAction(window.currentLobbyId, getCurrentLocationId(), payload),
+    applyState: state => setCombatState(state),
     resumeConsumable: async actionId => {
         const module = await import('./characterSheet.js');
         return module.resumeDeferredConsumable(window.currentLobbyId, getCurrentLocationId(), actionId);
@@ -7461,12 +7620,12 @@ window.addEventListener('character-item-operation-finished', () => {
     resumeSavedCombatAction(combatState);
 });
 
-async function resumeCompletedCombatAction(state, force = false) {
+async function resumeCompletedCombatAction(state) {
     const current = state?.current_character;
     const actionId = current?.completed_pending_action_id;
     if (current?.deferred_action) {
         deferredCombatActions.delete(current.deferred_action.id);
-        return resumeSavedCombatAction(state, { force });
+        return resumeSavedCombatAction(state);
     }
     const payload = actionId ? deferredCombatActions.get(actionId) : null;
     if (!payload) return;
@@ -7977,7 +8136,7 @@ function getLocationObjectAtScreen(clientX, clientY) {
     return mesh || null;
 }
 
-export function useLocationVerticalAccess(objectId, direction, characterId = null) {
+export async function useLocationVerticalAccess(objectId, direction, characterId = null) {
     const object = (currentLocationData?.objects || []).find(o => o.id === objectId);
     const actor = getCurrentInteractionActor(characterId);
     if (!object || !actor || !['ladder','stairs','hatch','floor_opening'].includes(object.type) || !['up','down','drop'].includes(direction)) return false;
@@ -7986,10 +8145,28 @@ export function useLocationVerticalAccess(objectId, direction, characterId = nul
     const lower = structureLevel(object) - Number(['hatch','floor_opening'].includes(object.type));
     const floor = lower + Number(direction === 'up');
     const p = structurePose(object);
+    let landing = {x:Math.floor(p.x),y:Math.floor(p.z),floor_level:floor};
+    if (direction === 'drop') {
+        try {
+            const response = await fetch(`/lobbies/${window.currentLobbyId}/locations/${currentLocationId}/movement-preview`, {
+                method:'POST',headers:{'Content-Type':'application/json',Authorization:`Bearer ${localStorage.getItem('access_token')}`},
+                body:JSON.stringify({character_id:characterId,special_action:'drop_down',object_id:object.id}),
+            });
+            const result=await response.json();
+            if (!response.ok || !result.route) {
+                showNotification('Нет свободного прохода вниз или места приземления','error');
+                return false;
+            }
+            landing={x:result.route.landing.x,y:result.route.landing.y,floor_level:result.route.floor_level};
+        } catch {
+            showNotification('Не удалось проверить спрыгивание','error');
+            return false;
+        }
+    }
     window.socket?.emit('move_in_location', {
         token:localStorage.getItem('access_token'),location_id:currentLocationId,character_id:characterId,
-        x:Math.floor(p.x),y:Math.floor(p.z),
-        ...(direction === 'drop' ? {special_action:'drop_down',object_id:object.id} : {floor_level:floor}),
+        ...landing,
+        ...(direction === 'drop' ? {special_action:'drop_down',object_id:object.id} : {}),
     });
     hideHighlight();
     hideStructureInteraction();
@@ -8012,11 +8189,11 @@ function getObjectActions(object) {
 }
 
 function getStructureActions(object) {
-    const actions = [...getObjectActions(object)];
+    const actions = [...getObjectActions(object)].filter(action=>action!=='climb');
     if (['door', 'window', 'table', 'chair', 'shelf', 'chest'].includes(object.type) && !actions.includes('rotate')) {
         actions.push('rotate');
     }
-    if ((LOW_CLIMB_OBJECT_TYPES.has(object.type) || HIGH_CLIMB_OBJECT_TYPES.has(object.type) || object.properties?.climbable) && !actions.includes('climb')) {
+    if (getMovementObjectProfile(object).climbCost>0 && !actions.includes('climb')) {
         actions.push('climb');
     }
     if (combatState?.status === 'active' && isStructureCoverObject(object)) {
@@ -8096,7 +8273,7 @@ function getObjectTraversalHeight(object) {
     const dimensions = properties.dimensions || {};
     const rawHeight = dimensions.height ?? properties.height ?? object?.height;
     const parsed = Number(rawHeight);
-    if (Number.isFinite(parsed) && parsed > 0) return parsed;
+    if (Number.isFinite(parsed) && parsed >= 0) return parsed;
 
     const type = object?.type || object?.object_type || '';
     if (type === 'ground_item' || properties.is_ground_item) return 0.08;
@@ -8261,7 +8438,8 @@ function getMovementMap(movingCharacterId = null) {
         });
     }
 
-    const result = { blockedTiles, climbCostTiles };
+    const surfaceCosts = buildMovementSurfaceCosts(currentLocationData, getObjectFootprintTiles, structureLevel);
+    const result = { blockedTiles, climbCostTiles, surfaceCosts };
     movementMapCache.set(cacheKey, result);
     return result;
 }
@@ -8335,14 +8513,22 @@ function getClimbActionMode(object) {
     return profile.climbCost >= 12 ? 'high' : 'low';
 }
 
-function performClimbAction(object, actorCharacterId) {
+async function performClimbAction(object, actorCharacterId) {
     const actor = getLocationCharacterById(actorCharacterId);
     if (!actor) {
         showNotification('Не удалось определить персонажа');
         return false;
     }
-    const landing = findClimbLandingTile(object, actor, actorCharacterId);
-    if (!landing) {
+    let route;
+    try {
+        const response=await fetch(`/lobbies/${window.currentLobbyId}/locations/${window.currentLocationId}/movement-preview`,{
+            method:'POST',headers:{'Content-Type':'application/json',Authorization:`Bearer ${localStorage.getItem('access_token')}`},
+            body:JSON.stringify({character_id:actorCharacterId,special_action:'climb',object_id:object.id}),
+        });
+        if (!response.ok) throw new Error('Предпросмотр перелезания недоступен');
+        route=(await response.json()).route;
+    } catch(error) {showNotification(error.message,'system');return false;}
+    if (!route) {
         showNotification('Не удалось найти клетку для перелезания', 'system');
         hideStructureInteraction();
         return false;
@@ -8351,15 +8537,20 @@ function performClimbAction(object, actorCharacterId) {
         showNotification('Не удалось выполнить перелезание', 'system');
         return false;
     }
+    const payment=await chooseTraversalPayment(route);
+    if (!payment) return false;
+    const landing=route.path.at(-1);
     window.socket.emit('move_in_location', {
         token: localStorage.getItem('access_token'),
         location_id: window.currentLocationId,
         character_id: actorCharacterId,
-        x: landing.x,
-        y: landing.y,
+        x: landing[0],
+        y: landing[1],
+        floor_level:route.floor_level,
         special_action: 'climb',
         object_id: object.id,
         climb_mode: getClimbActionMode(object),
+        climb_payment:payment,
     });
     hideStructureInteraction();
     return true;
@@ -8642,10 +8833,15 @@ function getMovementObjectProfile(object) {
     const properties = object.properties || {};
     const height = getObjectTraversalHeight(object);
 
-    if (properties.passable === true || PASSABLE_OBJECT_TYPES.has(type)) {
+    if (PASSABLE_OBJECT_TYPES.has(type)) {
         return { blocked: false, climbCost: 0 };
     }
 
+    const category = properties.traversal_category || 'auto';
+    if (['passable','low','high','blocked'].includes(category)) {
+        return {blocked:category==='blocked',climbCost:({low:5,high:12}[category]||0)};
+    }
+    if (properties.passable===true) return {blocked:false,climbCost:0};
     if (type === 'door') {
         if (properties.is_open) return { blocked: false, climbCost: 0 };
         if (properties.climbable) {
@@ -8656,38 +8852,21 @@ function getMovementObjectProfile(object) {
 
     if (type === 'window') return { blocked: true, climbCost: 0 };
 
-    if (properties.blocks_movement === false) {
+    if (properties.blocks_movement === false || properties.block_movement === false) {
         return { blocked: false, climbCost: 0 };
     }
 
-    if (properties.climbable || LOW_CLIMB_OBJECT_TYPES.has(type) || height <= 1.05) {
-        const climbCost = properties.climb_cost !== undefined
-            ? Number(properties.climb_cost)
-            : 5;
-        return { blocked: false, climbCost: Math.max(1, climbCost) };
-    }
-
-    if (HIGH_CLIMB_OBJECT_TYPES.has(type) || (height > 1.05 && height <= 1.6)) {
-        const climbCost = properties.climb_cost !== undefined
-            ? Number(properties.climb_cost)
-            : 12;
-        return { blocked: false, climbCost: Math.max(1, climbCost) };
-    }
-
-    if (properties.block_movement === false) {
-        return { blocked: false, climbCost: 0 };
-    }
-
-    if (properties.block_movement || TOO_HIGH_OBJECT_TYPES.has(type) || properties.blocks_movement === true || height > 1.8) {
-        return { blocked: true, climbCost: 0 };
-    }
-
-    return { blocked: true, climbCost: 0 };
+    if (height<.5) return {blocked:false,climbCost:0};
+    if (height>=2&&!properties.climbable) return {blocked:true,climbCost:0};
+    return {blocked:false,climbCost:Math.max(1,Number(properties.climb_cost ?? (height<1?5:12)))};
 }
 
 function getTileMovementProfile(x, y, movingCharacterId = null) {
     const profile = { blocked: false, climbCost: 0 };
     const movementMap = getMovementMap(movingCharacterId);
+    const level = getCharacterModelEntry(movingCharacterId)?.floorLevel || 0;
+    profile.travelCost = findCombatCharacterByCharacterId(movingCharacterId)?.ignores_difficult_surface
+        ? 1 : movementMap.surfaceCosts?.get(x + ":" + y + ":" + level) || 1;
     const tileKey = `${x}:${y}`;
     if (movementMap.blockedTiles.has(tileKey)) {
         profile.blocked = true;
@@ -8701,7 +8880,7 @@ function getTileMovementProfile(x, y, movingCharacterId = null) {
 }
 
 function findMovementPath(startX, startY, endX, endY, movingCharacterId = null, endLevel = null) {
-    if (hasStoreyNavigation() && movingCharacterId != null) {
+    if (movingCharacterId != null) {
         return serverMovementPreview(startX,startY,endX,endY,movingCharacterId,
             endLevel ?? getCharacterModelEntry(movingCharacterId)?.floorLevel ?? 0);
     }
@@ -8766,12 +8945,13 @@ function findMovementPath(startX, startY, endX, endY, movingCharacterId = null, 
             const ny = current.y + dy;
             if (!inBounds(nx, ny)) continue;
 
+            if (!ordinaryHeightTransitionAllowed(getTileHeight(current.x, current.y), getTileHeight(nx, ny))) continue;
             const tileProfile = getTileMovementProfile(nx, ny, movingCharacterId);
             if (nx === endX && ny === endY && tileProfile.climbCost > 0) continue;
             if (tileProfile.blocked && tileProfile.climbCost === 0) continue;
             if (!companionCanOccupy(nx, ny)) continue;
 
-            const stepCost = 1 + Math.max(0, tileProfile.climbCost || 0);
+            const stepCost = (tileProfile.travelCost || 1) + Math.max(0, tileProfile.climbCost || 0);
             const newCost = current.cost + stepCost;
             const nextKey = keyFor(nx, ny);
             if (costSoFar.has(nextKey) && newCost >= costSoFar.get(nextKey)) continue;
@@ -11167,8 +11347,8 @@ export function isLocationCharacterInDarkness(characterId) {
     if (!currentLocationData) return null;
     const entry = getCharacterModelEntry(characterId);
     if (!entry) return null;
-    const x = Math.floor(Number(entry.posX));
-    const z = Math.floor(Number(entry.posY));
+    const x = Math.floor(Number(entry.posX)+.5);
+    const z = Math.floor(Number(entry.posY)+.5);
     const profile = activeLightingProfile || resolveLocationLighting(
         currentLocationData.lighting, window.lobbyGameTimeMinutes ?? 480,
     );
@@ -12931,9 +13111,58 @@ export function setLocationStructureRotation(value) {
     updateBuildPreview();
 }
 
-export function rotateLocationPlacement(direction) {
+// Для выделения удержание показывает локальный preview, а не очередь сетевых команд.
+function previewLocationRotationHold(yawStep) {
+    if (!editorHeldRotation) {
+        const state = { data: currentLocationData, identity: getLocationRotationContext(), yaw: 0,
+            preview: null, scene, ready: null };
+        editorHeldRotation = state;
+        state.ready = editorHotkeyRotationQueue.then(() => {
+            if (editorHeldRotation !== state || state.data !== currentLocationData
+                || state.identity !== getLocationRotationContext()) return;
+            state.preview = createEditorGroupMovePreview();
+            state.scene.add(state.preview);
+            renderLocationRotationHold(state);
+        });
+    }
+    editorHeldRotation.yaw += yawStep;
+    renderLocationRotationHold(editorHeldRotation);
+    return true;
+}
+function renderLocationRotationHold(state) {
+    for (const mesh of state.preview?.children || []) {
+        const origin = mesh.userData.editorMoveOrigin;
+        if (origin) mesh.rotation.y = origin.rotation + state.yaw * Math.PI / 180;
+    }
+}
+export function finishLocationRotationHold(commit) {
+    const state = editorHeldRotation;
+    editorHeldRotation = null;
+    if (!state) return;
+    const remove = () => {
+        if (state.preview) { state.scene.remove(state.preview); disposeLocationObject(state.preview); }
+    };
+    if (!commit || state.data !== currentLocationData || state.identity !== getLocationRotationContext()) { remove(); return; }
+    editorHotkeyRotationQueue = state.ready.then(() => {
+        if (state.data !== currentLocationData || state.identity !== getLocationRotationContext()) return;
+        return updateSelectedLocationAssetGroup(asset => ({ rotation: asset.kind === 'lamp' && asset.lightKind !== 'spot'
+            ? asset.rotation : ((Number(asset.rotation) - state.yaw) % 360 + 360) % 360 }));
+    }).catch(error => showNotification(error.message || 'Не удалось повернуть объект', 'system')).finally(remove);
+}
+window.finishLocationRotationHold = finishLocationRotationHold;
+
+export function getLocationRotationContext() {
+    if (!window.isGM || !window.locationEditMode || !currentLocationData) return null;
+    return JSON.stringify([currentLocationData.id, houseSceneEpoch, window.locationEditorTool,
+        selectedLocationAsset && [selectedLocationAsset.id, selectedLocationAsset.kind, selectedLocationAsset.type, selectedLocationAsset.lightKind],
+        editorSelections, editorRotateMode, editorMoveMode, editorResizeMode]);
+}
+window.getLocationRotationContext = getLocationRotationContext;
+
+export function rotateLocationPlacement(direction, fraction = 1) {
     if (!window.isGM || !window.locationEditMode || ![-1, 1].includes(direction)) return false;
-    const yawStep = cameraYawStepDegrees(camera, direction);
+    if (!Number.isFinite(fraction) || fraction <= 0) return false;
+    const yawStep = cameraYawStepDegrees(camera, direction) * fraction;
     if (editorRotateMode) {
         editorRotateAngle = ((editorRotateAngle - yawStep) % 360 + 360) % 360;
         editorRotateHotkeyPending = true;
@@ -12960,6 +13189,7 @@ export function rotateLocationPlacement(direction) {
     if (editorSelections.length) {
         if (editorSelections.every(selection => selection.kind === 'lamp'
             && getEditorSource(selection)?.kind !== 'spot')) return true;
+        if (fraction !== 1) return previewLocationRotationHold(yawStep);
         const selections = editorSelections.map(selection => ({ ...selection }));
         editorHotkeyRotationQueue = editorHotkeyRotationQueue.then(() => {
             if (selections.length !== editorSelections.length
@@ -13581,11 +13811,12 @@ function getPrimaryLocationEditorAsset() {
 export function getSelectedLocationEditorAsset() {
     const asset = getPrimaryLocationEditorAsset();
     const source = getSelectedEditorSource();
-    return asset ? { ...asset, selectedCount: editorSelections.length,
+    return asset ? { ...asset, ...(editorHeldRotation ? { rotation: ((asset.rotation - editorHeldRotation.yaw) % 360 + 360) % 360 } : {}), selectedCount: editorSelections.length,
         selectionKey: editorSelection.kind === 'structure' ? `structure:${editorSelection.id}`
             : editorSelection.kind === 'lamp' ? `lamp:${editorSelection.index}`
                 : `decor:${editorSelection.x}:${editorSelection.z}:${editorSelection.index}`,
         roofEditing:roofEditPending,
+        traversalCategory:editorSelection.kind==='structure'&&!PASSABLE_OBJECT_TYPES.has(source?.type)?(source?.properties?.traversal_category||'auto'):null,
         hidden: Boolean(editorSelection.kind === 'structure' ? source?.properties?.gm_hidden : source?.gm_hidden) } : null;
 }
 
@@ -13818,6 +14049,8 @@ function cancelCurrentAssetResizeDrag() {
 }
 
 function clearEditorSelection() {
+    window.stopMapRotationHold?.();
+    finishLocationRotationHold(false);
     if (editorSelection?.kind === 'lamp') applyLocationLighting();
     editorSelection = null;
     editorSelections = [];
@@ -14735,6 +14968,20 @@ export async function scaleSelectedLocationAssets(grow) {
 
 export async function updateSelectedLocationAssetDetails(...args) {
     return runLocationObjectCommand(() => updateSelectedLocationAssetDetailsImpl(...args));
+}
+export async function setSelectedLocationTraversalCategory(category) {
+    if (!window.isGM||editorSelections.length!==1||editorSelection?.kind!=='structure'
+        ||!['auto','passable','low','high','blocked'].includes(category)) return false;
+    try {
+        return await runLocationObjectCommand(async()=>{
+            const source=getSelectedEditorSource();
+            if (!source) return false;
+            const updated=await editorUpdateObject(window.currentLobbyId,source.id,{properties:{traversal_category:category}});
+            updateLocationObject(updated);notifyEditorSelection();return true;
+        });
+    } catch(error) {
+        showNotification(error.message||'Не удалось изменить проходимость','system');return false;
+    }
 }
 async function updateSelectedLocationAssetDetailsImpl({ x, z, height, elevation, intensity, distance, color, rotation, dimensions, roofType, buildingId, level, detachRoof } = {}) {
     const source = getSelectedEditorSource();
@@ -16744,6 +16991,16 @@ function brushStrokeTiles(fromX, fromZ, toX, toZ) {
 function setupCharacterDragging() {
     if (!renderer) return;
     const canvas = renderer.domElement;
+    let cancelledPlacementByRightClick=false;
+    const cancelPlacementOnRightPointerDown=event=>{
+        if(event.button!==2||!pendingCharacterPlacement)return;
+        cancelledPlacementByRightClick=true;
+        event.preventDefault();event.stopImmediatePropagation();
+        cancelCharacterPlacement();
+        showNotification('Размещение персонажа отменено','system');
+    };
+    window.addEventListener('pointerdown',cancelPlacementOnRightPointerDown,true);
+    handlers.window.characterPlacementCancelPointerDown=cancelPlacementOnRightPointerDown;
 
     function getCharacterAtScreen(clientX, clientY) {
         const rect = canvas.getBoundingClientRect();
@@ -16809,6 +17066,7 @@ function setupCharacterDragging() {
         if (armedMoveCharacterId && !isDraggingCharacter) {
             updateMovementPreview(e.clientX, e.clientY);
         }
+        if (pendingCharacterPlacement?.gmRelocation) updateGmRelocationPreview(e.clientX,e.clientY);
         if (pendingCombatAction) {
             updateAttackPreview(e.clientX, e.clientY);
         }
@@ -16870,7 +17128,21 @@ function setupCharacterDragging() {
 
     // pointerdown - начало перетаскивания
     const onPointerDown = (e) => {
+        if(e.button===2){
+            cancelledPlacementByRightClick=Boolean(pendingCharacterPlacement);
+            if(cancelledPlacementByRightClick){
+                e.preventDefault();e.stopImmediatePropagation();
+                cancelCharacterPlacement();
+                showNotification('Размещение персонажа отменено','system');
+            }
+            return;
+        }
         if (e.button !== 0) return;
+        if (pendingCharacterPlacement?.gmRelocation) {
+            e.preventDefault();e.stopImmediatePropagation();
+            void commitGmCharacterRelocation(e.clientX,e.clientY);
+            return;
+        }
         if (structureActionMenu?.style.display === 'block') {
             e.preventDefault();
             e.stopImmediatePropagation();
@@ -17018,6 +17290,9 @@ function setupCharacterDragging() {
         let newZ = (hit || intersectPoint).z + dragCharacter.offsetZ;
         newX = Math.max(0.5, Math.min(currentLocationData.grid_width - 0.5, newX));
         newZ = Math.max(0.5, Math.min(currentLocationData.grid_height - 0.5, newZ));
+        const destination=movementPointerPosition({x:newX,z:newZ});
+        newX=destination.x+.5;
+        newZ=destination.y+.5;
         const tileX = Math.floor(newX);
         const tileZ = Math.floor(newZ);
         const height = getTileHeight(tileX, tileZ) + (getCharacterModelEntry(dragCharacter.characterId)?.floorLevel || 0) * STOREY_HEIGHT;
@@ -17025,8 +17300,8 @@ function setupCharacterDragging() {
         const entry = characterModels.get(dragCharacter.characterId);
         if (entry) {
             entry.label.position.set(newX, height + characterLabelOffset(entry), newZ);
-            entry.posX = tileX;
-            entry.posY = tileZ;
+            entry.posX = Number((newX-.5).toFixed(1));
+            entry.posY = Number((newZ-.5).toFixed(1));
         }
         if (armedMoveCharacterId && dragCharacter.characterId === armedMoveCharacterId) {
             updateMovementPreview(e.clientX, e.clientY);
@@ -17044,8 +17319,8 @@ function setupCharacterDragging() {
         e.preventDefault();
         const entry = characterModels.get(dragCharacter.characterId);
         if (entry) {
-            const newX = Math.floor(entry.posX);
-            const newY = Math.floor(entry.posY);
+            const newX = entry.posX;
+            const newY = entry.posY;
             const movementCost = Math.max(Math.abs(newX - dragCharacter.startX), Math.abs(newY - dragCharacter.startZ));
             const activeCombatCharacter = combatState?.current_character || null;
             const isCombatActive = combatState?.status === 'active';
@@ -17096,6 +17371,12 @@ function setupCharacterDragging() {
     const onContextMenu = (e) => {
         e.preventDefault();
         e.stopImmediatePropagation();
+        if(cancelledPlacementByRightClick){cancelledPlacementByRightClick=false;return;}
+        if (pendingCharacterPlacement) {
+            cancelCharacterPlacement();
+            showNotification('Размещение персонажа отменено','system');
+            return;
+        }
         if (cancelLocationEditorContextAction()) return;
         if (pendingCombatAction) {
             showNotification('Выберите цель левой кнопкой мыши или нажмите Esc для отмены', 'system');
@@ -17185,6 +17466,12 @@ function setupCharacterDragging() {
             return;
         }
         if (e.key !== 'Escape') return;
+        if (pendingCharacterPlacement) {
+            e.preventDefault();e.stopImmediatePropagation();
+            cancelCharacterPlacement();
+            showNotification('Размещение персонажа отменено','system');
+            return;
+        }
         if (editorPaste) { e.preventDefault();cancelLocationPaste();return; }
         if (objectEdit?.phase === 'stroke') {
             e.preventDefault();
@@ -17224,14 +17511,6 @@ function setupCharacterDragging() {
         if (window.locationEditMode && editorSelections.length) {
             e.preventDefault();
             clearEditorSelection();
-            return;
-        }
-        if (pendingCharacterPlacement) {
-            e.preventDefault();
-            pendingCharacterPlacement = null;
-            pendingCharacterPlacementQueue = [];
-            canvas.style.cursor = 'default';
-            showNotification('Размещение персонажа отменено', 'system');
             return;
         }
         if (movementTypeMenu && movementTypeMenu.style.display !== 'none') {
@@ -17470,6 +17749,11 @@ export function setupLocationEditing() {
         if (document.activeElement?.closest?.('#location-floor-menu')) document.activeElement.blur();
         if (e.button !== 0) return;
         if (e.target !== canvas) return;
+        if (pendingCharacterPlacement?.gmRelocation) {
+            e.preventDefault();e.stopImmediatePropagation();
+            void commitGmCharacterRelocation(e.clientX,e.clientY);
+            return;
+        }
         if (editorPaste) {
             e.preventDefault(); e.stopImmediatePropagation();
             onPointerMove(e);
@@ -17795,6 +18079,7 @@ export function setupLocationEditing() {
         const characterId = parsed.characterId || groupIds[0];
         const ownerId = parsed.ownerId;
         if (!characterId) return;
+        cancelCharacterPlacement();
         openOwnerSelectionModal(characterId, tileX, tileZ, ownerId, {
             isMutant: Boolean(parsed.isMutant),
             onConfirm: groupIds.length > 1
@@ -17806,6 +18091,9 @@ export function setupLocationEditing() {
     };
     canvas.addEventListener('drop', onDrop);
     handlers.canvas.drop = onDrop;
+    const onCharacterDragEnd=()=>{previewValid=false;clearCharacterPlacementPreview();};
+    window.addEventListener('dragend',onCharacterDragEnd);
+    handlers.window.dragend=onCharacterDragEnd;
 
     const onWheel = (e) => {
         if (e.altKey) e.preventDefault();
@@ -17829,11 +18117,12 @@ export function setupLocationEditing() {
         // Keys describe handler roles; several are not DOM event names.
         // Remove each subscription before dropping its function reference.
         const windowEvents = {
+            characterPlacementCancelPointerDown:['pointerdown'],
             cameraBlur: ['blur'], pointerMove: ['pointermove'], pointerMoveWithDrag: ['pointermove'],
             combatHudPointerMove: ['pointermove'], combatHudPointerUp: ['pointerup', 'pointercancel'],
         };
         Object.keys(handlers.window).forEach(key => {
-            for (const type of windowEvents[key] || [key]) window.removeEventListener(type, handlers.window[key]);
+            for (const type of windowEvents[key] || [key]) window.removeEventListener(type, handlers.window[key],key==='characterPlacementCancelPointerDown');
             delete handlers.window[key];
         });
         const canvasEvents = {
@@ -17863,7 +18152,7 @@ export function setupLocationEditing() {
 }
 
 // ========== Модальное окно выбора владельца ==========
-async function spawnCharacterAtTile(characterId, tileX, tileZ, assignToUserId) {
+async function spawnCharacterAtTile(characterId, tileX, tileZ, assignToUserId, options = {}) {
     const response = await fetch(`/lobbies/${window.currentLobbyId}/locations/${getCurrentLocationId()}/spawn_character`, {
         method: 'POST',
         headers: {
@@ -17873,6 +18162,8 @@ async function spawnCharacterAtTile(characterId, tileX, tileZ, assignToUserId) {
         body: JSON.stringify({
             character_id: characterId, tile_x: tileX, tile_y: tileZ,
             assign_to_user_id: assignToUserId,
+            floor_level: options.floorLevel ?? (window.isGM ? locationViewLevel : 0),
+            ...(options.forceRelocate ? {force_relocate:true} : {}),
         }),
     });
     if (!response.ok) {
@@ -17915,6 +18206,15 @@ async function spawnMutantGroupNearTile(characterIds, centerX, centerY, assignTo
 }
 
 export async function openOwnerSelectionModal(characterId, tileX, tileZ, dragDataOwnerId, callbacks = {}) {
+    clearCharacterPlacementPreview();
+    if(window.isGM && getCharacterModelEntry(characterId)){
+        try{
+            if(callbacks.onConfirm)await callbacks.onConfirm(undefined);
+            else await spawnCharacterAtTile(characterId,tileX,tileZ,undefined,{forceRelocate:true});
+            callbacks.onSuccess?.();
+        }catch(error){showNotification(error.message,'error');callbacks.onCancel?.();}
+        return;
+    }
     const lobbyParticipants = window.lobbyParticipants || [];
     const currentUserId = parseInt(localStorage.getItem('user_id'));
     const isGM = window.isGM;
@@ -17996,9 +18296,20 @@ export async function openOwnerSelectionModal(characterId, tileX, tileZ, dragDat
 }
 
 function cancelCharacterPlacement() {
+    clearCharacterPlacementPreview();
     pendingCharacterPlacement = null;
     pendingCharacterPlacementQueue = [];
     if (renderer) renderer.domElement.style.cursor = 'default';
+}
+
+function clearCharacterPlacementPreview() {
+    clearMovementPreview();
+    if(previewSprite){
+        scene?.remove(previewSprite);
+        previewSprite.material.map?.dispose();
+        previewSprite.material.dispose();
+        previewSprite=null;
+    }
 }
 
 function activateNextCharacterPlacement() {
@@ -18010,16 +18321,20 @@ function activateNextCharacterPlacement() {
     renderer.domElement.style.cursor = 'crosshair';
     const remaining = pendingCharacterPlacementQueue.length;
     showNotification(
-        `Выберите клетку для ${pendingCharacterPlacement.name}${remaining ? ` · затем ещё ${remaining}` : ''}. Esc отменяет размещение.`,
+        pendingCharacterPlacement.gmRelocation
+            ? `Перенос ГМа: выберите точку для ${pendingCharacterPlacement.name}. Esc или ПКМ — отмена.`
+            : `Выберите клетку для ${pendingCharacterPlacement.name}${remaining ? ` · затем ещё ${remaining}` : ''}. Esc или ПКМ — отмена.`,
         'system',
     );
 }
 
-export function beginCharacterPlacement(characterOrCharacters) {
+export function beginCharacterPlacement(characterOrCharacters, options = {}) {
     const characters = Array.isArray(characterOrCharacters) ? characterOrCharacters : [characterOrCharacters];
     if (!locationActive || !currentLocationData || !renderer) {
         return false;
     }
+    if (options.gmRelocation && !window.isGM) return false;
+    cancelCharacterPlacement();
     pendingCharacterPlacementQueue = characters.map(character => {
         const characterId = Number(character?.id ?? character?.characterId);
         if (!characterId) return null;
@@ -18028,6 +18343,7 @@ export function beginCharacterPlacement(characterOrCharacters) {
             ownerId: Number(character?.owner_id ?? character?.ownerId) || null,
             name: character?.name || `#${characterId}`,
             isMutant: Boolean(character?.data?.is_mutant || character?.data?.basic?.is_mutant),
+            gmRelocation: Boolean(options.gmRelocation),
         };
     }).filter(Boolean);
     if (!pendingCharacterPlacementQueue.length) return false;
@@ -18035,8 +18351,73 @@ export function beginCharacterPlacement(characterOrCharacters) {
     return true;
 }
 
+function beginGmCharacterRelocation(characterId) {
+    const entry=getCharacterModelEntry(characterId);
+    if (!window.isGM || !entry) return false;
+    cancelCharacterPlacement();
+    window.cancelCommonMapTool?.();
+    clearPendingCombatAction();
+    hideStructureInteraction();
+    closeFacingMenu();
+    closeMovementTypeMenu();
+    armedMoveCharacterId=null;
+    clearMovementPreview();
+    return beginCharacterPlacement({id:characterId,name:entry.name},{gmRelocation:true});
+}
+
+function gmRelocationDestination(clientX,clientY) {
+    let point=getPointerWorldPoint(clientX,clientY);
+    if (!point) return null;
+    const level=locationViewLevel;
+    for (let i=0;i<4;i++) {
+        point=getPointerWorldPoint(clientX,clientY,getTileHeight(Math.floor(point.x),Math.floor(point.z))+level*STOREY_HEIGHT);
+        if (!point) return null;
+    }
+    const floors=locationObjectMeshes.filter(root=>root.visible
+        && root.userData.locationObject?.type==='floor' && structureLevel(root.userData.locationObject)===level);
+    const floorHit=raycaster.intersectObjects(floors,true).find(hit=>hit.object.visible);
+    const terrainHit=level===0?raycaster.intersectObjects(tileCubes,false)[0]:null;
+    point=floorHit?.point || terrainHit?.point || point;
+    if(point.x<.5||point.z<.5||point.x>currentLocationData.grid_width-.5||point.z>currentLocationData.grid_height-.5)return null;
+    return {...movementPointerPosition(point),level,height:point.y};
+}
+
+function updateGmRelocationPreview(clientX,clientY) {
+    if (!window.isGM || !pendingCharacterPlacement?.gmRelocation) return null;
+    const destination=gmRelocationDestination(clientX,clientY);
+    const entry=getCharacterModelEntry(pendingCharacterPlacement.characterId);
+    if (!entry || !destination) {
+        if(movementPreviewGhost)movementPreviewGhost.visible=false;
+        return null;
+    }
+    renderer.domElement.style.cursor='crosshair';
+    if(!movementPreviewGhost){movementPreviewGhost=createTransparentClone(entry.model,.35);scene.add(movementPreviewGhost);}
+    movementPreviewGhost.visible=true;
+    movementPreviewGhost.position.set(destination.x+.5,destination.height,destination.y+.5);
+    movementPreviewGhost.rotation.copy(entry.model.rotation);
+    movementPreviewGhost.scale.copy(entry.model.scale);
+    return destination;
+}
+
+async function commitGmCharacterRelocation(clientX,clientY) {
+    if (!window.isGM || !pendingCharacterPlacement?.gmRelocation) return false;
+    const destination=updateGmRelocationPreview(clientX,clientY);
+    if(!destination)return false;
+    const characterId=pendingCharacterPlacement.characterId;
+    cancelCharacterPlacement();
+    try {
+        await spawnCharacterAtTile(characterId,destination.x,destination.y,undefined,{forceRelocate:true,floorLevel:destination.level});
+        showNotification('Персонаж перенесён','success');
+        return true;
+    } catch(error) {
+        showNotification(error.message||'Не удалось перенести персонажа','error');
+        return false;
+    }
+}
+
 // ========== Управляющие функции для UI ==========
 export function setLocationEditMode(enabled) {
+    window.stopMapRotationHold?.();
     window.cancelCommonMapTool?.();
     if (!enabled) cancelLocationPaste();
     if (!enabled && objectEdit?.phase === 'stroke') void finishLocationBrushStroke(true);

@@ -1,8 +1,10 @@
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const WIDGET_SKILL_VALUES_EXPRESSION = `({base:document.querySelector('#sheet-content [name="skills.physical.will.base"]').value,bonus:document.querySelector('#sheet-content [name="skills.physical.will.bonus"]').value})`;
 
-module.exports = async ({ page, request, token, lobby, login, profile, base, connect, debugPort }) => {
+module.exports = async ({ page, request, token, lobby, login, profile, base, connect, debugPort, safeSession, focusRegression=false }) => {
+    const artifactDir = safeSession ? safeSession.artifacts : profile;
     const template = await request(`/lobbies/${lobby.id}/templates`, { name: 'Widget pistol', category: 'weapon',
         subcategory: 'Пистолет', weight: 1, volume: 1, attributes: { fixedMagazine: true, magazine_size: 6, caliber: '9x19', damage: 25 } }, token);
     const medicine = await request(`/lobbies/${lobby.id}/templates`, { name: 'Проверочный препарат', category: 'consumable',
@@ -46,6 +48,15 @@ module.exports = async ({ page, request, token, lobby, login, profile, base, con
     await page.evaluate(`window.openCharacterSheet(${character.id})`);
     await page.until(`document.body.classList.contains('character-sheet-open') && document.querySelectorAll('#sheet-content .sheet-pin').length>10`, 'sheet pin controls');
     assert.equal(await page.evaluate(`getComputedStyle(document.querySelector('.lobby-menu')).visibility==='hidden' && getComputedStyle(document.getElementById('panel-participants')).visibility==='hidden' && getComputedStyle(document.getElementById('panel-common-tools')).visibility==='hidden'`), true);
+    const masteryKeys = await page.evaluate(`(async()=>Object.keys((await import('/static/js/characterWidgets.js')).weaponMasteryLabels))()`);
+    const catalogueState = `(()=>{const root=document.getElementById('sheet-content');return{fields:[...root.querySelectorAll('[name]')].map(control=>control.name).filter(name=>name.startsWith('skills.specialized.')&&name.endsWith('.level')),blocks:[...root.querySelectorAll('.sheet-pin')].flatMap(button=>(button.dataset.pinBlocks||'').split(' ')).filter(Boolean)}})()`;
+    try {
+        await page.until(`(()=>{const state=${catalogueState};return ${JSON.stringify(masteryKeys)}.every(key=>state.fields.includes('skills.specialized.'+key+'.level')&&state.blocks.includes('weapon-mastery:'+key))})()`, 'семь специализаций и pin-кнопок готовы');
+    } catch (error) {
+        const state=await page.evaluate(catalogueState);
+        fs.writeFileSync(path.join(artifactDir,'widget-catalogue-readiness.json'),JSON.stringify(state,null,2));
+        throw error;
+    }
     const agreed = await page.evaluate(`[...document.querySelectorAll('#sheet-content .sheet-pin')].flatMap(b=>b.dataset.pinBlocks.split(' '))`);
     for (const block of ['health-pool', 'health-status', 'blood-check', 'infection', 'needs', 'organs', 'health-summary', 'effects', 'effect', 'addictions', 'zone:head',
         'weapon-mastery:pistols', 'equipment:helmet', 'equipment:gasMask', 'equipment:armor', 'protection:armor', 'coverage:armor', 'modifications:armor',
@@ -88,7 +99,7 @@ module.exports = async ({ page, request, token, lobby, login, profile, base, con
     await page.evaluate(`(()=>{const i=document.querySelector('${itemPanel} [data-widget-key="weight"]');i.value='0.35';i.dispatchEvent(new Event('change',{bubbles:true}))})()`);
     await page.until(`document.querySelector('${itemPanel} [data-widget-key="weight"]')?.value==='0.35' && !document.querySelector('${itemPanel} input').disabled`, 'fractional weight saved');
     assert.equal((await request(`/lobbies/characters/${character.id}`, null, token, 'GET')).data.inventory.pockets[1].weight, .35);
-    fs.writeFileSync(path.join(profile, 'inventory-widget-fields.png'), Buffer.from((await page.call('Page.captureScreenshot', { format: 'png' })).data, 'base64'));
+    fs.writeFileSync(path.join(artifactDir, 'inventory-widget-fields.png'), Buffer.from((await page.call('Page.captureScreenshot', { format: 'png' })).data, 'base64'));
     await page.evaluate(`document.querySelector('${itemPanel} [data-widget-control$=":quantity-up"]').click()`);
     await page.until(`document.querySelector('${itemPanel} [data-widget-control$=":quantity"]')?.value==='4' && !document.querySelector('${itemPanel} input').disabled`, 'inventory quantity through original closure');
     const movedItem = await request(`/lobbies/characters/${character.id}`, null, token, 'GET');
@@ -104,7 +115,7 @@ module.exports = async ({ page, request, token, lobby, login, profile, base, con
     await page.evaluate('window.closeCharacterSheet()');
     await page.until(`document.querySelectorAll('#character-widget-${backpackPin.id} .widget-inventory-field').length===3`, 'backpack contains labeled item fields');
     assert.equal(await page.evaluate(`(()=>{const p=document.querySelector('#character-widget-${backpackPin.id} .panel-content');return p.scrollWidth<=p.clientWidth+1})()`), true);
-    fs.writeFileSync(path.join(profile, 'backpack-widget-fields.png'), Buffer.from((await page.call('Page.captureScreenshot', { format: 'png' })).data, 'base64'));
+    fs.writeFileSync(path.join(artifactDir, 'backpack-widget-fields.png'), Buffer.from((await page.call('Page.captureScreenshot', { format: 'png' })).data, 'base64'));
     await page.evaluate(`document.querySelector('#character-widget-${backpackPin.id} .panel-header button').click()`);
     for (const pin of extraPrefs) await page.evaluate(`document.querySelector('#character-widget-${pin.id} .panel-header button').click()`);
     await page.evaluate(`window.openCharacterSheet(${character.id})`);
@@ -118,7 +129,7 @@ module.exports = async ({ page, request, token, lobby, login, profile, base, con
     };
     await page.evaluate(`document.querySelector('[data-tab="equipment"]').click()`);
     await page.evaluate(`document.querySelector('[data-equipment-panel="cosmetic"]').open=true;document.querySelector('[data-equipment-group="cosmetic"]').scrollIntoView({block:'center'})`);
-    fs.writeFileSync(path.join(profile, 'cosmetic-pin-buttons.png'), Buffer.from((await page.call('Page.captureScreenshot', { format: 'png' })).data, 'base64'));
+    fs.writeFileSync(path.join(artifactDir, 'cosmetic-pin-buttons.png'), Buffer.from((await page.call('Page.captureScreenshot', { format: 'png' })).data, 'base64'));
     assert.equal(await page.evaluate(`(()=>{
         return ['headphones','glasses','gloves'].every(key=>{
             const pin=document.querySelector('.sheet-pin[data-pin-block="cosmetic:'+key+'"]');
@@ -127,7 +138,7 @@ module.exports = async ({ page, request, token, lobby, login, profile, base, con
             return remove.textContent==='Снять' && pin.parentElement===remove.parentElement && a.left>=b.right && a.left-b.right<=8 && Math.abs(a.top+a.height/2-b.top-b.height/2)<2;
         });
     })()`), true, 'cosmetic unequip and pin buttons sit side by side');
-    fs.writeFileSync(path.join(profile, 'cosmetic-pin-buttons.png'), Buffer.from((await page.call('Page.captureScreenshot', { format: 'png' })).data, 'base64'));
+    fs.writeFileSync(path.join(artifactDir, 'cosmetic-pin-buttons.png'), Buffer.from((await page.call('Page.captureScreenshot', { format: 'png' })).data, 'base64'));
     const collisions = await page.evaluate(`(()=>{
         const failures=[];
         for(const key of ['gasMask','armor']){
@@ -143,8 +154,122 @@ module.exports = async ({ page, request, token, lobby, login, profile, base, con
     await hover('#sheet-content .loadout-slot[data-equipment-open="weapon-0"]', 'Widget pistol');
     await page.evaluate(`document.querySelector('[data-tab="inventory"]').click()`);
     await hover('#sheet-tab-inventory [data-item-template-id="' + (medicine.id + 1000000) + '"] strong', 'Описание проверочного предмета');
-    fs.writeFileSync(path.join(profile, 'inventory-hover-tooltip.png'), Buffer.from((await page.call('Page.captureScreenshot', { format: 'png' })).data, 'base64'));
+    fs.writeFileSync(path.join(artifactDir, 'inventory-hover-tooltip.png'), Buffer.from((await page.call('Page.captureScreenshot', { format: 'png' })).data, 'base64'));
     console.log('PASS: agreed block catalogue, damaged organs only, melee, effect edit, inventory quantity/transfer and visible equipment/item hover tooltips');
+
+    if (safeSession) {
+        // #51 использует уже существующий legacy-экземпляр и hover выше, без второго предмета.
+        const readCharacter = () => request(`/lobbies/characters/${character.id}`, null, token, 'GET');
+        const waitSaved = async (predicate, label) => {
+            for (let attempt=0;attempt<150;attempt++) {
+                const state=await readCharacter();
+                if(predicate(state.data)) {
+                    await page.evaluate(`(async()=>{const {Server}=await import('/static/js/api.js');await Server.waitForCharacterSave(${character.id})})()`);
+                    const confirmed=await readCharacter();
+                    if(predicate(confirmed.data))return confirmed.data;
+                }
+                await new Promise(resolve=>setTimeout(resolve,100));
+            }
+            assert.fail('Нет серверного подтверждения: '+label);
+        };
+        // Реальный ввод CDP: input/change имеют isTrusted для _manual_fields, в отличие от Event().
+        const fillNative = async (selector, text) => {
+            await page.until(`document.querySelector(${JSON.stringify(selector)})?.getClientRects().length`, 'поле ручного ввода');
+            await page.evaluate(`document.querySelector(${JSON.stringify(selector)}).scrollIntoView({block:'center'})`);
+            await page.evaluate('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
+            const point=await page.evaluate(`(()=>{const r=document.querySelector(${JSON.stringify(selector)}).getBoundingClientRect();return{x:r.x+r.width/2,y:r.y+r.height/2}})()`);
+            for(const type of ['mousePressed','mouseReleased'])await page.call('Input.dispatchMouseEvent',{type,...point,button:'left',buttons:type==='mousePressed'?1:0,clickCount:1});
+            await page.call('Input.dispatchKeyEvent',{type:'keyDown',key:'a',code:'KeyA',windowsVirtualKeyCode:65,modifiers:2});
+            await page.call('Input.dispatchKeyEvent',{type:'keyUp',key:'a',code:'KeyA',windowsVirtualKeyCode:65,modifiers:0});
+            await page.call('Input.insertText',{text:String(text)});
+            for(const type of ['keyDown','keyUp'])await page.call('Input.dispatchKeyEvent',{type,key:'Tab',code:'Tab',windowsVirtualKeyCode:9,modifiers:0});
+        };
+        let regressionPeer;
+        if(focusRegression){
+            assert.equal(process.env.VTT_SAFE_SCENARIO,'sheet-repro');
+            await request('/auth/register',{username:'sheet-repro-reader',email:'sheet-repro-reader@example.test',password:'synthetic-sheet-repro'});
+            const reader=await request('/auth/login',{username:'sheet-repro-reader',password:'synthetic-sheet-repro'});
+            await request(`/lobbies/${lobby.id}/join`,{},reader.access_token);
+            await request(`/lobbies/characters/${character.id}/visibility`,{visible_to:[reader.user_id],editable_to:[]},token,'PUT');
+            const version=await(await fetch(`http://127.0.0.1:${debugPort}/json/version`)).json(),protocol=await connect(version.webSocketDebuggerUrl);
+            const context=await protocol.call('Target.createBrowserContext'),target=await protocol.call('Target.createTarget',{url:base,browserContextId:context.browserContextId});
+            const info=(await(await fetch(`http://127.0.0.1:${debugPort}/json`)).json()).find(t=>t.id===target.targetId);assert.ok(info);
+            regressionPeer=await connect(info.webSocketDebuggerUrl);await regressionPeer.call('Page.enable');await regressionPeer.call('Runtime.enable');
+            await require('./durable_reload.browser.cjs').waitForDocument(regressionPeer,{href:base,label:'sheet reader origin'});
+            await regressionPeer.evaluate(`localStorage.setItem('access_token',${JSON.stringify(reader.access_token)});localStorage.setItem('user_id',${JSON.stringify(String(reader.user_id))});true`);
+            await regressionPeer.call('Page.navigate',{url:base+`/lobbies/${lobby.id}/page`});
+            await regressionPeer.until(`typeof openCharacterSheet==='function'&&window.socket?.connected&&window.isGM===false`,'ordinary sheet reader');
+            await regressionPeer.evaluate(`window.sheetReproEvents=[];socket.on('character_data_updated',p=>{if(p.character_id===${character.id})sheetReproEvents.push({source:p.source||null,data:p.updates?.data,transport:socket.io.engine.transport.name})});openCharacterSheet(${character.id});true`);
+            await regressionPeer.until(`document.body.classList.contains('character-sheet-open')&&document.querySelector('#sheet-content [name="health.current"]')`,'reader sheet before edits');
+            const ack=await regressionPeer.evaluate(`new Promise(resolve=>socket.emit('join_character',{character_id:${character.id},token:localStorage.getItem('access_token')},resolve))`);assert.equal(ack.ok,true);
+        }
+        const initial=(await readCharacter()).data;
+        const legacy=[...initial.inventory.backpack,...initial.inventory.pockets].find(item=>item.id==='widget-medicine');
+        assert.ok(legacy,'ранее добавленный legacy-предмет сохранён');
+        const repro={cards:{item:'6ae4891464ddc8c03ef03fe1',skills:'6ae48917bc96d644e211e009',effects:'6ae4891e30cd7d53b3c9238f'},
+            legacy:{id:legacy.id,templateId:legacy.templateId,hasInstanceNotes:Boolean(legacy.attributes?.notes)}, assertions:[]};
+        await page.evaluate(`document.querySelector('[data-tab="skills"]').click()`);
+        await fillNative('#sheet-content [name="skills.physical.will.base"]','14');
+        await waitSaved(data=>data.skills.physical.will.base===14,'ручной base=14');
+        await fillNative('#sheet-content [name="skills.physical.will.bonus"]','3');
+        await waitSaved(data=>data.skills.physical.will.base===14&&data.skills.physical.will.bonus===3,'ручной bonus=3');
+        repro.assertions.push('Ручные base/bonus сохранены на сервере');
+        await page.evaluate(`document.querySelector('[data-tab="basic"]').click()`);
+        const count=await page.evaluate(`document.querySelectorAll('#sheet-content [name^="health.effects."][name$=".name"]').length`);
+        await page.evaluate(`document.querySelector('#sheet-content [onclick="addEffect()"]').click()`);
+        await page.until(`document.querySelectorAll('#sheet-content [name^="health.effects."][name$=".name"]').length===${count+1}`, 'новый custom-эффект от кнопки');
+        const name=await page.evaluate(`[...document.querySelectorAll('#sheet-content [name^="health.effects."][name$=".name"]')].at(-1).name`);
+        const prefix=name.slice(0,-'.name'.length);
+        const manualName='Ручной эффект REG-REPRO-A';
+        await fillNative(`#sheet-content [name="${name}"]`,manualName);
+        await fillNative(`#sheet-content [name="${prefix}.value"]`,'7');
+        await fillNative(`#sheet-content [name="${prefix}.remaining"]`,'4');
+        const saved=await waitSaved(data=>data.health.effects.some(effect=>effect.name===manualName&&effect.type==='custom'&&effect.value===7&&effect.remaining===4),'custom name/value/remaining');
+        const manual=saved.health.effects.find(effect=>effect.name===manualName);
+        assert.ok(typeof manual.id==='string'&&manual.id.length>0,'сервер сохранил стабильный ID custom-эффекта');
+        const neighbor=saved.health.effects.findIndex(effect=>effect.id==='widget-effect');
+        assert.ok(neighbor>=0,'соседний исходный эффект существует');
+        await page.evaluate(`document.querySelector('#sheet-content [onclick="removeEffect(${neighbor})"]').click()`);
+        const expected=data=>data.skills.physical.will.base===14&&data.skills.physical.will.bonus===3
+            &&!data.health.effects.some(effect=>effect.id==='widget-effect')
+            &&data.health.effects.filter(effect=>effect.id===manual.id&&effect.name===manualName&&effect.type==='custom'&&effect.value===7&&effect.remaining===4).length===1;
+        await waitSaved(expected,'удалён сосед, custom ID/данные сохранены');
+        const checkUI=async label=>{
+            await page.evaluate(`document.querySelector('[data-tab="skills"]').click()`);
+            assert.deepEqual(await page.evaluate(WIDGET_SKILL_VALUES_EXPRESSION),{base:'14',bonus:'3'},label);
+            await page.evaluate(`document.querySelector('[data-tab="basic"]').click()`);
+            assert.equal(await page.evaluate(`[...document.querySelectorAll('#sheet-content [name^="health.effects."][name$=".name"]')].filter(input=>input.value===${JSON.stringify(manualName)}).length`),1,label+' custom отображается один раз');
+            assert.deepEqual(await page.evaluate(`(()=>{const input=[...document.querySelectorAll('#sheet-content [name^="health.effects."][name$=".name"]')].find(i=>i.value===${JSON.stringify(manualName)});const root=input.name.slice(0,-5);const value=suffix=>document.querySelector('#sheet-content [name="'+root+'.'+suffix+'"]').value;return{value:value('value'),remaining:value('remaining'),type:value('type')}})()`),{value:'7',remaining:'4',type:'custom'},label+' поля custom-эффекта');
+            assert.ok(expected((await readCharacter()).data),label+' серверные значения/ID');
+        };
+        await page.evaluate('window.closeCharacterSheet()');
+        await page.evaluate(`window.openCharacterSheet(${character.id})`);
+        await page.until(`document.body.classList.contains('character-sheet-open')&&document.getElementById('character-sheet-name').textContent==='Виджеты — первый'`,'лист повторно открыт');
+        await checkUI('повторное открытие');
+        await page.evaluate('window.closeCharacterSheet();window.regReproBeforeReload=true');
+        const oldEpoch=await page.evaluate('performance.timeOrigin');
+        await page.call('Page.reload');
+        await require('./durable_reload.browser.cjs').waitForDocument(page,{href:base+`/lobbies/${lobby.id}/page`,afterEpoch:oldEpoch,label:'sheet regression reload'});
+        await page.until(`!window.regReproBeforeReload&&typeof window.openCharacterSheet==='function'&&document.getElementById('scene-loading-screen').classList.contains('is-hidden')`,'перезагрузка после сохранения');
+        await page.evaluate(`window.openCharacterSheet(${character.id})`);
+        await page.until(`document.body.classList.contains('character-sheet-open')&&document.getElementById('character-sheet-name').textContent==='Виджеты — первый'`,'лист после reload');
+        await checkUI('перезагрузка');
+        await page.evaluate(`document.querySelector('[data-tab="inventory"]').click()`);
+        await hover('#sheet-tab-inventory [data-item-template-id="'+(medicine.id+1000000)+'"] strong','Описание проверочного предмета');
+        assert.ok([...((await readCharacter()).data.inventory.backpack),...((await readCharacter()).data.inventory.pockets)].some(item=>item.id===legacy.id),'тот же старый экземпляр после reload');
+        if(regressionPeer){
+            await regressionPeer.until(`sheetReproEvents.some(e=>e.data?.skills?.physical?.will?.base===14&&e.data?.skills?.physical?.will?.bonus===3&&e.data.health.effects.some(v=>v.id===${JSON.stringify(manual.id)}&&v.value===7&&v.remaining===4)&&!e.data.health.effects.some(v=>v.id==='widget-effect'))`,'actual reader synchronization event');
+            await regressionPeer.until(`[...document.querySelectorAll('#sheet-content [name^="health.effects."][name$=".name"]')].some(n=>n.value===${JSON.stringify(manualName)})`,'reader effect without reopen/reload');
+            repro.reader={events:await regressionPeer.evaluate('sheetReproEvents'),epoch:await regressionPeer.evaluate('performance.timeOrigin'),connected:await regressionPeer.evaluate('socket.connected')};
+            fs.writeFileSync(path.join(artifactDir,'reg-repro-a-reader.png'),Buffer.from((await regressionPeer.call('Page.captureScreenshot',{format:'png'})).data,'base64'));
+        }
+        repro.manualEffectId=manual.id;
+        repro.assertions.push('Custom-эффект создан кнопкой и изменён нативным вводом','Сосед удалён без изменения ID custom-эффекта','Base/bonus/custom сохранены после закрытия, открытия и reload','Описание того же legacy-предмета доступно после reload');
+        fs.writeFileSync(path.join(artifactDir,'reg-repro-a.json'),JSON.stringify(repro,null,2));
+        fs.writeFileSync(path.join(artifactDir,'reg-repro-a-hover.png'),Buffer.from((await page.call('Page.captureScreenshot',{format:'png'})).data,'base64'));
+    }
+
+    if(focusRegression)return;
     await pinField('health.painLevel');
     await pinField('equipment.armor.currentStageDurability');
     await pinAction("window.rollSkill('physical.will', 'Воля')");
@@ -229,12 +354,12 @@ module.exports = async ({ page, request, token, lobby, login, profile, base, con
     await page.evaluate(`document.querySelector('${painPanel} .toggle-btn').click();window.openCharacterSheet(${character.id})`);
     await page.until(`document.body.classList.contains('character-sheet-open')`, 'sheet reopened over widgets');
     assert.equal(await page.evaluate(`document.querySelector('[name="health.painLevel"]').value`), '7');
-    const screenshot = path.join(profile, 'character-sheet-pins.png');
+    const screenshot = path.join(artifactDir, 'character-sheet-pins.png');
     fs.writeFileSync(screenshot, Buffer.from((await page.call('Page.captureScreenshot',{format:'png'})).data,'base64'));
     console.log('Sheet pins screenshot:', screenshot);
     await page.evaluate(`window.closeCharacterSheet();(async()=>{window.sceneModule=await import('/static/js/lobby3d.js');sceneModule.controls.target.set(31.5,1,10.5);sceneModule.camera.position.set(35,9,19);sceneModule.controls.update()})()`);
     await page.evaluate(`new Promise(resolve=>setTimeout(resolve,1000))`);
-    const mapScreenshot = path.join(profile, 'character-map-widgets.png');
+    const mapScreenshot = path.join(artifactDir, 'character-map-widgets.png');
     fs.writeFileSync(mapScreenshot, Buffer.from((await page.call('Page.captureScreenshot',{format:'png'})).data,'base64'));
     console.log('Map widgets screenshot:', mapScreenshot);
     if (process.env.VTT_WIDGETS_FOCUSED === '1') {
@@ -292,7 +417,7 @@ module.exports = async ({ page, request, token, lobby, login, profile, base, con
     await page.evaluate(`(()=>{const i=document.querySelector('${painPanel} [data-widget-control="field:health.painLevel"]');i.value='10';i.dispatchEvent(new Event('change',{bubbles:true}))})()`);
     await page.until(`document.querySelector('${painPanel} [data-widget-control="field:health.painLevel"]')?.value==='10' && !document.querySelector('${painPanel} [data-widget-control="field:health.painLevel"]').disabled`, 'widget works on local scene');
     assert.equal((await request(`/lobbies/characters/${character.id}`, null, token, 'GET')).data.health.painLevel, 10);
-    const localScreenshot = path.join(profile, 'character-widgets-local-scene.png');
+    const localScreenshot = path.join(artifactDir, 'character-widgets-local-scene.png');
     fs.writeFileSync(localScreenshot, Buffer.from((await page.call('Page.captureScreenshot',{format:'png'})).data,'base64'));
     console.log('Local widgets screenshot:', localScreenshot);
     await page.evaluate(`document.querySelector('${secondPanel} .panel-header button').click()`);
@@ -301,3 +426,5 @@ module.exports = async ({ page, request, token, lobby, login, profile, base, con
     console.log('PASS: same widgets work in real local scene; sheet masks local controls/FPS and restores them');
     console.log('PASS: individual fields/actions, weapon/status blocks, hidden room UI, multi-character saves, existing skill roll and reload dialog, realtime updates, personal preferences, drag/collapse/reload');
 };
+
+module.exports.skillValuesExpression = WIDGET_SKILL_VALUES_EXPRESSION;

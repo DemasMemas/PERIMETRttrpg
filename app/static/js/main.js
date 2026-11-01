@@ -25,6 +25,8 @@ import AppState, {
     syncMapEditorAutoExpandCheckbox,
 } from './ui_interactions.js';
 import { initMapEditorQuickMenu, closeMapEditorQuickMenu } from './mapEditorQuickMenu.js';
+import { initMapRotationHold } from './rotationHold.js';
+import { isTypingTarget as isRotationTypingTarget } from './cameraPan.js';
 import { initWeather, applyWeather } from './weather.js';
 import { createLocationLightingEditor } from './locationLightingEditor.js';
 import { LOCATION_ASSETS } from './locationAssetCatalog.js';
@@ -66,6 +68,7 @@ import {
     setLocationAssetResizeAxis, getLocationAssetResizeState,
     deleteSelectedLocationAsset, toggleSelectedLocationAssetsHidden, toggleSelectedLocationFire,
     updateSelectedLocationAssetDetails, previewSelectedLocationLamp, updateSelectedLocationRoof, generateSelectedLocationRoof,
+    setSelectedLocationTraversalCategory,
     setLocationDarknessOverlayVisible,
 } from './locationScene.js';
 import { getUserColorHex, updateMyColor } from './colors.js';
@@ -215,6 +218,7 @@ window.toggleEditMode = function() {
 window.rotateLocationPlacement = rotateLocationPlacement;
 window.isLocationEditorTransformActive = isLocationEditorTransformActive;
 
+initMapRotationHold(isRotationTypingTarget);
 initMapEditorQuickMenu({
     isEnabled: () => Boolean(window.isGM && (window.isLocationActive ? getLocationEditMode() : getEditMode())),
     isLocation: () => Boolean(window.isLocationActive),
@@ -1072,6 +1076,20 @@ window.enterLocation = async function(locationId) {
                         </details>
                     `;
                     assetInspector.querySelector('[data-asset-name]').textContent = selection.label;
+                    if (selection.traversalCategory!==null&&selection.selectedCount===1) {
+                        const label=document.createElement('label');label.textContent='Проходимость ';
+                        const select=document.createElement('select');select.className='form-control';select.dataset.traversalCategory='';
+                        for(const [value,text] of [['auto','По высоте'],['passable','Свободный проход'],['low','Низкое препятствие'],['high','Высокое препятствие'],['blocked','Непроходимо']]) {
+                            const option=document.createElement('option');option.value=value;option.textContent=text;select.appendChild(option);
+                        }
+                        select.value=selection.traversalCategory||'auto';
+                        select.onchange=async()=>{
+                            select.disabled=true;
+                            try {await setSelectedLocationTraversalCategory(select.value);}
+                            finally {select.disabled=false;renderAssetSelection();}
+                        };
+                        label.appendChild(select);assetInspector.appendChild(label);
+                    }
                     if (selection.selectedCount > 1) {
                         assetInspector.querySelector('[data-asset-name]').textContent = `Выбрано объектов: ${selection.selectedCount}`;
                         assetInspector.querySelector('.location-asset-height-control').hidden = true;

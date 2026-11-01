@@ -167,8 +167,15 @@ def test_recovery_revalidates_selection_and_consent(client, pair, auth_headers, 
     else:
         consent.status = 'cancelled'
     db.session.commit()
+    paid_ap = pair['actor_location'].action_points_current
     assert prepare(client, pair, auth_headers).status_code in {400, 403, 409}
-    assert db.session.get(DeferredCombatAction, 'medical-test').status == 'ready'
+    assert db.session.get(DeferredCombatAction, 'medical-test').status == 'cancelled'
+    assert pair['actor_location'].action_points_current == paid_ap
+    meta = pair['actor_character'].data['health']['combatMeta']
+    assert 'pendingAction' not in meta and 'completedPendingActionId' not in meta
+    assert consent.status == 'cancelled'
+    assert not CharacterInteractionService.movement_locked(pair['target_location'].id)
+    assert prepare(client,pair,auth_headers).status_code == 409
     assert ConsumableUse.query.count() == 0
 
 

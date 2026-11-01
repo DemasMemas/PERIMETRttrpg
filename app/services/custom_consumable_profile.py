@@ -32,6 +32,14 @@ def _number(value, label, *, minimum=-1000, maximum=1000):
     return number
 
 
+def _has_immediate_effect(direct):
+    # Диапазоны/типы уже проверены вызывающим валидатором своего формата.
+    return any(
+        value is not None and _number(value, key, minimum=-1_000_000, maximum=1_000_000) != 0
+        for key, value in direct.items() if key in IMMEDIATE_FIELDS
+    )
+
+
 def validate_custom_consumable(category, attributes):
     if not isinstance(attributes, dict):
         return
@@ -54,7 +62,7 @@ def validate_custom_consumable(category, attributes):
     effects = profile.get("effects")
     if not isinstance(modifiers, list) or not isinstance(effects, list) or len(modifiers) + len(effects) + len(direct) > 32:
         raise ValidationError("Слишком много эффектов расходника")
-    if not any(_number(value, key) != 0 for key, value in direct.items() if key != "action_points_cost") and not modifiers and not effects:
+    if not _has_immediate_effect(direct) and not modifiers and not effects:
         raise ValidationError("Добавьте хотя бы один эффект препарата")
     seen_stats = set()
     for modifier in modifiers:
@@ -202,6 +210,13 @@ def _validate_catalog_profile(profile, attributes):
             raise ValidationError("Некорректные множители зависимости")
     if not direct and not effects and not modifiers and not profile.get("status_additions"):
         raise ValidationError("Добавьте хотя бы одно правило препарата")
+    # Для общей с простым редактором формы цена и нулевые изменения не дают эффекта.
+    # Каталожные процедуры/сроки со своими direct-полями сохраняют прежний контракт.
+    if (set(direct) <= IMMEDIATE_FIELDS | {"action_points_cost"}
+            and not effects and not modifiers
+            and not profile.get("status_additions") and not profile.get("status_removals")
+            and not _has_immediate_effect(direct)):
+        raise ValidationError("Добавьте хотя бы один эффект препарата")
     uses = _number(attributes.get("uses", 1), "заряды", minimum=1, maximum=10000)
     if not uses.is_integer():
         raise ValidationError("Количество зарядов должно быть целым")

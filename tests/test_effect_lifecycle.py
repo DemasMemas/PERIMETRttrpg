@@ -513,3 +513,72 @@ def test_fracture_becomes_unfixed_after_thirty_minutes(monkeypatch):
     consequence = next(effect for effect in effects if effect["type"] == "fracture_sequela")
     assert unfixed["permanent_penalty"] is True
     assert consequence["area"] == "leftLeg"
+
+
+@pytest.mark.parametrize('condition', [
+    {'effects': [{'type': 'death'}]},
+    {'effects': [{'type': 'unconscious'}]},
+    {'effects': [{'type': 'sleep'}]},
+    {'effects': [{'type': 'critical_condition'}]},
+    {'current': 0, 'max': 100},
+    {'organs': {'brain': {'current': 0}}},
+    {'organs': {'skull': {'current': 0}}},
+    {'zones': {'head': {'current': 0}}},
+    {'zones': {'chest': {'current': 0}}},
+    {'bloodStage': 'fatal'}, {'blood': 'critical'},
+    {'temperature': 29}, {'temperature': 41},
+    {'intoxication': 96}, {'intoxication': 100},
+])
+@pytest.mark.parametrize('new_effect', [
+    {'type': 'stress', 'value': 1},
+    {'type': 'stress_effect', 'source': 'stress_manifestation'},
+    {'type': 'stress_stupor'},
+    {'type': 'phobia', 'source': 'stress_manifestation'},
+])
+def test_new_stress_is_blocked_without_mutating_unconscious_or_dead_health(monkeypatch, condition, new_effect):
+    from copy import deepcopy
+    import app.services.effects as effects_module
+
+    def unexpected_rng(*args):
+        pytest.fail('Заблокированный стресс не должен использовать RNG')
+
+    monkeypatch.setattr(effects_module.random, 'randint', unexpected_rng)
+    health = {'stress': 4, **deepcopy(condition)}
+    health.setdefault('effects', []).append({'id': 'old', 'type': 'stress_effect'})
+    before = deepcopy(health)
+    assert apply_effect_to_health(health, new_effect) is health
+    assert health == before
+
+
+@pytest.mark.parametrize('effect_type', ['death', 'unconsciousness', 'sleep', 'critical_condition'])
+@pytest.mark.parametrize('status', [{'active': False}, {'remaining': 0}, {'remaining': -1}])
+def test_inactive_or_expired_conditions_do_not_prevent_stress(effect_type, status):
+    health = {'stress': 4, 'effects': [{'type': effect_type, **status}]}
+    apply_effect_to_health(health, {'type': 'stress', 'value': 1})
+    assert health['stress'] == 5
+
+
+@pytest.mark.parametrize('condition', [
+    {}, {'effects': [{'type': 'shock'}]}, {'effects': [{'type': 'stress_stupor'}]},
+    {'current': 1}, {'temperature': 29.1}, {'temperature': 40.9}, {'intoxication': 95},
+])
+def test_conscious_conditions_keep_normal_stress_increases(condition):
+    health = {'stress': 4, **condition}
+    apply_effect_to_health(health, {'type': 'stress', 'value': 1})
+    assert health['stress'] == 5
+
+
+@pytest.mark.parametrize('condition_type', ['death', 'unconsciousness'])
+def test_stress_reduction_and_healing_remain_available(condition_type):
+    from copy import deepcopy
+
+    health = {'stress': 4, 'current': 10, 'max': 100, 'effects': [
+        {'id': 'condition', 'type': condition_type},
+        {'id': 'old', 'type': 'stress_effect'},
+    ]}
+    effects_before = deepcopy(health['effects'])
+    apply_effect_to_health(health, {'type': 'stress', 'value': -1})
+    assert health['stress'] == 3
+    assert health['effects'] == effects_before
+    apply_effect_to_health(health, {'type': 'heal', 'value': 5})
+    assert health['current'] == 15

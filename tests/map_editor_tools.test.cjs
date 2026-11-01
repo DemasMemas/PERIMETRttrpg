@@ -379,6 +379,7 @@ test('only a marked building creates a protected travel zone', () => {
         selectedWorldObject: 'tree',
         WORLD_OBJECT_COLORS: { tree: '#123456', base: '#654321', factory: '#66747b' },
         PROTECTED_BUILDING_TYPES: new Set(['base', 'factory']),
+        getWorldNumericValue: id => Number(inputs[id]?.value),
         document: { getElementById(id) { return inputs[id]; } },
     });
     vm.runInContext(source.slice(start, end), context);

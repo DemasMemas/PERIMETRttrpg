@@ -41,6 +41,8 @@ function geometryFor(T,id,cache) {
     if(cache.geometries.has(id))return cache.geometries.get(id);
     const ceramic=ceramicModels.has(id);
     const positions=[],normals=[],colors=[],uvs=[],sinkParts=[[],[]];
+    const trunkRanges=[];
+    const markTrunk=build=>{const start=positions.length/3;build();trunkRanges.push([start,positions.length/3]);};
     let crateBottomStart = -1;
     const add=(geo,x,y,z,sx,sy,sz,color,tile=0,rx=0,rz=0,ry=0,groundY=null)=>{
         const flat=geo.index?geo.toNonIndexed():geo;
@@ -91,7 +93,7 @@ function geometryFor(T,id,cache) {
         if(drawers){for(let i=0;i<drawers;i++){const y=.22+i*.72/drawers;B(0,y,.475,.88,.65/drawers,.035,'#8b7050');knob(0,y,.51)}}
         else for(const x of [-.235,.235]){B(x,.54,.475,.45,.79,.035,'#89704e');knob(x<0?-.04:.04,.55,.51)}
     };
-    if(buildAdditionalHouseholdModel(T,id,{B,C,add,legs})) {
+    if(buildAdditionalHouseholdModel(T,id,{B,C,add,legs,markTrunk})) {
         // Additional models use the same merged geometry, atlas and lifecycle.
     }else if(id==='bed_single'||id==='bed_double'){
         for(const x of [-.43,.43])for(const z of [-.43,.43])B(x,.18,z,.07,.36,.06,iron,2);
@@ -216,6 +218,12 @@ function geometryFor(T,id,cache) {
     // Keep exact physical catalogue bounds, including details such as taps/feet.
     geo.computeBoundingBox();const box=geo.boundingBox,size=box.getSize(new T.Vector3()),center=box.getCenter(new T.Vector3());
     geo.translate(-center.x,-box.min.y,-center.z);geo.scale(1/size.x,1/size.y,1/size.z);
+    if(trunkRanges.length){
+        // Контур движения относится к стволу, а не к общему объёму кроны.
+        const trunk=new T.Box3(),p=geo.attributes.position;
+        for(const [start,end]of trunkRanges)for(let i=start;i<end;i++)trunk.expandByPoint(new T.Vector3().fromBufferAttribute(p,i));
+        geo.userData.movementTrunk={min:trunk.min.toArray(),max:trunk.max.toArray()};
+    }
     if(crateBottomStart>=0){
         // Apply after normalisation, otherwise re-centring would cancel the gap.
         // One centimetre at the catalogue's original 0.42 m height; pivot stays put.
@@ -251,7 +259,7 @@ export function createHouseholdModel(T,asset,dimensions,color) {
     mesh.userData.householdAssetId=asset.id;return mesh;
 }
 
-function buildAdditionalHouseholdModel(T,id,{B,C,add,legs}) {
+function buildAdditionalHouseholdModel(T,id,{B,C,add,legs,markTrunk}) {
     const grey='#85877c',rust='#786052',rubber='#30362f',white='#c7c5b1',blue='#627d7c';
     const ring=(x,y,z,r,t,c=iron,rx=Math.PI/2)=>add(new T.TorusGeometry(r,t,5,18),x,y,z,1,1,1,c,2,rx);
     const ball=(x,y,z,w,h,d,c)=>add(new T.SphereGeometry(1,12,8),x,y,z,w,h,d,c,2);
@@ -317,7 +325,7 @@ function buildAdditionalHouseholdModel(T,id,{B,C,add,legs}) {
                 }
             };
             const bend=[.035,.57,-.012],tip=[birch?.07:.025,.99,.018];
-            if(!shrub){branch([0,0,0],bend,birch?.022:pine?.031:.041,birch?.014:.022);branch(bend,tip,birch?.014:.022,.004);}
+            if(!shrub)markTrunk(()=>{branch([0,0,0],bend,birch?.022:pine?.031:.041,birch?.014:.022);branch(bend,tip,birch?.014:.022,.004);});
             const n=shrub?10:pine?18:birch?13:11;
             for(let i=0;i<n;i++){
                 const a=i*2.39996+.25,baseY=shrub?.03:pine?.48+(i/n)*.4:birch?.32+(i/n)*.5:.31+(i/n)*.48;

@@ -1,0 +1,41 @@
+const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path');
+module.exports=async({page,request,token,lobby,base,safeSession})=>{
+ assert.equal(process.env.VTT_SAFE_SCENARIO,'terrain');assert.ok(safeSession);
+ const result={checks:[]},save=()=>fs.writeFileSync(path.join(safeSession.artifacts,'terrain-los.json'),JSON.stringify(result,null,2));
+ const api='/lobbies/'+lobby.id;
+ const tiles=hill=>Array.from({length:5},()=>Array.from({length:5},(_,x)=>({terrain:'grass',height:hill&&x===2?6:1,objects:[]})));
+ const location=await request(api+'/locations',{name:'№105 изолированный холм',world_tile_x:10,world_tile_z:7,grid_width:5,grid_height:5,tiles_data:tiles(true)},token),url=api+'/locations/'+location.id;
+ const rifle={id:'los-rifle',name:'Проверочная винтовка',category:'weapon',weight:1,ergonomics:0,accuracy:0,range:20,durability:100,maxDurability:100,ammo:3,fireModes:{single_shot_options:[1]},
+  installedMagazine:{id:'los-mag',ammo:[{id:'los-ammo',name:'5.56x45',quantity:3,category:'ammo',attributes:{caliber:'5.56x45',damage:10,armor_piercing:0}}]}};
+ const actor=await request(api+'/characters',{name:'№105 Стрелок',data:{health:{current:700,max:700,effects:[]},skills:{physical:{strength:{base:10,bonus:0},shooting:{base:20,bonus:0}}},weapons:[rifle]}},token);
+ const target=await request(api+'/characters',{name:'№105 Цель',data:{health:{current:700,max:700,effects:[]}}},token);
+ const placed=await request(url+'/spawn_character',{character_id:actor.id,tile_x:0,tile_y:2},token);
+ const placedTarget=await request(url+'/spawn_character',{character_id:target.id,tile_x:4,tile_y:2},token);
+ await request(url+'/combat/start',{location_character_ids:[placed.location_character_id,placedTarget.location_character_id],initiator_location_character_id:placed.location_character_id,initiator_first:true},token);
+ await request(url+'/combat/action',{location_character_id:placed.location_character_id,action_key:'draw_weapon',weapon_index:0},token);
+ await request(url+'/combat/action',{location_character_id:placed.location_character_id,action_key:'change_facing',facing_x:1,facing_y:0,payment:'action'},token);
+ await request(url+'/combat/action',{location_character_id:placed.location_character_id,action_key:'aim',weapon_index:0,target_character_id:target.id},token);
+ const mount=async()=>{
+  await page.evaluate('(async()=>{window.L=await import("/static/js/locationScene.js");await enterLocation('+location.id+')})()');
+  await page.until('(()=>{try{return L.characterPose('+actor.id+')&&typeof L.hasLineOfSight==="function"&&document.getElementById("scene-loading-screen").classList.contains("is-hidden")}catch{return false}})()','сцена холма');
+  await page.evaluate('locationControls.target.set(2.5,3,2.5);locationControls.object.position.set(8,13,13);locationControls.update()');
+ };
+ await mount();
+ const before=await request(url+'/combat',null,token,'GET'),bodyBefore=await request('/lobbies/characters/'+target.id,null,token,'GET'),weaponBefore=await request('/lobbies/characters/'+actor.id,null,token,'GET');
+ const closed=await page.evaluate('L.hasLineOfSight(0,2,4,2)'),above=await page.evaluate('L.hasLineOfSight(0,2,4,2,12,12)');
+ assert.equal(closed,false);assert.equal(above,true);
+ const attack=async()=>page.evaluate('(async()=>{const r=await fetch('+JSON.stringify(url+'/combat/action')+',{method:"POST",headers:{"Content-Type":"application/json",Authorization:"Bearer "+localStorage.getItem("access_token")},body:JSON.stringify({location_character_id:'+placed.location_character_id+',action_key:"attack",weapon_index:0,target_character_id:'+target.id+',fire_mode:"aimed",target_zone:"chest",shot_count:1,volley_count:1,action_points:6,pending_action_id:"terrain-clear-aimed"})});return{status:r.status,body:await r.json()}})()');
+ const denied=await attack();result.denied={status:denied.status,error:denied.body.error};save();assert.equal(denied.status,400);assert.ok(JSON.stringify(denied.body).includes('закрыта укрытием'));
+ const after=await request(url+'/combat',null,token,'GET');
+ assert.equal(after.current_character.action_points_current,before.current_character.action_points_current);
+ assert.deepEqual((await request('/lobbies/characters/'+actor.id,null,token,'GET')).data.weapons,weaponBefore.data.weapons);
+ assert.deepEqual((await request('/lobbies/characters/'+target.id,null,token,'GET')).data.health,bodyBefore.data.health);
+ result.checks.push({stage:'hill-blocked',clientLos:closed,aboveLos:above,attackStatus:denied.status,noApAmmoHpChange:true});save();
+ fs.writeFileSync(path.join(safeSession.artifacts,'terrain-hill-blocked.png'),Buffer.from((await page.call('Page.captureScreenshot',{format:'png'})).data,'base64'));
+ await request(url,{tiles_data:tiles(false)},token,'PUT');
+ await page.evaluate('exitLocation()');await mount();
+ const clear=await page.evaluate('L.hasLineOfSight(0,2,4,2)');assert.equal(clear,true);
+ const allowed=await attack();result.clearAttempt={status:allowed.status,error:allowed.body.error,pending:allowed.body.pending_action};save();assert.equal(allowed.status,200,'после удаления холма штатное прицельное действие принято');
+ result.checks.push({stage:'hill-removed',clientLos:clear,attackStatus:allowed.status,scope:'Принятие действия, не завершённый оплаченный выстрел'});
+ result.status='READY_FOR_REVIEW';save();
+};

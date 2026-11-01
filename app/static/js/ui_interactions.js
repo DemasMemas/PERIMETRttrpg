@@ -382,6 +382,9 @@ function handleKeyDown(e) {
         }
         if (!modalOpen && ['KeyQ', 'KeyE'].includes(e.code)
             && window.rotateWorldObjectPlacement?.(e.code === 'KeyE' ? 1 : -1)) {
+            window.startMapRotationHold?.(e,
+                (direction, fraction) => window.rotateWorldObjectPlacement(direction, fraction),
+                () => window.getWorldObjectRotationContext?.());
             e.preventDefault();
             e.stopImmediatePropagation();
             return;
@@ -389,6 +392,10 @@ function handleKeyDown(e) {
         if (!modalOpen && !e.altKey && !e.ctrlKey && !e.metaKey
             && ['KeyQ', 'KeyE'].includes(e.code)
             && window.rotateLocationPlacement?.(e.code === 'KeyE' ? 1 : -1)) {
+            window.startMapRotationHold?.(e,
+                (direction, fraction) => window.rotateLocationPlacement(direction, fraction),
+                () => window.getLocationRotationContext?.(),
+                commit => window.finishLocationRotationHold?.(commit));
             e.preventDefault();
             e.stopImmediatePropagation();
             return;

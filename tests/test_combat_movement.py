@@ -75,11 +75,11 @@ def test_near_death_intoxication_blocks_actions():
         ("walk", 5, 5),
         ("correction", 3, 0),
         ("backward_sideways", 5, 10),
-        ("run", 5, 3),
-        ("sprint", 5, 2),
+        ("run", 5, 2.5),
+        ("sprint", 5, 5/3),
     ],
 )
-def test_movement_mode_costs_round_total_route_up(mode, distance, expected_cost):
+def test_movement_mode_costs_preserve_fractional_total(mode, distance, expected_cost):
     result = CombatService._movement_route_cost(movement_path(distance), mode)
 
     assert result["distance"] == distance
@@ -92,13 +92,207 @@ def test_climb_cost_is_not_reduced_by_running():
         "run",
     )
 
-    assert result["movement_points"] == 8
+    assert result["movement_points"] == 7.5
     assert result["climb_cost"] == 5
 
 
 def test_unknown_movement_mode_is_rejected():
     with pytest.raises(ValidationError, match="Unknown movement mode"):
         CombatService._movement_route_cost(movement_path(1), "teleport")
+
+
+@pytest.fixture
+def vertical_game(client,create_user,auth_headers):
+    from app.extensions import db
+    from test_character_interactions import _setup_pair
+    pair = _setup_pair(client,create_user,auth_headers)
+    actor=pair['actor_location']
+    actor.pos_x,actor.pos_y=2,3
+    actor.movement_points_current=100
+    actor.free_actions_current=1
+    actor.facing_x,actor.facing_y=1,0
+    pair['target_location'].pos_x,pair['target_location'].pos_y=9,9
+    pair['location'].grid_width=pair['location'].grid_height=10
+    db.session.commit()
+    return pair
+
+
+@pytest.mark.parametrize('height,blocked,cost',[(0,False,0),(.49,False,0),(.5,False,5),(.99,False,5),(1,False,12),(1.99,False,12),(2,True,0)])
+def test_obstacle_category_follows_real_height(height,blocked,cost):
+    for kind in ('chair','fence','wall'):
+        assert CombatService._object_movement_profile({'type':kind,'properties':{'dimensions':{'height':height}}}) == {'blocked':blocked,'climb_cost':cost}
+
+
+@pytest.mark.parametrize('category,blocked,cost',[('passable',False,0),('low',False,5),('high',False,12),('blocked',True,0)])
+def test_gm_category_override_does_not_change_physical_height(category,blocked,cost):
+    obj={'type':'wall','properties':{'dimensions':{'height':2.5},'traversal_category':category}}
+    assert CombatService._object_movement_profile(obj)=={'blocked':blocked,'climb_cost':cost}
+    assert CombatService._object_height(obj)==2.5
+
+
+@pytest.mark.parametrize('height,base,ap',[(.5,5,1),(.99,5,1),(1,12,3),(1.99,12,3)])
+@pytest.mark.parametrize('bonus',[-2,2,10])
+@pytest.mark.parametrize('payment',['movement','action'])
+def test_explicit_climb_honors_selected_payment_and_agility(vertical_game,height,base,ap,bonus,payment):
+    from copy import deepcopy
+    from app.extensions import db
+    from app.models import LocationObject
+    pair=vertical_game;actor=pair['actor_location']
+    value=deepcopy(actor.character.data)
+    value.setdefault('skills',{}).setdefault('physical',{})['agility']={'base':10+bonus*2,'bonus':0}
+    actor.character.data=value
+    obj=LocationObject(location_id=pair['location'].id,type='barrier',tile_x=3,tile_y=3,
+        properties={'dimensions':{'width':.8,'depth':.8,'height':height}})
+    db.session.add(obj);db.session.commit()
+    plan=CombatService._object_climb_plan(pair['location'],actor,obj)
+    assert plan
+    moved,cost,_=CombatService.move_character(pair['location'].id,pair['actor_user']['id'],actor.character_id,
+        *plan['path'][-1],special_action='climb',object_id=obj.id,climb_payment=payment)
+    expected=max(0,base-bonus) if payment=='movement' else 0
+    assert cost==expected and moved.movement_points_current==100-expected
+    assert moved.action_points_current==5-(ap if payment=='action' else 0)
+    assert moved.free_actions_current==1
+    assert moved.movement_distance_this_turn==pytest.approx(plan['distance'])
+    assert moved._movement_surfaces[1]['height']>=1+height
+    assert (moved.facing_x,moved.facing_y)==(1,0)
+
+
+def test_climb_requires_explicit_choice_and_cannot_silently_fallback_to_ap(vertical_game):
+    from app.extensions import db
+    from app.models import LocationObject
+    pair=vertical_game;actor=pair['actor_location']
+    actor.movement_points_current=0
+    obj=LocationObject(location_id=pair['location'].id,type='barrier',tile_x=3,tile_y=3,
+        properties={'dimensions':{'width':.8,'depth':.8,'height':.8}})
+    db.session.add(obj);db.session.commit()
+    plan=CombatService._object_climb_plan(pair['location'],actor,obj)
+    args=(pair['location'].id,pair['actor_user']['id'],actor.character_id,*plan['path'][-1])
+    for payment in (None,'movement','invalid',[],{}):
+        with pytest.raises(ValidationError):
+            CombatService.move_character(*args,special_action='climb',object_id=obj.id,climb_payment=payment)
+        assert (actor.pos_x,actor.pos_y,actor.action_points_current,actor.movement_points_current)==(2,3,5,0)
+
+
+@pytest.mark.parametrize('delta,payment,ap,op',[(1,'movement',0,12),(1.99,'action',3,0),(-1,'action',1,0),(-2,'action',1,0)])
+def test_terrain_step_up_or_controlled_descent_uses_explicit_action_without_fall(vertical_game,monkeypatch,delta,payment,ap,op):
+    from app.extensions import db
+    pair=vertical_game;actor=pair['actor_location'];location=pair['location']
+    location.tiles_data=[[{'height':3} for _ in range(10)] for _ in range(10)]
+    location.tiles_data[3][3]['height']=3+delta
+    db.session.commit()
+    plan=CombatService._vertical_movement_plan(location,actor,3,3,0)
+    assert plan
+    monkeypatch.setattr(CombatService,'resolve_fall',staticmethod(lambda *args,**kwargs:pytest.fail('Управляемый переход не вызывает падение')))
+    moved,cost,_=CombatService.move_character(location.id,pair['actor_user']['id'],actor.character_id,3,3,
+        special_action=plan['special_action'],climb_payment=payment)
+    assert cost==op and moved.movement_points_current==100-op
+    assert moved.action_points_current==5-ap and moved.free_actions_current==1
+    assert CombatService.physical_position(moved)['height']==pytest.approx(3+delta)
+    assert moved._movement_fall is None
+    assert moved.movement_distance_this_turn==1
+
+
+@pytest.mark.parametrize('delta',[2,2.01,3])
+def test_terrain_rise_at_least_two_meters_cannot_be_climbed(vertical_game,delta):
+    from app.extensions import db
+    pair=vertical_game;actor=pair['actor_location'];location=pair['location']
+    location.tiles_data=[[{'height':1} for _ in range(10)] for _ in range(10)]
+    location.tiles_data[3][3]['height']=1+delta
+    db.session.commit()
+    assert CombatService._find_movement_path(location,2,3,3,3,actor.character_id) is None
+    assert CombatService._vertical_movement_plan(location,actor,3,3,0) is None
+    with pytest.raises(ValidationError):
+        CombatService.move_character(location.id,pair['actor_user']['id'],actor.character_id,3,3,special_action='climb_up',climb_payment='action')
+    assert (actor.pos_x,actor.pos_y,actor.action_points_current)==(2,3,5)
+
+
+def test_controlled_drop_through_opening_below_two_meters_has_no_fall_roll(vertical_game,monkeypatch):
+    from app.extensions import db
+    from app.models import LocationObject
+    pair=vertical_game;actor=pair['actor_location'];location=pair['location']
+    actor.pos_x,actor.pos_y,actor.floor_level=3,2,1
+    floor=LocationObject(location_id=location.id,type='floor',tile_x=3,tile_y=3,
+        properties={'level':1,'elevation':-.5,'dimensions':{'width':6,'depth':6,'height':.1}})
+    portal=LocationObject(location_id=location.id,type='hatch',tile_x=3,tile_y=3,
+        properties={'level':1,'is_open':True,'dimensions':{'width':.9,'depth':.9,'height':.1}})
+    db.session.add_all([floor,portal]);db.session.commit()
+    plan=CombatService._object_drop_plan(location,actor,portal)
+    assert plan and plan['height']<=2
+    monkeypatch.setattr(CombatService,'resolve_fall',staticmethod(lambda *args,**kwargs:pytest.fail('Управляемый спуск не вызывает падение')))
+    moved,cost,_=CombatService.move_character(location.id,pair['actor_user']['id'],actor.character_id,plan['landing']['x'],plan['landing']['y'],
+        special_action='drop_down',object_id=portal.id,floor_level=0)
+    assert moved.floor_level==0 and cost==0
+    assert moved.action_points_current==4 and moved.movement_points_current==100
+    assert moved._movement_fall is None
+    assert moved.movement_distance_this_turn==pytest.approx(plan['distance']+plan['height'])
+
+
+@pytest.mark.parametrize('payment,ap,op',[('movement',0,12),('action',2,6)])
+def test_route_with_two_obstacles_applies_agility_to_each_one(vertical_game,payment,ap,op):
+    from copy import deepcopy
+    from app.extensions import db
+    from app.models import LocationObject
+    pair=vertical_game;actor=pair['actor_location'];location=pair['location']
+    actor.pos_x=1
+    value=deepcopy(actor.character.data)
+    value.setdefault('skills',{}).setdefault('physical',{})['agility']={'base':14,'bonus':0}
+    actor.character.data=value
+    for x in (3,5):
+        db.session.add(LocationObject(location_id=location.id,type='fence',tile_x=x,tile_y=3,
+            properties={'dimensions':{'width':.2,'depth':12,'height':.8}}))
+    db.session.commit()
+    route=CombatService._find_movement_path(location,1,3,7,3,actor.character_id)
+    assert route and len(route['climbs'])==2
+    assert max(point['height'] for point in route['surfaces'])>=1.8
+    assert route['surfaces'][-1]['height']==1
+    moved,cost,_=CombatService.move_character(location.id,pair['actor_user']['id'],actor.character_id,7,3,
+        movement_mode='walk',climb_payment=payment)
+    assert cost==pytest.approx(op) and moved.movement_points_current==pytest.approx(100-op)
+    assert moved.action_points_current==5-ap and moved.free_actions_current==1
+
+
+@pytest.mark.parametrize('penalty,limits',[(3,[7,14,21,3,3,3]),(-2,[12,24,36,6,4,3]),(10,[0,0,0,0,0,3])])
+def test_movement_distance_limits_include_penalties_and_negative_bonuses(penalty,limits):
+    modes = [('walk','standing'),('run','standing'),('sprint','standing'),
+             ('backward_sideways','standing'),('walk','prone'),('correction','sitting')]
+    assert [CombatService._movement_distance_limit(mode,posture,movement_penalty=penalty)
+            for mode,posture in modes] == limits
+    assert CombatService._movement_distance_limit('walk','sitting',movement_penalty=penalty) == limits[3]
+
+
+def test_correction_counts_toward_penalized_limit_and_extra_op_cannot_bypass_it(client,create_user,auth_headers):
+    from app.extensions import db
+    from test_character_interactions import _setup_pair
+    case = _setup_pair(client,create_user,auth_headers)
+    actor = case['actor_location']
+    actor.character.data = {**actor.character.data,'equipment':{'armor':{'movementPenalty':3}}}
+    actor.movement_points_current = 100
+    actor.free_actions_current = 1
+    actor.facing_x,actor.facing_y = 0,1
+    db.session.commit()
+    args = (case['location'].id,case['actor_user']['id'],actor.character_id)
+    CombatService.move_character(*args,1,2,movement_mode='correction')
+    CombatService.move_character(*args,1,2.5,movement_mode='correction')
+    assert actor.free_actions_current == 0
+    assert actor.movement_points_current == 100
+    assert actor.movement_mode_this_turn is None
+    assert actor.correction_distance_this_turn == 1.5
+    assert actor.movement_distance_this_turn == 1.5
+    CombatService.move_character(*args,1,8,movement_mode='walk')
+    assert actor.movement_points_current == 94.5
+    assert actor.movement_distance_this_turn == 7
+    CombatService.perform_action(case['location'].id,case['actor_user']['id'],actor.id,'convert_free_action_to_movement')
+    assert actor.movement_points_current == 101.5
+    with pytest.raises(ValidationError,match='limited to 7'):
+        CombatService.move_character(*args,1,8.25,movement_mode='walk')
+    assert actor.pos_y == 8
+    assert actor.movement_points_current == 101.5
+
+
+def test_negative_movement_penalty_is_preserved():
+    actor = SimpleNamespace(character=SimpleNamespace(data={'equipment':{'armor':{'movementPenalty':-2}}}),movement_points_max=0)
+    assert CombatService._movement_penalty(actor) == -2
+    assert CombatService._combat_profile(actor)['movement_gain'] == 12
 
 
 def test_backward_sideways_path_rejects_forward_steps():
@@ -116,12 +310,40 @@ def test_backward_sideways_path_rejects_forward_steps():
         )
 
 
+@pytest.mark.parametrize('destination,expected_mode,expected_cost',[
+    ((1,0),'backward_sideways',2),((0,1),'backward_sideways',2),((1,2),'walk',1),
+])
+def test_walk_preserves_facing_and_charges_backward_steps(client,create_user,auth_headers,destination,expected_mode,expected_cost):
+    from app.extensions import db
+    from test_character_interactions import _setup_pair
+    case = _setup_pair(client,create_user,auth_headers)
+    actor = case['actor_location']
+    actor.movement_points_current = 10
+    actor.facing_x, actor.facing_y = 0,1
+    db.session.commit()
+    moved,cost,_ = CombatService.move_character(case['location'].id,case['actor_user']['id'],
+        case['actor_character'].id,*destination,movement_mode='walk')
+    db.session.expire_all()
+    moved = db.session.get(LocationCharacter,actor.id)
+    assert cost == expected_cost
+    assert moved.movement_points_current == 10-expected_cost
+    assert moved.movement_mode_this_turn == expected_mode
+    assert (moved.facing_x,moved.facing_y) == (0,1)
+    assert moved.action_points_current == 5
+
+
+def test_running_behind_requires_an_explicit_turn_without_spending_points():
+    actor = SimpleNamespace(facing_x=0,facing_y=1)
+    with pytest.raises(ValidationError,match='направление взгляда'):
+        CombatService._effective_movement_mode(actor,{'path':[(1,1),(1,0)]},'run')
+
+
 def test_grapple_group_path_keeps_companion_offset(monkeypatch):
     location = SimpleNamespace(grid_width=6, grid_height=6)
     monkeypatch.setattr(
         CombatService,
         "_build_movement_map",
-        staticmethod(lambda location, moving_character_id=None, ignored_character_ids=None: (set(), {})),
+        staticmethod(lambda location, moving_character_id=None, ignored_character_ids=None, **kwargs: (set(), {})),
     )
 
     result = CombatService._find_movement_path(
@@ -145,7 +367,7 @@ def test_grapple_group_path_rejects_blocked_companion_destination(monkeypatch):
         CombatService,
         "_build_movement_map",
         staticmethod(
-            lambda location, moving_character_id=None, ignored_character_ids=None: (
+            lambda location, moving_character_id=None, ignored_character_ids=None, **kwargs: (
                 {(3, 2)},
                 {},
             )
@@ -1046,3 +1268,768 @@ def test_clear_aim_resets_target_weapon_and_bonus():
     assert location_character.aimed_target_character_id is None
     assert location_character.aimed_weapon_index is None
     assert location_character.aim_accuracy_bonus == 0
+
+
+@pytest.mark.parametrize('obj_type', ['chair', 'fence'])
+@pytest.mark.parametrize('flag', ['blocks_movement', 'block_movement'])
+@pytest.mark.parametrize('other_value', [None, True])
+def test_negative_movement_flags_override_climb_cost(obj_type, flag, other_value):
+    other = 'block_movement' if flag == 'blocks_movement' else 'blocks_movement'
+    properties = {flag: False, 'climb_cost': 9}
+    if other_value is not None:
+        properties[other] = other_value
+    assert CombatService._object_movement_profile({
+        'type': obj_type, 'properties': properties,
+    }) == {'blocked': False, 'climb_cost': 0}
+
+
+@pytest.mark.parametrize('obj_type,expected', [('chair', 5), ('fence', 12)])
+def test_default_and_custom_climb_cost_are_preserved(obj_type, expected):
+    assert CombatService._object_movement_profile({'type': obj_type}) == {
+        'blocked': False, 'climb_cost': expected,
+    }
+    assert CombatService._object_movement_profile({
+        'type': obj_type, 'properties': {'climb_cost': 8},
+    }) == {'blocked': False, 'climb_cost': 8}
+
+
+@pytest.mark.parametrize('flag', ['blocks_movement', 'block_movement'])
+@pytest.mark.parametrize('obj_type,properties,expected', [
+    ('door', {}, {'blocked': True, 'climb_cost': 0}),
+    ('window', {}, {'blocked': True, 'climb_cost': 0}),
+    ('door', {'is_open': True}, {'blocked': False, 'climb_cost': 0}),
+    ('door', {'climbable': True}, {'blocked': False, 'climb_cost': 12}),
+    ('door', {'climbable': True, 'climb_cost': 7}, {'blocked': False, 'climb_cost': 7}),
+    ('door', {'passable': True}, {'blocked': False, 'climb_cost': 0}),
+    ('window', {'passable': True}, {'blocked': False, 'climb_cost': 0}),
+    ('floor', {}, {'blocked': False, 'climb_cost': 0}),
+])
+def test_portals_and_passable_keep_priority_over_negative_flags(flag, obj_type, properties, expected):
+    assert CombatService._object_movement_profile({
+        'type': obj_type, 'properties': {**properties, flag: False},
+    }) == expected
+
+
+@pytest.mark.parametrize('portal_type', ['door', 'window'])
+@pytest.mark.parametrize('wall_props,portal_props,expected', [
+    ({'building_id': 'A'}, {'building_id': 'A'}, True),
+    ({'building_id': 'A'}, {'building_id': 'B'}, False),
+    ({}, {}, True),
+    ({'building_id': None}, {}, True),
+    ({'building_id': ''}, {'building_id': '   '}, True),
+    ({'building_id': ' A '}, {'building_id': 'A'}, True),
+    ({'building_id': 42}, {'building_id': ' 42 '}, True),
+    ({'building_id': 'A'}, {}, False),
+    ({}, {'building_id': 'A'}, False),
+    ({'building_id': 'A', 'level': 0}, {'building_id': 'A', 'level': 1}, False),
+    ({'building_id': 'A'}, {'building_id': 'A', 'rotation': 1.5707963267948966}, False),
+    ({'building_id': 'A'}, {'building_id': 'A', 'offset_z': 2}, False),
+    ({'building_id': 'A'}, {'building_id': 'A', 'elevation': 3}, False),
+])
+def test_wall_portal_requires_same_normalized_building_and_geometry(portal_type, wall_props, portal_props, expected):
+    wall = SimpleNamespace(type='wall', tile_x=2, tile_y=2, properties=wall_props)
+    portal = SimpleNamespace(type=portal_type, tile_x=2, tile_y=2, properties=portal_props)
+    assert CombatService._door_is_in_wall(portal, wall) is expected
+
+
+@pytest.mark.parametrize("terrain", ["snow", "sand", "swamp"])
+def test_difficult_surface_route_cost_is_doubled(terrain, monkeypatch):
+    location = SimpleNamespace(grid_width=3, grid_height=1, tiles_data=[
+        [{"terrain": "concrete"}, {"terrain": terrain}, {"terrain": terrain}]
+    ])
+    monkeypatch.setattr(CombatService, "_build_movement_map", staticmethod(lambda *a, **k: (set(), {})))
+    route = CombatService._find_movement_path(location, 0, 0, 2, 0)
+    assert route["cost"] == 3.5
+    assert CombatService._movement_route_cost(route, "walk")["movement_points"] == 3.5
+    assert CombatService._movement_route_cost(route, "run")["movement_points"] == 1.75
+
+def test_mixed_surface_route_counts_destination_and_keeps_climb_separate(monkeypatch):
+    location = SimpleNamespace(grid_width=4, grid_height=1, tiles_data=[
+        [{"terrain": "snow"}, {"terrain": "concrete"}, {"terrain": "sand"}, {"terrain": "concrete"}]
+    ])
+    monkeypatch.setattr(CombatService, "_build_movement_map", staticmethod(lambda *a, **k: (set(), {(2, 0): 5})))
+    route = CombatService._find_movement_path(location, 0, 0, 3, 0)
+    assert route["cost"] == 9.5
+    assert route["climb_cost"] == 5
+    assert CombatService._movement_route_cost(route, "run")["movement_points"] == 7.25
+
+
+@pytest.mark.parametrize("terrain", ["grass", "concrete", "wood", "granite", "mud", "water"])
+def test_unclassified_surface_is_not_implicitly_doubled(terrain):
+    location = SimpleNamespace(tiles_data=[[{"terrain": terrain}]])
+    assert CombatService._movement_surface_costs(location) == {}
+
+@pytest.mark.parametrize("species", ["bush", "tall_grass"])
+@pytest.mark.parametrize("state", ["green", "dry", "dead"])
+def test_existing_vegetation_ids_cost_two(species, state):
+    location = SimpleNamespace(tiles_data=[[{"terrain": "grass", "objects": []}]])
+    obj = {"type": "tree", "tile_x": 0, "tile_y": 0, "properties": {
+        "visual_asset": f"nature_{species}_{state}", "passable": True,
+        "dimensions": {"width": .8, "depth": .8}}}
+    assert CombatService._movement_surface_costs(location, [obj])[(0, 0, 0)] == 2
+
+def test_floor_does_not_inherit_ground_snow_and_upper_vegetation_is_level_specific():
+    location = SimpleNamespace(tiles_data=[[{"terrain": "snow"}]])
+    objects = [{"type": "floor", "tile_x": 0, "tile_y": 0, "properties": {
+        "level": 0, "dimensions": {"width": .8, "depth": .8}}},
+        {"type": "tree", "tile_x": 0, "tile_y": 0, "properties": {
+        "level": 1, "visual_asset": "nature_bush_green", "dimensions": {"width": .8, "depth": .8}}}]
+    assert CombatService._movement_surface_costs(location, objects) == {(0, 0, 1): 2}
+
+def test_storey_path_uses_the_same_difficult_surface_weights():
+    from app.services.location_navigation import find_path
+    location = SimpleNamespace(grid_width=4, grid_height=1, tiles_data=[[
+        {"height": 1, "terrain": terrain} for terrain in ["grass", "sand", "swamp", "snow"]]])
+    costs = CombatService._movement_surface_costs(location)
+    result = find_path(location, [], (0, 0, 0), (3, 0, 0), lambda level: (set(), {}), terrain_costs=costs)
+    assert result["cost"] == 6
+    assert result["climb_cost"] == 0
+
+def test_pathfinder_prefers_shorter_cost_over_shorter_difficult_route(monkeypatch):
+    tiles = [[{"terrain": "grass"} for _ in range(3)] for _ in range(3)]
+    tiles[1][1]["terrain"] = "sand"
+    location = SimpleNamespace(grid_width=3, grid_height=3, tiles_data=tiles)
+    monkeypatch.setattr(CombatService, "_build_movement_map", staticmethod(lambda *a, **k: (set(), {})))
+    result = CombatService._find_movement_path(location, 0, 1, 2, 1)
+    assert result["cost"] == pytest.approx(2**.5*2)
+    assert (1, 1) not in result["path"]
+
+
+def test_flight_keeps_existing_difficult_surface_immunity():
+    location = SimpleNamespace(tiles_data=[[{"terrain": "snow"}]])
+    assert CombatService._movement_surface_costs(location, ignores_terrain=True) == {}
+
+
+@pytest.mark.parametrize(('strength', 'modifier', 'distance'), [(6, -2, 1.6), (10, 0, 2), (18, 4, 2.8)])
+@pytest.mark.parametrize('mode', ['walk', 'run', 'sprint'])
+def test_jump_preview_uses_canonical_modifier_and_running_rules(strength, modifier, distance, mode):
+    data = {'skills': {'physical': {'strength': {'base': strength, 'bonus': 0}, 'agility': {'base': 14, 'bonus': 0}}}}
+    preview = CombatService._jump_profile(data, mode, 2)
+    assert preview['strength_modifier'] == modifier
+    assert preview['base_distance'] == distance
+    assert preview['max_distance'] == pytest.approx(distance * (2 if mode != 'walk' else 1))
+    assert preview['difficulty'] == (10 if mode == 'walk' else 6)
+    assert preview['agility_modifier'] == 2
+    assert preview['action_points'] == 2
+    assert preview['has_action_points'] is True
+    assert preview['execution_available'] is False
+
+
+def test_jump_preview_does_not_roll_or_mutate_and_reports_missing_ap(monkeypatch):
+    import copy
+    import app.services.combat as module
+    monkeypatch.setattr(module.random, 'randint', lambda *args: pytest.fail('preview must not roll'))
+    data = {'skills': {'physical': {'strength': {'base': 10, 'bonus': 0}}}}
+    before = copy.deepcopy(data)
+    assert CombatService._jump_profile(data, 'run', 1)['has_action_points'] is False
+    assert data == before
+
+
+def test_running_failure_rule_takes_priority_over_unstable_edge():
+    assert CombatService._jump_profile({}, 'walk')['failure_1_to_3'] == 'unstable_edge'
+    for mode in ['run', 'sprint']:
+        preview = CombatService._jump_profile({}, mode)
+        assert preview['failure_1_to_3'] == preview['failure_4_or_more'] == 'midpoint'
+
+
+@pytest.mark.parametrize(('rise', 'walkable'), [(.99, True), (1, False), (1.01, False), (1.99, False), (2, False), (-1, False), (-2, False)])
+def test_ordinary_walk_cannot_replace_explicit_height_transition(rise, walkable, monkeypatch):
+    location = SimpleNamespace(grid_width=2, grid_height=1, tiles_data=[[{'height': 4}, {'height': 4 + rise}]])
+    monkeypatch.setattr(CombatService, '_build_movement_map', staticmethod(lambda *a, **k: (set(), {})))
+    result = CombatService._find_movement_path(location, 0, 0, 1, 0)
+    assert (result is not None) is walkable
+
+
+@pytest.mark.parametrize(('rise', 'walkable'), [(.99, True), (1, False), (1.99, False), (2, False), (-1, False), (-2, False)])
+def test_storey_plain_surface_checks_real_height_not_only_level(rise, walkable):
+    from app.services.location_navigation import connects
+    a = {'x': 0, 'y': 0, 'level': 0, 'height': 4, 'stair': None}
+    b = {'x': 1, 'y': 0, 'level': 0, 'height': 4 + rise, 'stair': None}
+    assert connects(a, b) is walkable
+
+
+@pytest.fixture
+def gm_relocation_game(client, create_user, auth_headers):
+    from app.extensions import db
+    from app.models import Location, LocationObject
+    gm, owner = create_user("gm-relocation-gm"), create_user("gm-relocation-owner")
+    lobby_id = client.post("/lobbies/", headers=auth_headers(gm), json={
+        "name": "GM relocation", "map_type": "empty", "chunks_width": 1, "chunks_height": 1
+    }).get_json()["id"]
+    assert client.post(f"/lobbies/{lobby_id}/join", headers=auth_headers(owner)).status_code == 200
+    character = client.post(f"/lobbies/{lobby_id}/characters", headers=auth_headers(owner),
+                            json={"name": "Relocation actor", "data": {}}).get_json()
+    location = Location(lobby_id=lobby_id, name="Relocation", world_tile_x=1, world_tile_z=1,
+                        grid_width=5, grid_height=5,
+                        tiles_data=[[{"terrain": "concrete", "height": 1, "objects": []} for _ in range(5)] for _ in range(5)])
+    db.session.add(location)
+    db.session.flush()
+    db.session.add(LocationObject(location_id=location.id, name="Upper floor", type="floor", tile_x=2, tile_y=2,
+        properties={"level": 1, "dimensions": {"width": 5, "depth": 5, "height": .12}}))
+    placed = LocationCharacter(location_id=location.id, character_id=character["id"], pos_x=1, pos_y=1,
+        floor_level=1, controlled_by=owner["id"], action_points_current=3, movement_points_current=7)
+    db.session.add(placed)
+    db.session.commit()
+    return gm, owner, f"/lobbies/{lobby_id}/locations/{location.id}/spawn_character", placed
+
+def test_existing_character_relocation_is_gm_only(client, auth_headers, gm_relocation_game):
+    from app.extensions import db
+    gm, owner, url, placed = gm_relocation_game
+    response = client.post(url, headers=auth_headers(owner), json={
+        "character_id": placed.character_id, "tile_x": 2, "tile_y": 2})
+    assert response.status_code == 403
+    db.session.refresh(placed)
+    assert (placed.pos_x, placed.pos_y, placed.floor_level) == (1, 1, 1)
+    assert (placed.action_points_current, placed.movement_points_current) == (3, 7)
+
+def test_gm_relocation_keeps_floor_controller_and_resources(client, auth_headers, gm_relocation_game, monkeypatch):
+    from app.extensions import db
+    import app.lobbies as module
+    gm, owner, url, placed = gm_relocation_game
+    events = []
+    monkeypatch.setattr(module.socketio, "emit", lambda name, payload, **kw: events.append((name, payload)))
+    response = client.post(url, headers=auth_headers(gm), json={
+        "character_id": placed.character_id, "tile_x": 2, "tile_y": 2})
+    assert response.status_code == 200
+    db.session.refresh(placed)
+    assert (placed.pos_x, placed.pos_y, placed.floor_level) == (2, 2, 1)
+    assert (placed.action_points_current, placed.movement_points_current) == (3, 7)
+    event = next(payload["character"] for name, payload in events if name == "character_spawned")
+    assert event["controlled_by"] == owner["id"]
+    assert event["floor_level"] == 1
+
+@pytest.mark.parametrize("x", [True, -1, 5, float('inf'), "2"])
+def test_gm_relocation_rejects_invalid_coordinates_without_changes(client, auth_headers, gm_relocation_game, x):
+    from app.extensions import db
+    gm, owner, url, placed = gm_relocation_game
+    response = client.post(url, headers=auth_headers(gm), json={
+        "character_id": placed.character_id, "tile_x": x, "tile_y": 2})
+    assert response.status_code == 400
+    db.session.refresh(placed)
+    assert (placed.pos_x, placed.pos_y, placed.floor_level) == (1, 1, 1)
+    assert (placed.action_points_current, placed.movement_points_current) == (3, 7)
+
+def test_gm_relocation_can_choose_supported_floor_but_not_empty_air(client, auth_headers, gm_relocation_game):
+    from app.extensions import db
+    gm, owner, url, placed = gm_relocation_game
+    payload = {"character_id": placed.character_id, "tile_x": 2, "tile_y": 2, "floor_level": 2}
+    assert client.post(url, headers=auth_headers(gm), json=payload).status_code == 400
+    payload["floor_level"] = 0
+    assert client.post(url, headers=auth_headers(gm), json=payload).status_code == 200
+    db.session.refresh(placed)
+    assert placed.floor_level == 0
+    assert (placed.action_points_current, placed.movement_points_current) == (3, 7)
+
+
+def test_gm_explicit_transfer_can_place_in_air_and_preserves_character(client,auth_headers,gm_relocation_game,monkeypatch):
+    from copy import deepcopy
+    from app.extensions import db
+    import app.lobbies as module
+    gm,owner,url,placed=gm_relocation_game
+    placed.facing_x,placed.facing_y=-1,0
+    placed.posture='prone';placed.status='busy';placed.team_name='Команда';placed.team_color='#123456'
+    placed.movement_distance_this_turn=2.5
+    db.session.commit()
+    health=deepcopy(placed.character.data)
+    events=[];monkeypatch.setattr(module.socketio,'emit',lambda name,payload,**kw:events.append((name,payload)))
+    response=client.post(url,headers=auth_headers(gm),json={
+        'character_id':placed.character_id,'tile_x':3.2,'tile_y':3.7,'floor_level':2,'force_relocate':True})
+    assert response.status_code==200
+    db.session.refresh(placed)
+    assert (placed.pos_x,placed.pos_y,placed.floor_level)==(3.2,3.7,2)
+    assert (placed.action_points_current,placed.movement_points_current,placed.movement_distance_this_turn)==(3,7,2.5)
+    assert (placed.facing_x,placed.facing_y,placed.posture,placed.status)==(-1,0,'prone','busy')
+    assert placed.controlled_by==owner['id'] and placed.character.data==health
+    event=next(payload['character'] for name,payload in events if name=='character_spawned')
+    assert (event['facing_x'],event['facing_y'],event['team_name'],event['team_color'])==(-1,0,'Команда','#123456')
+
+
+@pytest.mark.parametrize('flag',[True,'true',1,[]])
+def test_player_cannot_use_gm_transfer_flag(client,auth_headers,gm_relocation_game,flag):
+    from app.extensions import db
+    gm,owner,url,placed=gm_relocation_game
+    response=client.post(url,headers=auth_headers(owner),json={
+        'character_id':placed.character_id,'tile_x':3.2,'tile_y':3.7,'floor_level':2,'force_relocate':flag})
+    assert response.status_code in (400,403)
+    db.session.refresh(placed)
+    assert (placed.pos_x,placed.pos_y,placed.floor_level)==(1,1,1)
+
+
+@pytest.mark.parametrize('legacy',[False,True])
+def test_gm_can_restore_psi_zombie_sheet_with_current_loot_and_without_heal(client,auth_headers,gm_relocation_game,legacy):
+    from copy import deepcopy
+    from app.extensions import db
+    from app.services.character_roles import is_mutant
+    gm,owner,url,placed=gm_relocation_game
+    data=deepcopy(placed.character.data)
+    data['skills']={'physical':{'shooting':{'base':13,'bonus':0,'xp':2}}}
+    data['inventory']={'backpack':[{'id':'saved-loot','name':'Сохранённый предмет','quantity':3}], 'pockets':[]}
+    data['equipment']={'helmet':{'id':'helmet','name':'Шлем','durability':41}}
+    data['weapons']=[{'id':'ordinary-rifle','name':'Винтовка','durability':37,'ammo':2}]
+    placed.character.data=data
+    assert CombatService._transform_into_zombie(placed,data)
+    assert is_mutant(placed.character.data)
+    zombie=deepcopy(placed.character.data)
+    if legacy:zombie.pop('psiZombification',None)
+    zombie['inventory']['backpack'][0]['quantity']=1
+    zombie['inventory']['backpack'].append({'id':'new-loot','name':'Новая добыча','quantity':1})
+    zombie['health']['current']=33
+    zombie['health']['zones']['head']['current']=14
+    placed.character.data=zombie;db.session.commit()
+    restore_url=f'/lobbies/{placed.character.lobby_id}/characters/{placed.character_id}/restore-player'
+    assert client.post(restore_url,headers=auth_headers(owner)).status_code==403
+    if not legacy:
+        snapshot=client.get(f'/lobbies/characters/{placed.character_id}',headers=auth_headers(gm)).get_json()['data']
+        snapshot['psiZombification']['previousData']['skills']['physical']['shooting']['base']=999
+        saved=client.put(f'/lobbies/characters/{placed.character_id}',headers=auth_headers(gm),json={'data':snapshot})
+        assert saved.status_code==200
+    response=client.post(restore_url,headers=auth_headers(gm))
+    assert response.status_code==200,response.get_json()
+    restored=response.get_json()['data']
+    assert not is_mutant(restored)
+    assert restored['inventory']==zombie['inventory'] and restored['equipment']==zombie['equipment']
+    assert restored['weapons']==[{'id':'ordinary-rifle','name':'Винтовка','durability':37,'ammo':2}]
+    assert restored['health']['current']==pytest.approx(33)
+    assert restored['health']['zones']['head']['current']==pytest.approx(14)
+    assert 'mutant' not in restored and 'psiZombification' not in restored
+    if not legacy:assert restored['skills']['physical']['shooting']['base']==13
+    db.session.refresh(placed)
+    assert placed.controlled_by==owner['id']
+    assert client.post(restore_url,headers=auth_headers(gm)).status_code==400
+
+def test_owner_initial_spawn_remains_available(client, auth_headers, gm_relocation_game):
+    gm, owner, url, placed = gm_relocation_game
+    lobby_url = url.split("/locations/")[0]
+    character = client.post(lobby_url + "/characters", headers=auth_headers(owner),
+        json={"name": "Initial spawn", "data": {}}).get_json()
+    response = client.post(url, headers=auth_headers(owner), json={
+        "character_id": character["id"], "tile_x": 3, "tile_y": 3})
+    assert response.status_code == 200
+
+
+def test_high_terrain_blocks_server_line_of_sight(app, gm_relocation_game):
+    from app.extensions import db
+    from app.models import Location, LocationObject
+    gm, owner, url, placed = gm_relocation_game
+    location = db.session.get(Location, placed.location_id)
+    for floor in LocationObject.query.filter_by(location_id=location.id, type='floor').all():
+        db.session.delete(floor)
+    location.tiles_data = [[{"terrain": "grass", "height": 6 if x == 2 else 1, "objects": []}
+                            for x in range(5)] for _ in range(5)]
+    db.session.flush()
+    shooter = SimpleNamespace(pos_x=0, pos_y=2, floor_level=0, posture="standing")
+    target = SimpleNamespace(pos_x=4, pos_y=2, floor_level=0, posture="standing")
+    analysis = CombatService._cover_analysis(location.id, shooter, target)
+    assert analysis["grade"] == "full"
+    assert all(zone.get("terrain") for zone in analysis["zones"].values())
+
+def test_raised_shooter_ray_uses_real_ground_height(app, gm_relocation_game):
+    from app.extensions import db
+    from app.models import Location, LocationObject
+    gm, owner, url, placed = gm_relocation_game
+    location = db.session.get(Location, placed.location_id)
+    for floor in LocationObject.query.filter_by(location_id=location.id, type='floor').all():
+        db.session.delete(floor)
+    location.tiles_data = [[{"terrain": "grass", "height": 5 if x == 0 else 1, "objects": []}
+                            for x in range(5)] for _ in range(5)]
+    db.session.add(LocationObject(location_id=location.id, name="Low cover", type="wall", tile_x=2, tile_y=2,
+        properties={"dimensions": {"width": .2, "depth": .2, "height": 2.5}}))
+    db.session.flush()
+    shooter = SimpleNamespace(pos_x=0, pos_y=2, floor_level=0, posture="standing")
+    target = SimpleNamespace(pos_x=4, pos_y=2, floor_level=0, posture="standing")
+    assert CombatService._cover_analysis(location.id, shooter, target)["grade"] == "none"
+
+
+def test_terrain_server_matches_actual_renderer_triangles_and_rays():
+    import json
+    from pathlib import Path
+    from app.services.terrain_los import TerrainMesh
+    golden = json.loads((Path(__file__).parent / "fixtures/terrain_los_parity.json").read_text(encoding="utf-8"))
+    for case in golden["cases"]:
+        mesh = TerrainMesh(case["tiles"])
+        triangles = mesh.triangles(2, 2)[0]
+        assert len(triangles) == len(case["triangles"]), case["name"]
+        for actual, expected in zip(triangles, case["triangles"]):
+            for actual_point, expected_point in zip(actual, expected):
+                assert actual_point == pytest.approx(expected_point, abs=1e-9), case["name"]
+        for (start, end), expected in zip(case["rays"], case["hits"]):
+            hit = mesh.first_hit(start, end)
+            assert bool(hit) == bool(expected), case["name"]
+            if hit:
+                assert hit["t"] == pytest.approx(expected["t"], abs=1e-9), case["name"]
+                assert hit["height"] == pytest.approx(expected["height"], abs=1e-9)
+
+def test_terrain_open_hatch_is_not_filled_by_a_synthetic_ground_block():
+    from app.services.terrain_los import TerrainMesh
+    from app.services.location_navigation import opening_at
+    tiles = [[{"terrain": "grass", "height": 6 if x == 2 else 1} for x in range(5)] for _ in range(5)]
+    hatch = {"type": "hatch", "tile_x": 2, "tile_y": 2,
+             "properties": {"level": 0, "is_open": True, "dimensions": {"width": 5, "depth": 5}}}
+    mesh = TerrainMesh(tiles)
+    accept = lambda hit: not opening_at([hatch], 0, hit["x"], hit["z"])
+    assert mesh.first_hit((.5, 2.65, 2.5), (4.5, 2.7, 2.5), accept) is None
+    hatch["properties"]["is_open"] = False
+    assert mesh.first_hit((.5, 2.65, 2.5), (4.5, 2.7, 2.5), accept)
+
+
+def test_ranged_hit_on_terrain_blocked_zone_cannot_damage_target(monkeypatch):
+    import copy
+    attacker = SimpleNamespace(character=SimpleNamespace(data={'weapons': [{}]}))
+    target = SimpleNamespace(character=SimpleNamespace(data={'health': {'current': 700}}), hp_zones={},
+                             grapple_live_shield=False, grapple_target_id=None)
+    before = copy.deepcopy(target.character.data)
+    monkeypatch.setattr(CombatService, '_ranged_damage_profile', lambda weapon: ({'damage': 100, 'armor_piercing': 20, 'effective_range': 0}, None))
+    monkeypatch.setattr(CombatService, '_random_hit_zone', lambda *args: 'chest')
+    monkeypatch.setattr(CombatService, '_live_shield_target', lambda *args: None)
+    monkeypatch.setattr(CombatService, '_apply_attack_damage', lambda *a, **kw: pytest.fail('Terrain blocked projectile must not damage target'))
+    result = CombatService._resolve_attack(target, attacker, {
+        'weapon_index': 0, 'hit_difficulty': 1, 'fire_mode': 'unaimed', 'round_number': 1,
+        'cover': {'zones': {'chest': {'terrain': True, 'object_id': None}}}}, forced_roll=20)
+    assert result['blocked_by_terrain'] is True
+    assert result['damage'] == 0
+    assert target.character.data == before
+
+
+def test_wall_sweep_checks_the_whole_segment_and_round_corners():
+    from app.services.movement_geometry import WallBox
+    wall = WallBox(0, 0, 2, .1, 0, 0)
+    assert wall.intersects_sweep((0, -1), (0, 1))
+    assert not wall.intersects_sweep((-2, -.4), (2, -.4))
+    corner = WallBox(0, 0, 2, 2, 0, 0)
+    assert not corner.intersects_sweep((1.2, 1.2), (1.2, 1.2))
+    assert corner.intersects_sweep((1.18, 1.18), (1.18, 1.18))
+    assert not corner.intersects_sweep((1.26, 0), (1.26, 0))
+
+
+@pytest.mark.parametrize('angle', [0, .4, 1.5707963267948966])
+def test_rotated_wall_sweep_uses_local_axes_instead_of_its_aabb(angle):
+    import math
+    from app.services.movement_geometry import WallBox
+    wall = WallBox(5, 5, 4, .2, angle, 0)
+    def world(x, y):
+        return 5 + x * math.cos(angle) + y * math.sin(angle), 5 - x * math.sin(angle) + y * math.cos(angle)
+    assert not wall.intersects_sweep(world(-1.5, -.4), world(1.5, -.4))
+    assert wall.intersects_sweep(world(0, -1), world(0, 1))
+
+
+@pytest.mark.parametrize('width, allowed', [(.5, False), (.6, True), (.9, True)])
+def test_open_door_uses_actual_circle_clearance_and_same_building(width, allowed):
+    wall = SimpleNamespace(type='wall', tile_x=2, tile_y=2, properties={
+        'building_id': 'A', 'dimensions': {'width': 5, 'depth': .2, 'height': 2.4},
+    })
+    door = SimpleNamespace(type='door', tile_x=2, tile_y=2, properties={
+        'building_id': 'A', 'is_open': True,
+        'dimensions': {'width': width, 'depth': .18, 'height': 2},
+    })
+    location = SimpleNamespace(tiles_data=[])
+    geometry = CombatService._movement_wall_geometry(location, [wall, door])
+    assert geometry.can_traverse((2, 1, 0), (2, 3, 0)) is allowed
+    door.properties['building_id'] = 'B'
+    geometry = CombatService._movement_wall_geometry(location, [wall, door])
+    assert not geometry.can_traverse((2, 1, 0), (2, 3, 0))
+    door.properties.update(building_id='A', is_open=False)
+    assert not CombatService._movement_wall_geometry(location, [wall, door]).can_traverse((2, 1, 0), (2, 3, 0))
+
+
+def test_embedded_walls_and_climbable_objects_keep_distinct_movement_rules():
+    location = SimpleNamespace(grid_width=3, grid_height=3, tiles_data=[[{'objects': [
+        {'type': 'wall', 'properties': {'dimensions': {'width': 3, 'depth': .1, 'height': 2.4}}},
+        {'type': 'wall', 'x': 2, 'z': 2, 'properties': {'climbable': True}},
+    ]}]])
+    geometry = CombatService._movement_wall_geometry(location, [])
+    assert not geometry.can_traverse((0, -.5, 0), (0, .5, 0))
+    assert geometry.can_traverse((0, -.5, 1), (0, .5, 1))
+    assert len(geometry.boxes) == 1
+
+
+def test_pripyat_saved_wall_no_longer_blocks_its_whole_edge_cell(monkeypatch):
+    import json
+    from pathlib import Path
+    fixture = json.loads((Path(__file__).parent / 'fixtures/pripyat_wall_geometry.json').read_text(encoding='utf-8'))
+    # Реальная стена sourceIndex=4 из SHIFT03-NAV-GEOMETRY, не новый полигон.
+    source = fixture['objects'][2]
+    assert (source['type'], source['tile_x'], source['tile_y']) == ('wall', 6, 6)
+    location = SimpleNamespace(grid_width=72, grid_height=72,
+                               tiles_data=[[{'height': 1} for _ in range(72)] for _ in range(72)])
+    objects = [SimpleNamespace(**o) for o in fixture['objects']]
+    geometry = CombatService._movement_wall_geometry(location, objects)
+    assert geometry.handles(objects[2])
+    assert (5, 5) in CombatService._object_footprint_tiles(source)
+    assert (5, 5) not in geometry.blocked_cells(0, 72, 72)
+    assert geometry.can_traverse((5, 5, 0), (5, 6, 0))
+    assert not geometry.can_traverse((5, 5, 0), (6, 5, 0))
+    # Смещённый проём исходной стены №2 ещё требует дробных узлов.
+    assert geometry.handles(objects[0])
+    assert geometry.can_traverse((6.5,3.5,0),(6.5,5.5,0))
+    monkeypatch.setattr(CombatService, '_movement_wall_geometry', staticmethod(lambda *args: geometry))
+    monkeypatch.setattr(CombatService, '_build_movement_map', staticmethod(lambda *args, **kwargs: (geometry.blocked_cells(0, 72, 72), {})))
+    route = CombatService._find_movement_path(location, 5, 5, 5, 6)
+    assert route and route['cost'] == 1
+    across = CombatService._find_movement_path(location, 5, 5, 6, 5)
+    assert across and across['cost'] > 1
+    assert all(geometry.can_traverse((*a, 0), (*b, 0)) for a, b in zip(across['path'], across['path'][1:]))
+
+
+def test_movement_map_uses_circle_clearance_for_a_wall_by_default(app):
+    from unittest.mock import patch
+    from app.models import LocationObject
+    location = SimpleNamespace(id=999, tiles_data=[])
+    wall = SimpleNamespace(type='wall',tile_x=6,tile_y=6,properties={
+        'offset_x':-.5,'offset_z':-.5,'rotation':-1.5707963267948966,
+        'dimensions':{'width':2,'depth':.2,'height':2.4},
+    })
+    with patch.object(LocationObject,'query') as objects, patch.object(LocationCharacter,'query') as characters:
+        objects.filter_by.return_value.all.return_value = [wall]
+        characters.filter_by.return_value.all.return_value = []
+        blocked, costs = CombatService._build_movement_map(location,floor_level=0)
+    assert (5,5) in CombatService._object_footprint_tiles(wall)
+    assert (5,5) not in blocked
+    assert costs == {}
+
+
+def test_server_preview_route_keeps_grapple_companion_constraints(app,monkeypatch):
+    from unittest.mock import patch
+    actor = SimpleNamespace(character_id=10,pos_x=1,pos_y=1,floor_level=0,grapple_target_id=2,
+                            character=SimpleNamespace(data={}))
+    captive = SimpleNamespace(character_id=11,pos_x=1,pos_y=2)
+    location = SimpleNamespace(id=999,grid_width=6,grid_height=6,tiles_data=[])
+    maps = []
+    def movement_map(location,moving_character_id,ignored_character_ids,**kwargs):
+        maps.append(ignored_character_ids)
+        return {(3,2)}, {}
+    monkeypatch.setattr(CombatService,'_build_movement_map',staticmethod(movement_map))
+    with patch.object(LocationCharacter,'query') as characters:
+        characters.filter_by.side_effect = lambda **filters: SimpleNamespace(first=lambda: actor if 'character_id' in filters else captive,all=lambda: [])
+        route = CombatService._find_movement_path(location,1,1,3,1,moving_character_id=10)
+    assert route is None
+    assert maps == [[10,11]]
+
+
+def test_fractional_route_passes_through_original_shifted_pripyat_door(monkeypatch):
+    import json
+    from pathlib import Path
+    fixture = json.loads((Path(__file__).parent/'fixtures/pripyat_wall_geometry.json').read_text(encoding='utf-8'))
+    location = SimpleNamespace(grid_width=20,grid_height=10,tiles_data=[])
+    geometry = CombatService._movement_wall_geometry(location,[SimpleNamespace(**o) for o in fixture['objects']])
+    monkeypatch.setattr(CombatService,'_movement_wall_geometry',staticmethod(lambda *args: geometry))
+    monkeypatch.setattr(CombatService,'_build_movement_map',staticmethod(lambda *args,**kwargs:(set(),{})))
+    route = CombatService._find_movement_path(location,6.5,3.5,6.5,5.5)
+    assert route is not None
+    assert route['distance'] == pytest.approx(2)
+    assert route['cost'] == pytest.approx(2)
+    assert all(geometry.can_traverse((*a,0),(*b,0)) for a,b in zip(route['path'],route['path'][1:]))
+    assert any(not float(x).is_integer() for x,y in route['path'])
+
+
+def test_fractional_move_persists_coordinates_op_and_preview(client,create_user,auth_headers):
+    from app.extensions import db
+    from test_character_interactions import _setup_pair
+    case = _setup_pair(client,create_user,auth_headers)
+    actor = case['actor_location']
+    actor.movement_points_current = 10
+    db.session.commit()
+    actor_id,location_id,lobby_id = actor.id,case['location'].id,case['lobby'].id
+    _,cost,_ = CombatService.move_character(location_id,case['actor_user']['id'],case['actor_character'].id,
+        1,1.25,movement_mode='walk')
+    assert cost == .25
+    db.session.expire_all()
+    actor = db.session.get(LocationCharacter,actor_id)
+    assert actor.pos_y == 1.25 and actor.movement_points_current == 9.75
+    assert actor.movement_distance_this_turn == .25
+    result = client.post(f'/lobbies/{lobby_id}/locations/{location_id}/movement-preview',
+        headers=auth_headers(case['actor_user']),json={'character_id':actor.character_id,'x':1,'y':1.75,'floor_level':0})
+    assert result.status_code == 200,result.get_json()
+    assert result.get_json()['route']['distance'] == .5
+    assert result.get_json()['route']['path'][0] == [1,1.25]
+
+
+def test_moving_circle_cannot_pass_through_another_character():
+    from app.services.movement_geometry import WallGeometry
+    geometry = WallGeometry([])
+    geometry.add_characters([SimpleNamespace(pos_x=1,pos_y=0,floor_level=0)])
+    assert not geometry.can_traverse((0,0,0),(2,0,0))
+    assert geometry.can_traverse((0,.6,0),(2,.6,0))
+    assert geometry.can_traverse((0,0,1),(2,0,1))
+
+
+def test_interaction_distance_uses_nearest_character_edges_with_fractional_positions():
+    first = SimpleNamespace(id=1,pos_x=1,pos_y=1,floor_level=0)
+    second = SimpleNamespace(id=2,pos_x=3,pos_y=1,floor_level=0)
+    assert CombatService._character_distance(first,second) == 1.5
+    assert not CombatService._is_adjacent(first,second)
+    second.pos_x = 2.5
+    assert CombatService._is_adjacent(first,second)
+    second.floor_level = 1
+    assert not CombatService._is_adjacent(first,second)
+
+
+def test_rotated_obstacle_ray_does_not_use_its_axis_aligned_box():
+    import math
+    obj = SimpleNamespace(tile_x=4,tile_y=4,type='wall',properties={
+        'rotation':math.pi/4,'offset_x':.5,'offset_z':.5,
+        'dimensions':{'width':4,'depth':.2,'height':2.4},
+    })
+    a,b = SimpleNamespace(pos_x=1.5,pos_y=3.3),SimpleNamespace(pos_x=4,pos_y=3.3)
+    assert CombatService._line_object_entry(a,b,obj) is None
+    a.pos_y,b.pos_y,b.pos_x = 4.5,4.5,7.5
+    assert CombatService._line_object_entry(a,b,obj) is not None
+
+
+def test_fractional_migration_preserves_legacy_values_and_refuses_lossy_downgrade(client,create_user,auth_headers):
+    import importlib.util
+    from pathlib import Path
+    from alembic.migration import MigrationContext
+    from alembic.operations import Operations
+    import sqlalchemy as sa
+    from app.extensions import db
+    from test_character_interactions import _setup_pair
+    case = _setup_pair(client,create_user,auth_headers)
+    actor_id = case['actor_location'].id
+    file = Path(__file__).parents[1]/'migrations/versions/d7b3e5f9012a_fractional_location_positions.py'
+    spec = importlib.util.spec_from_file_location('fractional_migration',file)
+    migration = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(migration)
+    db.session.remove()
+    with db.engine.begin() as connection:
+        migration.op = Operations(MigrationContext.configure(connection))
+        migration.downgrade()
+        assert isinstance(next(c for c in sa.inspect(connection).get_columns('location_characters') if c['name']=='pos_x')['type'],sa.Integer)
+        migration.upgrade()
+        before = connection.execute(sa.text('SELECT pos_x,pos_y FROM location_characters WHERE id=:id'),{'id':actor_id}).one()
+        assert tuple(before) == (1,1)
+        connection.execute(sa.text('UPDATE location_characters SET pos_x=1.25,movement_points_current=2.5 WHERE id=:id'),{'id':actor_id})
+        with pytest.raises(RuntimeError,match='дробные'):
+            migration.downgrade()
+        assert connection.execute(sa.text('SELECT pos_x FROM location_characters WHERE id=:id'),{'id':actor_id}).scalar_one() == 1.25
+
+
+def test_all_saved_pripyat_stairs_have_bidirectional_physical_routes(client,create_user,auth_headers):
+    import json,math
+    from pathlib import Path
+    from app.extensions import db
+    from app.models import LocationObject
+    from test_character_interactions import _setup_pair
+    fixture_path = Path(__file__).parents[1]/'tmp/pripyat-regression.json'
+    if not fixture_path.exists():
+        pytest.skip('Локальная копия Припяти отсутствует; полный прогон лестниц требует её наличия')
+    fixture = json.loads(fixture_path.read_text(encoding='utf-8'))
+    case = _setup_pair(client,create_user,auth_headers)
+    location = case['location']
+    location.grid_width,location.grid_height = fixture['grid_width'],fixture['grid_height']
+    location.tiles_data = fixture['tiles_data']
+    for source in fixture['objects']:
+        db.session.add(LocationObject(location_id=location.id,type=source['type'],name=source.get('name',source['type']),
+            tile_x=source['tile_x'],tile_y=source['tile_y'],properties=source.get('properties') or {}))
+    db.session.commit()
+    result = []
+    for index,source in enumerate(fixture['objects']):
+        if source['type'] != 'stairs':
+            continue
+        p = source['properties']
+        angle = p.get('rotation',0)
+        x,y = source['tile_x']+p.get('offset_x',0),source['tile_y']+p.get('offset_z',0)
+        level = p.get('level',0)
+        half_depth = p['dimensions']['depth']/2
+        low = (x-math.sin(angle)*(half_depth+.4),y-math.cos(angle)*(half_depth+.4),level)
+        high = (x+math.sin(angle)*(half_depth+.4),y+math.cos(angle)*(half_depth+.4),level+1)
+        up = CombatService._find_movement_path(location,*low[:2],*high[:2],start_level=low[2],end_level=high[2])
+        down = CombatService._find_movement_path(location,*high[:2],*low[:2],start_level=high[2],end_level=low[2])
+        result.append({'sourceIndex':index,'building':p.get('building_id'),'low':low,'high':high,
+            'up':up,'down':down})
+    assert len(result)==7
+    assert all(row['up'] and row['down'] for row in result),[(row['sourceIndex'],bool(row['up']),bool(row['down'])) for row in result]
+
+
+def test_pripyat_reported_street_tree_building_exit_and_drop(vertical_game):
+    import json,time
+    from pathlib import Path
+    from app.extensions import db
+    from app.models import LocationObject
+    source_path=Path(__file__).parents[1]/'tmp/pripyat-regression.json'
+    if not source_path.exists():
+        pytest.skip('Нужна локальная копия Припяти')
+    source=json.loads(source_path.read_text(encoding='utf-8'))
+    case=vertical_game;location=case['location'];actor=case['actor_location']
+    location.grid_width=source['grid_width'];location.grid_height=source['grid_height'];location.tiles_data=source['tiles_data']
+    objects=[]
+    for item in source['objects']:
+        obj=LocationObject(location_id=location.id,**item);objects.append(obj);db.session.add(obj)
+    db.session.commit()
+    geometry=CombatService._movement_wall_geometry(location,objects)
+    # Поваленное дерево из снимка 441: пересечение требует перелезания.
+    assert geometry.climb_edge_events((31,46,0),(36,46,0))
+    measurements=[]
+    # Раньше конечные клетки возле края попадали в прямоугольник кроны.
+    assert geometry.can_traverse((64,71,0),(64,71,0))
+    assert not geometry.can_traverse((64.5,68.5,0),(64.5,68.5,0))
+    for start,end in [((31,46,0),(36,46,0)),((64,29,0),(64,46,0)),
+                      ((64,46,0),(64,71,0)),((64,46,0),(64,0,0)),
+                      ((25,11,1),(25,3,0)),((25,7,0),(25,3,0))]:
+        actor.pos_x,actor.pos_y,actor.floor_level=start;db.session.commit()
+        t=time.perf_counter()
+        route=CombatService._find_movement_path(location,*start[:2],*end[:2],actor.character_id,end_level=end[2])
+        measurements.append(round((time.perf_counter()-t)*1000,2))
+        assert route,(start,end)
+        assert route['surfaces'][-1]['level']==end[2]
+    actor.pos_x,actor.pos_y,actor.floor_level=27,6,1;db.session.commit()
+    plan=CombatService._object_drop_plan(location,actor,objects[157])
+    assert plan and plan['floor_level']==0
+    assert plan['landing']['x']!=int(plan['landing']['x'])
+    # Тот же план при выполнении: точка не округляется и не телепортируется.
+    moved,_,_=CombatService.move_character(location.id,case['actor_user']['id'],actor.character_id,
+        plan['landing']['x'],plan['landing']['y'],special_action='drop_down',object_id=objects[157].id,floor_level=0)
+    assert moved.floor_level==0
+    print('Припять: мс маршрутов',measurements)
+
+
+def test_embedded_collision_uses_tile_origin_offsets_degrees_and_size():
+    obj={'type':'wall','x':.3,'z':-.2,'rotation':90,'dimensions':{'width':3,'depth':.1,'height':2.4}}
+    location=SimpleNamespace(tiles_data=[[{} for _ in range(5)] for _ in range(5)])
+    location.tiles_data[3][4]={'objects':[obj]}
+    geometry=CombatService._movement_wall_geometry(location,[])
+    assert not geometry.can_traverse((3,3,0),(5,3,0))
+    assert geometry.can_traverse((0,0,0),(1,0,0))
+    box=geometry.boxes[0]
+    assert (box.x,box.y)==pytest.approx((4.8,3.3))
+    assert box.angle==pytest.approx(1.5707963267948966)
+
+
+def test_drop_rechecks_closed_and_occupied_passage_before_payment(vertical_game,monkeypatch):
+    from app.extensions import db
+    from app.models import LocationObject
+    case=vertical_game;actor=case['actor_location'];location=case['location']
+    actor.pos_x,actor.pos_y,actor.floor_level=3,2,1
+    floor=LocationObject(location_id=location.id,type='floor',tile_x=3,tile_y=3,
+        properties={'level':1,'dimensions':{'width':6,'depth':6,'height':.1}})
+    portal=LocationObject(location_id=location.id,type='hatch',tile_x=3,tile_y=3,
+        properties={'level':1,'is_open':True,'dimensions':{'width':.9,'depth':.9,'height':.1}})
+    db.session.add_all([floor,portal]);db.session.commit()
+    plan=CombatService._object_drop_plan(location,actor,portal);assert plan
+    landing=plan['landing'];before=(actor.action_points_current,actor.movement_points_current)
+    monkeypatch.setattr(CombatService,'resolve_fall',staticmethod(lambda *a,**kw:pytest.fail('Недопустимый спуск не наносит урон')))
+    def move():
+        return CombatService.move_character(location.id,case['actor_user']['id'],actor.character_id,
+            landing['x'],landing['y'],special_action='drop_down',object_id=portal.id,floor_level=0)
+    portal.properties={**portal.properties,'is_open':False};db.session.commit()
+    with pytest.raises(ValidationError,match='passage|landing'):
+        move()
+    portal.properties={**portal.properties,'is_open':True}
+    blocker=case['target_location'];blocker.pos_x=landing['x'];blocker.pos_y=landing['y'];blocker.floor_level=0
+    db.session.commit()
+    with pytest.raises(ValidationError,match='passage|landing'):
+        move()
+    assert (actor.action_points_current,actor.movement_points_current)==before
+    assert (actor.pos_x,actor.pos_y,actor.floor_level)==(3,2,1)
+
+
+@pytest.mark.parametrize('kind',['tree','nature_oak_green','nature_oak_dead','nature_birch_dry','nature_pine_green'])
+@pytest.mark.parametrize('angle',[0,.7853981633974483,1.5707963267948966])
+def test_tree_crown_does_not_block_walk_but_trunk_still_does(kind,angle):
+    import math
+    tree=SimpleNamespace(type=kind,tile_x=5,tile_y=5,properties={'rotation':angle,'level':0,
+        'dimensions':{'width':5.5,'depth':5,'height':8}})
+    geometry=CombatService._movement_wall_geometry(SimpleNamespace(tiles_data=[]),[tree])
+    def point(x,y):return (5+x*math.cos(angle)+y*math.sin(angle),5-x*math.sin(angle)+y*math.cos(angle),0)
+    assert not geometry.can_traverse(point(-2,0),point(2,0))
+    assert geometry.can_traverse(point(-2,1.5),point(2,1.5))
+    assert geometry.can_traverse((3,5,1),(7,5,1))

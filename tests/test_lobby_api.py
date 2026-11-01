@@ -2314,7 +2314,7 @@ def test_gm_rest_event_advances_lobby_time_for_selected_characters(
     inactive_health = db.session.get(LobbyCharacter, inactive_npc["id"]).data["health"]
     assert sleeper_health["current"] == 450
     assert sleeper_health["intoxication"] == 15
-    assert sleeper_health["exhaustion"] == 1.5
+    assert sleeper_health["exhaustion"] == 2
     assert sleeper_health["needs"]["day"] == 2
     assert sleeper_health["needs"]["lastDay"]["missed"] == ["еда"]
     assert observer_health["current"] == 200

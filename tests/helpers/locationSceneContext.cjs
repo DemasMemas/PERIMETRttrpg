@@ -7,7 +7,7 @@ const architecture = vm.runInNewContext(fs.readFileSync(path.join(__dirname, '..
 module.exports = function sceneContext(values) {
     return {
         ...architecture,
-        currentLocationData: null, objectEdit: null, editorPaste: null, eraserMode: false,
+        currentLocationData: null, editorHeldRotation: null, objectEdit: null, editorPaste: null, eraserMode: false,
         editorHoverLevelOffset: () => 0, locationViewLevel: 0,
         locationSceneLoading: false, locationBuildingViewsDirty: false,
         locationObjectPickCache: { key: null, result: null },

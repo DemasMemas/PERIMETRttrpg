@@ -162,3 +162,37 @@ test('group commit sends all expected snapshots in one request and resolves fina
     assert.equal(h.controller.members.length, 2);
     assert.equal(h.controller.members[1].object.rotation, 15);
 });
+
+test('Короткий Q после дробного удержания сохраняет ровно15 градусов на границе359',async()=>{
+ const {worldObjectMouseTransform}=await modulePromise;
+ const vm=require('node:vm'),source=fs.readFileSync(path.join(__dirname,'../app/static/js/mapEdit.js'),'utf8');
+ const start=source.indexOf('export function rotateWorldObjectPlacement('),end=source.indexOf('window.cancelWorldObjectPlacement',start);
+ let value=344.5;
+ const context=vm.createContext({window:{isLocationActive:false,worldEditorTool:'objects'},AppState:{isGM:true,editMode:true},
+  selectedWorldObject:'factory',roadLinkActive:false,choosingExistingObjectTarget:false,document:{getElementById:()=>null},
+  worldObjectSettings:()=>({rotation:value}),worldObjectMouseTransform,
+  syncWorldNumber:(_,rotation)=>value=rotation,updateWorldObjectPreview:()=>{},getHoveredTile:()=>null});
+ vm.runInContext(source.slice(start,end).replaceAll('export ',''),context);
+ assert.equal(context.rotateWorldObjectPlacement(-1),true);assert.equal(value,359.5);
+ context.rotateWorldObjectPlacement(-1);assert.equal(value,14.5);
+});
+test('Выделенный объект глобальной карты также получает точный шаг после дробного угла',async()=>{
+ const {worldObjectMouseTransform}=await modulePromise,vm=require('node:vm');
+ const source=fs.readFileSync(path.join(__dirname,'../app/static/js/worldObjectEditor.js'),'utf8'),start=source.indexOf('    const rotationContext ='),end=source.indexOf("    document.addEventListener('input'",start);
+ let handler;const object={rotation:344.5};
+ const context=vm.createContext({window:{addEventListener:(_,fn)=>handler=fn},document:{getElementById:()=>null},
+  available:()=>true,selection:{selected:{object},members:[{}],busy:false},field:()=>({hidden:false}),
+  quickGeneration:0,quickTarget:null,quickSaving:false,gesture:null,isTypingTarget:()=>false,worldObjectMouseTransform,
+  nudge:change=>Object.assign(object,change),cancelGesture:()=>{}});
+ vm.runInContext(source.slice(start,end),context);
+ handler({code:'KeyQ',key:'q',target:{},preventDefault(){},stopImmediatePropagation(){}});
+ assert.equal(object.rotation,359.5);
+});
+
+test('Настройки размещения сохраняют точное дробное значение вместо ограниченного ползунка',()=>{
+ const vm=require('node:vm'),source=fs.readFileSync(path.join(__dirname,'../app/static/js/mapEdit.js'),'utf8');
+ const start=source.indexOf('function worldObjectSettings('),end=source.indexOf('export function updateWorldObjectPreview(',start);
+ const context=vm.createContext({getWorldNumericValue:()=>359.5,selectedWorldObject:'factory',PROTECTED_BUILDING_TYPES:new Set(),WORLD_OBJECT_COLORS:{factory:'#777'},
+ document:{getElementById:id=>id==='world-object-rotation'?{value:'359'}:null}});
+ vm.runInContext(source.slice(start,end),context);assert.equal(context.worldObjectSettings().rotation,359.5);
+});

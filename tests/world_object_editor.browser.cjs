@@ -8,6 +8,8 @@ const net = require('node:net');
 const { spawn } = require('node:child_process');
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
 const root = path.resolve(__dirname, '..');
+const isolation = require('./helpers/browser_isolation.cjs');
+const safeSession = process.env.VTT_SAFE_RUN_ID ? isolation.createSession(process.env) : null;
 
 async function connect(url) {
     const socket = new WebSocket(url);
@@ -22,12 +24,18 @@ async function connect(url) {
     };
     socket.onmessage = event => {
         const message = JSON.parse(event.data);
-        if(message.method==='Fetch.requestPaused'){
+        if(message.method==='Fetch.requestPaused' && safeSession){
+            safeSession.paused(message.params,call).catch(console.error);
+        } else if(message.method==='Fetch.requestPaused'){
             const p=message.params,name=new URL(p.request.url).pathname.split('/').pop(),dir=new URL(p.request.url).pathname.startsWith('/static/js/')?process.env.VTT_WATER_BASELINE_DIR:process.env.VTT_BROWSER_VENDOR_DIR;
             const file=dir&&path.join(dir,name);
             (file&&fs.existsSync(file)?call('Fetch.fulfillRequest',{requestId:p.requestId,responseCode:200,responseHeaders:[{name:'Content-Type',value:'application/javascript'},{name:'Access-Control-Allow-Origin',value:'*'}],body:fs.readFileSync(file).toString('base64')}):call('Fetch.continueRequest',{requestId:p.requestId})).catch(console.error);
         }
         if (message.method) events.set(message.method, message.params);
+        if (safeSession) {
+            const diagnostic=isolation.networkDiagnostic(message.method,message.params||{});
+            if(diagnostic&&networkEvents.length<2000)networkEvents.push(diagnostic);
+        }
         if (process.env.VTT_NETWORK === '1' && /^(Network\.webSocket|Runtime\.exceptionThrown|Log\.entryAdded)/.test(message.method || '')) networkEvents.push(message);
         if (message.method === 'Runtime.exceptionThrown') console.error('Browser exception:', JSON.stringify(message.params.exceptionDetails));
         if (message.method === 'Runtime.consoleAPICalled' && message.params.type === 'error') {
@@ -66,19 +74,24 @@ async function connect(url) {
         console.error(await evaluate(`JSON.stringify({url:location.href,gm:window.isGM,token:Boolean(localStorage.getItem('access_token')),body:document.body?.innerText.slice(0,500)})`));
         throw new Error(`Timed out: ${label}`);
     };
-    if (process.env.VTT_NETWORK === '1') await call('Network.enable');
-    return { call, evaluate, until, events, networkEvents, close: () => socket.close() };
+    if ((safeSession && isolation.isPageTarget(url)) || process.env.VTT_NETWORK === '1') await call('Network.enable');
+    const closed = new Promise(resolve => socket.addEventListener('close', resolve, { once: true }));
+    const client = { call, evaluate, until, events, networkEvents, close: () => { socket.close(); return closed; } };
+    return safeSession ? await safeSession.prepareClient(client,url) : client;
 }
 
 (async () => {
     const keepAlive = setInterval(() => {}, 1000);
+    let server, profile, browser, page, observer, playerPage, browserProtocol;
+    let serverErrors = '';
+    try {
     const reserve = net.createServer();
     await new Promise(resolve => reserve.listen(0, '127.0.0.1', resolve));
     const port = reserve.address().port;
     await new Promise(resolve => reserve.close(resolve));
     const base = `http://127.0.0.1:${port}`;
     const python = path.join(root, '.venv/Scripts/python.exe');
-    const server = spawn(python, ['-u', '-c', `import tempfile
+    server = safeSession ? safeSession.spawnServer(python, port) : spawn(python, ['-u', '-c', `import tempfile
 from app.config import TestingConfig, DevelopmentConfig
 test_directory = tempfile.TemporaryDirectory(prefix='vtt-browser-db-')
 TestingConfig.SQLALCHEMY_DATABASE_URI = 'sqlite:///' + test_directory.name + '/test.sqlite'
@@ -105,14 +118,12 @@ else:
     app = create_app('testing')
     socketio.run(app, host='127.0.0.1', port=${port}, debug=False, use_reloader=False, allow_unsafe_werkzeug=True)
 `], { cwd: root, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
-    let serverErrors = '';
     server.stderr.on('data', data => { serverErrors = process.env.VTT_NETWORK === '1' ? serverErrors + data : (serverErrors + data).slice(-10000); });
     server.stdout.on('data', data => { if(process.env.VTT_NETWORK === '1' && String(data).includes('NETWORK SERVER')) console.log(String(data).trim()); });
-    const profile = process.env.VTT_BROWSER_PROFILE || fs.mkdtempSync(path.join(os.tmpdir(), 'vtt-object-editor-'));
+    profile = safeSession ? safeSession.profile() : process.env.VTT_BROWSER_PROFILE || fs.mkdtempSync(path.join(os.tmpdir(), 'vtt-object-editor-'));
     if (process.env.VTT_BROWSER_PROFILE) fs.rmSync(path.join(profile,'DevToolsActivePort'),{force:true});
-    let browser, page, observer, playerPage, browserProtocol;
-    try {
-        for (let i = 0; i < 100; i++) {
+        if (safeSession) await safeSession.ready();
+        else for (let i = 0; i < 100; i++) {
             try { if ((await fetch(base)).ok) break; } catch {}
             await pause(100);
         }
@@ -139,9 +150,9 @@ else:
             { type: 'tree', x: 0.4, z: 0.4, scale: 0.6 },
         ] }, token, 'PATCH');
         await request(`/lobbies/${lobby.id}/chunks/1/0/tile/0/10`, { objects: [{ type: 'house', x: -0.4, z: -0.4 }] }, token, 'PATCH');
-        browser = spawn(process.env.BROWSER_EXECUTABLE || 'C:/Program Files/Google/Chrome/Application/chrome.exe', [
-            '--headless=new', '--no-sandbox', '--no-first-run', '--ignore-certificate-errors',
-            ...((process.env.VTT_PRIPYAT === '1' || process.env.VTT_UI_REGRESSION === '1' || process.env.VTT_UI_LAYOUT === '1' || process.env.VTT_LOC_SCULPT === '1' || process.env.VTT_LOC_LIGHT_CLEANUP === '1' || process.env.VTT_LOC_NUMERIC === '1' || process.env.VTT_LOC_HISTORY === '1' || process.env.VTT_LOC_BRUSH === '1' || process.env.VTT_LOC_CLIPBOARD === '1') ? ['--disable-background-timer-throttling', '--disable-renderer-backgrounding', '--disable-backgrounding-occluded-windows'] : []),
+        browser = (safeSession ? safeSession.spawn.bind(safeSession) : spawn)(process.env.BROWSER_EXECUTABLE || 'C:/Program Files/Google/Chrome/Application/chrome.exe', [
+            '--headless=new', ...(safeSession ? [] : ['--no-sandbox', '--ignore-certificate-errors']), '--no-first-run',
+            ...((process.env.VTT_ROTATION_ONLY === '1' || process.env.VTT_SHEET_REPRO_ONLY === '1' || process.env.VTT_MEDICAL_RETRY_ONLY === '1' || process.env.VTT_DAMAGE_REVOKE_ONLY === '1' || process.env.VTT_MAGAZINE_ONLY === '1' || process.env.VTT_MOVEMENT_ONLY === '1' || process.env.VTT_PRIPYAT === '1' || process.env.VTT_UI_REGRESSION === '1' || process.env.VTT_UI_LAYOUT === '1' || process.env.VTT_LOC_SCULPT === '1' || process.env.VTT_LOC_LIGHT_CLEANUP === '1' || process.env.VTT_LOC_NUMERIC === '1' || process.env.VTT_LOC_HISTORY === '1' || process.env.VTT_LOC_BRUSH === '1' || process.env.VTT_LOC_CLIPBOARD === '1') ? ['--disable-background-timer-throttling', '--disable-renderer-backgrounding', '--disable-backgrounding-occluded-windows'] : []),
             ...(process.env.VTT_PERF_UNCAPPED==='1'?['--disable-frame-rate-limit','--disable-gpu-vsync']:[]),
             ...(process.env.VTT_BROWSER_GPU==='1'?[]:['--use-angle=swiftshader','--enable-unsafe-swiftshader']), '--window-size=1440,900',
             '--remote-debugging-port=0', `--user-data-dir=${profile}`, 'about:blank',
@@ -157,18 +168,28 @@ else:
         await page.call('Page.enable');
         await page.call('Runtime.enable');
         await page.call('Log.enable');
-        if ((process.env.VTT_UI_REGRESSION === '1' || process.env.VTT_PRIPYAT === '1') && !process.env.VTT_WATER_BASELINE_DIR) {
+        if ((process.env.VTT_GM_RELOCATION_ONLY === '1' || process.env.VTT_UI_REGRESSION === '1' || process.env.VTT_PRIPYAT === '1' || process.env.VTT_MOVEMENT_ONLY === '1') && !process.env.VTT_WATER_BASELINE_DIR) {
             const modules = path.join(profile, 'regression-modules');
             fs.mkdirSync(modules,{recursive:true});
             const source = process.env.VTT_PRIPYAT_LEGACY === '1'
                 ? fs.readFileSync(path.join(root,'tmp/ui-regression-modules/locationScene.js'),'utf8').split('\nexport {showCombatActionMenu,')[0]
                 : fs.readFileSync(path.join(root,'app/static/js/locationScene.js'),'utf8');
             fs.writeFileSync(path.join(modules,'locationScene.js'), source + `
-export {showCombatActionMenu, showFacingMenu, updateFacingPreview, closeFacingMenu, findMovementPath, hasStoreyNavigation, beginCharacterMoveMode, updateMovementPreview, commitMovementPreview, resolveFacingCell};
+export {showCombatActionMenu, showFacingMenu, updateFacingPreview, closeFacingMenu, findMovementPath, hasStoreyNavigation, hasLineOfSight, beginCharacterMoveMode, updateMovementPreview, commitMovementPreview, resolveFacingCell, showMovementTypeMenu, selectEditorAsset};
 export function facingPreviewCount(){return facingPreviewMesh?.count || 0;}
 export function navigationPreviewSettled(sx,sy,x,y,c,l){return [...navigationPreviews.entries()].some(([key,value])=>key.endsWith(\`:\${c}:\${sx}:\${sy}:\${x}:\${y}:\${l}\`)&&value!==null);}
 export function characterPose(id){const e=getCharacterModelEntry(id);return {x:e.posX,y:e.posY,fx:e.facingX,fy:e.facingY};}
+export function characterSpatialPose(id){const e=getCharacterModelEntry(id);return {level:e.floorLevel,height:e.physicalHeight,x:e.model.position.x,z:e.model.position.z,renderHeight:e.model.position.y,animating:Boolean(e.positionAnimation)};}
+export function beginObjectClimbForTest(objectId,characterId){const object=currentLocationData.objects.find(o=>o.id===objectId);return performClimbAction(object,characterId);}
+export function captureCurrentSceneForTest(){renderer.render(scene,camera);return renderer.domElement.toDataURL('image/png');}
+export function objectRenderBoundsForTest(id){const root=locationObjectMeshes.find(m=>m.userData.locationObject?.id===id||m.userData.locationObjectId===id);if(!root)return null;const box=new THREE.Box3().setFromObject(root);return{center:box.getCenter(new THREE.Vector3()).toArray(),size:box.getSize(new THREE.Vector3()).toArray()};}
 export function movementHintText(){return movementPreviewHint?.textContent;}
+export function gmRelocationStateForTest(){return {pending:Boolean(pendingCharacterPlacement?.gmRelocation),ghost:Boolean(movementPreviewGhost||previewSprite),level:locationViewLevel};}
+export function characterIsMutantForTest(id){return Boolean(getCharacterModelEntry(id)?.isMutant);}
+export function characterModelCenterForTest(id){return new THREE.Box3().setFromObject(getCharacterModelEntry(id).model).getCenter(new THREE.Vector3()).toArray();}
+export function navigationPreviewStateForTest(){return {level:movementTargetLevel,route:movementPreviewLine?.userData?.route,points:movementPreviewLine?.userData?.points?.map(p=>p.toArray()),frustumCulled:movementPreviewLine?.frustumCulled};}
+export function movementHintSnapshot(){return {text:movementPreviewHint?.textContent||'',visible:Boolean(movementPreviewHint&&getComputedStyle(movementPreviewHint).display!=='none'&&getComputedStyle(movementPreviewHint).visibility!=='hidden'&&movementPreviewHint.getClientRects().length)};}
+export function movementReadinessSnapshot(){return {armedCharacterId:armedMoveCharacterId,mode:armedMovementType,previewCharacterId:movementPreviewCharacterId,startX:movementPreviewStartX,startY:movementPreviewStartY,previewInitialized:Boolean(movementPreviewGhost),menuClosed:!movementTypeMenu||getComputedStyle(movementTypeMenu).display==='none'||movementTypeMenu.getClientRects().length===0};}
 export function previewDiagnostics(){return {count:facingPreviewMesh?.count||0,pending:!!pendingFacingSelection,pose:pendingFacingSelection&&characterPose(pendingFacingSelection.characterId)};}
 export function previewComplete(){return facingPreviewState?.complete===true;}
 export function previewTiles(){return Array.from({length:facingPreviewMesh?.count||0},(_,i)=>[Math.round(facingPreviewMesh.instanceMatrix.array[i*16+12]-.5),Math.round(facingPreviewMesh.instanceMatrix.array[i*16+14]-.5)]);}
@@ -178,7 +199,8 @@ export function characterVisible(id){return getCharacterModelEntry(id)?.model.vi
 export function previewFixturePose(id,x,y,level){closeFacingMenu();const height=getVisionObjectIndex().floors.get(level)?.get(\`\${x}:\${y}\`)??getTileHeight(x,y);updateCharacterPosition(id,x,y,{floor_level:level,height});setLocationViewLevel(level);return height;}
 if(typeof renderFacingPreview==='function'){const original=renderFacingPreview;renderFacingPreview=()=>{const t=performance.now();try{return original();}finally{(window.previewRenderSamples ||= []).push(performance.now()-t);}};}
 `);
-            process.env.VTT_WATER_BASELINE_DIR = modules;
+            if (safeSession) safeSession.captureCurrentModule(path.join(modules,'locationScene.js'));
+            else process.env.VTT_WATER_BASELINE_DIR = modules;
         }
         if(process.env.VTT_WATER_BASELINE_DIR || process.env.VTT_BROWSER_VENDOR_DIR)await page.call('Fetch.enable',{patterns:[{urlPattern:'*/static/js/*',requestStage:'Request'},
             ...(process.env.VTT_BROWSER_VENDOR_DIR?[{urlPattern:'*unpkg.com/three@0.128.0/*',requestStage:'Request'},{urlPattern:'*cdnjs.cloudflare.com/ajax/libs/socket.io/*',requestStage:'Request'}]:[])]});
@@ -202,8 +224,57 @@ if(typeof renderFacingPreview==='function'){const original=renderFacingPreview;r
         await page.evaluate(`(async()=>{window.sceneModule=await import('/static/js/lobby3d.js');window.threeModule=await import('three')})()`);
         await page.until(`sceneModule.chunksMap.size===${waterGeometry?4:2} && document.getElementById('scene-loading-screen').classList.contains('is-hidden')`, 'world chunks');
         assert.equal(await page.evaluate('Boolean(sceneModule.renderer.isUnavailableRenderer)'), false);
-        if (process.env.VTT_PRIPYAT === '1') {
-            await require('./pripyat_ui.browser.cjs')({page,request,token,lobby,base,connect,debugPort});
+        if (safeSession) {
+            const renderer = await page.evaluate(`(()=>{const gl=sceneModule.renderer.getContext(),ext=gl.getExtension('WEBGL_debug_renderer_info');return ext?gl.getParameter(ext.UNMASKED_RENDERER_WEBGL):null})()`);
+            isolation.assertGpu(renderer);
+            fs.writeFileSync(path.join(safeSession.artifacts,'gpu.json'),JSON.stringify({renderer},null,2));
+        }
+        if (safeSession && process.env.VTT_SAFE_SCENARIO === 'terrain') {
+            await require('./terrain_los.browser.cjs')({page,request,token,lobby,base,safeSession});
+            return;
+        }
+        if (safeSession && process.env.VTT_SAFE_SCENARIO === 'gm-relocation') {
+            await require('./gm_relocation.browser.cjs')({page,request,token,lobby,base,connect,debugPort,safeSession});
+            return;
+        }
+        if (safeSession && process.env.VTT_SAFE_SCENARIO === 'height') {
+            await require('./movement_height.browser.cjs')({page,request,token,lobby,safeSession});
+            return;
+        }
+        if (safeSession && process.env.VTT_SAFE_SCENARIO === 'rotation') {
+            await require('./rotation_hold.browser.cjs')({page,request,token,lobby,safeSession});
+            return;
+        }
+        if (safeSession && process.env.VTT_SAFE_SCENARIO === 'medical-retry') {
+            await require('./medical_retry.browser.cjs')({page,request,token,lobby,base,connect,debugPort,safeSession});
+            return;
+        }
+        if (safeSession && process.env.VTT_SAFE_SCENARIO === 'magazine') {
+            await require('./magazine_regression.browser.cjs')({page,request,token,lobby,base,connect,debugPort,safeSession});
+            return;
+        }
+        if (safeSession && process.env.VTT_SAFE_SCENARIO === 'durable-reload') {
+            await require('./durable_reload.browser.cjs')({page,request,token,lobby,base,connect,debugPort,safeSession});
+            return;
+        }
+        if (safeSession && process.env.VTT_SAFE_SCENARIO === 'damage-revoke') {
+            await require('./damage_revoke.browser.cjs')({page,request,token,lobby,base,connect,debugPort,safeSession});
+            return;
+        }
+        if (safeSession && process.env.VTT_SAFE_SCENARIO === 'sheet-repro') {
+            await require('./character_widgets.browser.cjs')({page,request,token,lobby,login,profile,base,connect,debugPort,safeSession,focusRegression:true});
+            return;
+        }
+        if (safeSession && process.env.VTT_SAFE_SCENARIO === 'widgets') {
+            await require('./character_widgets.browser.cjs')({page,request,token,lobby,login,profile,base,connect,debugPort,safeSession});
+            return;
+        }
+        if (safeSession && process.env.VTT_SAFE_SCENARIO === 'skills') {
+            await require('./skills.browser.cjs')({page,request,token,lobby});
+            return;
+        }
+        if (process.env.VTT_PRIPYAT === '1' || process.env.VTT_MOVEMENT_ONLY === '1') {
+            await require('./pripyat_ui.browser.cjs')({page,request,token,lobby,base,connect,debugPort,safeSession});
             return;
         }
         if (process.env.VTT_UI_REGRESSION === '1') {
@@ -1008,9 +1079,18 @@ if(typeof renderFacingPreview==='function'){const original=renderFacingPreview;r
         assert.equal(vegetationPerf.stale,0,'no detached vegetation batches left in scene');
         await page.call('Browser.close');
     } catch (error) {
+        if (safeSession && page) {
+            try {
+                fs.writeFileSync(path.join(safeSession.artifacts,'failure.json'),JSON.stringify({error:String(error.message).replace(/eyJ[\w-]+\.[\w-]+\.[\w-]+/g,'[test token]'),network:page.networkEvents},null,2));
+                fs.writeFileSync(path.join(safeSession.artifacts,'failure.png'),Buffer.from((await page.call('Page.captureScreenshot',{format:'png'})).data,'base64'));
+            } catch { console.error('Не удалось сохранить диагностику собственного запуска'); }
+        }
         console.error(serverErrors.slice(-2500).replace(/eyJ[\w-]+\.[\w-]+\.[\w-]+/g,'[test token]'));
         throw error;
     } finally {
+        if (safeSession) {
+            try { await safeSession.cleanup(browser,server); } finally { clearInterval(keepAlive); }
+        } else {
         if (page && browser?.exitCode === null) {
             await page.call('Browser.close').catch(() => {});
             if (browser.exitCode === null) {
@@ -1020,11 +1100,12 @@ if(typeof renderFacingPreview==='function'){const original=renderFacingPreview;r
                 });
             }
         }
-        page?.close(); observer?.close(); playerPage?.close(); browserProtocol?.close(); browser?.kill(); server.kill(); clearInterval(keepAlive);
-        const profilePath = path.resolve(profile);
-        if (!process.env.VTT_BROWSER_PROFILE && path.dirname(profilePath) === path.resolve(os.tmpdir())
+        page?.close(); observer?.close(); playerPage?.close(); browserProtocol?.close(); browser?.kill(); server?.kill(); clearInterval(keepAlive);
+        const profilePath = profile ? path.resolve(profile) : null;
+        if (profilePath && !process.env.VTT_BROWSER_PROFILE && path.dirname(profilePath) === path.resolve(os.tmpdir())
             && path.basename(profilePath).startsWith('vtt-object-editor-')) {
             fs.rmSync(profilePath, { recursive: true, force: true, maxRetries: 20, retryDelay: 200 });
+        }
         }
     }
 })().catch(error => { console.error(error); process.exitCode = 1; });

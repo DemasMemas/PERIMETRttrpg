@@ -704,11 +704,44 @@ def _restore_limb_health_and_pool(health: Dict[str, Any], area: str, restored_he
     health["current"] = _clamp(_to_float(health.get("current"), 0) + recovered, 0, maximum_pool)
 
 
+def health_blocks_new_stress(health: Dict[str, Any]) -> bool:
+    """Смерть/потеря сознания по физическим условиям _character_condition, без RNG."""
+    active_types = {
+        effect.get("type") for effect in normalize_effect_list(health.get("effects") or [])
+        if effect.get("active", True)
+        and (effect.get("remaining") is None or _to_float(effect.get("remaining"), 0) > 0)
+    }
+    if active_types.intersection({"death", "unconsciousness", "sleep", "critical_condition"}):
+        return True
+    zones = health.get("zones") if isinstance(health.get("zones"), dict) else {}
+    organs = health.get("organs") if isinstance(health.get("organs"), dict) else {}
+    return bool(
+        _to_float(health.get("current"), 1) <= 0
+        or any(_to_float((zones.get(zone) or {}).get("current"), 1) <= 0
+               for zone in ("head", "chest"))
+        or any(_to_float((organs.get(organ) or {}).get("current"), 1) <= 0
+               for organ in ("brain", "skull"))
+        or str(health.get("bloodStage") or health.get("blood") or "normal").lower()
+        in {"critical", "fatal"}
+        or _to_float(health.get("temperature"), 36) <= 29
+        or _to_float(health.get("temperature"), 36) >= 41
+        or _to_float(health.get("intoxication"), 0) >= 96
+    )
+
+
 def apply_effect_to_health(health: Dict[str, Any], raw_effect: Any) -> Dict[str, Any]:
     effect = normalize_effect(raw_effect)
     signed_value = _to_float(effect.get("value", 0), 0)
     magnitude = abs(_to_float(effect.get("value", 0), 0))
     effect_type = effect["type"]
+
+    new_stress = (
+        (effect_type == "stress" and signed_value > 0)
+        or effect_type in {"stress_effect", "stress_stupor"}
+        or (effect_type == "phobia" and effect.get("source") == "stress_manifestation")
+    )
+    if new_stress and health_blocks_new_stress(health):
+        return health
 
     active_effects = normalize_effect_list(health.get("effects") or [])
     if effect_type.startswith("bleeding_") and any(

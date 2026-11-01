@@ -94,6 +94,7 @@ export function initDirectWorldObjectEditor({ lobbyId, state, protectedTypes, la
         render(selection.selected, selection.busy);
     };
     window.clearDirectWorldObjectSelection = () => {
+        window.stopMapRotationHold?.();
         quickGeneration++;
         quickTarget = null;
         quickDirty = false;
@@ -102,7 +103,10 @@ export function initDirectWorldObjectEditor({ lobbyId, state, protectedTypes, la
     window.hasDirectWorldObjectSelection = () => Boolean(selection.selected);
     window.isDirectWorldObjectTransformActive = () => Boolean(gesture);
     window.getDirectWorldObjectSelection = () => selection.members.map(member => ({ ...member, object: { ...member.object } }));
-    window.selectDirectWorldObjects = references => selection.selectMany(references);
+    window.selectDirectWorldObjects = references => {
+        window.stopMapRotationHold?.();
+        return selection.selectMany(references);
+    };
     window.refreshDirectWorldObjectEditor = () => render(selection.selected, selection.busy);
     window.syncDirectWorldObjectSelection = (chunkX, chunkY, tileX, tileY) => {
         const selected = selection.selected;
@@ -232,6 +236,14 @@ export function initDirectWorldObjectEditor({ lobbyId, state, protectedTypes, la
             }
         })();
     };
+    const rotationContext = () => available() && selection.selected && !field('rotation-option').hidden
+        ? `${quickGeneration}:${selection.members.length}` : null;
+    const rotateHeld = (direction, fraction) => {
+        if (rotationContext() === null) return false;
+        const object = quickTarget || selection.selected.object;
+        nudge({ rotation: ((Number(object.rotation || 0) - direction * fraction * 15) % 360 + 360) % 360 });
+        return true;
+    };
     // Window capture gives selected-object commands priority over the global
     // document handlers for Q (menu), E (editor), R (eraser) and +/- (height).
     window.addEventListener('keydown', event => {
@@ -245,6 +257,7 @@ export function initDirectWorldObjectEditor({ lobbyId, state, protectedTypes, la
         if (!command && !scaleDirection && !rotateDirection && !['Escape', 'Delete', 'Backspace'].includes(event.key)) return;
         event.preventDefault();
         event.stopImmediatePropagation();
+        if (rotateDirection && event.repeat) return;
         if (event.key === 'Escape') {
             if (gesture) cancelGesture();
             else selection.clear();
@@ -256,7 +269,10 @@ export function initDirectWorldObjectEditor({ lobbyId, state, protectedTypes, la
             if (gesture) cancelGesture();
             const object = quickTarget || selection.selected.object;
             if (scaleDirection) nudge(worldObjectMouseTransform('scale', object, scaleDirection * 10));
-            else if (!field('rotation-option').hidden) nudge(worldObjectMouseTransform('rotate', object, rotateDirection * 30));
+            else if (!field('rotation-option').hidden) {
+                rotateHeld(rotateDirection, 1);
+                window.startMapRotationHold?.(event, rotateHeld, rotationContext);
+            }
         }
     }, { capture: true });
     document.addEventListener('input', event => {

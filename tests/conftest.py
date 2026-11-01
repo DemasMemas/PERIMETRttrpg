@@ -1,20 +1,24 @@
-import pytest
+import os
+from pathlib import Path
+import sys
 
-from app import create_app
-from app.extensions import db
+sys.path.insert(0, str(Path(__file__).resolve().parent / 'helpers'))
+from isolation_guard import memory_database_scope
+
+os.environ['PYTHON_DOTENV_DISABLED'] = '1'
+
+import pytest
 
 
 @pytest.fixture
 def app():
-    test_app = create_app("testing")
+    from app import create_app
+    from app.extensions import db
 
+    test_app = create_app("testing")
     with test_app.app_context():
-        db.create_all()
-        yield test_app
-        db.session.remove()
-        db.drop_all()
-        db.session.remove()
-        db.engine.dispose()
+        with memory_database_scope(test_app, db):
+            yield test_app
 
 
 @pytest.fixture

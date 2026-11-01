@@ -16,6 +16,39 @@ from app.services.character_roles import follows_world_time
 logger = logging.getLogger(__name__)
 
 
+def _preserve_server_zombification(current_data,incoming_data):
+    snapshot=(current_data or {}).get('psiZombification')
+    if isinstance(snapshot,dict):
+        incoming_data['psiZombification']=deepcopy(snapshot)
+    else:
+        incoming_data.pop('psiZombification',None)
+
+
+def _preserve_server_medical_retry(current_data, incoming_data):
+    # Публичный лист не создаёт, не заменяет и не отменяет серверную процедуру.
+    current_health = (current_data or {}).get('health')
+    current_meta = current_health.get('combatMeta') if isinstance(current_health, dict) else None
+    current_retry = current_meta.get('mustDoRetry') if isinstance(current_meta, dict) else None
+    health = incoming_data.get('health')
+    if not isinstance(health, dict):
+        return
+    meta = health.get('combatMeta')
+    if not isinstance(meta, dict):
+        meta = health['combatMeta'] = {}
+    private = current_retry.get('medical_retry') if isinstance(current_retry, dict) else None
+    if (isinstance(current_retry, dict) and current_retry.get('kind') == 'medical'
+            and isinstance(private, dict) and private.get('server_authoritative') is True):
+        meta['mustDoRetry'] = deepcopy(current_retry)
+    else:
+        incoming_retry = meta.get('mustDoRetry')
+        if isinstance(incoming_retry, dict) and (
+            incoming_retry.get('kind') == 'medical'
+            or any(key in incoming_retry for key in ('medical_retry', 'item_snapshot', 'interaction_context'))
+        ):
+            # Старый/поддельный summary не возрождает уже завершённый повтор.
+            meta.pop('mustDoRetry', None)
+
+
 @dataclass
 class CharacterUpdate:
     character: LobbyCharacter
@@ -23,6 +56,51 @@ class CharacterUpdate:
 
 
 class CharacterService:
+    @staticmethod
+    def restore_player_sheet(character):
+        current=deepcopy(character.data or {})
+        basic=current.get('basic') or {}
+        profile=(current.get('mutant') or {}).get('profile',basic.get('mutant_type'))
+        if str(profile or '').casefold()!='зомбированный' or str(basic.get('former_character_id'))!=str(character.id):
+            raise ValidationError('Это не персонаж, превращённый в Зомбированного после Пси-урона')
+        snapshot=current.get('psiZombification') or {}
+        previous=snapshot.get('previousData')
+        data=deepcopy(previous if isinstance(previous,dict) else current)
+        # Вещи могли измениться уже после превращения: возвращаем текущие, не копии до смерти.
+        for key in ('inventory','equipment','money','currency','cash'):
+            if key in current:data[key]=deepcopy(current[key])
+        data['weapons']=[deepcopy(item) for item in current.get('weapons',[])
+                         if not str(item.get('id','')).startswith('mutant-attack-')]
+        live_health=deepcopy(current.get('health') or {})
+        data['health']=live_health
+        for owner in (data,data.setdefault('basic',{})):
+            for key in ('is_mutant','isMutant','is_npc','mutant_type','mutant_variant','former_character_id','former_name','characterType'):
+                owner.pop(key,None)
+            owner['character_type']='player'
+            if 'мутант' in str(owner.get('species','')).casefold():owner['species']='Человек'
+        data.pop('mutant',None);data.pop('psiZombification',None)
+        if not isinstance(previous,dict):data.pop('movement',None)
+        meta=live_health.get('combatMeta') or {}
+        for key in list(meta):
+            if key.startswith('mutant') or key in ('zombificationController','zombificationPreviousController'):meta.pop(key,None)
+        old_values={'current':live_health.get('current',0),
+            'zones':{key:zone.get('current',0) for key,zone in (live_health.get('zones') or {}).items()}}
+        health=apply_health_maximums(data)
+        # Смена типа листа не лечит персонажа и не воскрешает погибшего.
+        health['current']=min(health['max'],max(0,float(old_values['current'])))
+        for key,value in old_values['zones'].items():
+            if key in health['zones']:health['zones'][key]['current']=min(health['zones'][key]['max'],max(0,float(value)))
+        character.data=data
+        previous_controller=snapshot.get('previousController',character.owner_id)
+        participant=LobbyParticipant.query.filter_by(lobby_id=character.lobby_id,user_id=previous_controller,is_banned=False).first()
+        if not participant:
+            participant=LobbyParticipant.query.filter_by(lobby_id=character.lobby_id,user_id=character.owner_id,is_banned=False).first()
+        for model in LocationCharacter.query.filter_by(character_id=character.id).all():
+            if participant:model.controlled_by=participant.user_id
+            model.drawn_weapon_index=None
+        updates=CharacterService.sync_location_health(character,health)
+        return CharacterUpdate(character,updates)
+
     @staticmethod
     def require_membership(lobby_id, user_id):
         if user_id is None:
@@ -309,6 +387,8 @@ class CharacterService:
                 base_data = clean_snapshot(updates['_base_data'])
                 preserve_action_payment(character.data, base_data)
                 character_data = merge_sheet_data(base_data, character_data, character.data)
+            _preserve_server_medical_retry(character.data, character_data)
+            _preserve_server_zombification(character.data,character_data)
             CharacterService.apply_manual_field_resets(
                 character.data,
                 character_data,
@@ -320,6 +400,9 @@ class CharacterService:
                     character.data,
                     character_data,
                 )
+            # Нормализация предметов не должна менять внутренний снимок процедуры.
+            _preserve_server_medical_retry(character.data, character_data)
+            _preserve_server_zombification(character.data,character_data)
             health = apply_health_maximums(character_data)
             posture_updates = CharacterService.sync_location_health(character, health)
             character.data = character_data

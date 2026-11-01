@@ -6,8 +6,8 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm.attributes import flag_modified
 
 from app.extensions import db
-from app.models import DeferredCombatAction, LocationCharacter
-from app.services.exceptions import ConflictError, PermissionDenied, ValidationError
+from app.models import DeferredCombatAction, LocationCharacter, LocationObject
+from app.services.exceptions import ConflictError, PermissionDenied, ValidationError, ServiceError
 
 
 def _bound_items(actor, payload):
@@ -51,6 +51,7 @@ def durable_combat_action(operation):
         values = call.arguments
         resume_id = values.get('resume_pending_action_id')
         pending_id = values.get('pending_action_id')
+        authorized_resume = False
         try:
             if resume_id:
                 row = db.session.get(DeferredCombatAction, str(resume_id))
@@ -66,9 +67,11 @@ def durable_combat_action(operation):
                 if row.payload.get('action_key') == 'consumable_use':
                     raise ValidationError('Лечение завершается через сохранённую процедуру применения расходника')
                 saved_payload = deepcopy(row.payload)
+                authorized_resume = True
+                validate_deferred_conditions(actor, row)
                 bindings = saved_payload.pop('_bindings', {})
                 if bindings != _bound_items(actor, saved_payload):
-                    raise ValidationError('Оружие или предмет длительного действия изменились. Отмените действие и выберите их заново.')
+                    raise ValidationError('Оружие или предмет длительного действия изменились')
                 # Claim and apply in the same transaction. The version check rejects a racing resume.
                 row.status = 'completed'
                 db.session.flush()
@@ -83,10 +86,34 @@ def durable_combat_action(operation):
         except IntegrityError as error:
             db.session.rollback()
             raise ConflictError() from error
+        except ValidationError:
+            db.session.rollback()
+            if authorized_resume:
+                cancel_failed_action(values['location_character_id'], resume_id, values['user_id'])
+            raise
         except Exception:
             db.session.rollback()
             raise
     return run
+
+
+def cancel_failed_action(actor_id, action_id, user_id):
+    """После отката неудачного исполнения окончательно убираем оплаченный долг."""
+    from app.extensions import socketio
+    from app.services.character_events import emit_character_update
+    from app.services.combat import CombatService
+
+    actor = db.session.get(LocationCharacter, actor_id)
+    row = db.session.get(DeferredCombatAction, str(action_id))
+    if not actor or not row or row.location_character_id != actor.id or row.status != 'ready':
+        return
+    location_id = actor.location_id
+    cancel_deferred_action(actor, row.id)
+    db.session.commit()
+    emit_character_update({'character_id': actor.character_id,
+        'updates': {'data': actor.character.data}, 'source': 'combat'})
+    socketio.emit('combat_state_updated', CombatService.get_state(location_id, user_id),
+                 room=f'location_{location_id}')
 
 
 def ensure_no_deferred_action(actor):
@@ -116,6 +143,83 @@ def update_action_payment(actor, action_id, remaining):
         if row.status == 'ready':
             from app.services.deferred_consumable import prepare_medicine_roll
             prepare_medicine_roll(row)
+
+
+def validate_deferred_conditions(actor, row):
+    """Проверка условий без оплаты, бросков и исполнения сохранённого действия."""
+    from app.services.combat import CombatService
+    payload = row.payload or {}
+    kind = payload.get('action_key')
+    CombatService.ensure_character_can_act(actor, kind)
+    if kind == 'consumable_use':
+        from app.services.deferred_consumable import _validate_saved_selection
+        _validate_saved_selection(actor, payload.get('selection') or {})
+        return
+    if payload.get('_bindings', {}) != _bound_items(actor, payload):
+        raise ValidationError('Оружие или предмет продолжительного действия изменились')
+    target_ids = list(payload.get('target_character_ids') or [])
+    if payload.get('target_character_id') is not None:
+        target_ids.append(payload['target_character_id'])
+    for target_id in dict.fromkeys(target_ids):
+        target = LocationCharacter.query.filter_by(location_id=actor.location_id, character_id=target_id).first()
+        if not target:
+            raise ValidationError('Цель продолжительного действия покинула локацию')
+        contact = kind in {'melee_disarm','melee_shove','grapple','console_ally'} or (kind == 'attack' and not payload.get('fire_mode'))
+        if contact and not CombatService._is_adjacent(actor, target):
+            raise ValidationError('Цель продолжительного действия больше не находится рядом')
+        if kind == 'aim' or (kind == 'attack' and payload.get('fire_mode') not in {'area','suppression'}):
+            if not CombatService._can_see_location_character(actor, target, max_distance=float('inf')):
+                raise ValidationError('Цель продолжительного действия больше не видна')
+            index = payload.get('weapon_index')
+            if index is not None and int(index) >= 0 and actor.drawn_weapon_index != int(index):
+                weapons = (actor.character.data or {}).get('weapons') or []
+                weapon = weapons[int(index)] if int(index)<len(weapons) else {}
+                if not CombatService._template_attributes(weapon).get('natural_weapon'):
+                    raise ValidationError('Оружие продолжительного действия больше не находится в руках')
+    object_id = payload.get('target_object_id', payload.get('object_id'))
+    if object_id is not None:
+        obj = LocationObject.query.filter_by(id=object_id, location_id=actor.location_id).first()
+        if not obj:
+            raise ValidationError('Объект продолжительного действия больше недоступен')
+        if kind == 'take_cover':
+            distance = min((max(abs(actor.pos_x-x),abs(actor.pos_y-y))
+                for x,y in CombatService._object_footprint_tiles(obj)),default=float('inf'))
+            if not CombatService._is_cover_object(obj) or distance > 1:
+                raise ValidationError('Укрытие продолжительного действия больше недоступно')
+            if CombatService._object_height(obj) <= 1.05 and CombatService._posture_key(actor) == 'standing':
+                raise ValidationError('Для низкого укрытия требуется сидячее положение')
+        if kind == 'attack' and not CombatService._is_in_facing_arc(actor,obj.tile_x,obj.tile_y):
+            raise ValidationError('Объект продолжительного действия больше не находится в поле зрения')
+
+
+def cancel_unavailable_actions(actor):
+    """Вызывается до оплаты нового хода; отмена окончательна и не возвращает ОД."""
+    if actor.id is None:
+        return
+    rows = DeferredCombatAction.query.filter_by(location_character_id=actor.id).filter(
+        DeferredCombatAction.status.in_(('paying', 'ready')),
+    ).all()
+    for row in rows:
+        try:
+            validate_deferred_conditions(actor, row)
+        except ServiceError:
+            cancel_deferred_action(actor, row.id)
+    # У старого клиентского долга нет сохранённых условий, которые можно
+    # доказуемо проверить. Не оплачиваем его автоматически новым ходом.
+    data = actor.character.data or {}
+    meta = (data.get('health') or {}).get('combatMeta') or {}
+    known_ids = {row.id for row in rows}
+    orphan = (meta.get('pendingAction') or {}).get('id')
+    completed = meta.get('completedPendingActionId')
+    if (orphan and orphan not in known_ids) or (completed and completed not in known_ids):
+        data = deepcopy(data)
+        meta = data.setdefault('health',{}).setdefault('combatMeta',{})
+        if orphan and orphan not in known_ids:
+            meta.pop('pendingAction',None)
+        if completed and completed not in known_ids:
+            meta.pop('completedPendingActionId',None)
+        actor.character.data = data
+        flag_modified(actor.character,'data')
 
 
 def serialize_deferred_action(actor, health):
@@ -154,11 +258,13 @@ def preserve_action_payment(current_data, incoming_data):
 
 def cancel_deferred_action(actor, action_id):
     row = db.session.get(DeferredCombatAction, str(action_id))
-    if not row or row.location_character_id != actor.id or row.status not in {'paying', 'ready'}:
+    if not row or row.location_character_id != actor.id:
         raise ValidationError('Нет активного длительного действия')
-    row.status = 'cancelled'
-    from app.services.deferred_consumable import cancel_treatment
-    cancel_treatment(row)
+    # Повторное удаление устаревшей строки панели не меняет итог действия.
+    if row.status in {'paying', 'ready'}:
+        row.status = 'cancelled'
+        from app.services.deferred_consumable import cancel_treatment
+        cancel_treatment(row)
     data = deepcopy(actor.character.data or {})
     meta = data.setdefault('health', {}).setdefault('combatMeta', {})
     if (meta.get('pendingAction') or {}).get('id') == row.id:

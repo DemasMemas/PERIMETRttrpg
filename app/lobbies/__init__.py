@@ -2,6 +2,7 @@
 import json
 import gzip
 import io
+import math
 import random
 import re
 from copy import deepcopy
@@ -1310,11 +1311,19 @@ def update_lobby_time(lobby_id, lobby):
 
 def _normalize_character_needs(health):
     needs = health.get('needs') if isinstance(health.get('needs'), dict) else {}
+    missed_days = needs.get('missedDays') if isinstance(needs.get('missedDays'), dict) else {}
+    streaks = {}
+    for key in ('food', 'water', 'sleep'):
+        try:
+            streaks[key] = max(0, int(missed_days.get(key) or 0))
+        except (TypeError, ValueError, OverflowError):
+            streaks[key] = 0
     return {
         'day': max(1, int(needs.get('day') or 1)),
         'mealsToday': max(0, min(3, int(needs.get('mealsToday') or 0))),
         'drinksToday': max(0, min(3, int(needs.get('drinksToday') or 0))),
         'sleptToday': needs.get('sleptToday') is True,
+        'missedDays': streaks,
         'lastDay': needs.get('lastDay') if isinstance(needs.get('lastDay'), dict) else None,
     }
 
@@ -1322,16 +1331,21 @@ def _normalize_character_needs(health):
 def _resolve_character_day(health, effects, *, slept):
     needs = _normalize_character_needs(health)
     missed = []
-    if needs['mealsToday'] < 3:
-        missed.append('еда')
-    if needs['drinksToday'] < 3:
-        missed.append('вода')
-    if not slept and not needs['sleptToday']:
-        missed.append('сон')
-    health['exhaustion'] = max(
-        0,
-        min(10, float(health.get('exhaustion') or 0) + len(missed) - (0.5 if slept else 0)),
-    )
+    missed_days = needs['missedDays']
+    exhaustion_gain = 0
+    for key, label, satisfied in (
+        ('food', 'еда', needs['mealsToday'] >= 3),
+        ('water', 'вода', needs['drinksToday'] >= 3),
+        ('sleep', 'сон', slept or needs['sleptToday']),
+    ):
+        missed_days[key] = 0 if satisfied else missed_days[key] + 1
+        if not satisfied:
+            missed.append(label)
+            exhaustion_gain += missed_days[key]
+    exhaustion = max(0, float(health.get('exhaustion') or 0))
+    if slept:
+        exhaustion -= math.floor(exhaustion / 2)
+    health['exhaustion'] = min(10, exhaustion + exhaustion_gain)
     infection_blocked = any(
         effect.get('type') == 'infection_growth_block' and effect.get('active', True)
         for effect in effects
@@ -1369,6 +1383,7 @@ def _resolve_character_day(health, effects, *, slept):
         'mealsToday': 0,
         'drinksToday': 0,
         'sleptToday': False,
+        'missedDays': missed_days,
         'lastDay': {
             'day': needs['day'],
             'meals': needs['mealsToday'],
@@ -2421,10 +2436,25 @@ def preview_location_movement(lobby_id, location_id, lobby, participant):
     user_id = int(get_jwt_identity())
     if lobby.gm_id != user_id and actor.controlled_by not in (None, user_id):
         return jsonify({'error': 'Access denied'}), 403
+    if payload.get('special_action') in ('climb','drop_down'):
+        if type(payload.get('object_id')) is not int:
+            return jsonify({'error':'Некорректное препятствие'}),400
+        obj = LocationObject.query.filter_by(location_id=location_id,id=payload.get('object_id')).first()
+        if not obj or (obj.properties or {}).get('gm_hidden') and lobby.gm_id!=user_id:
+            return jsonify({'error':'Препятствие недоступно'}),404
+        plan = (CombatService._object_drop_plan(location,actor,obj) if payload.get('special_action')=='drop_down'
+                else CombatService._object_climb_plan(location,actor,obj))
+        if plan:
+            plan['climb_agility_bonus']=CombatService._climb_payment_profile(actor.character.data,plan['climbs'])['agility_bonus']
+        return jsonify({'route':plan}),200
     x, y, level = payload.get('x'), payload.get('y'), payload.get('floor_level', actor.floor_level)
-    if any(isinstance(v, bool) or not isinstance(v, int) for v in (x, y, level)) or not (0 <= x < location.grid_width and 0 <= y < location.grid_height):
+    if any(isinstance(v,bool) or not isinstance(v,(int,float)) or not math.isfinite(v) for v in (x,y)) or type(level) is not int or not (0<=x<=location.grid_width-1 and 0<=y<=location.grid_height-1):
         return jsonify({'error': 'Invalid position'}), 400
     path = CombatService._find_movement_path(location, actor.pos_x, actor.pos_y, x, y, actor.character_id, end_level=level)
+    if path is None:
+        path = CombatService._vertical_movement_plan(location,actor,x,y,level)
+    if path:
+        path['climb_agility_bonus']=CombatService._climb_payment_profile(actor.character.data,[])['agility_bonus']
     return jsonify({'route': path}), 200
 
 
@@ -2937,6 +2967,12 @@ def spawn_character_in_location(lobby_id, location_id):
 
     is_gm = (lobby.gm_id == user_id)
 
+    force_relocate = data.get('force_relocate', False)
+    if type(force_relocate) is not bool:
+        return jsonify({'error': 'Invalid relocation mode'}), 400
+    if force_relocate and not is_gm:
+        return jsonify({'error': 'Only GM can force relocation'}), 403
+
     character = LobbyCharacter.query.get(character_id)
     if not character:
         return jsonify({'error': 'Character not found'}), 404
@@ -2962,19 +2998,36 @@ def spawn_character_in_location(lobby_id, location_id):
         LocationCharacter.last_action.desc().nullslast(),
         LocationCharacter.id.desc(),
     ).first()
+    if existing and not is_gm:
+        return jsonify({'error': 'Only GM can relocate an existing character'}), 403
+    if force_relocate and not existing:
+        return jsonify({'error': 'Character is not placed in this location'}), 404
+    target_level = data.get('floor_level', (existing.floor_level or 0) if existing else 0)
+    if any(isinstance(value,bool) or not isinstance(value,(int,float)) or not math.isfinite(value) for value in (tile_x,tile_y)) or type(target_level) is not int or not (
+        0 <= tile_x <= location.grid_width-1 and 0 <= tile_y <= location.grid_height-1
+    ):
+        return jsonify({'error': 'Invalid position'}), 400
+    if not is_gm and target_level != 0:
+        return jsonify({'error': 'Only GM can choose a placement floor'}), 403
+    from app.services.location_navigation import surface
+    objects = LocationObject.query.filter_by(location_id=location_id).all()
+    if not force_relocate and surface(location, objects, tile_x, tile_y, target_level) is None:
+        return jsonify({'error': 'No supporting surface on selected floor'}), 400
+
     if existing:
         # Перемещаем на новые координаты
         previous_position = (existing.pos_x, existing.pos_y)
         existing.pos_x = tile_x
         existing.pos_y = tile_y
-        existing.floor_level = 0
+        existing.floor_level = target_level
         combat_state = LocationCombatState.query.filter_by(location_id=location_id).first()
         anomaly_changed = False
         if not combat_state or combat_state.status != 'active':
             anomaly_changed = CombatService._sync_anomaly_after_relocation(
                 location, existing, previous_position,
             )
-        existing.status = 'idle'
+        if not force_relocate:
+            existing.status = 'idle'
         if assign_to_user_id is not None:
             existing.controlled_by = target_user_id  # обновляем управление
         db.session.commit()
@@ -2999,6 +3052,7 @@ def spawn_character_in_location(lobby_id, location_id):
             character_id=character_id,
             pos_x=tile_x,
             pos_y=tile_y,
+            floor_level=target_level,
             status='idle',
             hp_zones=zones_dict,
             effects=[],
@@ -3017,6 +3071,7 @@ def spawn_character_in_location(lobby_id, location_id):
         db.session.commit()
         action = 'spawned'
 
+    target_user_id = loc_char.controlled_by
     # Уведомляем всех в локации через сокет
     socketio.emit('character_spawned', {
         'action': action,
@@ -3030,6 +3085,10 @@ def spawn_character_in_location(lobby_id, location_id):
             'effects': loc_char.effects,
             'pos_x': loc_char.pos_x,
             'pos_y': loc_char.pos_y,
+            'facing_x': loc_char.facing_x,
+            'facing_y': loc_char.facing_y,
+            'team_name': loc_char.team_name,
+            'team_color': loc_char.team_color,
             **CombatService.physical_position(loc_char),
             'posture': loc_char.posture,
             'prone_on_back': bool(loc_char.prone_on_back),
@@ -3053,7 +3112,7 @@ def spawn_character_in_location(lobby_id, location_id):
                 'location_id': location_id,
                 'updates': [{'x': x, 'z': y, 'objects': location.tiles_data[y][x].get('objects', [])}],
             }, room=f'location_{location_id}')
-    if existing and anomaly_changed:
+    if existing:
         socketio.emit(
             'combat_state_updated', CombatService.get_state(location_id, user_id),
             room=f"location_{location_id}",
@@ -3334,6 +3393,18 @@ def finish_self_consumable(character_id):
     return jsonify({'data': result.character.data_snapshot(), 'consumable_result': use_result}), 200
 
 
+def _public_medical_character_snapshot(snapshot):
+    # Удаляем внутренние аргументы только из публичной копии, не из ORM JSON.
+    public = deepcopy(snapshot)
+    health = public.get('health')
+    meta = health.get('combatMeta') if isinstance(health, dict) else None
+    retry = meta.get('mustDoRetry') if isinstance(meta, dict) else None
+    if isinstance(retry, dict):
+        retry.pop('medical_retry', None)
+        retry.pop('attack_details', None)
+    return public
+
+
 @lobbies_bp.route('/characters/<int:character_id>/medical-procedure', methods=['POST'])
 @jwt_required()
 def apply_medical_procedure(character_id):
@@ -3344,19 +3415,19 @@ def apply_medical_procedure(character_id):
         'character_id': operation.actor.id,
         'updates': {'data': operation.actor.data},
         'source': 'medical_procedure',
-    })
+    }, snapshot_projector=_public_medical_character_snapshot)
     if operation.target.id != operation.actor.id:
         emit_character_update({
             'character_id': operation.target.id,
             'updates': {'data': operation.target.data},
             'source': 'medical_procedure',
-        })
+        }, snapshot_projector=_public_medical_character_snapshot)
     for related in operation.related_characters:
         emit_character_update({
             'character_id': related.id,
             'updates': {'data': related.data},
             'source': 'medical_procedure',
-        })
+        }, snapshot_projector=_public_medical_character_snapshot)
     for posture_update in operation.posture_updates:
         socketio.emit('location_character_posture_updated', posture_update,
                       room=f"location_{posture_update['location_id']}")
@@ -3365,8 +3436,8 @@ def apply_medical_procedure(character_id):
         state = CombatService.get_state(location_id, user_id)
         socketio.emit('combat_state_updated', state, room=f'location_{location_id}')
     return jsonify({
-        'actor_data': operation.actor.data_snapshot(),
-        'target_data': operation.target.data_snapshot(),
+        'actor_data': _public_medical_character_snapshot(operation.actor.data_snapshot()),
+        'target_data': _public_medical_character_snapshot(operation.target.data_snapshot()),
         'medical_result': operation.result,
     }), 200
 
@@ -3776,8 +3847,18 @@ def _resolve_combat_start_requests(location_id, *, approved_id=None):
             socketio.emit('combat_start_request_resolved', payload, room=f'user_{user_id}')
 
 
+def _publish_location_character_snapshots(location_id):
+    # Начало хода тоже может изменить здоровье: обязательная атака при Пси ≥ 50.
+    for loc_char in LocationCharacter.query.filter_by(location_id=location_id).all():
+        character = loc_char.character
+        if character and isinstance(character.data,dict):
+            emit_character_update({'character_id':character.id,
+                'updates':{'data':character.data_snapshot()},'updated_by':0})
+
+
 def _publish_combat_start(lobby_id, location_id, gm_id, state):
     socketio.emit('combat_state_updated', state, room=f"location_{location_id}")
+    _publish_location_character_snapshots(location_id)
     for detonation in state.get('detonations') or []:
         socketio.emit(
             'combat_explosion',
@@ -3953,18 +4034,7 @@ def end_location_combat_turn(lobby_id, location_id, lobby, participant):
             username='\u0410\u043d\u043e\u043c\u0430\u043b\u0438\u044f',
         )
     socketio.emit('combat_state_updated', state, room=f"location_{location_id}")
-    characters = LocationCharacter.query.filter_by(location_id=location_id).all()
-    for loc_char in characters:
-        character = loc_char.character
-        if not character or not isinstance(character.data, dict):
-            continue
-        emit_character_update(
-            {
-                'character_id': character.id,
-                'updates': {'data': character.data_snapshot()},
-                'updated_by': 0,
-            },
-        )
+    _publish_location_character_snapshots(location_id)
     return jsonify(state), 200
 
 
@@ -4002,6 +4072,7 @@ def remove_location_combat_participant(
         location_character_id,
     )
     socketio.emit('combat_state_updated', state, room=f"location_{location_id}")
+    _publish_location_character_snapshots(location_id)
     return jsonify(state), 200
 
 
@@ -4233,6 +4304,30 @@ def adjust_character_stress(lobby_id, character_id, lobby):
             room=f'location_{location_id}',
         )
     return jsonify({'stress': result, 'data': character.data_snapshot()}), 200
+
+
+@lobbies_bp.route('/<int:lobby_id>/characters/<int:character_id>/restore-player', methods=['POST'])
+@jwt_required()
+@requires_gm
+def restore_player_character_by_gm(lobby_id,character_id,lobby):
+    character=LobbyCharacter.query.filter_by(id=character_id,lobby_id=lobby_id).first()
+    if not character:raise NotFoundError('Персонаж не найден')
+    result=CharacterService.restore_player_sheet(character)
+    flag_modified(character,'data')
+    db.session.commit()
+    emit_character_update({'character_id':character.id,'updates':{'data':character.data_snapshot()},'source':'gm_restore_player_sheet'})
+    socketio.emit('character_updated',{'id':character.id},room=f'lobby_{lobby_id}')
+    models=LocationCharacter.query.filter_by(character_id=character.id).all()
+    for location_id in {model.location_id for model in models}:
+        model=CombatService._unique_location_characters([m for m in models if m.location_id==location_id])[0]
+        state=CombatService.get_state(model.location_id,lobby.gm_id)
+        row=next(c for c in state['characters'] if c['location_character_id']==model.id)
+        socketio.emit('character_spawned',{'action':'moved','character':{
+            **row,'id':character.id,'pos_x':model.pos_x,'pos_y':model.pos_y,
+            'hp_zones':model.hp_zones,'effects':model.effects,
+        }},room=f'location_{model.location_id}')
+        socketio.emit('combat_state_updated',state,room=f'location_{model.location_id}')
+    return jsonify({'data':character.data_snapshot()}),200
 
 
 @lobbies_bp.route('/<int:lobby_id>/characters/<int:character_id>/heal', methods=['POST'])

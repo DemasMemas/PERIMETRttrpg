@@ -240,8 +240,11 @@ test('terrain grid omits covered floor tiles and rebuilds when surfaces change',
     assert.ok(start >= 0 && end > start);
     const flush = flags => {
         const calls = [];
+        calls.surfaceEvents=[];
         const mark = name => (...args) => calls.push({ name, args });
         const context = vm.createContext({
+            window:{dispatchEvent:event=>calls.surfaceEvents.push(event.type)},
+            Event:class{constructor(type){this.type=type;}},
             pendingTerrainRefresh: { changed: new Map([['1,0', { x: 1, z: 0 }]]), ...flags },
             scene: {}, currentLocationData: { grid_width: 2 }, editorSelection: null, objectEdit: null,
             characterModels: new Map(),
@@ -261,10 +264,12 @@ test('terrain grid omits covered floor tiles and rebuilds when surfaces change',
     const heightCalls = flush({ smooth: true, surface: true, water: true, grid: true });
     assert.deepEqual(heightCalls.map(call => call.name), ['smooth', 'surface', 'water', 'grid']);
     assert.deepEqual(heightCalls[1].args, [true, true]);
+    assert.deepEqual(heightCalls.surfaceEvents,['map-surface-changed']);
     const paintCalls = flush({ terrainColor: true, texture: true, grass: true });
     assert.deepEqual(paintCalls.map(call => call.name),
         ['smoothColors', 'texture', 'gridColors', 'grass']);
     assert.equal(paintCalls[1].args[0][0].x, 1);
+    assert.deepEqual(paintCalls.surfaceEvents,[]);
     assert.match(scene, /updateLocationGridColors\(\)/);
     assert.match(scene, /locationGridMesh\.raycast = \(\) => \{\}/);
     assert.doesNotMatch(scene, /gridLines\.push\(x, -0\.1/);
@@ -422,7 +427,11 @@ test('switching between global map and location hides only global UI and restore
         ['canvas-container', { style: { display: 'block' } }],
         ['location-container', { style: { display: 'none' } }],
     ]);
+    const restored=[];
+    for(const id of ['chat-toggle','common-tools-toggle','edit-toggle'])nodes.set(id,{id});
+    const menu={insertBefore:(node,anchor)=>restored.push([node.id,anchor.id])};
     const context = vm.createContext({ document: {
+        querySelector:selector=>selector==='.lobby-menu'?menu:null,
         body: { classList: { toggle(name, enabled) {
             if (enabled) classes.add(name);
             else classes.delete(name);
@@ -440,6 +449,8 @@ test('switching between global map and location hides only global UI and restore
         assert.equal(nodes.get('canvas-container').style.display, 'block');
         assert.equal(nodes.get('location-container').style.display, 'none');
     }
+    assert.equal(restored.length,6);
+    assert.deepEqual(restored.slice(0,2),[['chat-toggle','edit-toggle'],['common-tools-toggle','edit-toggle']]);
     assert.match(main, /setLocationViewActive\(true\);\s*hideGlobalCanvas\(\)/);
     assert.match(main, /setLocationViewActive\(false\);\s*showGlobalCanvas\(\)/);
     for (const selector of ['.lobby-menu', '#settings-panel', '#tile-info', '.world-group-context-menu']) {
@@ -464,8 +475,15 @@ test('flat terrain and water tiles fill their cells without permanent grid gaps'
 
 test('floor is passable and does not charge climb movement in the client', () => {
     const scene = read('locationScene.js');
-    assert.match(scene, /PASSABLE_OBJECT_TYPES = new Set\(\[[^\]]*'floor'/);
-    assert.match(scene, /properties\.passable === true \|\| PASSABLE_OBJECT_TYPES\.has\(type\)[\s\S]*?climbCost: 0/);
+    const context=vm.createContext({getObjectTraversalHeight:()=>2.4});
+    const setStart=scene.indexOf('const PASSABLE_OBJECT_TYPES =');
+    vm.runInContext(scene.slice(setStart,scene.indexOf(';',setStart)+1),context);
+    const start=scene.indexOf('function getMovementObjectProfile(');
+    vm.runInContext(scene.slice(start,scene.indexOf('\n}',start)+2),context);
+    for(const properties of [{},{passable:false},{traversal_category:'blocked'}]){
+        const result=context.getMovementObjectProfile({type:'floor',properties});
+        assert.equal(result.blocked,false);assert.equal(result.climbCost,0);
+    }
 });
 
 test('terrain cap uses only a constant depth bias while floor materials stay independent', () => {

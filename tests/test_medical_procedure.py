@@ -929,10 +929,17 @@ def test_failed_check_spends_item_but_keeps_injury_and_registers_must_do(client,
     data = response.json['actor_data']
     assert any(entry['id'] == 'bleed-1' for entry in data['health']['effects'])
     assert data['inventory']['backpack'][0]['quantity'] == 1
-    retry = data['health']['combatMeta']['mustDoRetry']
+    public_retry = data['health']['combatMeta']['mustDoRetry']
+    assert public_retry['kind'] == 'medical'
+    assert 'medical_retry' not in public_retry
+    assert 'attack_details' not in public_retry
+    db.session.refresh(pair['actor_character'])
+    retry = pair['actor_character'].data['health']['combatMeta']['mustDoRetry']
     assert retry['kind'] == 'medical'
     assert retry['medical_retry']['application']['effect']['id'] == 'bleed-1'
     assert retry['medical_retry']['server_authoritative'] is True
+    assert public_retry == {key: value for key, value in retry.items()
+                            if key not in {'medical_retry', 'attack_details'}}
 
 
 def test_must_do_retry_applies_server_treatment_without_spending_item_twice(

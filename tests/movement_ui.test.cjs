@@ -6,6 +6,113 @@ const { test } = require('node:test');
 
 const source = fs.readFileSync(path.join(__dirname, '../app/static/js/locationScene.js'), 'utf8');
 
+test('отмена размещения очищает очередь и призрак, не отправляя перенос',()=>{
+    let cleared=0;
+    const context=vm.createContext({pendingCharacterPlacement:{gmRelocation:true},pendingCharacterPlacementQueue:[{},{}],
+        renderer:{domElement:{style:{cursor:'crosshair'}}},clearCharacterPlacementPreview:()=>cleared++});
+    vm.runInContext(functionSource('cancelCharacterPlacement'),context);
+    context.cancelCharacterPlacement();
+    assert.equal(context.pendingCharacterPlacement,null);assert.equal(context.pendingCharacterPlacementQueue.length,0);
+    assert.equal(context.renderer.domElement.style.cursor,'default');assert.equal(cleared,1);
+});
+
+test('перенос ГМа использует существующий запрос без смены управляющего',async()=>{
+    let payload;
+    const context=vm.createContext({window:{currentLobbyId:7,isGM:true},getCurrentLocationId:()=>8,locationViewLevel:0,
+        localStorage:{getItem:()=>''},fetch:async(url,options)=>{payload=JSON.parse(options.body);return{ok:true,json:async()=>({})};}});
+    vm.runInContext('async '+functionSource('spawnCharacterAtTile'),context);
+    await context.spawnCharacterAtTile(5,3.2,3.7,undefined,{forceRelocate:true,floorLevel:2});
+    assert.equal(payload.force_relocate,true);assert.equal(payload.floor_level,2);
+    assert.equal(payload.tile_x,3.2);assert.equal(Object.hasOwn(payload,'assign_to_user_id'),false);
+});
+
+test('при завершении размещения удаляются оба вида предпросмотра',()=>{
+    const disposed=[];
+    const sprite={material:{map:{dispose:()=>disposed.push('texture')},dispose:()=>disposed.push('material')}};
+    const context=vm.createContext({previewSprite:sprite,scene:{remove:item=>disposed.push(item===sprite?'sprite':'other')},clearMovementPreview:()=>disposed.push('ghost')});
+    vm.runInContext(functionSource('clearCharacterPlacementPreview'),context);
+    context.clearCharacterPlacementPreview();
+    assert.equal(context.previewSprite,null);
+    assert.deepEqual(disposed,['ghost','sprite','texture','material']);
+});
+
+test('повторное размещение ГМом не открывает выбор владельца',async()=>{
+    let request,finished=false;
+    const context=vm.createContext({window:{isGM:true},clearCharacterPlacementPreview(){},getCharacterModelEntry:()=>({controlledBy:9}),
+        spawnCharacterAtTile:async(...args)=>{request=args;},document:{createElement:()=>{throw Error('Окно владельца не требуется');}}});
+    vm.runInContext('async '+functionSource('openOwnerSelectionModal'),context);
+    await context.openOwnerSelectionModal(5,3.2,3.7,9,{onSuccess:()=>{finished=true;}});
+    assert.equal(request[3],undefined);assert.equal(request[4].forceRelocate,true);assert.equal(finished,true);
+});
+
+test('цель на улице сбрасывает этаж независимо от этажа персонажа',()=>{
+    const context=vm.createContext({navigationPointer:null,movementTargetLevel:1,
+        getPointerWorldPoint:()=>({x:25,y:3.4,z:3}),locationObjectMeshes:[],tileCubes:[],
+        raycaster:{intersectObjects:objects=>objects===context.tileCubes?[{point:{x:25,y:1,z:3}}]:[]},
+        locationHitOccludedByTerrain:()=>false});
+    vm.runInContext(functionSource('getMovementPointerPoint'),context);
+    const point=context.getMovementPointerPoint(10,10,{floorLevel:1,model:{position:{y:3.4}}});
+    assert.equal(point.y,1);assert.equal(context.movementTargetLevel,0);
+});
+
+test('обновляемая линия маршрута не исчезает из-за старой области видимости',()=>{
+    const context=vm.createContext({THREE:{BufferGeometry:class{setFromPoints(){}},
+        Vector3:class{},LineBasicMaterial:class{constructor(options){Object.assign(this,options);}},
+        Line:class{constructor(geometry,material){Object.assign(this,{geometry,material});}}}});
+    vm.runInContext(functionSource('createPreviewLine'),context);
+    const line=context.createPreviewLine(0x00ff00);
+    assert.equal(line.frustumCulled,false);assert.equal(line.material.depthWrite,false);
+});
+
+test('одноэтажная сцена со стеной использует серверный маршрут для preview', () => {
+    const route = { cost: 1, path: [[5,5],[5,6]] };
+    let requests = 0;
+    const context = vm.createContext({
+        currentLocationData: { objects: [{ type: 'wall' }] }, hasStoreyNavigation: () => false,
+        serverMovementPreview: () => { requests++; return route; },
+    });
+    vm.runInContext(functionSource('hasPreciseWallNavigation'),context);
+    vm.runInContext(functionSource('findMovementPath'),context);
+    assert.equal(context.findMovementPath(5,5,5,6,123,0),route);
+    assert.equal(requests,1);
+});
+
+test('встроенная в клетку стена также требует серверный preview', () => {
+    const context = vm.createContext({currentLocationData:{objects:[],tiles_data:[[{objects:[{type:'wall'}]}]]}});
+    vm.runInContext(functionSource('hasPreciseWallNavigation'),context);
+    assert.equal(context.hasPreciseWallNavigation(),true);
+});
+
+test('указатель движения выбирает десятые метра вместо пиксельной точности', () => {
+    const context = vm.createContext({currentLocationData:{grid_width:10,grid_height:10}});
+    vm.runInContext(functionSource('movementPointerPosition'),context);
+    const point = context.movementPointerPosition({x:6.75,z:5.125});
+    assert.equal(point.x,6.3);
+    assert.equal(point.y,4.6);
+    const same=context.movementPointerPosition({x:6.751,z:5.124});
+    assert.equal(same.x,point.x);assert.equal(same.y,point.y);
+});
+
+test('дистанция и ОП отображаются до десятых без изменения исходного расчёта',()=>{
+    const context=vm.createContext({});vm.runInContext(functionSource('formatMovementNumber'),context);
+    assert.equal(context.formatMovementNumber(3.4343467365764),'3.4');
+    assert.equal(context.formatMovementNumber(7.999999999),'8');
+    assert.equal(context.formatMovementNumber(Infinity),'—');
+});
+
+test('видимость между дробными позициями не зацикливает обход клеток', () => {
+    let calls = 0;
+    const context = vm.createContext({
+        currentLocationData:{tiles_data:[],objects:[]},getTileHeight:()=>1,
+        getVisionObjectIndex:()=>({terrainCache:new Map(),walls:[]}),terrainLineHit:()=>null,
+        getVisionBlockerHeight:()=>{calls++;return -Infinity;},lightPathOpen:()=>true,
+    });
+    vm.runInContext(functionSource('hasLineOfSight'),context);
+    assert.equal(vm.runInContext('hasLineOfSight(6.5,3.5,6.5,5.25)',context,{timeout:100}),true);
+    assert.ok(calls<=3);
+    assert.equal(context.hasLineOfSight(NaN,0,1,1),false);
+});
+
 test('horizontal facing preserves zero Y when calculating turn angle and payment', () => {
     const context=vm.createContext({});
     vm.runInContext(functionSource('getFacingChangeOptions'),context);
@@ -77,10 +184,14 @@ function movementContext(current = {}) {
             movement_points_current: 50, posture: 'standing', ...current,
         } },
     });
+    vm.runInContext(functionSource('formatMovementNumber'),context);
     for (const name of ['COMBAT_MOVEMENT_TYPES', 'COMBAT_POSTURES']) {
         const start = source.indexOf(`const ${name} =`);
         vm.runInContext(source.slice(start, source.indexOf('\n};', start) + 3), context);
     }
+    vm.runInContext(functionSource('resolveMovementType'), context);
+    vm.runInContext(functionSource('getClimbPaymentProfile'), context);
+    vm.runInContext(functionSource('getSpecialMovementAvailability'), context);
     vm.runInContext(functionSource('getMovementModeRouteCost'), context);
     vm.runInContext(functionSource('getMovementModeAvailability'), context);
     return context;
@@ -94,6 +205,38 @@ test('evasion shows reduced movement distances and disallows correction', () => 
         assert.equal(result.remainingDistance, distance);
     }
     assert.equal(context.getMovementModeAvailability('correction', null, true).allowed, false);
+});
+
+test('шаг за спину автоматически получает цену и лимит спиной/боком', () => {
+    const context = movementContext({facing_x:0,facing_y:1});
+    context.combatState.status = 'active';
+    const result = context.getMovementModeAvailability('walk',{path:[[1,1],[1,0]],cost:1,distance:1});
+    assert.equal(result.allowed,true);
+    assert.equal(result.movementType,'backward_sideways');
+    assert.equal(result.movementPoints,2);
+    assert.equal(result.remainingDistance,5);
+    assert.equal(context.getMovementModeAvailability('run',{path:[[1,1],[1,0]],cost:1,distance:1}).allowed,false);
+});
+
+test('лимиты учитывают штраф, бонус и округление ползком', () => {
+    const slow=movementContext({movement_penalty:3});
+    for(const [mode,limit] of [['walk',7],['run',14],['sprint',21],['backward_sideways',3],['correction',3]]) {
+        assert.equal(slow.getMovementModeAvailability(mode).remainingDistance,limit);
+    }
+    assert.equal(movementContext({movement_penalty:-2}).getMovementModeAvailability('walk').remainingDistance,12);
+    assert.equal(movementContext({posture:'prone'}).getMovementModeAvailability('walk').remainingDistance,4);
+});
+
+test('корректировка допускает основной режим, списывается один раз и входит в общий лимит', () => {
+    const context=movementContext({movement_penalty:3,movement_distance_this_turn:1.5,
+        correction_distance_this_turn:1.5,free_actions_current:0});
+    assert.equal(context.getMovementModeAvailability('correction',{cost:1,distance:1}).modeFreeActions,0);
+    assert.equal(context.getMovementModeAvailability('walk',{cost:5.5,distance:5.5}).allowed,true);
+    assert.equal(context.getMovementModeAvailability('walk',{cost:5.75,distance:5.75}).allowed,false);
+    context.combatState.current_character.movement_mode_this_turn='walk';
+    context.combatState.current_character.movement_distance_this_turn=6.5;
+    assert.equal(context.getMovementModeAvailability('correction',{cost:.5,distance:.5}).allowed,true);
+    assert.equal(context.getMovementModeAvailability('correction',{cost:.75,distance:.75}).allowed,false);
 });
 
 test('continuing movement uses authoritative evasion and does not repay run AP', () => {
@@ -171,15 +314,19 @@ test('an empty visible tile forgets a removed or moved character', () => {
     assert.equal(memory.get('2:0').characters.length, 0);
 });
 
-test('actual sight ray sees a standing head but not a crouching head behind low cover', () => {
+test('actual sight ray sees a standing head but not a crouching head behind low cover', async () => {
+    const geometryUrl = 'data:text/javascript;base64,' + Buffer.from(fs.readFileSync(path.join(__dirname, '../app/static/js/locationTerrain.js'), 'utf8')).toString('base64');
+    const lineSource = fs.readFileSync(path.join(__dirname, '../app/static/js/terrainLineOfSight.js'), 'utf8').replace("'./locationTerrain.js'", JSON.stringify(geometryUrl));
+    const terrain = await import('data:text/javascript;base64,' + Buffer.from(lineSource).toString('base64'));
     const context = vm.createContext({
         FOG_VIEW_RADIUS: 25, FOG_VIEW_HALF_ANGLE: Math.PI / 3,
         getTileHeight: () => 1,
         getVisionBlockerHeight: (x, y) => x === 1 && y === 0 ? 2.5 : -Infinity,
         darknessFactorAt: () => 1,
         lightPathOpen: () => true,
-        getVisionObjectIndex: () => ({walls:[]}),
-        currentLocationData: { objects: [] },
+        terrainLineHit: terrain.terrainLineHit, terrainOpeningAt: terrain.terrainOpeningAt,
+        getVisionObjectIndex: () => ({walls:[],terrainCache:new Map()}),
+        currentLocationData: { objects: [], tiles_data: [[{height:1},{height:1},{height:1}]] },
     });
     for (const name of ['visionEyeHeight', 'hasLineOfSight', 'isPointVisibleToPlayer', 'isCharacterVisibleToPlayer']) {
         vm.runInContext(functionSource(name), context);
@@ -223,4 +370,91 @@ test('evasion is an unchecked independent checkbox next to automatic MP conversi
     context.showMovementTypeMenu(1, true);
     assert.match(menu.innerHTML, /id="movement-evasion" checked/);
     assert.equal(buttons.length, 5);
+});
+
+
+function traversalContext() {
+    const context = vm.createContext({});
+    for (const name of ['LOW_CLIMB_OBJECT_TYPES', 'HIGH_CLIMB_OBJECT_TYPES',
+        'TOO_HIGH_OBJECT_TYPES', 'PASSABLE_OBJECT_TYPES']) {
+        const start = source.indexOf(`const ${name} =`);
+        assert.ok(start >= 0);
+        vm.runInContext(source.slice(start, source.indexOf(';', start) + 1), context);
+    }
+    for (const name of ['getObjectTraversalHeight', 'getMovementObjectProfile']) {
+        vm.runInContext(functionSource(name), context);
+    }
+    return object => JSON.parse(JSON.stringify(context.getMovementObjectProfile(object)));
+}
+
+test('Оба отрицательных флага отменяют цену перелезания chair/fence', () => {
+    const profile = traversalContext();
+    for (const type of ['chair', 'fence']) {
+        for (const flag of ['blocks_movement', 'block_movement']) {
+            assert.deepEqual(profile({ type, properties: { [flag]: false, climb_cost: 9 } }),
+                { blocked: false, climbCost: 0 }, `${type}: ${flag}`);
+            const other = flag === 'blocks_movement' ? 'block_movement' : 'blocks_movement';
+            assert.deepEqual(profile({ type, properties: { [flag]: false, [other]: true } }),
+                { blocked: false, climbCost: 0 }, `${type}: ${flag} при втором true`);
+        }
+    }
+});
+
+test('Обычное перелезание сохраняет цены и пользовательскую стоимость', () => {
+    const profile = traversalContext();
+    for (const [type, cost] of [['chair', 5], ['fence', 12]]) {
+        assert.deepEqual(profile({ type }), { blocked: false, climbCost: cost });
+        assert.deepEqual(profile({ type, properties: { climb_cost: 8 } }),
+            { blocked: false, climbCost: 8 });
+    }
+});
+
+test('Категория по высоте совпадает с серверными границами и допускает переопределение ГМа',()=>{
+    const profile=traversalContext();
+    for(const [height,blocked,cost] of [[.49,false,0],[.5,false,5],[.99,false,5],[1,false,12],[1.99,false,12],[2,true,0]]) {
+        assert.deepEqual(profile({type:'wall',properties:{dimensions:{height}}}),{blocked,climbCost:cost});
+    }
+    assert.deepEqual(profile({type:'wall',properties:{dimensions:{height:2.5},traversal_category:'low'}}),{blocked:false,climbCost:5});
+});
+
+test('Два препятствия получают два бонуса Ловкости; оплата ОД выбирается явно',()=>{
+    const context=movementContext({climb_agility_bonus:2,movement_points_current:100});
+    const route={cost:16,distance:6,climbCost:10,climbs:[{base_cost:5,category:'low'},{base_cost:5,category:'low'}]};
+    const op=context.getMovementModeAvailability('walk',{...route,climbPayment:'movement'});
+    const ap=context.getMovementModeAvailability('walk',{...route,climbPayment:'action'});
+    assert.equal(op.movementPoints,12);assert.equal(op.modeActionPoints,0);
+    assert.equal(ap.movementPoints,6);assert.equal(ap.modeActionPoints,2);
+    context.combatState.current_character.movement_points_current=0;
+    assert.equal(context.getMovementModeAvailability('walk',{...route,climbPayment:'movement'}).allowed,false);
+});
+
+test('Подъём и спуск показывают фиксированную цену действия без цены шага или лишних СД',()=>{
+    const context=movementContext({climb_agility_bonus:-2,movement_points_current:100});
+    const route={special_action:'climb_up',cost:12,climb_cost:12,distance:1,
+        climbs:[{base_cost:12,category:'high'}]};
+    const op=context.getMovementModeAvailability('walk',{...route,climbPayment:'movement'});
+    const ap=context.getMovementModeAvailability('walk',{...route,climbPayment:'action'});
+    assert.equal(op.movementPoints,14);assert.equal(op.modeActionPoints,0);assert.equal(op.modeFreeActions,0);
+    assert.equal(ap.movementPoints,0);assert.equal(ap.modeActionPoints,3);
+    const down=context.getMovementModeAvailability('walk',{special_action:'descend',height_change:-2,distance:1,climbPayment:'action'});
+    assert.equal(down.allowed,true);assert.equal(down.movementPoints,0);assert.equal(down.modeActionPoints,1);
+});
+
+test('Door/window/passable сохраняют приоритет над отрицательными флагами', () => {
+    const profile = traversalContext();
+    for (const flag of ['blocks_movement', 'block_movement']) {
+        for (const type of ['door', 'window']) {
+            assert.deepEqual(profile({ type, properties: { [flag]: false } }),
+                { blocked: true, climbCost: 0 });
+            assert.deepEqual(profile({ type, properties: { [flag]: false, passable: true } }),
+                { blocked: false, climbCost: 0 });
+        }
+        assert.deepEqual(profile({ type: 'door', properties: { [flag]: false, is_open: true } }),
+            { blocked: false, climbCost: 0 });
+        assert.deepEqual(profile({ type: 'door', properties: { [flag]: false, climbable: true } }),
+            { blocked: false, climbCost: 12 });
+        assert.deepEqual(profile({ type: 'door', properties: { [flag]: false, climbable: true, climb_cost: 7 } }),
+            { blocked: false, climbCost: 7 });
+    }
+    assert.deepEqual(profile({ type: 'floor' }), { blocked: false, climbCost: 0 });
 });

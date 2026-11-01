@@ -204,6 +204,8 @@ export async function openMutantCard(characterId, loadedCharacter = null) {
         const data = character.data || {};
         const mutant = data.mutant || {};
         const health = data.health || {};
+        const canRestorePlayer=window.isGM && Number(data.basic?.former_character_id)===Number(characterId)
+            && String(mutant.profile||data.basic?.mutant_type||'').toLowerCase()==='зомбированный';
         const modal = document.createElement('div');
         modal.className = 'modal mutant-card-modal';
         modal.style.display = 'flex';
@@ -320,6 +322,8 @@ export async function openMutantCard(characterId, loadedCharacter = null) {
                 <div class="mutant-card-attacks">${attacks || '<span>Нет</span>'}</div>
                 ${(traits || variantTraits) ? `<h4>Особенности</h4><ul class="mutant-card-traits">${traits}${variantTraits}</ul>` : ''}
                 ${window.isGM ? '<button type="button" class="btn btn-sm btn-warning mutant-card-heal">Вылечить полностью</button><button type="button" class="btn btn-sm btn-danger mutant-card-delete">Удалить экземпляр</button>' : ''}
+                ${canRestorePlayer?'<button type="button" class="btn btn-sm btn-secondary mutant-card-restore-player" title="Вернуть обычный лист с сохранением текущих вещей и здоровья. Это не полное лечение.">Вернуть обычный лист</button>':''}
+                ${canRestorePlayer&&!data.psiZombification?.previousData?'<p class="mutant-restore-note">Прежние навыки до превращения не сохранились. После возврата их можно исправить вручную; текущие вещи останутся.</p>':''}
             </div>
         `;
         document.body.appendChild(modal);
@@ -327,6 +331,17 @@ export async function openMutantCard(characterId, loadedCharacter = null) {
         modal.querySelector('.mutant-card-close').addEventListener('click', close);
         modal.addEventListener('pointerdown', event => {
             if (event.target === modal) close();
+        });
+        modal.querySelector('.mutant-card-restore-player')?.addEventListener('click',async event=>{
+            const button=event.currentTarget;button.disabled=true;
+            try{
+                await Server.restorePlayerCharacter(currentLobbyId,characterId);
+                close();
+                await loadLobbyCharacters();
+                const sheet=await import('./characterSheet.js');
+                await sheet.openCharacterSheet(characterId,'inventory');
+                showNotification('Обычный лист восстановлен, вещи сохранены','success');
+            }catch(error){button.disabled=false;showNotification(error.message,'error');}
         });
         modal.querySelector('.mutant-card-heal')?.addEventListener('click', async () => {
             if (!window.confirm(`Вылечить ${character.name} полностью?`)) return;
