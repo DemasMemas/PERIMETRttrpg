@@ -190,7 +190,8 @@ export function planBuildingInterior(source, { buildingId, level = 0, seed = '0'
                 const start=run[0][along]-.5,end=run.at(-1)[along]+.5;
                 for(const [lo,hi] of [[start,door[along]-.6],[door[along]+.6,end]]) if(hi-lo>.1) {
                     add('wall',cut.axis==='x'?cut.at:(lo+hi)/2,cut.axis==='z'?cut.at:(lo+hi)/2,
-                        hi-lo,rotation,.5+roll,{visual_asset:'inner_wall'});
+                        hi-lo,rotation,.5+roll,{visual_asset:'inner_wall',structural_damage:{version:1,
+                            seed:`${seed}:partition:${level}:${cut.axis}:${cut.at}:${lo}:${hi}`}});
                 }
             } else {
                 add('wall',center.x,center.z,run.length,rotation,2.4,{visual_asset:'inner_wall'});

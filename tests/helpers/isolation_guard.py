@@ -5,6 +5,7 @@ import os
 
 ALLOWED_MODULES = (
     'test_combat_movement.py', 'test_combat_attacks.py',
+    'test_character_jumps.py',
     'test_effect_lifecycle.py', 'test_regression_combat.py',
     'test_consumable_rules.py', 'test_consumable_catalog_rules.py',
     'test_inventory_ammo_stacks.py', 'test_inventory_access.py',

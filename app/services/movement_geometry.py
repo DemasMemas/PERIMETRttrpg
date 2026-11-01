@@ -27,6 +27,9 @@ class WallBox:
     depth: float
     angle: float
     level: int
+    bottom: float = -math.inf
+    top: float = math.inf
+    object_id: int | None = None
 
     def local(self, point):
         dx, dy = point[0] - self.x, point[1] - self.y

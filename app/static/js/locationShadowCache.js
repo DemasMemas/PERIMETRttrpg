@@ -57,6 +57,9 @@ export function createLocationShadowCache(light) {
             for(const material of Array.isArray(node.material)?node.material:[node.material]){
                 if(!material)continue;
                 let old=records.get(material);
+                // Один материал часто используется десятками частей модели.
+                // В пределах обхода его состояние достаточно сравнить один раз.
+                if(old?.frame===frame)continue;
                 const values=[material.version,material.visible,material.opacity,material.alphaTest,
                     material.map?.version,material.alphaMap?.version,material.displacementMap?.version,
                     material.displacementScale,material.displacementBias];

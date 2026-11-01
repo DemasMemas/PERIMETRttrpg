@@ -205,6 +205,8 @@ ACTION_CATALOG = [
     {'key': 'grapple_live_shield', 'label': 'Живой щит', 'action_points': 3, 'free_actions': 0, 'movement_points': 0},
     {'key': 'recover_from_shock', 'label': 'Попытаться очнуться', 'action_points': 0, 'free_actions': 0, 'movement_points': 0},
     {'key': 'mutant_jump', 'label': 'Прыжок', 'action_points': 4, 'free_actions': 0, 'movement_points': 0},
+    {'key': 'jump', 'label': 'Прыжок', 'action_points': 2, 'free_actions': 0, 'movement_points': 0},
+    {'key': 'recover_jump_balance', 'label': 'Восстановить равновесие', 'action_points': 0, 'free_actions': 0, 'movement_points': 0},
     {'key': 'mutant_ambush', 'label': 'Засада', 'action_points': 0, 'free_actions': 0, 'movement_points': 0},
     {'key': 'mutant_battle_cry', 'label': 'Боевой клич', 'action_points': 2, 'free_actions': 0, 'movement_points': 0},
     {'key': 'mutant_camouflage', 'label': 'Маскировка', 'action_points': 1, 'free_actions': 0, 'movement_points': 0},
@@ -1245,7 +1247,7 @@ class CombatService:
             raise ValidationError('Unknown movement mode')
         running = movement_mode in {'run', 'sprint'}
         strength_modifier = CombatService._base_skill_modifier(character_data, 'skills.physical.strength')
-        base_distance = 2 + .2 * strength_modifier
+        base_distance = max(0, 2 + .2 * strength_modifier)
         return {
             'base_distance': round(base_distance, 10),
             'max_distance': round(base_distance * (2 if running else 1), 10),
@@ -1257,9 +1259,10 @@ class CombatService:
             'running': running,
             'failure_1_to_3': 'midpoint' if running else 'unstable_edge',
             'failure_4_or_more': 'midpoint',
-            'execution_available': False,
-            'needs_rules': ['unstable_edge_position_and_state'],
-            'blocked_by': ['fractional_position_support'],
+            'execution_available': True,
+            'max_rise': 1,
+            'needs_rules': [],
+            'blocked_by': [],
         }
 
     @staticmethod
@@ -9356,6 +9359,8 @@ class CombatService:
         location = character.location
         node = surface(location, LocationObject.query.filter_by(location_id=location.id).all(), character.pos_x, character.pos_y, level)
         height = node['height'] if node else ground(location, character.pos_x, character.pos_y) + level * 2.4
+        from app.services.character_jump import object_support_height
+        height = object_support_height(character, height)
         return {'floor_level': level, 'height': height}
 
     @staticmethod
@@ -9882,6 +9887,7 @@ class CombatService:
 
     @staticmethod
     def _movement_wall_geometry(location, objects):
+        from dataclasses import replace
         from app.services.location_navigation import level_of,ground,STOREY_HEIGHT
         from app.services.movement_geometry import WallGeometry, wall_boxes, tree_trunk_box
         entries = [(o, o) for o in objects]
@@ -9906,6 +9912,8 @@ class CombatService:
                 size=CombatService._object_dimensions(wall,axis_aligned=False)
                 trunk=tree_trunk_box(wall,size)
                 parts = [trunk] if trunk is not None else wall_boxes(wall,openings,size=size)
+                bottom = ground(location,wall.tile_x,wall.tile_y)+level_of(wall)*STOREY_HEIGHT+CombatService._coerce_float((wall.properties or {}).get('elevation'),0)
+                parts = [replace(part,bottom=bottom,top=bottom+CombatService._object_height(wall),object_id=getattr(wall,'id',None)) for part in parts]
                 if profile['blocked']:
                     boxes.extend(parts)
                 else:
@@ -10106,6 +10114,7 @@ class CombatService:
         a,b = surface(location,objects,*start),surface(location,objects,*end)
         if not a or not b or a['stair'] or b['stair']:
             return None
+        a = {**a,'height':CombatService.physical_position(actor)['height']}
         if start[2]!=level:
             upper = max(start[2],level)
             crossing = (x,y) if start[2]>level else (actor.pos_x,actor.pos_y)
@@ -10265,9 +10274,12 @@ class CombatService:
                 if not surface(location,objects,*b) or wall_geometry.climb_at(b):
                     return False
             return True
+        support = (((actor.character.data or {}).get('health') or {}).get('combatMeta') or {}).get('jumpSupport') if actor else None
+        height_options = ({'start_height':CombatService.physical_position(actor)['height']}
+                          if support and support.get('position')==[start_x,start_y,start_level] else {})
         return find_path(location,objects,(start_x,start_y,start_level),(end_x,end_y,end_level),
                          movement_map,terrain_costs=terrain_costs,can_traverse=can_traverse,
-                         geometry=wall_geometry,continuous=True)
+                         geometry=wall_geometry,continuous=True,**height_options)
 
     @staticmethod
     def _prepare_character_for_turn(loc_char):
@@ -10359,6 +10371,7 @@ class CombatService:
 
     @staticmethod
     def _serialize_character(loc_char, current_turn_id=None, combat_state=None):
+        from app.services.character_jump import balance_state
         character = loc_char.character
         profile = CombatService._combat_profile(loc_char)
         posture = CombatService._posture_key(loc_char)
@@ -10442,6 +10455,7 @@ class CombatService:
             'is_mutant': is_mutant,
             'ignores_difficult_surface': CombatService._mutant_has_trait(data, 'Полёт'),
             'jump_preview': None if is_mutant else CombatService._jump_profile(data, loc_char.movement_mode_this_turn or 'walk', loc_char.action_points_current or 0),
+            'unstable_jump': deepcopy(balance_state(loc_char)),
             'mutant_type': CombatService._mutant_profile_name(data) if is_mutant else '',
             'is_npc': is_npc(data),
             'gm_hidden': bool(loc_char.gm_hidden),
@@ -12470,8 +12484,10 @@ class CombatService:
         module_selection=None,
         magazine_selection=None,
         loading=None,
+        jump_origin=None,
     ):
         deferred_request = snapshot_action_arguments(locals())
+        from app.services.character_jump import balance_state
         location = CombatService._get_location(location_id)
         is_gm = CombatService._ensure_access(location, user_id)
         CombatService._release_invalid_grapples(location_id)
@@ -12513,6 +12529,16 @@ class CombatService:
                     'kind': 'ambush', 'detection_difficulty_bonus': 5,
                 },
             }
+        if (not state or state.status != 'active') and action_key in {'jump','recover_jump_balance'}:
+            if not CombatService._can_end_turn_for_character(character,user_id,is_gm=is_gm):
+                raise PermissionDenied('Вы не управляете этим персонажем')
+            from app.services.character_jump import prepare_jump,execute_jump,recover_balance
+            details = (execute_jump(location,character,prepare_jump(location,character,target_x,target_y),0)
+                if action_key=='jump' else recover_balance(location,character,0))
+            character.last_action = db.func.now()
+            db.session.commit()
+            return {'character':CombatService._serialize_character(character),
+                    'state':CombatService.get_state(location_id,user_id),'action':action_key,'jump':details}
         if not state or state.status != 'active':
             raise ValidationError("Combat is not active")
 
@@ -12573,10 +12599,21 @@ class CombatService:
         gunpoint_details = None
         anomaly_details = None
         mutant_action_details = None
+        jump_details = None
         special_action_cost = None
         resolved_hits = []
         single_fire = False
         current_round = max(1, state.round_number or 1)
+        if action_key in {'jump','recover_jump_balance'}:
+            from app.services.character_jump import prepare_jump, balance_state
+            if action_key == 'jump':
+                jump_details = prepare_jump(location,character,target_x,target_y,jump_origin)
+                deferred_request['jump_origin'] = jump_details['origin']
+            elif not balance_state(character):
+                raise ValidationError('Персонаж уже находится в устойчивом положении')
+        if action_key in {'change_facing','escape_anomaly'}:
+            from app.services.character_jump import require_balance
+            require_balance(character)
         if action_key == 'mutant_jump':
             if not CombatService._mutant_has_trait(data, 'Прыгун'):
                 raise ValidationError('Этому мутанту недоступен прыжок')
@@ -13439,8 +13476,9 @@ class CombatService:
                 raise ValidationError("Target character not found")
             if not CombatService._is_adjacent(character, target):
                 raise ValidationError("Цель атаки ближнего боя должна находиться на соседней клетке")
-            character.facing_x = 0 if target.pos_x == character.pos_x else (1 if target.pos_x > character.pos_x else -1)
-            character.facing_y = 0 if target.pos_y == character.pos_y else (1 if target.pos_y > character.pos_y else -1)
+            if not balance_state(character):
+                character.facing_x = 0 if target.pos_x == character.pos_x else (1 if target.pos_x > character.pos_x else -1)
+                character.facing_y = 0 if target.pos_y == character.pos_y else (1 if target.pos_y > character.pos_y else -1)
             CombatService._sync_grapple_facing(character)
 
         if action_key == 'melee_disarm':
@@ -14156,8 +14194,9 @@ class CombatService:
                 raise ValidationError(
                     'Миролюбивый мутант не может атаковать первым'
                 )
-            character.facing_x = 0 if target.pos_x == character.pos_x else (1 if target.pos_x > character.pos_x else -1)
-            character.facing_y = 0 if target.pos_y == character.pos_y else (1 if target.pos_y > character.pos_y else -1)
+            if not balance_state(character):
+                character.facing_x = 0 if target.pos_x == character.pos_x else (1 if target.pos_x > character.pos_x else -1)
+                character.facing_y = 0 if target.pos_y == character.pos_y else (1 if target.pos_y > character.pos_y else -1)
             profile = (
                 CombatService._virtual_melee_profile(
                     attack_type_key,
@@ -14749,6 +14788,13 @@ class CombatService:
                 }
             if not resumed_paid_action:
                 character.action_points_current -= action_point_cost
+            if action_key in {'jump','recover_jump_balance'}:
+                from app.services.character_jump import execute_jump, recover_balance
+                jump_details = (execute_jump(location,character,jump_details,current_round)
+                    if action_key=='jump' else recover_balance(location,character,current_round))
+                data = character.character.data
+                health = data.setdefault('health',{})
+                combat_meta = health.setdefault('combatMeta',{})
             if action_key == 'draw_weapon':
                 CombatService._set_active_weapon(character, weapon_index)
                 data = character.character.data
@@ -16013,6 +16059,7 @@ class CombatService:
             'gunpoint': gunpoint_details,
             'anomaly': anomaly_details,
             'mutant_action': mutant_action_details,
+            'jump': jump_details,
         }
 
     @staticmethod
@@ -16051,6 +16098,8 @@ class CombatService:
         if not is_gm and character.controlled_by not in (None, user_id):
             raise PermissionDenied("Permission denied")
         CombatService.ensure_character_can_act(character)
+        from app.services.character_jump import require_balance
+        require_balance(character)
         if character.grappled_by_id:
             raise ValidationError("A grappled character cannot move independently")
 
@@ -16313,7 +16362,7 @@ class CombatService:
                     movement_cost += climb_profile['movement_points']
                 else:
                     climb_action_points = climb_profile['action_points']
-            if distance <= 0:
+            if distance <= 0 and not (movement_mode in {'run','sprint'} and not character.movement_mode_this_turn):
                 return character, 0, CombatService._serialize_state(location, state)
 
             used_mode = character.movement_mode_this_turn

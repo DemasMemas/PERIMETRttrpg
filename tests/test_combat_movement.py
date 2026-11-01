@@ -1412,7 +1412,7 @@ def test_jump_preview_uses_canonical_modifier_and_running_rules(strength, modifi
     assert preview['agility_modifier'] == 2
     assert preview['action_points'] == 2
     assert preview['has_action_points'] is True
-    assert preview['execution_available'] is False
+    assert preview['execution_available'] is True
 
 
 def test_jump_preview_does_not_roll_or_mutate_and_reports_missing_ap(monkeypatch):

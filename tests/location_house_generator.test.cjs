@@ -76,7 +76,7 @@ test('empty shells preserve orthogonal boundaries, independent wealth/damage, an
             assert.ok(plan.objects.filter(o=>o.type==='hatch').every(o=>o.properties.is_open===false));
             assert.equal(plan.objects.filter(o => o.type === 'door').length, 1);
             for (const object of plan.objects) {
-                assert.ok(['floor','wall','roof','door','window','ladder','stairs','hatch','floor_opening'].includes(object.type));
+                assert.ok(['floor','wall','roof','door','window','ladder','stairs','hatch','floor_opening','household_rubble'].includes(object.type));
                 assert.equal(object.properties.building_id, 'shell');
                 assert.equal(object.properties.building_generation.wealth, wealth);
                 if (object.properties.visual_asset) assert.ok(catalog.findLocationAsset(object.properties.visual_asset));

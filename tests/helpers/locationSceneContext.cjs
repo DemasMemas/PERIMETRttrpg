@@ -9,6 +9,8 @@ module.exports = function sceneContext(values) {
         ...architecture,
         currentLocationData: null, editorHeldRotation: null, objectEdit: null, editorPaste: null, eraserMode: false,
         editorHoverLevelOffset: () => 0, locationViewLevel: 0,
+        pendingFacingSelection: null, facingPreviewPointer: null, pendingCharacterPlacement: null,
+        window: {dispatchEvent() {}}, Event: class {},
         locationSceneLoading: false, locationBuildingViewsDirty: false,
         locationObjectPickCache: { key: null, result: null },
         updateRoofVisibility() {}, updateLocationSculpt() {}, assetSurfacePlacement: () => null, alignFloorRugToSurface() {},

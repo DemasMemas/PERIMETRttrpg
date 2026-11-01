@@ -9,6 +9,8 @@ import { createWaterProfileLayer, connectedWaterCells, normalizeWaterProfile } f
 // static/js/locationScene.js
 import * as THREE from 'three';
 import { createVerticalAccessModel } from './locationVerticalAccess.js';
+import { damagedOpening, damagedWall, openingFracturePlan, createOpeningFractures,
+    createBrokenWallGeometry, createWallDebris } from './locationBuildingDamage.js';
 import { createBasementCutaway, cutawayContains } from './locationBasementCutaway.js';
 import { createHouseholdModel, releaseHouseholdRendererResources } from './locationHouseholdModels.js';
 import { createLocationShadowCache, createLocationShadowPass } from './locationShadowCache.js';
@@ -967,7 +969,12 @@ function invalidateMovementMapCache() {
     locationObjectPickCache = { key: null, result: null };
 }
 
+let jumpPreviewVisible = false;
 function clearAttackPreview() {
+    if (jumpPreviewVisible) {
+        ensureMovementPreviewHint().style.display = 'none';
+        jumpPreviewVisible = false;
+    }
     if (attackPreviewLine && scene) {
         scene.remove(attackPreviewLine);
         disposeObject(attackPreviewLine);
@@ -1562,6 +1569,42 @@ function updateMovementPreview(clientX, clientY) {
     hint.style.color = calculating || previewFailed ? '#fff' : route && (!isCombatActive || availability.allowed) ? '#d7ffe5' : '#ffd0d0';
 }
 
+function updateJumpPreview(clientX,clientY,entry) {
+    const action=pendingCombatAction;
+    const point=getPointerWorldPoint(clientX,clientY,entry.physicalHeight??entry.model.position.y);
+    if(!point)return;
+    const x=Math.max(0,Math.min(currentLocationData.grid_width-1,Math.round((point.x-.5)*10)/10));
+    const y=Math.max(0,Math.min(currentLocationData.grid_height-1,Math.round((point.z-.5)*10)/10));
+    const key=[x,y,movementMapVersion].join(':');
+    const hint=ensureMovementPreviewHint();
+    jumpPreviewVisible=true;
+    hint.style.left=`${clientX+14}px`;hint.style.top=`${clientY+14}px`;hint.style.display='block';
+    if(action.jumpPreviewKey===key)return;
+    action.jumpPreviewKey=key;
+    clearTimeout(action.jumpPreviewTimer);
+    if(!attackPreviewLine){attackPreviewLine=createPreviewLine(0xff8c42);scene.add(attackPreviewLine);}
+    attackPreviewLine.geometry.setFromPoints([entry.model.position.clone(),new THREE.Vector3(x+.5,entry.model.position.y,y+.5)]);
+    attackPreviewLine.material.color.setHex(0xff8c42);
+    hint.textContent='Проверка прыжка…';
+    action.jumpPreviewTimer=setTimeout(async()=>{
+        try{
+            const response=await fetch(`/lobbies/${window.currentLobbyId}/locations/${getCurrentLocationId()}/movement-preview`,{
+                method:'POST',headers:{'Content-Type':'application/json',Authorization:`Bearer ${localStorage.getItem('access_token')}`},
+                body:JSON.stringify({character_id:action.actorCharacterId,special_action:'jump',x,y})});
+            const result=await response.json();
+            if(pendingCombatAction!==action||action.jumpPreviewKey!==key)return;
+            if(!response.ok)throw Error(typeof result.error==='string'?result.error:result.error?.message||'Прыжок недоступен');
+            attackPreviewLine.geometry.setFromPoints(result.route.surfaces.map(p=>new THREE.Vector3(p.x+.5,p.height+.12,p.y+.5)));
+            attackPreviewLine.material.color.setHex(0x72e8ae);
+            hint.textContent=`Прыжок: ${formatMovementNumber(result.route.distance)} м / ${formatMovementNumber(result.jump.max_distance)} м · Ловкость СЛ${result.jump.difficulty} · 2 ОД${combatState?.status==='active'&&!result.jump.has_action_points?' · оплата продолжится в следующем ходу':''}`;
+        }catch(error){
+            if(pendingCombatAction!==action||action.jumpPreviewKey!==key)return;
+            attackPreviewLine?.material.color.setHex(0xff7777);
+            hint.textContent=error.message||'Не удалось проверить прыжок';
+        }
+    },100);
+}
+
 function updateAttackPreview(clientX, clientY) {
     if (!pendingCombatAction) {
         clearAttackPreview();
@@ -1578,6 +1621,10 @@ function updateAttackPreview(clientX, clientY) {
         return;
     }
     if (pendingCombatAction.targetType === 'point') {
+        if (pendingCombatAction.actionKey === 'jump') {
+            updateJumpPreview(clientX,clientY,actorEntry);
+            return;
+        }
         const point = getPointerWorldPoint(clientX, clientY, actorEntry.model.position.y);
         if (!point) {
             clearAttackPreview();
@@ -2902,7 +2949,26 @@ function showCombatActionMenu(clientX, clientY, characterId) {
     ];
 
     if (condition.state === 'active') {
-        if (isCurrentTurn && combatCharacter?.active_anomaly) {
+        if (combatCharacter && !combatCharacter.is_mutant && isCurrentTurn) {
+            if (combatCharacter.unstable_jump) {
+                menuItems.push({label:'Равновесие',icon:'↔',angle:278,ringRadius:165,
+                    title:'Ловкость СЛ12 · бесплатно. Можно отказаться и остаться на месте.',
+                    action:async()=>{
+                        try {
+                            const result=await Server.performLocationCombatAction(window.currentLobbyId,getCurrentLocationId(),{
+                                location_character_id:combatCharacter.location_character_id,action_key:'recover_jump_balance'});
+                            setCombatState(result.state);
+                            showNotification(result.jump.outcome==='balanced'?'Равновесие восстановлено':'Персонаж оступился на 0,5 м назад','system');
+                        }catch(error){showNotification(error.message,'system');}
+                    }});
+            } else if (!combatCharacter.active_anomaly) {
+                const profile=combatCharacter.jump_preview;
+                menuItems.push({label:'Прыжок',icon:'↗',angle:278,ringRadius:165,
+                    title:`До ${formatMovementNumber(profile?.max_distance??0)} м · Ловкость СЛ${profile?.difficulty??10} · 2 ОД`,
+                    action:()=>showJumpMenu(characterId)});
+            }
+        }
+        if (isCurrentTurn && combatCharacter?.active_anomaly && !combatCharacter.unstable_jump) {
             menuItems.push({
                 label: '\u0412\u044b\u0440\u0432\u0430\u0442\u044c\u0441\u044f',
                 actionKey: 'escape_anomaly',
@@ -4819,10 +4885,52 @@ function beginCharacterMoveMode(characterId, movementType = 'walk', evasion = fa
     return true;
 }
 
+function showJumpMenu(characterId) {
+    const actor=findCombatCharacterByCharacterId(characterId);
+    const choosePoint=()=>beginPendingCombatAction({actorCharacterId:characterId,
+        actorLocationCharacterId:actor.location_character_id,actionKey:'jump',targetType:'point'});
+    if(combatState?.status!=='active'||actor.movement_mode_this_turn){choosePoint();return;}
+    closeCombatMenus();
+    const modal=document.createElement('div');modal.className='modal jump-mode-modal';
+    const lifetime=new AbortController();
+    const close=()=>{lifetime.abort();modal.remove();};
+    modal.style.display='flex';
+    modal.innerHTML=`<div class="modal-content"><h3>Прыжок</h3>
+        <p>С места — Ловкость СЛ10. В режиме бега или спринта — двойная дальность и СЛ6. Сам прыжок стоит 2 ОД.</p>
+        <button type="button" class="btn btn-primary" data-jump-mode="walk">С места</button>
+        <button type="button" class="btn btn-secondary" data-jump-mode="run">Выбрать бег · 2 ОД</button>
+        <button type="button" class="btn btn-secondary" data-jump-mode="sprint">Выбрать спринт · 4 ОД</button>
+        <button type="button" class="btn btn-secondary" data-jump-cancel>Отмена</button></div>`;
+    document.body.appendChild(modal);
+    modal.querySelector('[data-jump-cancel]').onclick=close;
+    modal.onpointerdown=event=>{if(event.target===modal)close();};
+    document.addEventListener('keydown',event=>{if(event.key==='Escape'){event.preventDefault();close();}},{signal:lifetime.signal});
+    modal.querySelectorAll('[data-jump-mode]').forEach(button=>button.onclick=async()=>{
+        const mode=button.dataset.jumpMode;
+        if(mode==='walk'){close();choosePoint();return;}
+        modal.querySelectorAll('[data-jump-mode]').forEach(b=>{b.disabled=true;});
+        try{
+            await new Promise((resolve,reject)=>{
+                const socket=window.socket;
+                const stop=()=>{clearTimeout(timer);socket.off('combat_state_updated',updated);socket.off('movement_rejected',denied);};
+                const updated=state=>{const c=state.characters?.find(c=>c.character_id===characterId);
+                    if(c?.movement_mode_this_turn===mode){stop();setCombatState(state);resolve();}};
+                const denied=result=>{if(result.character_id===characterId){stop();reject(Error(result.message));}};
+                const timer=setTimeout(()=>{stop();reject(Error('Не получено подтверждение выбора режима'));},8000);
+                socket.on('combat_state_updated',updated);socket.on('movement_rejected',denied);
+                socket.emit('move_in_location',{token:localStorage.getItem('access_token'),location_id:getCurrentLocationId(),
+                    character_id:characterId,x:actor.x,y:actor.y,floor_level:actor.floor_level,movement_mode:mode});
+            });
+            if(!modal.isConnected)return;
+            close();choosePoint();
+        }catch(error){showNotification(error.message,'system');modal.querySelectorAll('[data-jump-mode]').forEach(b=>{b.disabled=false;});}
+    });
+}
+
 export function beginPendingCombatAction(action) {
     window.cancelCommonMapTool?.();
     if (!combatState || combatState.status !== 'active') {
-        if (action?.actionKey !== 'use_item' || !canControlCharacter(action.actorCharacterId)
+        if (!['use_item','jump'].includes(action?.actionKey) || !canControlCharacter(action.actorCharacterId)
             || getLocationCharacterCondition(action.actorCharacterId).state !== 'active') {
             showNotification('Этот персонаж сейчас не может применить предмет', 'system');
             return false;
@@ -4830,7 +4938,7 @@ export function beginPendingCombatAction(action) {
         pendingCombatAction = { ...action, outOfCombat: true, createdAt: Date.now() };
         closeCombatMenus();
         hideStructureInteraction();
-        showNotification('Применение предмета: выберите персонажа на карте (Esc — отмена)', 'system');
+        showNotification(action.actionKey==='jump'?'Прыжок: выберите точку (Esc — отмена)':'Применение предмета: выберите персонажа на карте (Esc — отмена)', 'system');
         return true;
     }
     const actor = action?.actorCharacterId ? findCombatCharacterByCharacterId(action.actorCharacterId) : null;
@@ -4862,7 +4970,7 @@ export function beginPendingCombatAction(action) {
     if (typeof window.closeCharacterSheet === 'function' && action.source === 'sheet') {
         window.closeCharacterSheet();
     }
-    const label = action.actionKey === 'use_item'
+    const label = action.actionKey === 'jump' ? 'Прыжок' : action.actionKey === 'use_item'
         ? 'Использование предмета'
         : (action.actionKey === 'explosive_attack'
             ? 'Выбор точки взрыва'
@@ -4875,13 +4983,14 @@ export function beginPendingCombatAction(action) {
                     ? 'выберите до 3 соседних целей, затем нажмите Enter'
                     : 'выберите до 3 целей в области 5×5, затем нажмите Enter'
             )
-            : 'выберите цель на сцене');
+            : action.actionKey==='jump'?'выберите точку на сцене (Esc — отмена)':'выберите цель на сцене');
     showNotification(`${label}: ${targetHint}`, 'system');
     renderCombatHud();
     return true;
 }
 
 export function clearPendingCombatAction() {
+    clearTimeout(pendingCombatAction?.jumpPreviewTimer);
     pendingCombatAction = null;
     clearAttackPreview();
     renderCombatHud();
@@ -4896,6 +5005,10 @@ export function registerDeferredCombatAction(actionId, payload) {
 }
 
 export function startCharacterMoveMode(characterId) {
+    if(findCombatCharacterByCharacterId(characterId)?.unstable_jump){
+        showNotification('Сначала восстановите равновесие на краю: Ловкость СЛ12, бесплатно','system');
+        return false;
+    }
     window.cancelCommonMapTool?.();
     const entry = characterModels.get(characterId);
     if (!entry) {
@@ -5251,6 +5364,7 @@ async function resolveCombatStructureSelection(clientX, clientY) {
 async function resolveCombatPointSelection(clientX, clientY) {
     if (!pendingCombatAction || pendingCombatAction.targetType !== 'point') return false;
     const action = pendingCombatAction;
+    if (action.resolving) return true;
     const actor = findCombatCharacterByCharacterId(action.actorCharacterId);
     const actorEntry = actor ? characterModels.get(actor.character_id) : null;
     if (!actor || !actorEntry) {
@@ -5259,8 +5373,8 @@ async function resolveCombatPointSelection(clientX, clientY) {
     }
     const point = getPointerWorldPoint(clientX, clientY, actorEntry.model.position.y);
     if (!point) return false;
-    const targetX = Math.floor(point.x);
-    const targetY = Math.floor(point.z);
+    const targetX = action.actionKey==='jump'?Math.max(0,Math.min(currentLocationData.grid_width-1,Math.round((point.x-.5)*10)/10)):Math.floor(point.x);
+    const targetY = action.actionKey==='jump'?Math.max(0,Math.min(currentLocationData.grid_height-1,Math.round((point.z-.5)*10)/10)):Math.floor(point.z);
     if (
         targetX < 0 ||
         targetY < 0 ||
@@ -5270,6 +5384,7 @@ async function resolveCombatPointSelection(clientX, clientY) {
         showNotification('Точка стрельбы находится за пределами локации', 'system');
         return false;
     }
+    action.resolving = true;
     try {
         const payload = {
             location_character_id: action.actorLocationCharacterId,
@@ -5305,6 +5420,14 @@ async function resolveCombatPointSelection(clientX, clientY) {
         if (typeof action.onResolve === 'function') {
             await action.onResolve({ targetX, targetY });
         }
+        if (action.actionKey==='jump' && result.jump) {
+            setCombatState(result.state);
+            const labels={success:'успех',midpoint:'приземление на середине',unstable_edge:'неустойчивое положение на краю'};
+            const check=result.jump.check;
+            showNotification(`Прыжок: ${check.total} против СЛ${check.difficulty} · ${labels[result.jump.outcome]}`,'system');
+            if(pendingCombatAction===action)clearPendingCombatAction();
+            return true;
+        }
         if (action.actionKey === 'mutant_jump') {
             showNotification(`Прыжок завершён: клетка ${targetX}, ${targetY}.`, 'success');
         }
@@ -5335,6 +5458,8 @@ async function resolveCombatPointSelection(clientX, clientY) {
     } catch (error) {
         showNotification(error.message || 'Не удалось выполнить стрельбу', 'system');
         return false;
+    } finally {
+        action.resolving = false;
     }
 }
 
@@ -6261,10 +6386,16 @@ function applyFogOfWar() {
                 position.x ?? 0, position.y ?? 0,
                 getTileHeight(position.x ?? 0, position.y ?? 0) + getFogObjectHeight(object), sources);
         mesh.userData.physicalShadowVisible = physicalVisible && !object.properties?.gm_hidden;
-        const displayLevel = ['hatch','floor_opening'].includes(object.type) && structureLevel(object)-1 === locationViewLevel
+        const displayLevel = object.type==='hatch' && structureLevel(object)-1 === locationViewLevel
             ? locationViewLevel : structureLevel(object);
         mesh.visible = physicalVisible && locationLevelVisible(displayLevel, structureBuildingId(object),
             mesh.position.x, mesh.position.z, object);
+        // Камера скрывает остатки вместе с этажом. Физический силуэт для
+        // солнца независимо восстанавливает locationShadowPass.
+        for(const child of mesh.userData.floorAttachedMeshes||[]){
+            child.visible=locationLevelVisible(structureLevel(object),structureBuildingId(object),
+                mesh.position.x,mesh.position.z,object);
+        }
     });
     syncFogMemoryGhosts(active, sources);
     visionBlockerHeightCache = null;
@@ -6600,7 +6731,8 @@ export function applyCharacterVisibilityUpdate(characterId, gmHidden) {
 export function updateCharacterPosition(characterId, posX, posY, options = {}) {
     const entry = getCharacterModelEntry(characterId);
     if (!entry) return;
-    const origin = entry.model.position.clone();
+    const origin = options.jump&&options.path?.length
+        ?new THREE.Vector3(options.path[0].x+.5,options.path[0].height,options.path[0].y+.5):entry.model.position.clone();
     const previousFloor = entry.floorLevel || 0;
     entry.floorLevel = options.floor_level ?? entry.floorLevel ?? 0;
     if (entry.floorLevel !== previousFloor) {
@@ -6623,14 +6755,14 @@ export function updateCharacterPosition(characterId, posX, posY, options = {}) {
         const started = performance.now();
         const tick = time => {
             if (entry.positionAnimation !== marker || getCharacterModelEntry(characterId) !== entry) return;
-            const progress = Math.max(0, Math.min(nodes.length - 1, (time - started) / 180));
+            const progress = Math.max(0, Math.min(nodes.length - 1, (time - started) / (options.jump?650/(nodes.length-1):180)));
             const index = Math.min(nodes.length - 2, Math.floor(progress));
             const t = progress - index;
             const a = index === 0 ? {x:origin.x-.5,y:origin.z-.5,height:origin.y,level:nodes[0].level} : nodes[index];
             const b = nodes[index+1];
             const x = a.x + (b.x-a.x)*t + .5, z = a.y + (b.y-a.y)*t + .5;
             let height = a.height + (b.height-a.height)*t;
-            const stair = (currentLocationData?.objects || []).find(o => {
+            const stair = !options.jump && (currentLocationData?.objects || []).find(o => {
                 if (o.type !== 'stairs') return false;
                 const p=structurePose(o),dx=x-p.x,dz=z-p.z;
                 return Math.abs(dx*p.axis.x+dz*p.axis.z)<p.width/2
@@ -7268,8 +7400,8 @@ function renderCombatHud() {
                             : 'Центр области 5x5')
                         : (pendingCombatAction.targetType === 'multi_melee'
                             ? `Соседние цели ${(pendingCombatAction.selectedTargetIds || []).length}/3 · Enter для атаки`
-                            : (pendingCombatAction.fireMode || pendingCombatAction.actionKey || 'действие')))}
-            }</div>` : ''}
+                            : ({jump:'Прыжок'}[pendingCombatAction.actionKey] || pendingCombatAction.fireMode || pendingCombatAction.actionKey || 'действие')))}
+            </div>` : ''}
             ${stressCards.map(({character, effect}) => `<div class="stress-effect-card" data-character="${character.location_character_id}" data-effect="${escapeHtml(effect.id)}" style="margin-top:8px;padding:8px;border:1px solid rgba(215,120,80,.45);border-radius:8px;"><strong>Стресс: ${escapeHtml(character.name)} — ${escapeHtml(effect.name)}</strong><div style="margin-top:4px;font-size:12px;opacity:.86;">${escapeHtml(effect.requirement || '')}</div><div style="margin-top:7px"><button class="btn btn-sm btn-primary stress-approve">Разрешить</button><button class="btn btn-sm btn-secondary stress-replace">Заменить эффект</button><button class="btn btn-sm btn-secondary stress-skip">Пропустить</button></div></div>`).join('')}
             <div style="margin-top:10px;">
                 ${combatState.status === 'active' && combatState.current_character && canActWithCombatCharacter(combatState.current_character) ? '<button class="btn btn-sm btn-secondary combat-end-turn-btn" style="margin-top:8px;">Закончить ход</button>' : ''}
@@ -7890,10 +8022,12 @@ export function initLocationScene(containerId) {
     scene.add(locationAmbientLight);
     locationDirectionalLight = new THREE.DirectionalLight(0xffffff, 1);
     locationDirectionalLight.castShadow = true;
-    locationDirectionalLight.shadow.mapSize.set(2048, 2048);
-    // Keep narrow wall caps out of the sun's PCF self-shadow band.
-    // Retain the small normal offset so furniture shadows stay near their feet.
-    locationDirectionalLight.shadow.bias = -0.0005;
+    // На карте квартала 2048 теряет тонкие столбы и мелкие предметы.
+    // Карта солнца кешируется; размер ограничен возможностями устройства.
+    const sunShadowSize = Math.min(4096, renderer.capabilities?.maxTextureSize || 2048);
+    locationDirectionalLight.shadow.mapSize.set(sunShadowSize, sunShadowSize);
+    // Большой отрицательный сдвиг давал зубцы на стенах под кровлей.
+    locationDirectionalLight.shadow.bias = -0.00005;
     locationDirectionalLight.shadow.normalBias = 0.02;
     locationDirectionalLight.shadow.radius = 2;
     scene.add(locationDirectionalLight);
@@ -10811,10 +10945,34 @@ function createLocationObjectMesh(obj, forPreview = false, relatedObjects = curr
         poster.rotation.y=-Math.PI/2;
         poster.position.y=height/2;
         group.add(poster);
+    } else if (properties.structural_debris?.version===1) {
+        const kind=properties.structural_debris.material;
+        const debrisMaterial=new THREE.MeshStandardMaterial({color:quietHouseColor(properties.color||'#aaa18e','wall'),roughness:.97});
+        applySurfacePattern(debrisMaterial,getSurfaceTexture(THREE,kind==='wood'?'floor':'wall'),.5,'top');
+        group.add(createWallDebris(THREE,{width,depth,height},debrisMaterial,kind,properties.structural_debris.seed));
     } else if (household) {
         group.add(createHouseholdModel(THREE, asset, {width, depth, height}, properties.color));
     } else if (['ladder','hatch','floor_opening'].includes(obj.type)) {
         group.add(createVerticalAccessModel(THREE,obj,{width,depth,height},material));
+        if(damagedOpening(obj)){
+            const floors=(relatedObjects||[]).filter(f=>f.type==='floor'&&structureLevel(f)===structureLevel(obj)
+                &&structureBuildingId(f)===structureBuildingId(obj)
+                &&Math.abs(Number(f.properties?.elevation||0)-Number(properties.elevation||0))<.08);
+            const supports=floors.flatMap(f=>{const p=floorVisualPose(f,relatedObjects);
+                return floorSlabParts(f,relatedObjects).map(r=>({...p,width:r.width,depth:r.depth,
+                    x:p.x+r.x*p.axis.x+r.z*p.normal.x,z:p.z+r.x*p.axis.z+r.z*p.normal.z}));});
+            const seed=properties.structural_damage?.seed||`${properties.generation_seed}:${obj.tile_x}:${obj.tile_y}`;
+            const fractures=openingFracturePlan(structurePose(obj),supports,seed);
+            const wood=properties.structural_damage?.material!=='masonry';
+            material.color.copy(asset?.properties?.structural_damage
+                ? new THREE.Color(properties.color||asset.color)
+                : locationObjectMaterialColor(floors[0]||{type:'floor',properties:{color:'#776d5d'}}));
+            applySurfacePattern(material,getSurfaceTexture(THREE,wood?'floor':'wall'),.5,'top');
+            const fragments=createOpeningFractures(THREE,fractures,material,wood?'wood':'masonry');
+            material.userData.openingFracture=true;
+            fragments.traverse(m=>{if(m.isMesh)m.userData.openingFracture=true;});
+            group.add(fragments);
+        }
     } else if (obj.type === 'roof' && Array.isArray(properties.roof_geometry)) {
         const geometry=createSavedRoofGeometry(THREE,properties.roof_geometry);
         const mesh=new THREE.Mesh(geometry,material);
@@ -10839,6 +10997,8 @@ function createLocationObjectMesh(obj, forPreview = false, relatedObjects = curr
         group.add(createFenceModel(THREE, width, height, depth, fenceColor));
     } else if (obj.type === 'wall') {
         const plan = wallVisualPlan(obj, relatedObjects || []);
+        const wallDamageSeed=properties.structural_damage?.seed
+            || (properties.layout_generation?`${properties.layout_generation.seed}:${obj.tile_x}:${obj.tile_y}:${structureLevel(obj)}`:properties.generation_seed);
         const roofAnchor=properties.roof_ground_anchor?transformedRoofAnchor(obj):null;
         let roofCeiling=Infinity;
         if(properties.roof_wall) {
@@ -10870,9 +11030,12 @@ function createLocationObjectMesh(obj, forPreview = false, relatedObjects = curr
             const spanHeight = span.top - span.bottom;
             const centerX = (span.start + span.end) / 2;
             const centerY = (span.bottom + span.top) / 2;
-            const geometry = new THREE.BoxGeometry(spanWidth, spanHeight, depth,
-                quietHouseFinish ? Math.ceil(spanWidth / 0.6) : 1,
-                quietHouseFinish ? 3 : 1);
+            const geometry = damagedWall(obj)
+                ? createBrokenWallGeometry(THREE,spanWidth,spanHeight,depth,
+                    `${wallDamageSeed}:${span.start}:${span.end}`)
+                : new THREE.BoxGeometry(spanWidth, spanHeight, depth,
+                    quietHouseFinish ? Math.ceil(spanWidth / 0.6) : 1,
+                    quietHouseFinish ? 3 : 1);
             if (quietHouseFinish) {
                 const positions = geometry.getAttribute('position');
                 const colors = [];
@@ -11030,7 +11193,8 @@ function createLocationObjectMesh(obj, forPreview = false, relatedObjects = curr
         });
     }
 
-    if (['wall', 'floor', 'window', 'stairs', 'door'].includes(obj.type)) batchStructureParts(group);
+    if (['wall', 'floor', 'window', 'stairs', 'door', 'floor_opening'].includes(obj.type)
+        || properties.structural_debris?.version===1) batchStructureParts(group);
     const objectPosition = getObjectGridPosition(obj);
     const tileX = objectPosition.x ?? 0;
     const tileY = objectPosition.y ?? 0;
@@ -11056,9 +11220,15 @@ function createLocationObjectMesh(obj, forPreview = false, relatedObjects = curr
         // Animated, translucent anomaly visuals are effects, not sun blockers.
         // Casting their changing rings would invalidate the static shadow map
         // every frame across the entire quarter.
-        child.castShadow = !['floor', 'household_floor_rug', 'anomaly'].includes(obj.type) && !child.userData.fireFlame;
-        child.receiveShadow = obj.type !== 'anomaly';
-        if(['roof','ceiling'].includes(obj.type)){
+        // Уцелевшее перекрытие физически закрывает солнце даже при разрезе
+        // камерой. Иначе остаются отдельные тени досок над освещённым полом.
+        child.castShadow = !['floor_opening', 'household_floor_rug', 'anomaly'].includes(obj.type) && !child.userData.fireFlame;
+        child.receiveShadow = !['floor_opening', 'anomaly'].includes(obj.type);
+        if(child.userData.openingFracture||child.material.userData?.openingFracture){
+            child.castShadow=child.receiveShadow=true;
+            (group.userData.floorAttachedMeshes ||= []).push(child);
+        }
+        if(['roof','ceiling'].includes(obj.type)||child.material.userData?.openingFracture){
             child.userData.physicalShadow={visible:child.visible,castShadow:child.castShadow,opacity:child.material.opacity,side:child.material.side};
             (group.userData.physicalShadowMeshes ||= []).push(child);
         }
@@ -11702,6 +11872,7 @@ export function setLocationViewLevel(level) {
     const next = Math.min(locationFloorCount() - 1, Math.max(locationMinimumLevel(), Math.trunc(Number(level) || 0)));
     if (next === locationViewLevel) return;
     locationViewLevel = next;
+    locationObjectPickCache.key=null;
     hideHighlight();
     if (editorSelection) clearEditorSelection();
     const placementLevel = document.getElementById('loc-structure-level');
@@ -12777,7 +12948,7 @@ function updateBuildPreview() {
     const openingPlacementPreview = placingAsset && !editingSelection && source?.kind === 'structure'
         && ['door', 'window'].includes(placementForLocationAsset(source).type);
     const movableStructurePreview = placingAsset && !editingSelection && source?.kind === 'structure'
-        && !openingPlacementPreview;
+        && !openingPlacementPreview && placementForLocationAsset(source).type !== 'floor_opening';
     const wallBulbPreview = movableStructurePreview && (source.id === 'wall_bulb' || source.mount === 'wall');
     const wallMount = wallBulbPreview ? wallBulbPlacement(x, z, source) : null;
     const surface = placingAsset && !editingSelection && !wallBulbPreview ? assetSurfacePlacement(x, z, source) : null;
@@ -12843,6 +13014,7 @@ function updateBuildPreview() {
                 type: placementForLocationAsset(source).type,
                 tile_x: mount?.tileX ?? x, tile_y: mount?.tileZ ?? z,
                 properties: {
+                    ...placementForLocationAsset(source).properties,
                     ...placementProperties,
                     dimensions: { width: structureWidth, depth: structureDepth, height: structureHeight },
                     color: structureColor,
@@ -13006,6 +13178,7 @@ async function placeStructureAtTileImpl(x, z, client = null) {
             tile_x: mount?.tileX ?? x,
             tile_y: mount?.tileZ ?? z,
             properties: {
+                ...placement.properties,
                 ...building,
                 dimensions,
                 ...(placedType === 'floor' ? { roof_type: roofType === 'flat' ? 'flat' : 'gable',
@@ -14142,7 +14315,7 @@ function visibleEditorHit(hit) {
         if (Number.isInteger(lampIndex) && lampDisplayLevel(currentLocationData?.lighting?.local_lights?.[lampIndex]) !== locationViewLevel) return false;
         if (item.isMesh && item.material) {
             const materials = Array.isArray(item.material) ? item.material : [item.material];
-            if (materials.every(material => material.visible === false || material.opacity === 0)) return false;
+            if (!item.userData?.pickOnly && materials.every(material => material.visible === false || material.opacity === 0)) return false;
         }
     }
     return true;

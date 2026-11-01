@@ -309,6 +309,10 @@ class CharacterService:
         CharacterService.require_membership(lobby_id, owner_id)
 
         character_data = clean_snapshot(data or {})
+        jump_meta = (character_data.get('health') or {}).get('combatMeta')
+        if isinstance(jump_meta,dict):
+            for key in ('unstableJump','jumpSupport'):
+                jump_meta.pop(key,None)
         normalize_inventory_ammo_stacks(character_data)
         apply_health_maximums(character_data)
         character = LobbyCharacter(

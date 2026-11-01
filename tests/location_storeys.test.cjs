@@ -4,7 +4,7 @@ const {test}=require('node:test'),assert=require('node:assert/strict');
 const fs=require('node:fs'),path=require('node:path'),vm=require('node:vm');
 const read=name=>fs.readFileSync(path.join(__dirname,'../app/static/js',name),'utf8');
 const load=()=>import(`data:text/javascript;base64,${Buffer.from(read('locationArchitecture.js')).toString('base64')}`);
-const part=(name,next)=>{const s=read('locationScene.js'),a=s.indexOf(`function ${name}(`),b=s.indexOf(`function ${next}(`,a+1);return s.slice(a,b).replaceAll('export ','');};
+const part=(name,next)=>{const s=read('locationScene.js'),a=s.indexOf(`function ${name}(`),b=s.indexOf(`function ${next}(`,a+1);return s.slice(s.slice(a-6,a)==='async '?a-6:a,b).replaceAll('export ','').replace(/async\s*$/,'');};
 const make=(type,x,z,w,d,level=0,extra={})=>({id:`${type}-${x}-${z}`,type,name:type,tile_x:Math.floor(x),tile_y:Math.floor(z),properties:{building_id:'A',level,
     offset_x:x-Math.floor(x)-.5,offset_z:z-Math.floor(z)-.5,dimensions:{width:w,depth:d,height:type==='floor'?.12:type==='window'?1:type==='door'?2:2.4},...extra}});
 const building=()=>[make('floor',5,5,8,8),make('wall',5,1,8,.2),make('wall',5,9,8,.2),
@@ -171,6 +171,7 @@ test('drop is a distinct action for old hatches and lidless openings, never an u
     const context=createSceneContext({...architecture,currentLocationData:{objects:[opening,closed]},currentLocationId:9,
         getCurrentInteractionActor:()=>actor,getCharacterTileDistance:()=>1,getActionRequirement:()=>({max_distance:1}),
         localStorage:{getItem:()=> 'test-token'},window:{socket:{emit:(name,payload)=>emitted.push({name,payload})}},
+        fetch:async()=>({ok:true,json:async()=>({route:{landing:{x:5.1,y:5.2},floor_level:0}})}),
         hideHighlight(){},hideStructureInteraction(){},pendingStructureAction:null,
         objectInteractions:{},isFireObject:()=>false,findLocationAsset:()=>null});
     vm.runInContext(part('isStructureActionAllowed','updateInteractiveObject').replace(/async\s*$/,''),context);
@@ -180,12 +181,14 @@ test('drop is a distinct action for old hatches and lidless openings, never an u
     assert.equal(context.isStructureActionAllowed(opening,'level_up',7),false);
     assert.equal(context.isStructureActionAllowed(closed,'drop_down',7),false);
     assert.ok(context.getObjectActions(closed).includes('drop_down')); // old saves gain the action too
-    assert.equal(context.useLocationVerticalAccess(opening.id,'up',7),false);
+    assert.equal(await context.useLocationVerticalAccess(opening.id,'up',7),false);
     assert.equal(emitted.length,0);
-    assert.equal(context.useLocationVerticalAccess(opening.id,'drop',7),true);
+    assert.equal(await context.useLocationVerticalAccess(opening.id,'drop',7),true);
     assert.equal(emitted[0].payload.special_action,'drop_down');
     assert.equal(emitted[0].payload.object_id,opening.id);
-    assert.equal(emitted[0].payload.floor_level,undefined); // landing is selected by the server
+    assert.equal(emitted[0].payload.floor_level,0); // Сервер подтвердил этаж и дробную точку приземления.
+    assert.equal(emitted[0].payload.x,5.1);
+    assert.equal(emitted[0].payload.y,5.2);
     actor.floorLevel=1;
     assert.equal(context.isStructureActionAllowed(opening,'drop_down',7),false);
     const source=[make('floor',5,5,8,8,2),opening];

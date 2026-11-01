@@ -13,6 +13,13 @@ test('camera cutaways retain physical casters during shadow rendering and restor
     pass.dispose();assert.equal(renderer.shadowMap.render,original);
 });
 function node(extra={}){return{position:{x:0,y:0,z:0},quaternion:{x:0,y:0,z:0,w:1},scale:{x:1,y:1,z:1},visible:true,layers:{mask:1},...extra};}
+test('Скрытие этажа камерой сохраняет физическую тень досок вместе с перекрытием',async()=>{
+    const {createLocationShadowPass}=await load(),board={visible:false,castShadow:true,userData:{physicalShadow:{visible:true,castShadow:true}}};
+    const root={visible:false,userData:{physicalShadowVisible:true,floorAttachedMeshes:[board],physicalShadowMeshes:[board]}};
+    const renderer={shadowMap:{render(){assert.equal(root.visible,true);assert.equal(board.visible,true);}}};
+    const pass=createLocationShadowPass(renderer,()=>[root]);
+    renderer.shadowMap.render();assert.equal(root.visible,false);assert.equal(board.visible,false);pass.dispose();
+});
 async function setup(){
     const {createLocationShadowCache}=await load();
     const parent=node(),material={version:0,visible:true,opacity:1,alphaTest:0};
@@ -46,6 +53,15 @@ test('animated skin, morphs and custom depth materials retain per-frame shadow u
     for(const props of [{isSkinnedMesh:true},{morphTargetInfluences:[0]},{customDepthMaterial:{}}]){
         const s=await setup();Object.assign(s.mesh,props);assert.equal(s.update(),true);assert.equal(s.update(),true);
     }
+});
+test('Общий материал проверяется один раз за кадр, а его изменение обновляет тень',async()=>{
+    const s=await setup();let reads=0,version=0;
+    Object.defineProperty(s.material,'version',{get(){reads++;return version;}});
+    s.entries.push(node({...s.mesh,parent:s.parent,material:s.material}));
+    assert.equal(s.update(),true);assert.equal(reads,1);
+    assert.equal(s.update(),false);assert.equal(reads,2);
+    version++;assert.equal(s.update(),true);assert.equal(reads,3);
+    assert.equal(s.update(),false);
 });
 test('camera movement does not rebuild terrain clipping and geometry, while storey and object changes do',()=>{
     const source=read('locationScene.js'),start=source.indexOf('function updateRoofVisibility(');

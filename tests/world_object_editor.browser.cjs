@@ -176,6 +176,7 @@ else:
                 : fs.readFileSync(path.join(root,'app/static/js/locationScene.js'),'utf8');
             fs.writeFileSync(path.join(modules,'locationScene.js'), source + `
 export {showCombatActionMenu, showFacingMenu, updateFacingPreview, closeFacingMenu, findMovementPath, hasStoreyNavigation, hasLineOfSight, beginCharacterMoveMode, updateMovementPreview, commitMovementPreview, resolveFacingCell, showMovementTypeMenu, selectEditorAsset};
+export function sceneGraphicsForTest(){return {scene,renderer,camera,controls,sun:locationDirectionalLight,roots:locationObjectMeshes,roofs:roofMeshes,characters:characterModels,cache:locationShadowCache,shadowPass:locationShadowPass,batches:locationRenderBatches,pickAtScreen:getLocationObjectAtScreen};}
 export function facingPreviewCount(){return facingPreviewMesh?.count || 0;}
 export function navigationPreviewSettled(sx,sy,x,y,c,l){return [...navigationPreviews.entries()].some(([key,value])=>key.endsWith(\`:\${c}:\${sx}:\${sy}:\${x}:\${y}:\${l}\`)&&value!==null);}
 export function characterPose(id){const e=getCharacterModelEntry(id);return {x:e.posX,y:e.posY,fx:e.facingX,fy:e.facingY};}
@@ -184,6 +185,7 @@ export function beginObjectClimbForTest(objectId,characterId){const object=curre
 export function captureCurrentSceneForTest(){renderer.render(scene,camera);return renderer.domElement.toDataURL('image/png');}
 export function objectRenderBoundsForTest(id){const root=locationObjectMeshes.find(m=>m.userData.locationObject?.id===id||m.userData.locationObjectId===id);if(!root)return null;const box=new THREE.Box3().setFromObject(root);return{center:box.getCenter(new THREE.Vector3()).toArray(),size:box.getSize(new THREE.Vector3()).toArray()};}
 export function movementHintText(){return movementPreviewHint?.textContent;}
+export async function placeLibraryAssetForTest(x,z){hoveredTileCoords={x,z};updateBuildPreview();const preview=buildPreviewMesh?.userData?.locationObject?.properties;const staged=await placeStructureAtTile(x,z);const object=staged&&currentLocationData.objects.find(o=>o.id>0&&o.tile_x===staged.tile_x&&o.tile_y===staged.tile_y&&o.properties.visual_asset===staged.properties.visual_asset);return {preview,object};}
 export function gmRelocationStateForTest(){return {pending:Boolean(pendingCharacterPlacement?.gmRelocation),ghost:Boolean(movementPreviewGhost||previewSprite),level:locationViewLevel};}
 export function characterIsMutantForTest(id){return Boolean(getCharacterModelEntry(id)?.isMutant);}
 export function characterModelCenterForTest(id){return new THREE.Box3().setFromObject(getCharacterModelEntry(id).model).getCenter(new THREE.Vector3()).toArray();}

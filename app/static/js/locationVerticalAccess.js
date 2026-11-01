@@ -20,13 +20,23 @@ export function createVerticalAccessModel(THREE, object, {width,depth,height}, m
         }
         return root;
     }
+    if (object.type === 'floor_opening') {
+        // Проём — отсутствие перекрытия. Рамки соседних проёмов создавали
+        // ложные балки над пустотой и выступали за внешний контур здания.
+        // Невидимая поверхность сохраняет выбор проёма в редакторе и меню.
+        const pick = new THREE.Mesh(new THREE.PlaneGeometry(width, depth),
+            new THREE.MeshBasicMaterial({visible:false, colorWrite:false, depthWrite:false, side:THREE.DoubleSide}));
+        pick.rotation.x = -Math.PI / 2;
+        pick.userData.pickOnly=true;
+        root.add(pick);
+        return root;
+    }
     const sealed=object.properties?.visual_asset === 'bunker_hatch';
     const rim=Math.min(width,depth)*.075;
     for (const sign of [-1,1]) {
         box(root,width+rim*2,.045,rim,0,.015,sign*(depth+rim)/2,metal);
         box(root,rim,.045,depth,sign*(width+rim)/2,.015,0,metal);
     }
-    if (object.type === 'floor_opening') return root;
     const lid=new THREE.Group();lid.position.set(0,.035,-depth/2);root.add(lid);
     if (sealed) {
         box(lid,width,height,depth,0,-height/2,depth/2);

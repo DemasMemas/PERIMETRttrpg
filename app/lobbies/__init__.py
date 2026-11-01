@@ -2436,6 +2436,13 @@ def preview_location_movement(lobby_id, location_id, lobby, participant):
     user_id = int(get_jwt_identity())
     if lobby.gm_id != user_id and actor.controlled_by not in (None, user_id):
         return jsonify({'error': 'Access denied'}), 403
+    if payload.get('special_action') == 'jump':
+        from app.services.character_jump import prepare_jump, animation_path
+        plan = prepare_jump(location,actor,payload.get('x'),payload.get('y'))
+        points = animation_path(plan['start'],plan['landing'])
+        return jsonify({'route':dict(surfaces=points,path=[[p['x'],p['y']] for p in points],
+            distance=plan['distance'],cost=0,climbs=[],climb_cost=0,floor_level=plan['landing']['level']),
+            'jump':plan['profile']}),200
     if payload.get('special_action') in ('climb','drop_down'):
         if type(payload.get('object_id')) is not int:
             return jsonify({'error':'Некорректное препятствие'}),400
@@ -3017,6 +3024,14 @@ def spawn_character_in_location(lobby_id, location_id):
     if existing:
         # Перемещаем на новые координаты
         previous_position = (existing.pos_x, existing.pos_y)
+        if (existing.pos_x,existing.pos_y,existing.floor_level or 0)!=(tile_x,tile_y,target_level):
+            sheet=deepcopy(existing.character.data or {})
+            meta=(sheet.get('health') or {}).get('combatMeta') or {}
+            if any(key in meta for key in ('unstableJump','jumpSupport')):
+                meta.pop('unstableJump',None)
+                meta.pop('jumpSupport',None)
+                existing.character.data=sheet
+                flag_modified(existing.character,'data')
         existing.pos_x = tile_x
         existing.pos_y = tile_y
         existing.floor_level = target_level
@@ -3520,6 +3535,8 @@ def change_character_facing_outside_combat(
         return jsonify({'error': 'You do not control this character'}), 403
     payload = request.get_json() or {}
     facing_x = CombatService._coerce_int(payload.get('facing_x'), 0)
+    from app.services.character_jump import require_balance
+    require_balance(location_character)
     facing_y = CombatService._coerce_int(payload.get('facing_y'), 0)
     if (facing_x, facing_y) == (0, 0):
         return jsonify({'error': 'Choose a facing direction'}), 400
@@ -4609,11 +4626,26 @@ def perform_location_combat_action(lobby_id, location_id, lobby, participant):
     )
     socketio.emit('combat_character_updated', result['character'], room=f"location_{location_id}")
     socketio.emit('combat_state_updated', result['state'], room=f"location_{location_id}")
+    if result.get('jump'):
+        actor = result['character']
+        socketio.emit('character_moved',{'character_id':actor['character_id'],
+            'x':actor['x'],'y':actor['y'],'floor_level':actor['floor_level'],'height':actor['height'],
+            'facing_x':actor['facing_x'],'facing_y':actor['facing_y'],
+            'path':result['jump']['path'],'jump':True},room=f'location_{location_id}')
     ground_object_events = {}
     pending_nodes = [result]
     while pending_nodes:
         node = pending_nodes.pop()
         if isinstance(node, dict):
+            revealed = node.get('revealed_anomaly')
+            if isinstance(revealed,dict):
+                if revealed.get('object_id'):
+                    ground_object_events[int(revealed['object_id'])]='updated'
+                elif revealed.get('tile_x') is not None and revealed.get('tile_y') is not None:
+                    location = db.session.get(Location,location_id)
+                    x,y=revealed['tile_x'],revealed['tile_y']
+                    socketio.emit('location_tiles_updated',{'location_id':location_id,'updates':[
+                        {'x':x,'z':y,'objects':location.tiles_data[y][x].get('objects',[])}]},room=f'location_{location_id}')
             object_id = node.get('ground_object_id')
             object_event = node.get('ground_object_event')
             if object_id and object_event:

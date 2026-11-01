@@ -151,6 +151,10 @@ def validate_deferred_conditions(actor, row):
     payload = row.payload or {}
     kind = payload.get('action_key')
     CombatService.ensure_character_can_act(actor, kind)
+    if kind == 'jump':
+        from app.services.character_jump import prepare_jump
+        prepare_jump(actor.location,actor,payload.get('target_x'),payload.get('target_y'),payload.get('jump_origin'))
+        return
     if kind == 'consumable_use':
         from app.services.deferred_consumable import _validate_saved_selection
         _validate_saved_selection(actor, payload.get('selection') or {})
@@ -249,7 +253,7 @@ def preserve_action_payment(current_data, incoming_data):
     meta = health.setdefault('combatMeta', {})
     if not isinstance(meta, dict):
         meta = health['combatMeta'] = {}
-    for key in ('pendingAction', 'completedPendingActionId'):
+    for key in ('pendingAction', 'completedPendingActionId', 'unstableJump', 'jumpSupport'):
         if key in current:
             meta[key] = deepcopy(current[key])
         else:

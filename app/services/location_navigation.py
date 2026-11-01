@@ -283,7 +283,7 @@ def connects(a, b):
     return abs(a['height'] - b['height']) <= rise * distance + .21
 
 
-def find_path(location, objects, start, end, maps, terrain_costs=None, can_traverse=None, geometry=None, continuous=False):
+def find_path(location, objects, start, end, maps, terrain_costs=None, can_traverse=None, geometry=None, continuous=False, start_height=None):
     """maps(level) returns the established blocked cells and climb costs."""
     levels = {0, start[2], end[2]} | {level_of(o) for o in objects}
     # Surface geometry only uses these structures. Collision maps still include
@@ -340,6 +340,8 @@ def find_path(location, objects, start, end, maps, terrain_costs=None, can_trave
             x, y, level = key
             nearby = surface_buckets.get((math.floor(x+.5),math.floor(y+.5),level),())
             cache[key] = surface(location, nearby, x, y, level)
+            if key == start and cache[key] and start_height is not None:
+                cache[key] = {**cache[key],'height':start_height}
         return cache[key]
 
     source, target = node(start), node(end)

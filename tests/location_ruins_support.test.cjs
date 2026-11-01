@@ -3,7 +3,7 @@ const {modules,fixture}=require('./location_furniture_fixture.cjs');
 test('interaction picking skips invisible roof hits and selects the visible object below',()=>{
     const fs=require('node:fs'),vm=require('node:vm'),path=require('node:path');
     const source=fs.readFileSync(path.join(__dirname,'../app/static/js/locationScene.js'),'utf8');
-    const start=source.indexOf('function getLocationObjectAtScreen('),end=source.indexOf('\nexport function useLocationVerticalAccess',start);
+    const start=source.indexOf('function getLocationObjectAtScreen('),end=source.indexOf('\nexport async function useLocationVerticalAccess',start);
     const roof={visible:true,userData:{locationObjectId:1}},floor={visible:true,userData:{locationObjectId:2}};
     const hits=[{object:{visible:false,userData:{},parent:roof}},{object:{visible:true,userData:{},parent:floor}}];
     const ctx=vm.createContext({renderer:{domElement:{getBoundingClientRect:()=>({left:0,top:0,width:100,height:100})}},

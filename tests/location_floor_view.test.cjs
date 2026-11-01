@@ -49,6 +49,9 @@ test('picking rejects other floors, hidden ancestors, and fully transparent mate
     assert.equal(context.visibleEditorHit(hit),true);
     root.visible=false;assert.equal(context.visibleEditorHit(hit),false);root.visible=true;
     hit.object.material.opacity=0;assert.equal(context.visibleEditorHit(hit),false);
+    hit.object.userData={pickOnly:true};assert.equal(context.visibleEditorHit(hit),true);
+    root.userData.locationObject.properties.level=-1;assert.equal(context.visibleEditorHit(hit),false);
+    root.userData.locationObject.properties.level=-2;delete hit.object.userData.pickOnly;
     delete root.userData.locationObject;root.userData.locationLampIndex=0;
     hit.object.material.opacity=1;assert.equal(context.visibleEditorHit(hit),false);
 });
@@ -143,6 +146,9 @@ test('near multi-storey houses retain lower floors while single-storey houses st
         userData: { locationObject: { properties: { level, building_id: 'multi' } } } }));
     structures.push({ visible: true, position: { x: 10, z: 1 },
         userData: { locationObject: { properties: { level: 0, building_id: 'single' } } } });
+    const fracture={visible:true,castShadow:true};
+    structures.push({visible:true,position:{x:1,z:1},userData:{floorAttachedMeshes:[fracture],
+        locationObject:{type:'floor_opening',properties:{level:1,building_id:'multi'}}}});
     const decor = [0, 2.4, 4.8].map(elevation => ({ visible: true, position: { x: 1, z: 1 },
         userData: { sourceObject: { elevation, type: 'chair' } } }));
     decor.push({ visible: true, position: { x: 10, z: 1 },
@@ -168,7 +174,8 @@ test('near multi-storey houses retain lower floors while single-storey houses st
     for (const level of [0, 1, 2]) {
         context.locationViewLevel = level;
         context.applyFogOfWar();
-        assert.deepEqual(structures.map(mesh => mesh.visible), [true, level >= 1, level >= 2, true]);
+        assert.deepEqual(structures.map(mesh => mesh.visible), [true, level >= 1, level >= 2, true, level>=1]);
+        assert.equal(fracture.visible,level>=1,'Обломки следуют своему перекрытию, а не поверхности выбора проёма');
         assert.deepEqual(decor.map(mesh => mesh.visible), [true, level >= 1, level >= 2, true, true]);
         assert.equal(character.model.visible, true);
         assert.equal(character.label.visible, true);
@@ -176,7 +183,8 @@ test('near multi-storey houses retain lower floors while single-storey houses st
     context.locationViewLevel = 0;
     multi.distant = true;
     context.applyFogOfWar();
-    assert.deepEqual(structures.map(mesh => mesh.visible), [true, true, true, true]);
+    assert.deepEqual(structures.map(mesh => mesh.visible), [true, true, true, true, true]);
+    assert.equal(fracture.visible,true,'В общем виде здания обломки остаются вместе с видимым верхним перекрытием');
     assert.deepEqual(decor.map(mesh => mesh.visible), [true, true, true, true, true]);
 });
 

@@ -571,7 +571,8 @@ test('stationary right click clears selection with any tool before canceling pla
     window.locationEditMode = false;
     context.editorSelections = [{ kind: 'structure', id: 1 }];
     assert.equal(context.cancelLocationEditorContextAction(), false);
-    assert.match(scene, /const onContextMenu = \(e\) => \{\s*e\.preventDefault\(\);\s*e\.stopImmediatePropagation\(\);\s*if \(cancelLocationEditorContextAction\(\)\) return;/);
+    const contextMenu=scene.slice(scene.indexOf('const onContextMenu = (e) => {',scene.indexOf('function setupLocationControls(')));
+    assert.ok(contextMenu.indexOf('if (cancelLocationEditorContextAction()) return;')<contextMenu.indexOf('const obj = getCharacterAtScreen'));
     assert.match(scene, /if \(cancelLocationEditorContextAction\(\)\) return;/);
     assert.match(main, /window\.cancelLocationAssetPlacement = \(\) => \{\s*activeAsset = null;\s*clearLocationAssetPreset\(\);\s*renderAssetCards\(\);\s*renderPlacementSettings\(\);/);
 });

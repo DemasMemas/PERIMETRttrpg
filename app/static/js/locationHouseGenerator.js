@@ -70,6 +70,7 @@ export function planBuildingShell({ minX, minZ, width, depth, shape = 'rectangle
     const generation = { version: 1, minX, minZ, width, depth, shape, storeys, basements,
         wealth, condition, buildingType, seed: String(seed), ...(roofType?{roofType,roofPitch,roofDirection,bodies:bodyRects}: {}) };
     const objects = [];
+    const survivingCells=new Map(),wallDebris=[];
     const style = {
         poor: { wall: 'wall', floor: 'art_aged_wood', color: '#877964', thickness: .16, window: .8 },
         ordinary: { wall: 'art_worn_plaster', floor: 'floor', color: '#aaa18e', thickness: .2, window: 1.1 },
@@ -119,6 +120,7 @@ export function planBuildingShell({ minX, minZ, width, depth, shape = 'rectangle
     if(basements&&(!cellar||basements>1&&!cellarOther))return {error:'Не удалось разместить подвальные люки вне межэтажной лестницы'};
     const circulation=[{x:serviceX+service.width/2,z:serviceZ+service.depth/2},...basements?[cellar,...(cellarOther?[cellarOther]:[])]:[]];
     for (let level = -basements; level < highestStorey; level++) {
+        const surviving=new Set();survivingCells.set(level,surviving);
         for (const { x, z } of cells) {
             if(!occupied(x,z,level))continue;
             const cx=minX+x*unit+unit/2,cz=minZ+z*unit+unit/2;
@@ -131,7 +133,9 @@ export function planBuildingShell({ minX, minZ, width, depth, shape = 'rectangle
                 && random(`slab:${level}:${x}:${z}`) < (condition === 'ruins' ? .48 : condition === 'damaged' ? .2 : 0);
             if (!collapse) add('floor', level, minX + x * unit + unit/2, minZ + z * unit + unit/2, unit, unit, .12,
                 { roof_enabled: false, visual_asset: style.floor, color: '#776d5d' });
-            else add('floor_opening', level, minX + x * unit + unit/2, minZ + z * unit + unit/2, unit, unit, .05);
+            else add('floor_opening', level, minX + x * unit + unit/2, minZ + z * unit + unit/2, unit, unit, .05,
+                {structural_damage:{version:1,material:'wood',seed:`${seed}:slab:${level}:${x}:${z}`}});
+            if(!collapse)surviving.add(`${x}:${z}`);
             if (!roofType && level === storeys - 1 && random(`roof:${x}:${z}`)
                 >= (condition === 'ruins' ? .85 : condition === 'damaged' ? .4 : condition === 'worn' ? .08 : 0)) {
                 add('roof', level, minX + x * 2 + 1, minZ + z * 2 + 1, 2, 2, .13,
@@ -143,12 +147,15 @@ export function planBuildingShell({ minX, minZ, width, depth, shape = 'rectangle
                 const roll = random(`wall:${level}:${x}:${z}:${dx}:${dz}`);
                 const broken = !entrance && level >= 0
                     && roll < (condition === 'ruins' ? .72 : condition === 'damaged' ? .3 : 0);
-                if (broken && roll < (condition === 'ruins' ? .4 : .14)) continue;
                 const wx = minX + x * unit + unit/2 + dx*unit/2, wz = minZ + z * unit + unit/2 + dz*unit/2;
                 const rotation = dx ? -Math.PI / 2 : 0;
+                const damageSeed=`${seed}:wall:${level}:${x}:${z}:${dx}:${dz}`;
+                if(broken)wallDebris.push({level,x,z,wx,wz,dx,dz,rotation,seed:damageSeed});
+                if (broken && roll < (condition === 'ruins' ? .4 : .14)) continue;
                 const height = broken ? .45 + roll : 2.4;
                 add('wall', level, wx, wz, unit, style.thickness, height,
-                    { rotation, color: style.color, visual_asset: style.wall, exterior_wall: true });
+                    { rotation, color: style.color, visual_asset: style.wall, exterior_wall: true,
+                        ...(broken?{structural_damage:{version:1,seed:damageSeed}}:{}) });
                 const windowMargin=Math.min(unit*.8,style.window)/2+.25;
                 const nearStairs=highestStorey>1&&wx>=serviceX-windowMargin&&wx<=serviceX+service.width+windowMargin
                     &&wz>=serviceZ-windowMargin&&wz<=serviceZ+service.depth+windowMargin
@@ -188,6 +195,21 @@ export function planBuildingShell({ minX, minZ, width, depth, shape = 'rectangle
     // Compact only compatible rectangles. Openings remain separate editable objects;
     // the existing wall/floor geometry cuts them out of the resulting spans.
     compactShellObjects(objects, condition);
+    // Обломки падают до первого уцелевшего перекрытия. Проход лестницы и
+    // вход остаются свободны; каждый завал — обычный редактируемый объект.
+    for(const source of wallDebris.slice(0,48)){
+        const {x,z,wx,wz,dx,dz,rotation,seed:debrisSeed}=source;
+        let landing=source.level;
+        while(landing>=-basements&&!survivingCells.get(landing)?.has(`${x}:${z}`))landing--;
+        if(landing < -basements)continue;
+        const px=wx-dx*.46,pz=wz-dz*.46;
+        if(px>serviceX-.2&&px<serviceX+service.width+.2&&pz>serviceZ-.2&&pz<serviceZ+service.depth+.2)continue;
+        if(Math.hypot(px-entryX,pz-entryZ)<1.2)continue;
+        add('household_rubble',landing,px,pz,unit*.78,.7,.22,{rotation,elevation:.035,passable:true,
+            color:wealth==='poor'?'#77604a':style.color,visual_asset:'household_rubble',
+            structural_debris:{version:1,material:wealth==='poor'?'wood':'masonry',seed:debrisSeed,
+                source_level:source.level,source_x:wx,source_z:wz}});
+    }
     if(roofType) {
         const roofing=planEditableRoofs(objects,roofBodies,{condition,seed,buildingId,group:`${buildingId}-roof`,groundHeight});
         if(roofing.error)return roofing;

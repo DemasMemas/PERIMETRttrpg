@@ -77,7 +77,7 @@ test('sunlight casts shadows and local sources refresh the permanent field', () 
     assert.match(scene, /locationDirectionalLight\.castShadow = true/);
     assert.match(roof, /shadowCaster\.castShadow = true/);
     assert.match(roof, /roof\.userData\.visualMeshes = gable \? \[roofFace, gable\] : \[roofFace\]/);
-    assert.match(scene, /child\.castShadow = !\['floor', 'household_floor_rug', 'anomaly'\]\.includes\(obj\.type\) && !child\.userData\.fireFlame/);
+    assert.match(scene, /child\.castShadow = !\['floor_opening', 'household_floor_rug', 'anomaly'\]\.includes\(obj\.type\) && !child\.userData\.fireFlame/);
     assert.match(scene, /child\.receiveShadow = true/);
     assert.match(scene, /function refreshObjectLightSource\([^)]*\) \{\s*queueStaticLightFieldRefresh\(\)/);
 });

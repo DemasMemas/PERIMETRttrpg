@@ -1,9 +1,14 @@
 import { findLocationAsset } from './locationAssetCatalog.js';
 
-export function placementForLocationAsset(asset) {
+export function placementForLocationAsset(asset, seed = asset.id) {
+    const properties=asset.properties?JSON.parse(JSON.stringify(asset.properties)):{};
+    for(const key of ['structural_damage','structural_debris']){
+        if(properties[key]?.version===1)properties[key].seed=String(seed);
+    }
     return {
         type: asset.baseType || asset.id,
         visualAsset: asset.baseType ? asset.id : null,
+        properties,
     };
 }
 

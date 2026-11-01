@@ -13,6 +13,7 @@ export function createLocationRenderBatches(THREE, scene, roots) {
         'lightMap', 'bumpMap', 'envMap', 'emissiveIntensity'];
     const geometries = new WeakMap();
     let previous = [];
+    const visible = [];
     const staticRoot = root => root.visible && root.userData?.locationObject?.type !== 'anomaly'
         && !isFireObject(root.userData?.locationObject) && !root.userData?.fireFlames;
     function materialKey(material) {
@@ -61,9 +62,11 @@ export function createLocationRenderBatches(THREE, scene, roots) {
     function geometryVersion(geometry) {
         const attrs = geometry.attributes;
         const old = geometries.get(geometry);
+        let attributeCount = 0;
+        for (const name in attrs) attributeCount++;
         if (old && old.index === geometry.index && old.indexVersion === geometry.index?.version
             && old.start === geometry.drawRange.start && old.count === geometry.drawRange.count
-            && old.names.length === Object.keys(attrs).length
+            && old.names.length === attributeCount
             && old.names.every((name, i) => attrs[name] === old.attributes[i]
                 && attrs[name].version === old.versions[i])) return old;
         const names = Object.keys(attrs);
@@ -75,10 +78,16 @@ export function createLocationRenderBatches(THREE, scene, roots) {
     }
     function prepare() {
         scene.updateMatrixWorld();
-        const visible = [];
+        // Список нужен каждый кадр, но записи не меняют владельца геометрии.
+        // Переиспользуем их, чтобы обход квартала не создавал тысячи объектов.
+        let visibleCount = 0;
         for (const root of roots()) if (staticRoot(root)) root.traverseVisible(mesh => {
-            if (mesh.isMesh) visible.push({ root, mesh, version: geometryVersion(mesh.geometry) });
+            if (!mesh.isMesh) return;
+            const entry = visible[visibleCount] || (visible[visibleCount] = {});
+            entry.root = root; entry.mesh = mesh; entry.version = geometryVersion(mesh.geometry);
+            visibleCount++;
         });
+        visible.length = visibleCount;
         const unchanged = previous.length === visible.length && visible.every(({ root, mesh, version }, i) => {
             const old = previous[i], m = mesh.material, c = m?.color, e = m?.emissive;
             return old.mesh === mesh && old.material === m && old.materialVersion === m?.version

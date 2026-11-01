@@ -67,3 +67,23 @@ test('unknown or mismatched variant falls back to the original asset', () => {
     assert.equal(visualAssetForLocationObject('box', {}).id, 'box');
     assert.equal(placementForLocationAsset(findLocationAsset('box')).visualAsset, null);
 });
+
+test('Разрушения сохраняют обычные игровые типы, собственные размеры и независимые свойства',()=>{
+    const definitions=[['ruin_wall_low','wall','structural_damage',false],['ruin_wall_high','wall','structural_damage',false],
+        ['ruin_partition_low','wall','structural_damage',false],['ruin_partition_high','wall','structural_damage',false],
+        ['ruin_masonry_debris','household_rubble','structural_debris',true],['ruin_wood_debris','household_rubble','structural_debris',true],
+        ['ruin_wood_opening','floor_opening','structural_damage',true],['ruin_masonry_opening','floor_opening','structural_damage',true]];
+    for(const [id,type,key,passable]of definitions){
+        const asset=findLocationAsset(id),p=placementForLocationAsset(asset),other=placementForLocationAsset(asset);
+        assert.equal(asset.group,'Разрушения');assert.equal(asset.passable,passable);assert.equal(p.type,type);assert.equal(p.visualAsset,id);
+        assert.equal(p.properties[key].version,1);assert.equal(p.properties[key].seed,id);
+        assert.equal(visualAssetForLocationObject(type,{visual_asset:id}).id,id);
+        p.properties[key].material='changed';assert.notEqual(other.properties[key].material,'changed');
+        assert.notEqual(asset.properties[key].material,'changed');
+    }
+    for(const size of ['low','high']){
+        const inner=findLocationAsset('ruin_partition_'+size),outer=findLocationAsset('ruin_wall_'+size);
+        assert.ok(inner.dimensions[1]<outer.dimensions[1]);assert.notEqual(inner.id,outer.id);
+        assert.equal(placementForLocationAsset(inner).visualAsset,inner.id);
+    }
+});
