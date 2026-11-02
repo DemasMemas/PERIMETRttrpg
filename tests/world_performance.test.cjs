@@ -45,6 +45,45 @@ test('initial neighboring chunks coalesce terrain and road rebuilds', () => {
     assert.ok([...chunks.values()].every(chunk => chunk.waterShoreDirty && chunk.terrainTextureRegion));
 });
 
+test('начальная загрузка объединяет разные сетевые пакеты и сохраняет живые правки', async () => {
+    const start=source.indexOf('const pendingWorldTerrainChunks = new Set();');
+    const end=source.indexOf('// ---',start);
+    const chunks=new Map(),timers=[],built=[],roads=[];
+    const context=vm.createContext({chunksMap:chunks,CHUNK_SIZE:32,brushActive:false,lastHoverRaycastAt:0,
+        performance:{now:()=>1},window:{},setTimeout(fn){timers.push(fn);return timers.length;},clearTimeout(){},
+        refreshWorldTerrainChunk(entry){built.push([entry.chunkX,entry.changed]);},
+        rebuildRoadMeshes(entry){roads.push(entry.chunkX);}});
+    vm.runInContext(source.slice(start,end),context);
+    const finish=context.beginWorldTerrainLoad();
+    chunks.set('0,0',{chunkX:0,chunkY:0,hasRoadNodes:true});
+    context.refreshWorldTerrainNeighborhood(0,0,null,null,true,true,true,true,true);
+    timers.shift()(); // Таймер между двумя HTTP-ответами не строит неполный рельеф.
+    assert.equal(built.length,0);
+    chunks.get('0,0').changed='правка другого участника';
+    chunks.set('1,0',{chunkX:1,chunkY:0,hasRoadNodes:true});
+    context.refreshWorldTerrainNeighborhood(1,0,null,null,true,true,true,true,true);
+    const ready=context.waitForWorldTerrainRefresh();
+    finish();finish(); // Повторное завершение не снимает блокировку другого запуска.
+    timers.shift()();
+    await ready;
+    assert.deepEqual(built,[[0,'правка другого участника'],[1,undefined]]);
+    assert.deepEqual(roads,[0,1]);
+    const laterFinish=context.beginWorldTerrainLoad();
+    context.refreshWorldTerrainNeighborhood(0,0,null,null,true,true,true,true,true);
+    timers.shift()();
+    assert.equal(built.length,2);
+    laterFinish();timers.shift()();
+    assert.equal(built.length,4);
+    const cancelled=context.beginWorldTerrainLoad();
+    context.refreshWorldTerrainNeighborhood(0,0,null,null,true,true,true,true,true);
+    timers.shift()();
+    cancelled({defer:true});
+    assert.equal(timers.length,0,'Отмена не запускает тяжёлое построение в покидаемой сцене');
+    assert.equal(built.length,4);
+    const resumed=context.beginWorldTerrainLoad();resumed();timers.shift()();
+    assert.equal(built.length,6,'Повторное открытие завершает сохранённую очередь');
+});
+
 test('anomaly LOD creates only one full effect; the distant marker is batched separately', () => {
     const start = source.indexOf('function createAnomalyLOD(');
     const end = source.indexOf('\nconst FAR_ANOMALY_DISTANCE_SQ', start);

@@ -1,7 +1,8 @@
 // static/js/lobbyData.js
 import { Server } from './api.js';
 import { addChunk, chunksMap, setMapDimensions, setTileClickCallback,
-    setWorldGrassGroundPixelsEnabled, waitForWorldTerrainRefresh } from './lobby3d.js';
+    setWorldGrassGroundPixelsEnabled, waitForWorldTerrainRefresh, beginWorldTerrainLoad,
+    prepareInitialWorldTerrainPixels } from './lobby3d.js';
 import { loadGrassGroundPixels } from './locationTerrainTexture.js';
 import { setLobbyData, updateParticipantsList } from './ui.js';
 import AppState from './ui_interactions.js';
@@ -152,7 +153,7 @@ export function loadAllChunks({ signal, onProgress } = {}) {
         if (signal) chunkLoadControl.signal = signal;
         if (onProgress) {
             chunkLoadControl.listeners.add(onProgress);
-            onProgress(chunkLoadControl.progress);
+            onProgress(chunkLoadControl.progress, chunkLoadControl.detail);
         }
         return loadingAllChunks;
     }
@@ -163,9 +164,10 @@ export function loadAllChunks({ signal, onProgress } = {}) {
     const startedAt = performance.now();
     const control = { signal, listeners: new Set(onProgress ? [onProgress] : []), progress: 0 };
     chunkLoadControl = control;
-    const reportProgress = value => {
+    const reportProgress = (value, detail) => {
         control.progress = Math.max(control.progress, value);
-        if (!control.signal?.aborted) control.listeners.forEach(listener => listener(control.progress));
+        if (detail) control.detail = detail;
+        if (!control.signal?.aborted) control.listeners.forEach(listener => listener(control.progress, control.detail));
     };
     const metrics = {
         startedAt, firstFrameMs: null, pageToFirstFrameMs: null,
@@ -222,11 +224,24 @@ export function loadAllChunks({ signal, onProgress } = {}) {
             while (nextIndex < ranges.length) {
                 if (window.isLocationActive || control.signal?.aborted) return;
                 await fetchChunkBatch(ranges[nextIndex++], metrics, grassGroundReady, control);
-                reportProgress(90 * chunksMap.size / metrics.expectedChunks);
+                reportProgress(65 * chunksMap.size / metrics.expectedChunks, 'Получаем данные секторов.');
             }
         };
-        reportProgress(90 * chunksMap.size / metrics.expectedChunks);
-        await Promise.all(Array.from({ length: Math.min(4, ranges.length) }, worker));
+        reportProgress(65 * chunksMap.size / metrics.expectedChunks, 'Получаем данные секторов.');
+        // Чанки доступны для живых правок сразу, но тяжёлая сборка рельефа
+        // выполняется один раз, когда поступят данные всех соседей.
+        const finishTerrainLoad = beginWorldTerrainLoad();
+        try {
+            await Promise.all(Array.from({ length: Math.min(4, ranges.length) }, worker));
+            if (!control.signal?.aborted && !window.isLocationActive) {
+                reportProgress(65, 'Подготавливаем текстуры поверхности.');
+                await prepareInitialWorldTerrainPixels({ signal: control.signal,
+                    onProgress: fraction => reportProgress(65 + 20 * fraction) });
+                reportProgress(90, 'Собираем рельеф, берега и дороги.');
+            }
+        } finally {
+            finishTerrainLoad({ defer: Boolean(control.signal?.aborted || window.isLocationActive) });
+        }
         if (control.signal?.aborted) return;
         if (window.isLocationActive) {
             metrics.pausedForLocation = true;

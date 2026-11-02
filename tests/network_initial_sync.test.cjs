@@ -36,7 +36,7 @@ test('marker snapshots recover after authentication and do not erase independent
         upsertLocationMarker(location) {
             markers.set(`loc_${location.id}`, { data: location });
         },
-        updateRouteDatalists() {}, updateRouteLines() {},
+        updateRouteDatalists() {}, updateRouteLines() {}, refreshMapMarkers() {},
         showNotification(message) { notifications.push(message); },
         Server: { getLocations() { return new Promise(resolve => pendingLocations.push(resolve)); } },
         console: { warn() {} },
@@ -89,6 +89,7 @@ test('socket marker refresh preserves location markers and releases obsolete rou
         ['loc_1', {}], ['cache_1', {}], ['route_1', {}],
     ]);
     const routeLines = new Map([['route', {
+        parent: { remove() { removed.push('line'); } },
         geometry: { dispose() { removed.push('geometry'); } },
         material: { dispose() { removed.push('material'); } },
     }]]);
@@ -119,6 +120,8 @@ test('chunk loading shares an in-flight request and limits parallel HTTP work', 
         chunksMap,
         performance: { now: () => 10, mark() {}, measure() {} },
         waitForWorldTerrainRefresh: async () => {},
+        beginWorldTerrainLoad: () => () => {},
+        prepareInitialWorldTerrainPixels: async () => {},
         loadGrassGroundPixels: async () => {},
         setWorldGrassGroundPixelsEnabled() {},
         console: { info() {}, warn() {} },

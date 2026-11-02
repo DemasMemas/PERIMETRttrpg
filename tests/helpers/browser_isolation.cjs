@@ -5,7 +5,7 @@ const {promisify} = require('node:util');
 const execute = promisify(execFile);
 const root = path.resolve(__dirname, '../..');
 const fixedVendor=require('./fixed_vendor.cjs');
-const BROWSER_SCENARIOS=Object.freeze({pripyat:'VTT_PRIPYAT',widgets:'VTT_WIDGETS_ONLY',skills:'VTT_SKILLS_ONLY',movement:'VTT_MOVEMENT_ONLY',magazine:'VTT_MAGAZINE_ONLY','damage-revoke':'VTT_DAMAGE_REVOKE_ONLY','durable-reload':'VTT_DURABLE_RELOAD_ONLY','medical-retry':'VTT_MEDICAL_RETRY_ONLY','sheet-repro':'VTT_SHEET_REPRO_ONLY',rotation:'VTT_ROTATION_ONLY',surface:'VTT_MOVEMENT_ONLY',height:'VTT_MOVEMENT_ONLY','gm-relocation':'VTT_GM_RELOCATION_ONLY',terrain:'VTT_MOVEMENT_ONLY',walls:'VTT_MOVEMENT_ONLY',psi:'VTT_MOVEMENT_ONLY',climb:'VTT_MOVEMENT_ONLY',jump:'VTT_MOVEMENT_ONLY',graphics:'VTT_MOVEMENT_ONLY'});
+const BROWSER_SCENARIOS=Object.freeze({pripyat:'VTT_PRIPYAT',widgets:'VTT_WIDGETS_ONLY',skills:'VTT_SKILLS_ONLY',movement:'VTT_MOVEMENT_ONLY',magazine:'VTT_MAGAZINE_ONLY','damage-revoke':'VTT_DAMAGE_REVOKE_ONLY','durable-reload':'VTT_DURABLE_RELOAD_ONLY','medical-retry':'VTT_MEDICAL_RETRY_ONLY','sheet-repro':'VTT_SHEET_REPRO_ONLY',rotation:'VTT_ROTATION_ONLY',surface:'VTT_MOVEMENT_ONLY',height:'VTT_MOVEMENT_ONLY','gm-relocation':'VTT_GM_RELOCATION_ONLY',terrain:'VTT_MOVEMENT_ONLY',walls:'VTT_MOVEMENT_ONLY',psi:'VTT_MOVEMENT_ONLY',climb:'VTT_MOVEMENT_ONLY',jump:'VTT_MOVEMENT_ONLY',graphics:'VTT_MOVEMENT_ONLY','world-loading':'VTT_MOVEMENT_ONLY'});
 const BROWSER_DB_MODES=Object.freeze({memory:'--confirm-memory-browser','owned-file':'--confirm-isolated-browser'});
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
 function cleanEnvironment(source) {
@@ -19,7 +19,7 @@ function validateEnvironment(env) {
     if (!/^[0-9a-f-]{36}$/.test(env.VTT_SAFE_RUN_ID || '') || env.PYTHON_DOTENV_DISABLED !== '1'
         || env.VTT_BROWSER_GPU !== '1' || !Object.hasOwn(BROWSER_SCENARIOS,env.VTT_SAFE_SCENARIO)) throw Error('Нет безопасного допуска браузера');
     if(!Object.hasOwn(BROWSER_DB_MODES,env.VTT_SAFE_DB_MODE)||env.VTT_SAFE_DB_CONFIRMATION!==BROWSER_DB_MODES[env.VTT_SAFE_DB_MODE])throw Error('Режим БД не подтверждён соответствующим флагом');
-    if(['movement','magazine','damage-revoke','durable-reload','medical-retry','sheet-repro','skills','rotation','surface','height','gm-relocation','terrain','walls','psi','climb','jump'].includes(env.VTT_SAFE_SCENARIO)&&env.VTT_SAFE_DB_MODE!=='owned-file')throw Error('Сценарий требует owned-file маршрут');
+    if(['movement','magazine','damage-revoke','durable-reload','medical-retry','sheet-repro','skills','rotation','surface','height','gm-relocation','terrain','walls','psi','climb','jump','graphics','world-loading'].includes(env.VTT_SAFE_SCENARIO)&&env.VTT_SAFE_DB_MODE!=='owned-file')throw Error('Сценарий требует owned-file маршрут');
     const flag=BROWSER_SCENARIOS[env.VTT_SAFE_SCENARIO];
     const allowed = new Set(['VTT_SAFE_RUN_ID','VTT_SAFE_SCENARIO','VTT_BROWSER_GPU','VTT_SAFE_DB_MODE','VTT_SAFE_DB_CONFIRMATION',flag]);
     for (const key of Object.keys(env)) if (key.startsWith('VTT_') && !allowed.has(key)) throw Error('Запрещённая VTT-настройка');

@@ -156,6 +156,8 @@ function chunksHarness() {
         loadGrassGroundPixels: async () => {},
         setWorldGrassGroundPixelsEnabled() {},
         waitForWorldTerrainRefresh: () => terrain,
+        beginWorldTerrainLoad: () => () => {},
+        prepareInitialWorldTerrainPixels: async () => {},
         addChunk(x, y) { chunksMap.set(`${x},${y}`, {}); },
         console: { info() {}, error() {}, warn() {} },
     });
@@ -191,4 +193,55 @@ test('aborted world load discards late chunks and can be restarted', async () =>
     await retry;
     assert.equal(chunksMap.size, 1);
     assert.equal(context.window.worldLoadMetrics.complete, true);
+});
+
+test('отмена сохраняет готовые чанки и отбрасывает запоздавший пакет; повтор достраивает карту', async () => {
+    const { context, chunksMap, finishTerrain } = chunksHarness();
+    let finished=0;
+    context.beginWorldTerrainLoad=()=>()=>{finished++;};
+    context.window.MAP_CHUNKS_WIDTH=4;
+    const responses=[];
+    context.Server.getChunks=(id,minX,maxX,minY,maxY)=>new Promise(resolve=>responses.push(()=>resolve(
+        Array.from({length:maxX-minX+1},(_,i)=>({chunk_x:minX+i,chunk_y:0,data:[]}))
+    )));
+    // Сохранённый ранее чанк остаётся доступен после отмены.
+    chunksMap.set('0,0',{});
+    const controller=new AbortController();
+    const loading=context.loadAllChunks({signal:controller.signal});
+    responses.shift()();
+    await new Promise(setImmediate);
+    assert.equal(context.window.worldLoadMetrics.requests,1);
+    assert.equal(chunksMap.size,2);
+    controller.abort();
+    responses.shift()();
+    await loading;
+    assert.equal(finished,1,'Отмена освобождает очередь рельефа');
+    assert.deepEqual([...chunksMap.keys()],['0,0','1,0']);
+    const retry=context.loadAllChunks();
+    while(responses.length)responses.shift()();
+    finishTerrain();
+    await retry;
+    assert.equal(finished,2);
+    assert.equal(chunksMap.size,4);
+    assert.equal(context.window.worldLoadMetrics.complete,true);
+});
+
+test('ошибка одного пакета оставляет карту неполной; повтор получает недостающие чанки', async () => {
+    const { context, chunksMap, finishTerrain } = chunksHarness();
+    context.window.MAP_CHUNKS_WIDTH=4;
+    let fail=true;
+    context.Server.getChunks=async(id,minX,maxX)=>{
+        if(fail&&minX===2)throw Error('Разрыв соединения');
+        return Array.from({length:maxX-minX+1},(_,i)=>({chunk_x:minX+i,chunk_y:0,data:[]}));
+    };
+    finishTerrain();
+    await context.loadAllChunks();
+    assert.equal(chunksMap.size,2);
+    assert.equal(context.window.worldLoadMetrics.complete,false);
+    assert.equal(context.window.worldLoadMetrics.failedRequests,1);
+    fail=false;
+    await context.loadAllChunks();
+    assert.equal(chunksMap.size,4);
+    assert.equal(context.window.worldLoadMetrics.chunks,2);
+    assert.equal(context.window.worldLoadMetrics.complete,true);
 });

@@ -231,6 +231,10 @@ if(typeof renderFacingPreview==='function'){const original=renderFacingPreview;r
             isolation.assertGpu(renderer);
             fs.writeFileSync(path.join(safeSession.artifacts,'gpu.json'),JSON.stringify({renderer},null,2));
         }
+        if (safeSession && process.env.VTT_SAFE_SCENARIO === 'world-loading') {
+            await require('./world_loading.browser.cjs')({page,request,token,base,safeSession});
+            return;
+        }
         if (safeSession && process.env.VTT_SAFE_SCENARIO === 'terrain') {
             await require('./terrain_los.browser.cjs')({page,request,token,lobby,base,safeSession});
             return;

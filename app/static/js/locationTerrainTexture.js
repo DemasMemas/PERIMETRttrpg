@@ -59,6 +59,16 @@ export function getGrassGroundImages() {
         ? { plain: plainGroundImage, forest: forestGroundImage } : null;
 }
 
+// Только цветовые данные: рабочим потокам не нужны DOM и исходные Image.
+export function getGrassGroundPixelData() {
+    return { plain: plainGroundPixels, forest: forestGroundPixels };
+}
+
+export function setGrassGroundPixelData({ plain, forest }) {
+    plainGroundPixels = plain;
+    forestGroundPixels = forest;
+}
+
 function hash(x, z, seed = 0) {
     let value = Math.imul(x + seed * 37 + 1, 374761393)
         + Math.imul(z + seed * 53 + 1, 668265263);

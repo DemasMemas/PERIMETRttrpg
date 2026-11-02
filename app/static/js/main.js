@@ -250,7 +250,7 @@ let currentLocationData = null;
 function resumeWorldMapLoad() {
     const loadingToken = showSceneLoading('world');
     const signal = sceneLoadingController.signal;
-    const onProgress = percent => setSceneLoadingProgress(loadingToken, 10 + percent * 0.9);
+    const onProgress = (percent, detail) => setSceneLoadingProgress(loadingToken, 10 + percent * 0.9, detail);
     setSceneLoadingProgress(loadingToken, 10);
     (async () => {
         await loadAllChunks({ signal, onProgress });

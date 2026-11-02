@@ -734,6 +734,8 @@ test('world chunks wait for one shared grass image load and keep a consistent fa
             setWorldGrassGroundPixelsEnabled(enabled) { events.push(`source:${enabled}`); },
             addChunk(x, y) { events.push(`chunk:${x},${y}`); chunksMap.set(`${x},${y}`, {}); },
             waitForWorldTerrainRefresh: async () => {},
+            beginWorldTerrainLoad: () => () => {},
+        prepareInitialWorldTerrainPixels: async () => {},
             console: { warn() { counters.warnings++; }, error() { counters.errors++; }, info() {} },
         });
         vm.runInContext(code, context);

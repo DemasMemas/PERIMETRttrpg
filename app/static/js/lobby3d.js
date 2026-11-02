@@ -15,8 +15,9 @@ import { createWaterMaterial } from './waterSurface.js';
 import { createTerrainMaterialLayer } from './terrainMaterialLayer.js';
 import { addTerrainMaterialOptions } from './terrainMaterialCatalog.js';
 import { applySurfacePattern, getSurfaceTexture } from './locationTerrainDetail.js';
-import { createTerrainPixelsRegion, getGrassGroundImages,
+import { createTerrainPixelsRegion, getGrassGroundImages, getGrassGroundPixelData,
     updateTerrainPixelsRegion } from './locationTerrainTexture.js';
+import { prepareWorldTerrainPixelImages } from './worldTerrainPixels.js';
 import { createWorldGrassDetail } from './worldGrassDetail.js';
 import { createPo2Fence } from './worldPo2Fence.js';
 import { buildSmoothTerrainData, isSmoothTerrainTile, createTerrainHeightSampler } from './locationTerrain.js';
@@ -1254,12 +1255,7 @@ function refreshWorldTerrainSurface(entry, smoothData) {
         if (metrics) metrics.terrainStages.geometryMs += performance.now() - geometryStartedAt;
         return;
     }
-    const material = new THREE.MeshStandardMaterial({
-        map: entry.terrainTexture, side: THREE.DoubleSide, roughness: 0.97,
-        polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1,
-    });
-    worldGrassDetail.apply(material);
-    entry.materialLayer?.apply(material);
+    const material = createWorldTerrainSurfaceMaterial(entry.terrainTexture, entry.materialLayer);
     const mesh = new THREE.Mesh(geometry, material);
     mesh.frustumCulled = false;
     mesh.visible = entry.terrainVisible;
@@ -1270,6 +1266,99 @@ function refreshWorldTerrainSurface(entry, smoothData) {
     if (metrics) metrics.terrainStages.geometryMs += performance.now() - geometryStartedAt;
 }
 
+function createWorldTerrainSurfaceMaterial(texture, layer) {
+    const material = new THREE.MeshStandardMaterial({
+        map: texture, side: THREE.DoubleSide, roughness: 0.97,
+        polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1,
+    });
+    worldGrassDetail.apply(material);
+    layer?.apply(material);
+    return material;
+}
+
+let worldTerrainWarmupMaterial = null;
+function prepareWorldTerrainSurfaceShader() {
+    if (worldTerrainWarmupMaterial || renderer.isUnavailableRenderer) return;
+    const startedAt = performance.now();
+    const texture = new THREE.DataTexture(new Uint8Array([255, 255, 255, 255]), 1, 1,
+        THREE.RGBAFormat, THREE.UnsignedByteType);
+    texture.encoding = THREE.sRGBEncoding;
+    worldTerrainWarmupMaterial = createWorldTerrainSurfaceMaterial(texture, worldTerrainMaterials);
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.Float32BufferAttribute([0, 0, 0, 1, 0, 0, 0, 0, 1], 3));
+    geometry.setAttribute('normal', new THREE.Float32BufferAttribute([0, 1, 0, 0, 1, 0, 0, 1, 0], 3));
+    geometry.setAttribute('uv', new THREE.Float32BufferAttribute([0, 0, 1, 0, 0, 1], 2));
+    geometry.setAttribute('color', new THREE.Float32BufferAttribute(new Float32Array(9).fill(1), 3));
+    geometry.setAttribute('terrainTop', new THREE.Float32BufferAttribute([0, 0, 0], 1));
+    geometry.setAttribute('terrainTileCoord', new THREE.Float32BufferAttribute([0, 0, 0, 0, 0, 0], 2));
+    const mesh = new THREE.Mesh(geometry, worldTerrainWarmupMaterial);
+    mesh.receiveShadow = true;
+    const bank = new THREE.Mesh(geometry, worldWaterBankMat);
+    bank.receiveShadow = true;
+    const water = new THREE.Mesh(geometry, waterMat);
+    scene.add(mesh, bank, water);
+    try { renderer.compile(scene, camera); }
+    catch (error) {
+        worldTerrainWarmupMaterial.dispose();
+        texture.dispose();
+        worldTerrainWarmupMaterial = null;
+        throw error;
+    } finally {
+        // Материал удерживает готовую программу для настоящих поверхностей.
+        scene.remove(mesh, bank, water);
+        geometry.dispose();
+        if (window.worldLoadMetrics) window.worldLoadMetrics.terrainMaterialWarmupMs = performance.now() - startedAt;
+    }
+}
+
+function sampleWorldTerrainKind(entry, x, z) {
+    const chunk = chunksMap.get(`${Math.floor(x / CHUNK_SIZE)},${Math.floor(z / CHUNK_SIZE)}`);
+    const tile = chunk?.tilesData[z - chunk.chunkY * CHUNK_SIZE]?.[x - chunk.chunkX * CHUNK_SIZE];
+    if (tile) return tile.terrain;
+    const localX = Math.max(0, Math.min(CHUNK_SIZE - 1, x - entry.chunkX * CHUNK_SIZE));
+    const localZ = Math.max(0, Math.min(CHUNK_SIZE - 1, z - entry.chunkY * CHUNK_SIZE));
+    return entry.tilesData[localZ]?.[localX]?.terrain || 'grass';
+}
+
+async function prepareInitialWorldTerrainPixels({ signal, onProgress } = {}) {
+    const entries = [...chunksMap.values()].filter(entry => !entry.terrainTexture
+        && entry.tilesData.some(row => row.some(tile => tile.terrain !== 'water')));
+    if (entries.length < 8 || typeof Worker === 'undefined' || signal?.aborted) return;
+    const startedAt = performance.now();
+    const metrics = window.worldLoadMetrics;
+    const originalEntries = new Map(entries.map(entry => [`${entry.chunkX},${entry.chunkY}`, entry]));
+    const tasks = entries.map(entry => {
+        const originX = entry.chunkX * CHUNK_SIZE - 2, originZ = entry.chunkY * CHUNK_SIZE - 2;
+        const minX = Math.floor(originX + 0.5 / 12 - 0.5), minZ = Math.floor(originZ + 0.5 / 12 - 0.5);
+        const maxX = Math.floor(originX + 511.5 / 12 - 0.5) + 1, maxZ = Math.floor(originZ + 511.5 / 12 - 0.5) + 1;
+        return { key: `${entry.chunkX},${entry.chunkY}`, revision: entry.terrainPixelRevision || 0,
+            originX, originZ, minX, minZ, textureSize: 512, pixelsPerTile: 12,
+            photos: worldGrassGroundPixelsEnabled,
+            rows: Array.from({ length: maxZ - minZ + 1 }, (_, z) =>
+                Array.from({ length: maxX - minX + 1 }, (_, x) => sampleWorldTerrainKind(entry, minX + x, minZ + z))) };
+    });
+    try {
+        await prepareWorldTerrainPixelImages(tasks, { signal, groundPixels: getGrassGroundPixelData(), onProgress,
+            onStarted: prepareWorldTerrainSurfaceShader,
+            onResult(task, result) {
+                const entry = chunksMap.get(task.key);
+                // Правка другого участника за время расчёта отменяет старый результат.
+                if (entry !== originalEntries.get(task.key) || entry.terrainTexture
+                    || (entry.terrainPixelRevision || 0) !== task.revision) return;
+                entry.preparedTerrainPixels = result;
+                if (metrics) {
+                    metrics.terrainPixelWorkerChunks = (metrics.terrainPixelWorkerChunks || 0) + 1;
+                    metrics.terrainPixelWorkerWorkMs = (metrics.terrainPixelWorkerWorkMs || 0) + result.workMs;
+                }
+            } });
+    } catch (error) {
+        // Недоступный Worker не мешает игре: обычная сборка рассчитает остальные изображения.
+        if (!signal?.aborted) console.warn('Фоновый расчёт текстур недоступен; используем основной поток', error);
+    } finally {
+        if (metrics) metrics.terrainPixelPreparationMs = performance.now() - startedAt;
+    }
+}
+
 function refreshWorldTerrainPixels(entry) {
     const baseX = entry.chunkX * CHUNK_SIZE;
     const baseZ = entry.chunkY * CHUNK_SIZE;
@@ -1277,14 +1366,7 @@ function refreshWorldTerrainPixels(entry) {
     const textureOriginZ = baseZ - 2;
     const pixelsPerTile = 12;
     const textureSize = 512;
-    const sampleTerrain = (x, z) => {
-        const chunk = chunksMap.get(`${Math.floor(x / CHUNK_SIZE)},${Math.floor(z / CHUNK_SIZE)}`);
-        const tile = chunk?.tilesData[z - chunk.chunkY * CHUNK_SIZE]?.[x - chunk.chunkX * CHUNK_SIZE];
-        if (tile) return tile.terrain;
-        const localX = Math.max(0, Math.min(CHUNK_SIZE - 1, x - baseX));
-        const localZ = Math.max(0, Math.min(CHUNK_SIZE - 1, z - baseZ));
-        return entry.tilesData[localZ]?.[localX]?.terrain || 'grass';
-    };
+    const sampleTerrain = (x, z) => sampleWorldTerrainKind(entry, x, z);
     const metrics = typeof window !== 'undefined' && window.worldLoadMetrics?.fullLoadMs === null
         ? window.worldLoadMetrics : null;
     const startedAt = metrics ? performance.now() : 0;
@@ -1295,7 +1377,10 @@ function refreshWorldTerrainPixels(entry) {
     let pass = 'reused';
     if (!entry.terrainTexture) {
         pass = 'full';
-        const image = createTerrainPixelsRegion(sampleTerrain, textureOriginX, textureOriginZ,
+        const prepared = entry.preparedTerrainPixels;
+        entry.preparedTerrainPixels = null;
+        if (prepared && profile) Object.assign(profile, prepared.profile);
+        const image = prepared?.image || createTerrainPixelsRegion(sampleTerrain, textureOriginX, textureOriginZ,
             textureSize, pixelsPerTile, worldGrassGroundPixelsEnabled, profile, true);
         const texture = new THREE.DataTexture(image.data, image.width, image.height,
             THREE.RGBAFormat, THREE.UnsignedByteType);
@@ -1694,6 +1779,28 @@ const pendingWorldTerrainFullChunks = new Set();
 const pendingWorldRoadChunks = new Set();
 let worldTerrainRefreshTimer = null;
 const worldTerrainRefreshWaiters = [];
+let worldTerrainLoadDepth = 0;
+
+// Сетевые пакеты не должны повторно строить одни и те же стыки. При этом
+// сами чанки остаются доступны для приходящих правок других участников.
+function beginWorldTerrainLoad() {
+    worldTerrainLoadDepth++;
+    let finished = false;
+    return ({ defer = false } = {}) => {
+        if (finished) return;
+        finished = true;
+        worldTerrainLoadDepth--;
+        if (!worldTerrainLoadDepth && defer) {
+            clearTimeout(worldTerrainRefreshTimer);
+            worldTerrainRefreshTimer = null;
+            return;
+        }
+        if (!worldTerrainLoadDepth && !worldTerrainRefreshTimer
+            && (pendingWorldTerrainChunks.size || pendingWorldRoadChunks.size)) {
+            worldTerrainRefreshTimer = setTimeout(flushWorldTerrainRefresh, 0);
+        }
+    };
+}
 
 function queueWorldBridgeSpanRefresh(worldX,worldZ) {
     const queue=[[worldX,worldZ],[worldX-1,worldZ],[worldX+1,worldZ],[worldX,worldZ-1],[worldX,worldZ+1]],seen=new Set();
@@ -1732,6 +1839,7 @@ function waitForWorldTerrainRefresh() {
 
 function flushWorldTerrainRefresh() {
     worldTerrainRefreshTimer = null;
+    if (worldTerrainLoadDepth) return;
     if (brushActive) {
         worldTerrainRefreshTimer = setTimeout(flushWorldTerrainRefresh, 100);
         return;
@@ -1772,6 +1880,10 @@ function refreshWorldTerrainNeighborhood(cx, cy, tileX = null, tileZ = null,
             const entry = chunksMap.get(`${cx + dx},${cy + dz}`);
             if (!entry) continue;
             if (refreshWater) entry.waterShoreDirty = true;
+            if (refreshTexture) {
+                entry.terrainPixelRevision = (entry.terrainPixelRevision || 0) + 1;
+                entry.preparedTerrainPixels = null;
+            }
             // Height changes need live geometry, but do not change texture pixels.
             const regionFields = refreshTexture ? ['terrainTextureRegion'] : [];
             if (deferred && !loadRefresh) regionFields.push('terrainPreviewRegion');
@@ -3253,7 +3365,7 @@ export function getTileHeightAt(globalX, globalZ) {
 }
 
 export { scene, camera, renderer, controls, directionalLight, ambientLight, fillLight, waterMat,
-    waitForWorldTerrainRefresh };
+    waitForWorldTerrainRefresh, beginWorldTerrainLoad, prepareInitialWorldTerrainPixels };
 
 // ========== ВРЕМЕННОЕ СКРЫТИЕ ГЛОБАЛЬНОЙ КАРТЫ (ДЛЯ ЛОКАЦИЙ) ==========
 let globalCanvasParent = null;
