@@ -20,19 +20,21 @@ function harness(saved) {
         };
     };
     const panel = element(); panel.offsetWidth = 340; panel.offsetHeight = 350;
-    const collapse = element(); panel.querySelector = () => collapse;
+    const collapse = element(), messages = {scrollTop:0,scrollHeight:1200};
+    panel.querySelector = selector => selector === '.chat-messages' ? messages : collapse;
     panel.getBoundingClientRect = () => ({ left: parseFloat(panel.style.left) || 0, top: parseFloat(panel.style.top) || 0 });
     const toggle = element(), pin = element(), close = element();
     const documentHandlers = {}, windowHandlers = {};
     let observer;
-    const context = vm.createContext({ localStorage,
+    const frames=[];
+    const context = vm.createContext({ localStorage,requestAnimationFrame:callback=>frames.push(callback),
         document: { getElementById: id => ({ 'panel-chat': panel, 'chat-toggle': toggle, 'chat-pin': pin, 'chat-close': close })[id],
             addEventListener: (event, handler) => { documentHandlers[event] = handler; } },
         window: { currentLobbyId: 19, innerWidth: 1440, innerHeight: 900, addEventListener: (event, handler) => { windowHandlers[event] = handler; } },
         MutationObserver: class { constructor(callback) { observer = callback; } observe() {} },
     });
     vm.runInContext(source.replaceAll('export ', ''), context);
-    return { context, panel, toggle, pin, close, collapse, documentHandlers, windowHandlers,
+    return { context, panel, toggle, pin, close, collapse, messages,flushFrames:()=>{while(frames.length)frames.shift()();},documentHandlers, windowHandlers,
         observe: () => observer(), state: () => JSON.parse(values.get(key)) };
 }
 
@@ -44,6 +46,16 @@ test('chat separates human messages, dice commands, skill rolls and system/game 
         ['Бой', 'Начался раунд', 'event'], ['Событие', 'Событие путешествия', 'event'],
         ['Система', 'Ремонт завершён', 'event'], ['Аномалия', 'Получен урон', 'event'], ['Systematic', 'A player name', 'human'],
     ]) assert.equal(context.chatMessageKind(username, text), expected);
+});
+
+test('открытие и разворачивание чата прокручивает к последним сообщениям после раскладки',()=>{
+    const h=harness();h.context.initChatPanel();h.toggle.handlers.click();
+    assert.equal(h.messages.scrollTop,0);h.flushFrames();assert.equal(h.messages.scrollTop,1200);
+    h.messages.scrollTop=0;h.close.handlers.click();h.toggle.handlers.click();h.flushFrames();
+    assert.equal(h.messages.scrollTop,1200);
+    h.messages.scrollTop=0;h.panel.classList.toggle('collapsed',true);h.observe();
+    h.panel.classList.toggle('collapsed',false);h.observe();h.flushFrames();
+    assert.equal(h.messages.scrollTop,1200);
 });
 
 test('chat dock, close and reopen retain floating position without reinitializing controls', () => {

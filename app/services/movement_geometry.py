@@ -41,22 +41,27 @@ class WallBox:
         rx, ry = (self.width * c + self.depth * s) / 2 + padding, (self.width * s + self.depth * c) / 2 + padding
         return self.x - rx, self.y - ry, self.x + rx, self.y + ry
 
-    def intersects_sweep(self, start, end, radius=CHARACTER_RADIUS + WALL_CLEARANCE):
+    def segment_entry(self, start, end):
+        """Первая точка пересечения отрезка без радиуса персонажа."""
         a, b = self.local(start), self.local(end)
         w, d = self.width / 2, self.depth / 2
-        # Пересечение самого отрезка с прямоугольником в локальных осях стены.
         entered, leaving = 0, 1
         for origin, target, half in zip(a, b, (w, d)):
             delta = target - origin
             if abs(delta) < EPSILON:
                 if abs(origin) > half:
-                    break
+                    return None
             else:
                 first, last = sorted(((-half - origin) / delta, (half - origin) / delta))
                 entered, leaving = max(entered, first), min(leaving, last)
                 if entered > leaving:
-                    break
-        else:
+                    return None
+        return entered
+
+    def intersects_sweep(self, start, end, radius=CHARACTER_RADIUS + WALL_CLEARANCE):
+        a, b = self.local(start), self.local(end)
+        w, d = self.width / 2, self.depth / 2
+        if self.segment_entry(start,end) is not None:
             return True
         # Точное расстояние до прямоугольника сохраняет круглые углы контура;
         # расширенный AABB здесь не является окончательной проверкой.

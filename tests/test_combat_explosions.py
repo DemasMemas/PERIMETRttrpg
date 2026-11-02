@@ -100,7 +100,8 @@ def test_scatter_uses_failure_margin_and_stays_inside_location(monkeypatch):
     monkeypatch.setattr("app.services.combat.random.random", lambda: 0)
 
     assert CombatService._scatter_point(8, 8, 4, 10, 10) == (9, 8)
-    assert CombatService._scatter_point(3, 3, 99, 30, 30) == (29, 3)
+    # Недобор любой величины даёт не более 10 м разлёта.
+    assert CombatService._scatter_point(3, 3, 99, 30, 30) == (13, 3)
 
 
 def test_explosion_applies_blast_and_posture_reduced_fragments(app, monkeypatch):
@@ -297,6 +298,6 @@ def test_hand_grenade_action_spends_two_ap_and_consumes_one_item(app, monkeypatc
         assert result["explosive"]["success"] is True
         assert result["explosive"]["impact"] == {"x": 8, "y": 5}
         assert result["explosive"]["detonated"] is False
-        assert result["explosive"]["pending"]["trigger"] == "round_start"
+        assert result["explosive"]["pending"]["trigger"] == "actor_turn_start"
         assert placed.action_points_current == 2
         assert character.data["inventory"]["pockets"][0]["quantity"] == 1

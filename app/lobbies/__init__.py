@@ -3891,20 +3891,36 @@ def _publish_location_character_snapshots(location_id):
                 'updates':{'data':character.data_snapshot()},'updated_by':0})
 
 
-def _publish_combat_start(lobby_id, location_id, gm_id, state):
-    socketio.emit('combat_state_updated', state, room=f"location_{location_id}")
-    _publish_location_character_snapshots(location_id)
-    for detonation in state.get('detonations') or []:
+def _publish_detonations(lobby_id, location_id, user_id, detonations, *, chat=True):
+    """Одинаковые последствия мгновенного и отложенного взрыва для всех клиентов."""
+    for detonation in detonations:
+        if (detonation.get('explosion') or {}).get('awaiting_gm'):
+            continue
         socketio.emit(
             'combat_explosion',
             {'location_id': location_id, 'explosive': detonation},
             room=f"location_{location_id}",
         )
-        summary = CombatService.format_explosion_summary({'explosive': detonation})
+        for damage in (detonation.get('explosion') or {}).get('objects') or []:
+            object_id = damage.get('object_id')
+            if not object_id:
+                continue
+            obj = db.session.get(LocationObject, object_id)
+            payload = {'location_id': location_id}
+            payload.update({'object': LocationObjectSchema().dump(obj)} if obj else {'object_id': object_id})
+            socketio.emit('location_object_updated' if obj else 'location_object_deleted',
+                          payload, room=f"location_{location_id}")
+        summary = CombatService.format_explosion_summary({'explosive': detonation}) if chat else None
         if summary:
             _emit_lobby_chat_message(
-                lobby_id, gm_id, summary, username='\u0412\u0437\u0440\u044b\u0432',
+                lobby_id, user_id, summary, username='\u0412\u0437\u0440\u044b\u0432',
             )
+
+
+def _publish_combat_start(lobby_id, location_id, gm_id, state):
+    socketio.emit('combat_state_updated', state, room=f"location_{location_id}")
+    _publish_location_character_snapshots(location_id)
+    _publish_detonations(lobby_id, location_id, gm_id, state.get('detonations') or [])
     participants = [
         character
         for character in (state.get('characters') or [])
@@ -4070,7 +4086,23 @@ def end_location_combat_turn(lobby_id, location_id, lobby, participant):
         )
     socketio.emit('combat_state_updated', state, room=f"location_{location_id}")
     _publish_location_character_snapshots(location_id)
+    _publish_detonations(lobby_id, location_id, participant.user_id, state.get('detonations') or [])
     return jsonify(state), 200
+
+
+@lobbies_bp.route('/<int:lobby_id>/locations/<int:location_id>/combat/explosions/<string:event_id>/targets/<int:actor_id>', methods=['POST'])
+@jwt_required()
+@requires_gm
+def decide_explosion_target(lobby_id, location_id, event_id, actor_id, lobby):
+    from app.services.explosion_choice import decide
+    location=CombatService._get_location(location_id)
+    if location.lobby_id!=lobby_id:
+        raise NotFoundError('Location not found')
+    state=decide(location_id,lobby.gm_id,event_id,actor_id,(request.get_json() or {}).get('choice'))
+    socketio.emit('combat_state_updated',state,room=f'location_{location_id}')
+    _publish_location_character_snapshots(location_id)
+    _publish_detonations(lobby_id,location_id,lobby.gm_id,state.get('detonations') or [])
+    return jsonify(state),200
 
 
 @lobbies_bp.route(
@@ -4613,6 +4645,7 @@ def perform_location_combat_action(lobby_id, location_id, lobby, participant):
         area_center_y=data.get('area_center_y'),
         target_x=data.get('target_x'),
         target_y=data.get('target_y'),
+        target_floor_level=data.get('target_floor_level'),
         posture=data.get('posture'),
         facing_x=data.get('facing_x'),
         facing_y=data.get('facing_y'),
@@ -4684,14 +4717,9 @@ def perform_location_combat_action(lobby_id, location_id, lobby, participant):
             room=f"location_{location_id}",
         )
     if result.get('explosive') and result['explosive'].get('detonated', True):
-        socketio.emit(
-            'combat_explosion',
-            {
-                'location_id': location_id,
-                'explosive': result['explosive'],
-            },
-            room=f"location_{location_id}",
-        )
+        _publish_detonations(lobby_id, location_id, participant.user_id, [result['explosive']], chat=False)
+    reaction_detonations = (result.get('explosive') or {}).get('reaction_detonations') or []
+    _publish_detonations(lobby_id, location_id, participant.user_id, reaction_detonations)
     actor = db.session.get(LobbyCharacter, result['character'].get('character_id'))
     if actor:
         emit_character_update(
@@ -4942,6 +4970,12 @@ def perform_location_combat_action(lobby_id, location_id, lobby, participant):
     affected_character_ids.update(
         entry.get('character_id')
         for entry in (explosion.get('targets') or [])
+        if entry.get('character_id')
+    )
+    affected_character_ids.update(
+        entry.get('character_id')
+        for detonation in reaction_detonations
+        for entry in (detonation.get('explosion') or {}).get('targets') or []
         if entry.get('character_id')
     )
     affected_character_ids.update(

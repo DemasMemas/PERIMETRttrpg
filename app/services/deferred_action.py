@@ -13,6 +13,14 @@ from app.services.exceptions import ConflictError, PermissionDenied, ValidationE
 def _bound_items(actor, payload):
     data = actor.character.data or {}
     result = {}
+    if payload.get('action_key')=='pour_water':
+        held=((data.get('health') or {}).get('combatMeta') or {}).get('heldWaterItem') or {}
+        result['heldWaterItem']=deepcopy(held)
+        try:
+            item=data
+            for key in held['path']:item=item[key]
+            result['water']=deepcopy(item)
+        except (KeyError,IndexError,TypeError):result['water']=None
     if payload.get('loading') is not None:
         from app.services.ammo_loading import loading_bindings
         result['loading'] = loading_bindings(data, payload['loading'])
@@ -62,6 +70,8 @@ def durable_combat_action(operation):
                 is_gm = CombatService._ensure_access(actor.location, values['user_id'])
                 if not CombatService._can_end_turn_for_character(actor, values['user_id'], is_gm=is_gm):
                     raise PermissionDenied('Вы не управляете этим персонажем')
+                if (((actor.character.data or {}).get('health') or {}).get('combatMeta') or {}).get('grenadeReaction'):
+                    raise ConflictError('Сначала завершите реакцию на гранату')
                 if row.status != 'ready':
                     raise ConflictError('Действие ещё не оплачено, уже завершено или отменено')
                 if row.payload.get('action_key') == 'consumable_use':
@@ -151,6 +161,19 @@ def validate_deferred_conditions(actor, row):
     payload = row.payload or {}
     kind = payload.get('action_key')
     CombatService.ensure_character_can_act(actor, kind)
+    if kind=='extinguish_fire':
+        from app.services.effects import normalize_effect_list
+        if not any(e['type']=='burning' and e.get('active',True) for e in normalize_effect_list((actor.character.data.get('health') or {}).get('effects') or [])):
+            raise ValidationError('Персонаж больше не горит')
+    if kind=='prepare_water':
+        from app.services.burning import water_item
+        water_item(actor.character.data,payload.get('item_path'))
+        if not CombatService._has_usable_free_hand(actor):raise ValidationError('Рука для воды больше не свободна')
+    if kind=='pour_water':
+        from app.services.burning import water_item
+        held=((actor.character.data.get('health') or {}).get('combatMeta') or {}).get('heldWaterItem') or {}
+        if not held.get('path'):raise ValidationError('Вода больше не находится в руке')
+        water_item(actor.character.data,held['path'])
     if kind == 'jump':
         from app.services.character_jump import prepare_jump
         prepare_jump(actor.location,actor,payload.get('target_x'),payload.get('target_y'),payload.get('jump_origin'))
@@ -168,6 +191,11 @@ def validate_deferred_conditions(actor, row):
         target = LocationCharacter.query.filter_by(location_id=actor.location_id, character_id=target_id).first()
         if not target:
             raise ValidationError('Цель продолжительного действия покинула локацию')
+        if kind=='pour_water' and target.id!=actor.id:
+            from app.services.explosion_geometry import distance
+            objects=LocationObject.query.filter_by(location_id=actor.location_id).all()
+            if distance(actor.location,objects,actor.pos_x,actor.pos_y,actor.floor_level or 0,target)>1.5 or CombatService._explosion_cover(actor.location_id,actor.pos_x,actor.pos_y,target,actor.floor_level or 0).get('grade')=='full':
+                raise ValidationError('Цель обливания больше недоступна')
         contact = kind in {'melee_disarm','melee_shove','grapple','console_ally'} or (kind == 'attack' and not payload.get('fire_mode'))
         if contact and not CombatService._is_adjacent(actor, target):
             raise ValidationError('Цель продолжительного действия больше не находится рядом')
@@ -253,7 +281,7 @@ def preserve_action_payment(current_data, incoming_data):
     meta = health.setdefault('combatMeta', {})
     if not isinstance(meta, dict):
         meta = health['combatMeta'] = {}
-    for key in ('pendingAction', 'completedPendingActionId', 'unstableJump', 'jumpSupport', 'slipperyMovement'):
+    for key in ('pendingAction', 'completedPendingActionId', 'unstableJump', 'jumpSupport', 'slipperyMovement', 'grenadeReaction','heldWaterItem'):
         if key in current:
             meta[key] = deepcopy(current[key])
         else:

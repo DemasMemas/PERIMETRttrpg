@@ -27,6 +27,11 @@ export function initChatPanel() {
     panel.dataset.chatInitialized = 'true';
     const key = `chat-panel:${window.currentLobbyId}:${localStorage.getItem('user_id')}`;
     const state = readChatPanelState(localStorage, key);
+    const scrollLatest = () => requestAnimationFrame(() => {
+        if (!state.open || panel.classList.contains('collapsed')) return;
+        const messages = panel.querySelector('.chat-messages');
+        if (messages) messages.scrollTop = messages.scrollHeight;
+    });
     const save = () => {
         try { localStorage.setItem(key, JSON.stringify(state)); } catch { /* Keep chat usable without persistent storage. */ }
     };
@@ -49,6 +54,7 @@ export function initChatPanel() {
         pin.title = state.docked ? 'Открепить чат' : 'Закрепить чат справа';
         pin.setAttribute('aria-label', pin.title);
         if (state.open && !state.docked) restoreFloatingPosition();
+        if (state.open && !state.collapsed) scrollLatest();
     };
     const rememberFloatingPosition = () => {
         if (state.docked || !state.open) return;
@@ -68,6 +74,7 @@ export function initChatPanel() {
         const collapsed = panel.classList.contains('collapsed');
         if (state.collapsed === collapsed) return;
         state.collapsed = collapsed; save();
+        if (!collapsed) scrollLatest();
     }).observe(panel, { attributes: true, attributeFilter: ['class'] });
     window.addEventListener('resize', () => {
         if (state.open && !state.docked) { restoreFloatingPosition(); rememberFloatingPosition(); }

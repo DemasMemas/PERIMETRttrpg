@@ -6,6 +6,8 @@ import random
 from typing import Any, Dict, Iterable, List, Optional
 
 EFFECT_TYPE_META = {
+    "burning": {"label": "Горение", "group": "injury"},
+    "concussion": {"label": "Контузия", "group": "injury"},
     # `generic` is retained only for legacy or malformed records. New effects
     # created by a GM use `custom`, which makes their manual nature explicit.
     "generic": {"label": "Неопределённый эффект", "group": "technical"},
@@ -71,6 +73,8 @@ EFFECT_TYPE_META = {
 }
 
 TYPE_ALIASES = {
+    "burning": "burning", "горение": "burning",
+    "concussion": "concussion", "контузия": "concussion",
     "custom": "custom",
     "пользовательский эффект": "custom",
     "organ_failure": "organ_failure",
@@ -384,6 +388,10 @@ def normalize_effect(raw: Any) -> Dict[str, Any]:
 
     source = raw.get("source") or raw.get("origin")
     effect_type = canonical_type(raw.get("type") or raw.get("kind") or raw.get("effectType"), raw.get("name", ""))
+    if effect_type=="generic" and str(raw.get("name") or "").casefold()=="контузия":
+        effect_type="concussion"
+    if effect_type=="generic" and str(raw.get("name") or "").casefold()=="горение":
+        effect_type="burning"
     if source == "stress_manifestation" and effect_type == "generic":
         effect_type = "stress_effect"
     value = raw.get("value", raw.get("amount", raw.get("power", 0)))
@@ -406,11 +414,17 @@ def normalize_effect(raw: Any) -> Dict[str, Any]:
         "treatment_window_seconds": raw.get("treatment_window_seconds", 3600),
         "treatment_window_expired": raw.get("treatment_window_expired", False),
     })
+    if effect_type=="concussion":
+        data["rollPenalty"]=3
     # Consumables attach executable metadata (delayed adjustments, expiry
     # consequences, wound state). Keep it while still normalizing core fields.
     for key, value in raw.items():
         if key not in {"type", "kind", "effectType", "turns", "tickPhase", "zone", "bodyPart", "target"}:
             data.setdefault(key, value)
+    if effect_type=='burning':
+        data['tick']='round_end'
+        data['damage_per_round']=data.get('damage_per_round') or 50
+        data.setdefault('thermal_threshold',35)
     generic_names = {
         "", "общий", "generic", "неопределенный эффект", "неопределённый эффект",
     }
@@ -731,6 +745,13 @@ def health_blocks_new_stress(health: Dict[str, Any]) -> bool:
 
 def apply_effect_to_health(health: Dict[str, Any], raw_effect: Any) -> Dict[str, Any]:
     effect = normalize_effect(raw_effect)
+    if effect['type']=='concussion':
+        current=normalize_effect_list(health.get('effects') or [])
+        previous=[e for e in current if e['type']=='concussion' and e.get('active',True)]
+        effect['remaining']=max([effect.get('remaining') or 0]+[e.get('remaining') or 0 for e in previous]) or None
+        health['effects']=[e for e in current if e['type']!='concussion']+[effect]
+        sync_health_derived_statuses(health)
+        return health
     signed_value = _to_float(effect.get("value", 0), 0)
     magnitude = abs(_to_float(effect.get("value", 0), 0))
     effect_type = effect["type"]

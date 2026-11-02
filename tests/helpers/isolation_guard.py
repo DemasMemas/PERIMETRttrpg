@@ -4,6 +4,7 @@ from pathlib import Path
 import os
 
 ALLOWED_MODULES = (
+    'test_combat_explosions.py', 'test_grenade_rules.py',
     'test_combat_movement.py', 'test_combat_attacks.py',
     'test_character_jumps.py',
     'test_ice_movement.py',

@@ -982,6 +982,11 @@ function clearAttackPreview() {
     }
 }
 
+function combatEffectSurfaceHeight(effect) {
+    const x=Number(effect.x),y=Number(effect.y),level=Number(effect.floor_level)||0;
+    return localMapToolSurface(x+.5,y+.5,level) ?? getTileHeight(x,y)+level*STOREY_HEIGHT;
+}
+
 export function showCombatExplosion(payload) {
     if (!scene) return;
     const details = payload?.explosive || payload;
@@ -1014,7 +1019,7 @@ export function showCombatExplosion(payload) {
     group.add(ring, core);
     group.position.set(
         Number(impact.x) + 0.5,
-        getTileHeight(Number(impact.x), Number(impact.y)) + 0.05,
+        combatEffectSurfaceHeight({...impact,floor_level:explosion.floor_level}) + 0.05,
         Number(impact.y) + 0.5,
     );
     scene.add(group);
@@ -1041,6 +1046,21 @@ export function showCombatExplosion(payload) {
     requestAnimationFrame(animate);
 }
 
+function combatCloudGeometry(area,height) {
+    const positions=[],cells=new Set(area.cells.map(c=>c.join(',')));
+    const quad=(a,b,c,d)=>positions.push(...a,...b,...c,...a,...c,...d);
+    for(const [x,z,level] of area.cells){
+        const bottom=combatEffectSurfaceHeight({x,y:z,floor_level:level})+.04,top=bottom+height;
+        quad([x,top,z],[x+1,top,z],[x+1,top,z+1],[x,top,z+1]);
+        for(const [dx,dz,a,b] of [[-1,0,[x,z],[x,z+1]],[1,0,[x+1,z+1],[x+1,z]],[0,-1,[x+1,z],[x,z]],[0,1,[x,z+1],[x+1,z+1]]]){
+            if(cells.has([x+dx,z+dz,level].join(',')))continue;
+            quad([a[0],bottom,a[1]],[b[0],bottom,b[1]],[b[0],top,b[1]],[a[0],top,a[1]]);
+        }
+    }
+    const geometry=new THREE.BufferGeometry();geometry.setAttribute('position',new THREE.Float32BufferAttribute(positions,3));
+    geometry.computeVertexNormals();return geometry;
+}
+
 function syncCombatAreaVisuals(state) {
     combatAreaMeshes.forEach((mesh) => {
         scene?.remove(mesh);
@@ -1057,7 +1077,7 @@ function syncCombatAreaVisuals(state) {
             : (type === 'gas' ? 0x879c43 : 0xe46d24);
         const height = type.startsWith('smoke') ? 2.4 : 0.35;
         const mesh = new THREE.Mesh(
-            new THREE.CylinderGeometry(radius, radius, height, 48),
+            area.cells?combatCloudGeometry(area,height):new THREE.CylinderGeometry(radius, radius, height, 48),
             new THREE.MeshBasicMaterial({
                 color,
                 transparent: true,
@@ -1066,9 +1086,9 @@ function syncCombatAreaVisuals(state) {
                 side: THREE.DoubleSide,
             }),
         );
-        mesh.position.set(
+        if(!area.cells)mesh.position.set(
             Number(area.x) + 0.5,
-            getTileHeight(Number(area.x), Number(area.y)) + height / 2 + 0.04,
+            combatEffectSurfaceHeight(area) + height / 2 + 0.04,
             Number(area.y) + 0.5,
         );
         mesh.userData.combatArea = area;
@@ -1090,7 +1110,7 @@ function syncCombatAreaVisuals(state) {
         marker.rotation.x = -Math.PI / 2;
         marker.position.set(
             Number(event.x) + 0.5,
-            getTileHeight(Number(event.x), Number(event.y)) + 0.08,
+            combatEffectSurfaceHeight(event) + 0.08,
             Number(event.y) + 0.5,
         );
         scene.add(marker);
@@ -1617,7 +1637,7 @@ function updateAttackPreview(clientX, clientY) {
             updateJumpPreview(clientX,clientY,actorEntry);
             return;
         }
-        const point = getPointerWorldPoint(clientX, clientY, actorEntry.model.position.y);
+        const point = pendingCombatAction.actionKey==='explosive_attack'?localMapToolPoint(clientX,clientY):getPointerWorldPoint(clientX, clientY, actorEntry.model.position.y);
         if (!point) {
             clearAttackPreview();
             return;
@@ -1635,7 +1655,7 @@ function updateAttackPreview(clientX, clientY) {
         );
         const end = new THREE.Vector3(
             targetX + 0.5,
-            getTileHeight(targetX, targetY) + 0.35,
+            (localMapToolSurface(targetX+.5,targetY+.5,point.floor_level??actor.floor_level??0)??getTileHeight(targetX,targetY)) + 0.35,
             targetY + 0.5
         );
         attackPreviewLine.geometry.setFromPoints([start, end]);
@@ -2482,6 +2502,70 @@ function showNarrativeActionModal(characterId) {
     form.elements.action_name.focus();
 }
 
+async function showFireAndWaterMenu(character) {
+    const sheet = await Server.getCharacter(character.character_id);
+    let modal = document.getElementById('combat-fire-water-menu');
+    if (!modal) {
+        modal = document.createElement('div');
+        modal.id = 'combat-fire-water-menu';
+        modal.style.cssText = 'position:fixed;inset:0;z-index:10060;display:flex;align-items:center;justify-content:center;padding:16px;background:rgba(0,0,0,.48);';
+        document.body.appendChild(modal);
+    }
+    modal.innerHTML = `<div style="width:min(440px,100%);max-height:85vh;overflow:auto;padding:18px;border-radius:14px;background:#171e1c;color:#f4f1e8;">
+        <div style="display:flex;justify-content:space-between;"><strong>Огонь и вода</strong><button type="button" class="fire-close btn btn-secondary">×</button></div>
+        <p>Тушить себя: 3 ОД, d20 против СЛ 12 + стресс + модификатор смеси, без бонуса навыка.</p>
+        <button type="button" class="fire-extinguish btn btn-secondary">Тушить себя · 3 ОД</button>
+        <p>Сначала возьмите воду в свободную руку. Обливание всей ёмкостью стоит ещё 2 ОД и сокращает горение на 2 раунда за литр.</p>
+        <div class="fire-water-items" style="display:grid;gap:6px;"></div>
+        <label style="display:block;margin-top:12px;">Кого облить <select class="fire-water-target" style="width:100%;"></select></label>
+        <button type="button" class="fire-pour btn btn-primary" style="margin-top:10px;">Облить водой · 2 ОД</button>
+    </div>`;
+    const close = () => modal.remove();
+    modal.querySelector('.fire-close').onclick = close;
+    modal.onpointerdown = event => { if (event.target === modal) close(); };
+    const perform = async (key, extra = {}) => {
+        const buttons = modal.querySelectorAll('button');
+        buttons.forEach(button => { button.disabled = true; });
+        try {
+            const result = await Server.performLocationCombatAction(window.currentLobbyId, getCurrentLocationId(), {
+                location_character_id: character.location_character_id, action_key: key, ...extra,
+            });
+            const check = result.narrative_action?.check;
+            showNotification(check ? `${check.success ? 'Потушено' : 'Горение сохраняется'}: d20 ${check.roll}, СЛ ${check.difficulty}`
+                : result.narrative_action?.name || 'Действие оплачивается', check && !check.success ? 'system' : 'success');
+            close();
+        } catch (error) {
+            buttons.forEach(button => { button.disabled = false; });
+            showNotification(error.message, 'system');
+        }
+    };
+    modal.querySelector('.fire-extinguish').disabled = !(character.effects || []).some(e => e.type === 'burning' && e.active !== false);
+    modal.querySelector('.fire-extinguish').onclick = () => perform('extinguish_fire');
+    const list = modal.querySelector('.fire-water-items');
+    const water = getCharacterTransferEntries(sheet.data || {}).filter(entry => {
+        const item = entry.item || {};
+        return item.attributes?.consumable?.direct?.satisfy_water === true || /^(вода|water)(\s|$)/i.test(String(item.name || '').trim());
+    });
+    water.forEach(entry => {
+        const button = document.createElement('button');
+        button.type = 'button'; button.className = 'btn btn-secondary';
+        button.textContent = `Взять: ${entry.item.name} · ${entry.rootLabel}`;
+        button.disabled = Boolean(character.water_in_hand);
+        button.onclick = () => perform('prepare_water', { item_path: entry.path });
+        list.appendChild(button);
+    });
+    if (!water.length) list.textContent = 'В инвентаре нет воды.';
+    const targets = modal.querySelector('.fire-water-target');
+    const available = [character, ...(combatState?.characters || []).filter(target => target.character_id !== character.character_id)];
+    available.forEach(target => {
+        const option = document.createElement('option'); option.value = target.character_id;
+        option.textContent = target.character_id === character.character_id ? 'Себя' : target.name || `Персонаж ${target.character_id}`;
+        targets.appendChild(option);
+    });
+    modal.querySelector('.fire-pour').disabled = !character.water_in_hand;
+    modal.querySelector('.fire-pour').onclick = () => perform('pour_water', { target_character_id: Number(targets.value) });
+}
+
 function showReactionReserveMenu(character) {
     if (!character?.location_character_id) return;
     let modal = document.getElementById('combat-reaction-reserve-menu');
@@ -3083,6 +3167,21 @@ function showCombatActionMenu(clientX, clientY, characterId) {
             });
         }
         const hasReserve = Boolean(combatCharacter.reaction_reserve);
+        if (isCurrentTurn) {
+            menuItems.push({label:'Огонь и вода', key:'fire_and_water', icon:'♨', angle:230, ringRadius:205,
+                requiresCombat:true, action:() => showFireAndWaterMenu(combatCharacter).catch(error => showNotification(error.message,'system'))});
+        }
+        if(isCurrentTurn&&(combatCharacter.effects||[]).some(e=>e.type==='concussion'&&e.active!==false)){
+            menuItems.push({label:'Преодолеть контузию',actionKey:'recover_concussion',icon:'◉',angle:194,ringRadius:205,
+                requiresCombat:true,title:'2 ОД, проверка Воли СЛ12',action:async()=>{
+                    try{
+                        const result=await Server.performLocationCombatAction(window.currentLobbyId,getCurrentLocationId(),{
+                            location_character_id:combatCharacter.location_character_id,action_key:'recover_concussion'});
+                        const check=result.narrative_action.check;
+                        showNotification(`${check.success?'Контузия снята':'Контузия сохраняется'}: ${check.total}, СЛ12`,check.success?'success':'system');
+                    }catch(error){showNotification(error.message,'system');}
+                }});
+        }
         if (isCurrentTurn && !hasReserve) {
             menuItems.push({
                 label: 'Реакция',
@@ -5243,7 +5342,7 @@ function selectAreaFireAnchor(clientX, clientY) {
     const actor = findCombatCharacterByCharacterId(action.actorCharacterId);
     const actorEntry = actor ? characterModels.get(actor.character_id) : null;
     if (!actorEntry) return false;
-    const point = getPointerWorldPoint(clientX, clientY, actorEntry.model.position.y);
+    const point = action.actionKey==='explosive_attack'?localMapToolPoint(clientX,clientY):getPointerWorldPoint(clientX, clientY, actorEntry.model.position.y);
     if (!point) return false;
     const x = Math.floor(point.x);
     const y = Math.floor(point.z);
@@ -5393,6 +5492,7 @@ async function resolveCombatPointSelection(clientX, clientY) {
             attribute_choice: action.attributeChoice,
             target_x: targetX,
             target_y: targetY,
+            target_floor_level: action.actionKey==='explosive_attack'?point.floor_level:undefined,
             pending_action_id: `combat-point-${action.actorLocationCharacterId}-${Date.now()}-${Math.random().toString(36).slice(2)}`,
         };
         const result = await Server.performLocationCombatAction(
@@ -7528,6 +7628,32 @@ function renderCombatHud() {
         mustDoBtn.onclick = () => performMustDoRetry(combatState.current_character);
     }
     const endTurnBtn = combatHud.querySelector('.combat-end-turn-btn');
+    const explosionChoices=(combatState?.pending_explosives||[]).flatMap(event=>(event.gm_choices||[]).map(id=>({event,id})));
+    if(explosionChoices.length){
+        const panel=document.createElement('div');panel.className='explosion-gm-choices';
+        panel.style.cssText='padding:8px;margin:8px 0;border:1px solid #b99144;border-radius:8px;';
+        const title=document.createElement('strong');title.textContent='Взрыв: персонажи вне очереди боя';panel.append(title);
+        if(window.isGM)for(const {event,id} of explosionChoices){
+            const row=document.createElement('div');row.style.marginTop='8px';
+            const name=document.createElement('div');name.textContent=`${event.item_name}: ${combatState.characters.find(c=>c.location_character_id===id)?.name||'Персонаж'}`;row.append(name);
+            for(const [choice,label] of [['include','Добавить в бой'],['exclude','Исключить из взрыва']]){
+                const button=document.createElement('button');button.className='btn btn-sm btn-secondary';
+                button.dataset.explosionChoice=choice;button.dataset.actorId=id;button.textContent=label;
+                button.onclick=async()=>{row.querySelectorAll('button').forEach(b=>{b.disabled=true;});try{
+                    setCombatState(await Server.decideExplosionTarget(window.currentLobbyId,getCurrentLocationId(),event.id,id,choice));
+                }catch(error){showNotification(error.message,'system');row.querySelectorAll('button').forEach(b=>{b.disabled=false;});}};
+                row.append(button);
+            }panel.append(row);
+        }else{const text=document.createElement('div');text.textContent='Ожидается решение ГМа.';panel.append(text);}
+        combatHud.querySelector('.combat-hud-body')?.prepend(panel);
+        if(endTurnBtn)endTurnBtn.disabled=true;
+    }
+    if(endTurnBtn&&combatState?.current_character?.grenade_reaction){
+        endTurnBtn.textContent='Завершить реакцию — взрыв';
+        const phase=document.createElement('div');phase.style.cssText='color:#ffc76b;margin:6px 0';
+        phase.textContent='Граната: до взрыва доступны 2 ОД из имеющихся и половина получаемых ОП. Остаток сохраняется.';
+        endTurnBtn.before(phase);
+    }
     if (endTurnBtn) {
         endTurnBtn.onclick = async () => {
             endTurnBtn.disabled = true;
@@ -7739,7 +7865,7 @@ const resumeSavedCombatAction = createDeferredActionResumer({
         const module = await import('./characterSheet.js');
         return module.resumeDeferredConsumable(window.currentLobbyId, getCurrentLocationId(), actionId);
     },
-    canResume: actor => canActWithCombatCharacter(actor),
+    canResume: actor => !actor.grenade_reaction&&canActWithCombatCharacter(actor),
     notify: showNotification,
 });
 
@@ -7749,6 +7875,7 @@ window.addEventListener('character-item-operation-finished', () => {
 
 async function resumeCompletedCombatAction(state) {
     const current = state?.current_character;
+    if(current?.grenade_reaction)return;
     const actionId = current?.completed_pending_action_id;
     if (current?.deferred_action) {
         deferredCombatActions.delete(current.deferred_action.id);

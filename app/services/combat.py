@@ -166,6 +166,10 @@ EXPLOSIVE_PROFILES = {
 
 
 ACTION_CATALOG = [
+    {'key':'extinguish_fire','label':'Тушить себя','action_points':3,'free_actions':0,'movement_points':0},
+    {'key':'prepare_water','label':'Взять воду в руку','action_points':0,'free_actions':0,'movement_points':0},
+    {'key':'pour_water','label':'Облить водой','action_points':2,'free_actions':0,'movement_points':0},
+    {'key':'recover_concussion','label':'Преодолеть контузию','action_points':2,'free_actions':0,'movement_points':0},
     {'key': 'change_facing', 'label': '\u0420\u0430\u0437\u0432\u043e\u0440\u043e\u0442', 'action_points': 0, 'free_actions': 0, 'movement_points': 0},
     {'key': 'attack', 'label': 'Атака', 'action_points': 3, 'free_actions': 0, 'movement_points': 0},
     {'key': 'explosive_attack', 'label': '\u0412\u0437\u0440\u044b\u0432\u0447\u0430\u0442\u043a\u0430', 'action_points': 2, 'free_actions': 0, 'movement_points': 0},
@@ -629,29 +633,9 @@ class CombatService:
         center_x = float(obj.tile_x) + 0.5 + float(properties.get('offset_x', 0) or 0)
         center_y = float(obj.tile_y) + 0.5 + float(properties.get('offset_z', 0) or 0)
         box = WallBox(center_x,center_y,width,depth,float(properties.get('rotation',0) or 0),0)
-        bounds = (-width/2,width/2,-depth/2,depth/2)
-        start_x,start_y = box.local((float(shooter.pos_x)+.5,float(shooter.pos_y)+.5))
-        end_x,end_y = box.local((float(target.pos_x)+.5,float(target.pos_y)+.5))
-        dx = end_x - start_x
-        dy = end_y - start_y
-        lower, upper = 0.0, 1.0
-        for origin, delta, minimum, maximum in (
-            (start_x, dx, bounds[0], bounds[1]),
-            (start_y, dy, bounds[2], bounds[3]),
-        ):
-            if abs(delta) < 1e-9:
-                if origin < minimum or origin > maximum:
-                    return None
-                continue
-            first = (minimum - origin) / delta
-            second = (maximum - origin) / delta
-            if first > second:
-                first, second = second, first
-            lower = max(lower, first)
-            upper = min(upper, second)
-            if lower > upper:
-                return None
-        if lower <= 1e-9 or lower >= 1-1e-9:
+        lower = box.segment_entry((float(shooter.pos_x)+.5,float(shooter.pos_y)+.5),
+                                  (float(target.pos_x)+.5,float(target.pos_y)+.5))
+        if lower is None or lower <= 1e-9 or lower >= 1-1e-9:
             return None
         return lower
 
@@ -670,6 +654,8 @@ class CombatService:
         shooter_eye = {'standing': 1.65, 'sitting': 1.05, 'prone': 0.35}[
             CombatService._posture_key(shooter)
         ]
+        if getattr(shooter,'eye_height',None) is not None:
+            shooter_eye = shooter.eye_height
         zone_heights = {
             'standing': {
                 'left_leg': 0.55, 'right_leg': 0.55, 'abdomen': 1.0,
@@ -687,7 +673,7 @@ class CombatService:
         shooter_eye += base_height(shooter)
         zone_heights = {zone: height + base_height(target) for zone, height in zone_heights.items()}
         blocked = {}
-        smoke = CombatService._smoke_blocks_line(location_id, shooter, target)
+        smoke = None if getattr(shooter,'ignore_smoke',False) else CombatService._smoke_blocks_line(location_id, shooter, target)
         if smoke:
             for zone in zone_heights:
                 blocked[zone] = {
@@ -1679,6 +1665,8 @@ class CombatService:
             )
 
         active_effects = normalize_effect_list(health.get('effects') or [])
+        if skill_path in {'skills.physical.shooting','skills.physical.accuracy'} and any(e['type']=='burning' and e.get('active',True) and (e.get('remaining') or 0)>0 for e in active_effects):
+            modifier-=3
         suppressed_fracture_areas = {
             str(effect.get('area') or '').strip().lower()
             for effect in active_effects
@@ -3282,6 +3270,8 @@ class CombatService:
 
     @staticmethod
     def _has_free_hand(loc_char):
+        data = loc_char.character.data if loc_char.character and isinstance(loc_char.character.data, dict) else {}
+        water_in_hand = bool(data.get('health', {}).get('combatMeta', {}).get('heldWaterItem'))
         if loc_char.drawn_weapon_index is None:
             return True
         data = loc_char.character.data if loc_char.character and isinstance(loc_char.character.data, dict) else {}
@@ -3293,8 +3283,8 @@ class CombatService:
         attributes = CombatService._template_attributes(weapon)
         hands = attributes.get('hands', weapon.get('hands'))
         if hands is not None:
-            return CombatService._coerce_int(hands, 2) <= 1
-        return not bool(
+            return CombatService._coerce_int(hands, 2) + int(water_in_hand) < 2
+        return not water_in_hand and not bool(
             attributes.get('two_handed')
             or weapon.get('twoHanded')
             or weapon.get('two_handed')
@@ -6027,7 +6017,7 @@ class CombatService:
         trauma = None
         traumas = []
         prepared_rolls = list(prepared_trauma_rolls or [])
-        if damage >= 11:
+        if damage >= 11 or force_trauma and damage > 0:
             for trauma_index in range(max(0, CombatService._coerce_int(trauma_checks, 1))):
                 trauma_chance_roll = random.randint(1, 100)
                 threshold = {
@@ -6236,24 +6226,40 @@ class CombatService:
         distance = CombatService._point_distance(start_x, start_y, target_x, target_y)
         maximum = CombatService._coerce_float(maximum_range, 0)
         if maximum <= 0 or distance <= maximum or distance <= 1e-9:
-            return int(target_x), int(target_y), False
+            return float(target_x), float(target_y), False
         ratio = maximum / distance
         return (
-            int(round(start_x + (target_x - start_x) * ratio)),
-            int(round(start_y + (target_y - start_y) * ratio)),
+            start_x + (target_x - start_x) * ratio,
+            start_y + (target_y - start_y) * ratio,
             True,
         )
 
     @staticmethod
-    def _scatter_point(target_x, target_y, failure, width, height):
-        scatter = max(0, CombatService._coerce_int(failure, 0))
+    def _scatter_point(target_x, target_y, failure, width, height, *, location=None, floor_level=0):
+        scatter = min(10,max(0, CombatService._coerce_float(failure, 0)))
         if scatter <= 0:
-            return int(target_x), int(target_y)
+            return float(target_x), float(target_y)
         angle = random.random() * math.tau
-        return (
-            max(0, min(width - 1, int(round(target_x + math.cos(angle) * scatter)))),
-            max(0, min(height - 1, int(round(target_y + math.sin(angle) * scatter)))),
-        )
+        dx,dy = math.cos(angle)*scatter,math.sin(angle)*scatter
+        fraction = 1
+        for origin,delta,maximum in ((target_x,dx,width-1),(target_y,dy,height-1)):
+            if delta>1e-9:
+                fraction=min(fraction,(maximum-origin)/delta)
+            elif delta < -1e-9:
+                fraction=min(fraction,-origin/delta)
+        if location is not None:
+            from app.services.location_navigation import surface,ground,STOREY_HEIGHT
+            objects=LocationObject.query.filter_by(location_id=location.id).all()
+            geometry=CombatService._movement_wall_geometry(location,objects)
+            point=surface(location,objects,target_x,target_y,floor_level)
+            plane=point['height'] if point else ground(location,target_x,target_y)+floor_level*STOREY_HEIGHT
+            for box in [*geometry.boxes,*(item[0] for item in geometry.climb_boxes)]:
+                if box.level!=floor_level or not box.bottom-1e-9<=plane<=box.top+1e-9:
+                    continue
+                entry=box.segment_entry((target_x+.5,target_y+.5),(target_x+dx+.5,target_y+dy+.5))
+                if entry is not None:
+                    fraction=min(fraction,entry)
+        return target_x+dx*max(0,fraction),target_y+dy*max(0,fraction)
 
     @staticmethod
     def _segment_distance_to_point(start_x, start_y, end_x, end_y, point_x, point_y):
@@ -6276,12 +6282,26 @@ class CombatService:
     @staticmethod
     def _smoke_blocks_line(location_id, shooter, target):
         state = LocationCombatState.query.filter_by(location_id=location_id).first()
+        from app.services.cloud_geometry import refresh
+        refresh(state)
         areas = state.area_effects if state and isinstance(state.area_effects, list) else []
         for area in areas:
             if not isinstance(area, dict) or not str(area.get('type') or '').startswith('smoke'):
                 continue
             radius = max(0, CombatService._coerce_float(area.get('radius'), 0))
             if radius <= 0:
+                continue
+            if area.get('cells') is not None:
+                from app.services.movement_geometry import WallBox
+                from app.services.explosion_geometry import height
+                location=db.session.get(Location,location_id)
+                objects=LocationObject.query.filter_by(location_id=location_id).all()
+                start_height=height(location,objects,shooter.pos_x,shooter.pos_y,getattr(shooter,'floor_level',0) or 0)+1.65
+                end_height=height(location,objects,target.pos_x,target.pos_y,getattr(target,'floor_level',0) or 0)+1.65
+                for x,y,level in area['cells']:
+                    t=WallBox(x+.5,y+.5,1,1,0,0).segment_entry((shooter.pos_x+.5,shooter.pos_y+.5),(target.pos_x+.5,target.pos_y+.5))
+                    bottom=height(location,objects,x,y,level)
+                    if t is not None and bottom<=start_height+(end_height-start_height)*t<=bottom+2.4:return area
                 continue
             distance = CombatService._segment_distance_to_point(
                 shooter.pos_x, shooter.pos_y, target.pos_x, target.pos_y,
@@ -6318,14 +6338,17 @@ class CombatService:
         return 0.1
 
     @staticmethod
-    def _resolve_flash(location_id, epicenter_x, epicenter_y, profile, floor_level=0):
+    def _resolve_flash(location_id, epicenter_x, epicenter_y, profile, floor_level=0, target_ids=None):
+        from app.services.explosion_geometry import distance as spatial_distance
+        location=db.session.get(Location,location_id)
+        objects=LocationObject.query.filter_by(location_id=location_id).all()
         results = []
         for target in LocationCharacter.query.filter_by(location_id=location_id).all():
-            if not target.character or (getattr(target,'floor_level',0) or 0) != floor_level:
+            if target_ids is not None and target.id not in target_ids:
                 continue
-            distance = CombatService._point_distance(
-                epicenter_x, epicenter_y, target.pos_x, target.pos_y,
-            )
+            if not target.character:
+                continue
+            distance = spatial_distance(location,objects,epicenter_x,epicenter_y,floor_level,target)
             if distance > CombatService._coerce_float(profile.get('radius'), 0):
                 continue
             multiplier = CombatService._flash_facing_multiplier(
@@ -6335,6 +6358,9 @@ class CombatService:
                 CombatService._coerce_float(profile.get('blindness'), 0)
                 - 20 * distance
             ) * multiplier))
+            cover=CombatService._explosion_cover(location_id,epicenter_x,epicenter_y,target,floor_level,optical=True)
+            if (cover.get('zones') or {}).get('head'):
+                blindness=0
             data = dict(target.character.data or {})
             health = data.setdefault('health', {})
             if blindness > 0:
@@ -6363,6 +6389,7 @@ class CombatService:
                 'distance': round(distance, 2),
                 'facing_multiplier': multiplier,
                 'blindness': blindness,
+                'flash_blocked': bool((cover.get('zones') or {}).get('head')),
                 'deafness': deafness if distance <= CombatService._coerce_float(profile.get('noise'), 0) / 10 else 0,
             })
         return results
@@ -6376,8 +6403,8 @@ class CombatService:
             'id': uuid.uuid4().hex,
             'type': effect,
             'name': profile.get('name') or profile.get('label'),
-            'x': int(x),
-            'y': int(y),
+            'x': float(x),
+            'y': float(y),
             'radius': CombatService._coerce_float(profile.get('area_radius', profile.get('radius')), 0),
             'max_radius': CombatService._coerce_float(profile.get('max_radius'), profile.get('area_radius', profile.get('radius'))),
             'created_round': max(1, CombatService._coerce_int(current_round, 1)),
@@ -6392,11 +6419,13 @@ class CombatService:
             'burn_rounds': CombatService._coerce_int(profile.get('burn_rounds'), 0),
             'direct_burn_rounds': CombatService._coerce_int(profile.get('direct_burn_rounds'), 0),
             'burn_damage': CombatService._coerce_int(profile.get('burn_damage'), 0),
-            'thermal_threshold': CombatService._coerce_int(profile.get('thermal_threshold'), 0),
+            'thermal_threshold': CombatService._coerce_int(profile.get('thermal_threshold'), 35),
+            'threshold_inclusive': 'thermal_threshold' in profile,
+            'extinguish_difficulty_modifier': CombatService._coerce_int(profile.get('extinguish_difficulty_modifier'),0),
         }
 
     @staticmethod
-    def _apply_direct_fire_hit(location_id, x, y, area):
+    def _apply_direct_fire_hit(location_id, x, y, area, target_ids=None):
         if not isinstance(area, dict) or area.get('type') != 'fire':
             return []
         rounds = max(
@@ -6407,7 +6436,9 @@ class CombatService:
         )
         results = []
         for target in LocationCharacter.query.filter_by(location_id=location_id).all():
-            if not target.character or int(target.pos_x) != int(x) or int(target.pos_y) != int(y):
+            if target_ids is not None and target.id not in target_ids:
+                continue
+            if not target.character or CombatService._point_distance(target.pos_x,target.pos_y,x,y) > .75:
                 continue
             direct_area = {**area, 'burn_rounds': rounds, 'radius': 0.75}
             result = CombatService._apply_area_effect_to_character(
@@ -6432,12 +6463,14 @@ class CombatService:
         return 'head'
 
     @staticmethod
-    def _explosion_cover(location_id, epicenter_x, epicenter_y, target, floor_level=0):
+    def _explosion_cover(location_id, epicenter_x, epicenter_y, target, floor_level=0, optical=False):
         source = type('ExplosionOrigin', (), {
             'floor_level': floor_level,
             'pos_x': epicenter_x,
             'pos_y': epicenter_y,
             'posture': 'standing',
+            'eye_height': .05 if optical else 0,
+            'ignore_smoke': not optical,
         })()
         analysis = CombatService._cover_analysis(location_id, source, target)
         zones = analysis.get('zones') or {}
@@ -6447,10 +6480,58 @@ class CombatService:
         )
         return {
             'protection': max(0, min(100, protection)),
+            'grade':analysis.get('grade','none'),
+            'zones':zones,
             'objects': list(dict.fromkeys(
                 value.get('object_id') for value in zones.values() if value.get('object_id')
             )),
         }
+
+    @staticmethod
+    def _penetration_damage_multiplier(penetration, armor):
+        return max(0,1-math.ceil(max(0,armor-penetration)/5)*.25)
+
+    @staticmethod
+    def _explosion_fragment_hit(target,damage,penetration,zone,cover,round_number,additional=False):
+        protection=(cover.get('zones') or {}).get(zone)
+        cover_multiplier=1
+        if cover.get('live_shield') or protection and protection.get('terrain'):
+            cover_multiplier=0
+        elif protection:
+            if random.randint(1,100)<=protection.get('mesh_hit_chance',100):
+                cover_multiplier=CombatService._penetration_damage_multiplier(penetration,protection.get('physical_protection',0))
+                penetration*=.9
+        elif not cover.get('zones') and cover.get('protection',0):
+            # Поддержка прежних сохранений/профилей без детализации частей тела.
+            cover_multiplier=CombatService._penetration_damage_multiplier(penetration,cover['protection'])
+            penetration*=.9
+        incoming=max(0,damage*cover_multiplier)
+        data=target.character.data or {}
+        armor,layers=CombatService._target_armor(data,zone)
+        penetrated=penetration>=armor
+        applied=(0 if additional and not penetrated else
+                 round(incoming*CombatService._penetration_damage_multiplier(penetration,armor)))
+        wear=[]
+        if incoming>0:
+            for layer in layers:
+                result=(CombatService._damage_gas_mask(layer['item'],'bullet') if layer.get('is_gas_mask') else
+                        CombatService._damage_armor_item(layer['item'],layer['attributes'],incoming))
+                if result:wear.append(result)
+        health=None
+        if applied>0:
+            health=CombatService._apply_attack_damage(target,applied,zone,
+                {'damage_type':'fragment','armor_piercing':penetration},round_number=round_number,
+                allow_bleeding=additional,trauma_checks=1 if additional else 0,force_trauma=additional,
+                stress_trigger='explosion')
+        return {'damage':applied,'penetrated':penetrated,'penetration':penetration,
+                'armor':armor,'armor_damage':wear,'health':health}
+
+    @staticmethod
+    def _explosion_is_indoors(location,objects,x,y,floor_level):
+        from app.services.location_navigation import level_of,contains
+        # Помещения генератора имеют полы с building_id; одиночный настил не считается комнатой.
+        return any(o.type=='floor' and (o.properties or {}).get('building_id')
+                   and level_of(o)==floor_level and contains(o,x+.5,y+.5) for o in objects)
 
     @staticmethod
     def _throw_obstacle_difficulty(location_id, thrower, target_x, target_y):
@@ -6462,6 +6543,9 @@ class CombatService:
         objects = LocationObject.query.filter_by(location_id=location_id).all()
         doors = [item for item in objects if item.type == 'door' or (item.type == 'window' and (item.properties or {}).get('is_open'))]
         for obj in objects:
+            from app.services.location_navigation import level_of
+            if level_of(obj) != (getattr(thrower,'floor_level',0) or 0):
+                continue
             if not CombatService._is_cover_object(obj):
                 continue
             if CombatService._line_object_entry(thrower, target, obj) is not None:
@@ -6480,7 +6564,7 @@ class CombatService:
         return 5
 
     @staticmethod
-    def _apply_general_damage(target, damage, *, round_number=0, source='explosion'):
+    def _apply_general_damage(target, damage, *, round_number=0, source='explosion',cause_stress=True):
         damage = max(0, round(CombatService._coerce_float(damage, 0)))
         data = dict(target.character.data or {})
         previous_condition = CombatService._character_condition(data)['state']
@@ -6494,7 +6578,7 @@ class CombatService:
         current_round = max(0, CombatService._coerce_int(round_number, 0))
         if damage > 0:
             meta['injuryRound'] = current_round
-            if meta.get('damageStressRound') != current_round:
+            if cause_stress and meta.get('damageStressRound') != current_round:
                 meta['damageStressRound'] = current_round
                 meta['pendingExplosionStress'] = True
             CombatService._apply_damage_pain(data, damage, current_round, source)
@@ -6535,6 +6619,7 @@ class CombatService:
                 'type': 'deafness', 'name': '\u041f\u043e\u0432\u0440\u0435\u0436\u0434\u0435\u043d\u0438\u0435 \u0441\u043b\u0443\u0445\u0430',
                 'value': deafness, 'remaining': hours, 'time_unit': 'hour',
                 'tick': 'time_elapsed', 'source': 'blast_wave',
+                'minimum_value': deafness,
             })
             result.update({'type': 'hearing_damage', 'deafness': deafness, 'hours': hours})
         elif category in {2, 3}:
@@ -6542,7 +6627,7 @@ class CombatService:
             exhaustion = (0, 0, 1, 2)[band]
             apply_effect_to_health(health, {
                 'type': 'concussion', 'name': '\u041a\u043e\u043d\u0442\u0443\u0437\u0438\u044f',
-                'remaining': rounds, 'tick': 'round_end', 'source': 'blast_wave',
+                'remaining': rounds, 'tick': 'turn_end' if band==0 else 'round_end', 'source': 'blast_wave',
                 'roll_modifier': -3,
             })
             if exhaustion:
@@ -6575,17 +6660,25 @@ class CombatService:
         return result
 
     @staticmethod
-    def resolve_explosion(location_id, epicenter_x, epicenter_y, profile, *, round_number=0, floor_level=0):
+    def resolve_explosion(location_id, epicenter_x, epicenter_y, profile, *, round_number=0, floor_level=0,
+                          target_ids=None,damage_objects=True,create_area=True,live_shield_ids=()):
         from app.services.location_navigation import level_of
+        from app.services.explosion_choice import hold
+        if target_ids is None and hold(location_id,epicenter_x,epicenter_y,profile,floor_level):
+            return {'profile':profile['key'],'name':profile['name'],'epicenter':{'x':epicenter_x,'y':epicenter_y},
+                    'radius':profile.get('radius',0),'floor_level':floor_level,'targets':[],'objects':[],
+                    'area':None,'awaiting_gm':True}
         effect_type = str(profile.get('effect') or '').strip().lower()
         if effect_type == 'flash':
             return {
                 'profile': profile['key'],
                 'name': profile['name'],
-                'epicenter': {'x': int(epicenter_x), 'y': int(epicenter_y)},
+                'epicenter': {'x': float(epicenter_x), 'y': float(epicenter_y)},
                 'radius': CombatService._coerce_float(profile.get('radius'), 0),
+                'floor_level': floor_level,
                 'targets': CombatService._resolve_flash(
                     location_id, epicenter_x, epicenter_y, profile, **({'floor_level':floor_level} if floor_level else {}),
+                    **({'target_ids':target_ids} if target_ids is not None else {}),
                 ),
                 'objects': [],
                 'area': None,
@@ -6596,32 +6689,94 @@ class CombatService:
             )
             if floor_level:
                 area['floor_level'] = floor_level
+            from app.services.cloud_geometry import prepare
+            prepare(db.session.get(Location,location_id),LocationObject.query.filter_by(location_id=location_id).all(),area)
             return {
                 'profile': profile['key'],
                 'name': profile['name'],
-                'epicenter': {'x': int(epicenter_x), 'y': int(epicenter_y)},
+                'epicenter': {'x': float(epicenter_x), 'y': float(epicenter_y)},
                 'radius': CombatService._coerce_float(profile.get('radius'), 0),
+                'floor_level': floor_level,
                 'targets': CombatService._apply_direct_fire_hit(
                     location_id, epicenter_x, epicenter_y, area,
+                    **({'target_ids':target_ids} if target_ids is not None else {}),
                 ),
                 'objects': [],
-                'area': area,
+                'area': area if create_area else None,
             }
         radius = max(0, CombatService._coerce_float(profile.get('radius'), 0))
         target_results = []
-        for target in LocationCharacter.query.filter_by(location_id=location_id).all():
-            if not target.character or (getattr(target,'floor_level',0) or 0) != floor_level:
+        objects=LocationObject.query.filter_by(location_id=location_id).all()
+        location=db.session.get(Location,location_id)
+        indoors=CombatService._explosion_is_indoors(location,objects,epicenter_x,epicenter_y,floor_level)
+        people=CombatService._unique_location_characters(LocationCharacter.query.filter_by(location_id=location_id).all())
+        from app.services.explosion_geometry import distance as spatial_distance,height as surface_height
+        living=[(c.id,c.pos_x,c.pos_y,c.floor_level or 0) for c in people
+                if c.character and (c.id in live_shield_ids or CombatService._character_condition(c.character.data or {})['state']!='dead')]
+        for target in people:
+            if target_ids is not None and target.id not in target_ids:
+                continue
+            if not target.character:
                 continue
             posture_at_detonation = CombatService._posture_key(target)
-            distance = CombatService._point_distance(
-                epicenter_x, epicenter_y, target.pos_x, target.pos_y,
-            )
+            distance = spatial_distance(location,objects,epicenter_x,epicenter_y,floor_level,target)
             if distance > radius:
                 continue
             cover = CombatService._explosion_cover(
                 location_id, epicenter_x, epicenter_y, target, **({'floor_level':floor_level} if floor_level else {}),
             )
-            cover_multiplier = max(0, 1 - cover['protection'] / 100)
+            # Живое тело на линии взрыва прикрывает следующую цель целиком.
+            from app.services.movement_geometry import CHARACTER_RADIUS
+            dx,dy=target.pos_x-epicenter_x,target.pos_y-epicenter_y
+            length2=dx*dx+dy*dy
+            for body_id,bx,by,body_level in living:
+                if body_id==target.id or length2<=1e-9:
+                    continue
+                t=((bx-epicenter_x)*dx+(by-epicenter_y)*dy)/length2
+                origin_height=surface_height(location,objects,epicenter_x,epicenter_y,floor_level)
+                ray_height=origin_height+(surface_height(location,objects,target.pos_x,target.pos_y,target.floor_level or 0)-origin_height)*t
+                body=next(c for c in people if c.id==body_id)
+                bottom=surface_height(location,objects,bx,by,body_level)
+                top=bottom+{'standing':1.8,'sitting':1.2,'prone':.4}[CombatService._posture_key(body)]
+                if 0<t<1 and bottom-1e-8<=ray_height<=top and CombatService._segment_distance_to_point(epicenter_x,epicenter_y,target.pos_x,target.pos_y,bx,by)<=CHARACTER_RADIUS:
+                    cover={**cover,'protection':100,'grade':'full','live_shield':body_id}
+                    break
+            zones=cover.get('zones') or {}
+            chest_cover=zones.get('chest')
+            full_cover=cover.get('grade')=='full' or cover['protection']>=100
+            wave_blocked=bool(full_cover or cover.get('live_shield') or
+                chest_cover and (chest_cover.get('terrain') or chest_cover.get('class') not in {'conditional','flimsy'}))
+            posture_multiplier = {'standing': 1, 'sitting': 0.75, 'prone': 0.1}.get(
+                posture_at_detonation, 1,
+            )
+            fragment_damage = round(max(
+                0, profile['fragment'] * (1 - 0.1 * distance),
+            ) * posture_multiplier)
+            penetration = profile['penetration']
+            if not profile.get('fragment_keeps_penetration'):
+                penetration = max(0, penetration - 5 * distance)
+            fragment_zone = CombatService._grenade_fragment_zone()
+            fragment=CombatService._explosion_fragment_hit(target,fragment_damage,penetration,fragment_zone,cover,round_number)
+            armor,penetrated=fragment['armor'],fragment['penetrated']
+            applied_fragment_damage,fragment_armor_damage=fragment['damage'],fragment['armor_damage']
+            extra_traumas = max(
+                0,
+                5 - int(math.floor(distance)) - int(cover['protection'] // 10)
+                - (1 if posture_at_detonation == 'sitting' else 3 if posture_at_detonation == 'prone' else 0),
+            ) if fragment_damage>0 and not cover.get('live_shield') else 0
+            extra_results = []
+            for _ in range(extra_traumas):
+                extra_damage = sum(random.randint(1, 6) for _ in range(4))
+                extra_zone = CombatService._grenade_fragment_zone()
+                extra=CombatService._explosion_fragment_hit(target,extra_damage,penetration,extra_zone,cover,round_number,additional=True)
+                if extra['damage']<=0:
+                    continue
+                extra_results.append({
+                    'zone': extra_zone,
+                    'damage': extra['damage'],
+                    'traumas': (extra['health'] or {}).get('lastTraumas') or [],
+                })
+
             target_data = target.character.data if isinstance(target.character.data, dict) else {}
             blast_armor, blast_armor_layers = CombatService._target_armor(
                 target_data, 'chest',
@@ -6629,9 +6784,9 @@ class CombatService:
             armor_multiplier = max(0, 1 - blast_armor / 100)
             blast = max(
                 0,
-                profile['blast_base'] - profile['blast_falloff'] * distance,
+                profile['blast_base']*(1.5 if indoors else 1) - profile['blast_falloff'] * distance,
             )
-            blast = round(blast * cover_multiplier * armor_multiplier)
+            blast = 0 if wave_blocked else round(blast * armor_multiplier)
             blast_armor_damage = []
             for layer in blast_armor_layers:
                 if layer.get('is_gas_mask'):
@@ -6644,74 +6799,8 @@ class CombatService:
             blast_result = CombatService._apply_general_damage(
                 target, blast, round_number=round_number, source='blast_wave',
             )
-            blast_trauma = CombatService._apply_blast_trauma(
-                target, blast, round_number=round_number,
-            )
 
-            posture_multiplier = {'standing': 1, 'sitting': 0.75, 'prone': 0.1}.get(
-                posture_at_detonation, 1,
-            )
-            fragment_damage = round(max(
-                0, profile['fragment'] * (1 - 0.1 * distance),
-            ) * posture_multiplier * cover_multiplier)
-            penetration = profile['penetration']
-            if not profile.get('fragment_keeps_penetration'):
-                penetration = max(0, penetration - 5 * distance)
-            fragment_zone = CombatService._grenade_fragment_zone()
-            target_data = target.character.data if isinstance(target.character.data, dict) else {}
-            armor, armor_layers = CombatService._target_armor(target_data, fragment_zone)
-            penetrated = penetration >= armor
-            applied_fragment_damage = fragment_damage if penetrated else round(fragment_damage * 0.2)
-            fragment_armor_damage = []
-            for layer in armor_layers:
-                damage_result = (
-                    CombatService._damage_gas_mask(layer['item'], 'bullet')
-                    if layer.get('is_gas_mask')
-                    else CombatService._damage_armor_item(
-                        layer['item'], layer['attributes'], fragment_damage,
-                    )
-                )
-                if damage_result:
-                    fragment_armor_damage.append(damage_result)
-            fragment_health = None
-            if applied_fragment_damage > 0:
-                fragment_health = CombatService._apply_attack_damage(
-                    target,
-                    applied_fragment_damage,
-                    fragment_zone,
-                    {'damage_type': 'fragment', 'armor_piercing': penetration},
-                    round_number=round_number,
-                    allow_bleeding=False,
-                    trauma_checks=0,
-                    stress_trigger='explosion',
-                )
-            extra_traumas = max(
-                0,
-                5 - int(math.floor(distance)) - int(cover['protection'] // 10)
-                - (1 if posture_at_detonation == 'sitting' else 3 if posture_at_detonation == 'prone' else 0),
-            ) if penetrated else 0
-            extra_results = []
-            for _ in range(extra_traumas):
-                extra_damage = sum(random.randint(1, 6) for _ in range(4))
-                extra_zone = CombatService._grenade_fragment_zone()
-                health = CombatService._apply_attack_damage(
-                    target,
-                    extra_damage,
-                    extra_zone,
-                    {'damage_type': 'fragment', 'armor_piercing': penetration},
-                    round_number=round_number,
-                    allow_bleeding=True,
-                    trauma_checks=1,
-                    force_trauma=True,
-                    stress_trigger='explosion',
-                )
-                extra_results.append({
-                    'zone': extra_zone,
-                    'damage': extra_damage,
-                    'traumas': health.get('lastTraumas') or [],
-                })
-
-            concussion_chance = max(0, 150 - 30 * distance)
+            concussion_chance = 0 if wave_blocked else max(0,150*(2 if indoors else 1)-30*distance)
             concussion_roll = random.randint(1, 100)
             concussion = concussion_roll <= concussion_chance
             if concussion:
@@ -6731,7 +6820,15 @@ class CombatService:
                 target.character.data = data
                 flag_modified(target.character, 'data')
 
-            shock = distance <= 1
+            blast_trauma=CombatService._apply_blast_trauma(target,blast,round_number=round_number)
+            if concussion and blast_trauma and blast_trauma.get('type')=='concussion':
+                for effect in target.character.data['health'].get('effects') or []:
+                    if effect.get('type')=='concussion':
+                        effect['remaining']=5+blast_trauma['rounds']
+                        effect['tick']='round_end'
+                flag_modified(target.character,'data')
+
+            shock = distance <= 1 and (blast_result['damage']>0 or applied_fragment_damage>0 or any(r['damage']>0 for r in extra_results))
             if shock:
                 data = target.character.data if isinstance(target.character.data, dict) else {}
                 health = data.setdefault('health', {})
@@ -6745,6 +6842,8 @@ class CombatService:
                 posture_at_detonation == 'prone'
                 and distance <= 1
                 and CombatService._is_in_facing_arc(target, epicenter_x, epicenter_y)
+                and not (cover.get('live_shield') or cover['protection']>5
+                    or any(z.get('terrain') or z.get('class') not in {'conditional','flimsy'} for z in zones.values()))
             )
             if prone_facing_death:
                 data = target.character.data if isinstance(target.character.data, dict) else {}
@@ -6762,17 +6861,9 @@ class CombatService:
                 0, CombatService._coerce_int(profile.get('incendiary_rounds'), 0),
             )
             if incendiary_rounds and distance <= radius:
-                data = target.character.data if isinstance(target.character.data, dict) else {}
-                health = data.setdefault('health', {})
-                apply_effect_to_health(health, {
-                    'type': 'burning',
-                    'name': '\u0413\u043e\u0440\u0435\u043d\u0438\u0435',
-                    'remaining': incendiary_rounds,
-                    'tick': 'turn_end',
-                    'source': profile.get('key'),
-                })
-                target.character.data = data
-                flag_modified(target.character, 'data')
+                from app.services.burning import ignite
+                ignite(target,incendiary_rounds,source=profile.get('key'),damage=profile.get('burn_damage') or 50)
+            CombatService._sync_location_effects_from_character(target)
             target_results.append({
                 'character_id': target.character_id,
                 'name': target.character.name,
@@ -6784,7 +6875,7 @@ class CombatService:
                 'blast_trauma': blast_trauma,
                 'fragment_zone': fragment_zone,
                 'fragment_damage': applied_fragment_damage,
-                'fragment_penetration': round(penetration, 2),
+                'fragment_penetration': round(fragment['penetration'], 2),
                 'armor': round(armor, 2),
                 'fragment_armor_damage': fragment_armor_damage,
                 'penetrated': penetrated,
@@ -6801,7 +6892,7 @@ class CombatService:
             })
 
         object_results = []
-        for obj in list(LocationObject.query.filter_by(location_id=location_id).all()):
+        for obj in objects if damage_objects else []:
             if level_of(obj) != floor_level:
                 continue
             distance = CombatService._point_distance(
@@ -6824,17 +6915,21 @@ class CombatService:
         area = CombatService._area_from_profile(
             profile, epicenter_x, epicenter_y, round_number,
         )
+        if area:
+            area['floor_level'] = floor_level
         CombatService._apply_direct_fire_hit(
             location_id, epicenter_x, epicenter_y, area,
+            **({'target_ids':target_ids} if target_ids is not None else {}),
         )
         return {
             'profile': profile['key'],
             'name': profile['name'],
-            'epicenter': {'x': int(epicenter_x), 'y': int(epicenter_y)},
+            'epicenter': {'x': float(epicenter_x), 'y': float(epicenter_y)},
             'radius': radius,
+            'floor_level': floor_level,
             'targets': target_results,
             'objects': object_results,
-            'area': area,
+            'area': area if create_area else None,
         }
 
     @staticmethod
@@ -6857,8 +6952,8 @@ class CombatService:
             state.area_effects = areas
         return {
             'item_name': event.get('item_name') or profile.get('name'),
-            'impact': {'x': int(event.get('x')), 'y': int(event.get('y'))},
-            'detonated': True,
+            'impact': {'x': float(event.get('x')), 'y': float(event.get('y'))},
+            'detonated': not result.get('awaiting_gm',False),
             'explosion': result,
         }
 
@@ -6883,6 +6978,9 @@ class CombatService:
                     and CombatService._coerce_int(event.get('round'), 0)
                     <= CombatService._coerce_int(state.round_number, 0)
                 )
+            elif phase=='actor_turn_start':
+                due=(event.get('trigger')=='actor_turn_start' and event.get('actor_id')==actor_id
+                     and event.get('round',0)<=state.round_number)
             if due:
                 resolved = CombatService._activate_explosive_event(
                     state, event, state.round_number,
@@ -6891,16 +6989,20 @@ class CombatService:
                     detonations.append(resolved)
             else:
                 remaining.append(event)
-        state.pending_explosives = remaining
+        original_ids={e.get('id') for e in pending if isinstance(e,dict)}
+        state.pending_explosives = remaining+[e for e in state.pending_explosives or [] if e.get('id') not in original_ids]
         return detonations
 
     @staticmethod
-    def _apply_area_effect_to_character(area, target, round_number):
-        if (getattr(target,'floor_level',0) or 0) != area.get('floor_level',0):
+    def _apply_area_effect_to_character(area, target, round_number, geometry_context=None):
+        if target.id in area.get('excluded_actor_ids',[]):
             return None
-        distance = CombatService._point_distance(
-            area.get('x'), area.get('y'), target.pos_x, target.pos_y,
-        )
+        from app.services.cloud_geometry import prepare
+        from app.services.explosion_geometry import distance as spatial_distance
+        location,objects=geometry_context or (db.session.get(Location,target.location_id),LocationObject.query.filter_by(location_id=target.location_id).all())
+        prepare(location,objects,area)
+        if [math.floor(target.pos_x+.5),math.floor(target.pos_y+.5),target.floor_level or 0] not in area['cells']:return None
+        distance = spatial_distance(location,objects,area['x'],area['y'],area.get('floor_level',0),target)
         if distance > CombatService._coerce_float(area.get('radius'), 0):
             return None
         area_type = str(area.get('type') or '')
@@ -6940,21 +7042,15 @@ class CombatService:
                 })
                 result['concussion'] = True
         elif area_type == 'fire':
-            threshold = max(0, CombatService._coerce_int(area.get('thermal_threshold'), 0))
-            thermal = CombatService._target_elemental_protection(data, 'thermal')
-            if threshold and thermal >= threshold:
-                result['blocked_by_thermal_protection'] = True
-                return result
             rounds = max(1, CombatService._coerce_int(area.get('burn_rounds'), 1))
-            apply_effect_to_health(health, {
-                'type': 'burning',
-                'name': '\u0413\u043e\u0440\u0435\u043d\u0438\u0435',
-                'remaining': rounds,
-                'tick': 'turn_end',
-                'source': area.get('name') or 'fire_area',
-                'damage_per_round': max(0, CombatService._coerce_int(area.get('burn_damage'), 0)),
-                'thermal_threshold': max(0, CombatService._coerce_int(area.get('thermal_threshold'), 0)),
-            })
+            from app.services.burning import ignite,extinguish_in_water
+            if extinguish_in_water(target,include_traversed=False):
+                result['extinguished_by_water']=True
+                return result
+            ignite(target,rounds,source=area.get('name') or 'fire_area',
+                damage=area.get('burn_damage') or 50,threshold=area.get('thermal_threshold',35),
+                inclusive=area.get('threshold_inclusive',False),
+                extinguish_difficulty_modifier=area.get('extinguish_difficulty_modifier',0))
             result['burning_rounds'] = rounds
         target.character.data = data
         flag_modified(target.character, 'data')
@@ -6966,6 +7062,7 @@ class CombatService:
         updated = []
         affected = []
         targets = LocationCharacter.query.filter_by(location_id=state.location_id).all()
+        context=(db.session.get(Location,state.location_id),LocationObject.query.filter_by(location_id=state.location_id).all())
         for source in list(state.area_effects or []):
             if not isinstance(source, dict):
                 continue
@@ -6975,7 +7072,7 @@ class CombatService:
             for target in targets:
                 if target.character:
                     result = CombatService._apply_area_effect_to_character(
-                        area, target, state.round_number,
+                        area, target, state.round_number, geometry_context=context,
                     )
                     if result:
                         affected.append(result)
@@ -7857,8 +7954,7 @@ class CombatService:
                 armor_damage.append(damage_result)
         effective_armor = max(0.0, armor - profile['armor_piercing'])
         penetration_deficit = max(0.0, effective_armor)
-        damage_reduction_steps = math.ceil(penetration_deficit / 5) if penetration_deficit else 0
-        damage_multiplier = max(0.0, 1 - damage_reduction_steps * 0.25)
+        damage_multiplier = CombatService._penetration_damage_multiplier(profile['armor_piercing'],armor)
         crushing_non_penetration = False
         crushing_multiplier = (
             CombatService._crushing_damage_multiplier(profile)
@@ -8592,11 +8688,13 @@ class CombatService:
         details = result.get('explosive') if isinstance(result, dict) else None
         if not isinstance(details, dict):
             return None
+        def number(value):
+            return f'{round(float(value),1):g}' if isinstance(value,(int,float)) else str(value)
         explosion = details.get('explosion') or {}
         roll_text = ''
         if details.get('roll') is not None:
             roll_text = (
-                f"d20 {details.get('roll')} \u043f\u0440\u043e\u0442\u0438\u0432 \u0421\u041b {details.get('difficulty')}"
+                f"d20 {details.get('roll')} \u043f\u0440\u043e\u0442\u0438\u0432 \u0421\u041b {number(details.get('difficulty'))}"
                 f" - {'\u0443\u0441\u043f\u0435\u0445' if details.get('success') else '\u043f\u0440\u043e\u043c\u0430\u0445'}"
             )
         if details.get('disadvantage'):
@@ -8605,7 +8703,10 @@ class CombatService:
         header = f"{details.get('item_name')}: "
         if roll_text:
             header += f"{roll_text}. "
-        header += f"\u0422\u043e\u0447\u043a\u0430 \u0432\u0437\u0440\u044b\u0432\u0430 {impact.get('x')}, {impact.get('y')}"
+        if details.get('delay_check'):
+            check=details['delay_check']
+            header+=f"Задержка: Тактика {check['total']} против СЛ13 — {'успех' if check['success'] else 'провал'}, +2 ОД. "
+        header += f"\u0422\u043e\u0447\u043a\u0430 \u0432\u0437\u0440\u044b\u0432\u0430 {number(impact.get('x'))}, {number(impact.get('y'))}"
         if details.get('airburst'):
             header += " (\u0432\u043e\u0437\u0434\u0443\u0448\u043d\u044b\u0439 \u043f\u043e\u0434\u0440\u044b\u0432 \u043d\u0430 \u043f\u0440\u0435\u0434\u0435\u043b\u044c\u043d\u043e\u0439 \u0434\u0430\u043b\u044c\u043d\u043e\u0441\u0442\u0438)"
         target_lines = []
@@ -8630,6 +8731,11 @@ class CombatService:
                     f"\u0421\u043e\u0437\u0434\u0430\u043d\u0430 \u043e\u0431\u043b\u0430\u0441\u0442\u044c {area.get('type')} "
                     f"\u0440\u0430\u0434\u0438\u0443\u0441\u043e\u043c {area.get('radius')}"
                 )
+            elif explosion.get('awaiting_gm'):
+                target_lines.append('Ожидается решение ГМа об участниках взрыва.')
+            elif details.get('detonated') is False:
+                target_lines.append('3 секунды: реакция в ход каждого затронутого персонажа.' if (details.get('pending') or {}).get('trigger')=='short_fuse'
+                    else 'Взрыв в начале следующего хода метающего.')
             else:
                 target_lines.append("\u041f\u0435\u0440\u0441\u043e\u043d\u0430\u0436\u0438 \u043d\u0435 \u0437\u0430\u0434\u0435\u0442\u044b")
         return header + ". " + "; ".join(target_lines) + "."
@@ -8938,21 +9044,23 @@ class CombatService:
         if not isinstance(health, dict):
             return loc_char
         active_effects = normalize_effect_list(health.get('effects') or [])
+        if phase=='movement_end':
+            from app.services.burning import extinguish_in_water
+            extinguish_in_water(loc_char)
+            active_effects=normalize_effect_list(health.get('effects') or [])
+        if phase=='round_end':
+            from app.services.burning import tick
+            state=LocationCombatState.query.filter_by(location_id=loc_char.location_id).first()
+            tick(loc_char,state.round_number if state else 0)
+            character_data=loc_char.character.data;health=character_data['health']
+            active_effects=normalize_effect_list(health.get('effects') or [])
         for effect in active_effects:
             effect_type = str(effect.get('type') or '')
             if phase == 'turn_end' and effect_type in {'blindness', 'deafness'}:
-                value = max(0, CombatService._coerce_int(effect.get('value'), 0) - 20)
+                value = max(CombatService._coerce_int(effect.get('minimum_value'),0), CombatService._coerce_int(effect.get('value'), 0) - 20)
                 effect['value'] = value
                 if value <= 0:
                     effect['active'] = False
-            if phase == 'turn_end' and effect_type == 'burning':
-                damage = max(0, CombatService._coerce_int(effect.get('damage_per_round'), 0))
-                if damage:
-                    maximum = CombatService._coerce_float(health.get('max'), 700)
-                    health['current'] = max(
-                        0,
-                        CombatService._coerce_float(health.get('current'), maximum) - damage,
-                    )
         apply_periodic_effects_to_health(health, active_effects, phase=phase)
         apply_expired_effects_to_health(health, active_effects, phase=phase)
         health['effects'] = [
@@ -10354,6 +10462,20 @@ class CombatService:
             meta['consumableUsage'] = {}
             meta.pop('movementEvasion', None)
             meta.pop('slipperyMovement', None)
+            from app.services.grenade_reaction import begin,window
+            loc_char._grenade_detonations=begin(loc_char)
+            if not window(loc_char):
+                CombatService._pay_turn_obligations(loc_char)
+            flag_modified(loc_char.character,'data')
+        return loc_char
+
+    @staticmethod
+    def _pay_turn_obligations(loc_char):
+        """После окна гранаты оплачиваются те же долги, что в обычном начале хода."""
+        if getattr(loc_char,'character',None) and isinstance(loc_char.character.data,dict):
+            data=loc_char.character.data
+            health=data.setdefault('health',{})
+            meta=health.setdefault('combatMeta',{})
             # A reserve is valid only until the character receives their next regular turn.
             reaction_reserve = meta.get('reactionReserve')
             deferred_help_cost = 0
@@ -10550,6 +10672,8 @@ class CombatService:
             'powered_exoskeleton': CombatService._exoskeleton_power_profile(data)['powered'],
             'movement_mode_this_turn': loc_char.movement_mode_this_turn,
             'slippery_movement': health.get('combatMeta', {}).get('slipperyMovement', {}) if loc_char.movement_mode_this_turn else {},
+            'grenade_reaction':deepcopy(health.get('combatMeta',{}).get('grenadeReaction')),
+            'water_in_hand':deepcopy(health.get('combatMeta',{}).get('heldWaterItem')),
             'movement_evasion': CombatService._movement_evasion_active(loc_char),
             'movement_distance_this_turn': loc_char.movement_distance_this_turn or 0,
             'correction_distance_this_turn': loc_char.correction_distance_this_turn or 0,
@@ -11400,6 +11524,8 @@ class CombatService:
 
     @staticmethod
     def _serialize_state(location, state):
+        from app.services.cloud_geometry import refresh
+        refresh(state)
         characters = CombatService._unique_location_characters(
             LocationCharacter.query.filter_by(location_id=location.id).all()
         )
@@ -11654,6 +11780,8 @@ class CombatService:
             raise ValidationError("Combat is not active")
         if state.status != 'active':
             raise ValidationError("Combat is not active")
+        from app.services.explosion_choice import require_resolved
+        require_resolved(state)
         if not state.turn_order:
             raise ValidationError("Turn order is empty")
 
@@ -11676,6 +11804,24 @@ class CombatService:
             raise NotFoundError("Current character not found")
         if not _continue_pending and not CombatService._can_end_turn_for_character(current_character, user_id, is_gm=is_gm):
             raise PermissionDenied("You do not control this character")
+
+        from app.services.grenade_reaction import window,finish,begin
+        if window(current_character):
+            detonations=finish(current_character,state)
+            cancel_unavailable_actions(current_character)
+            detonations.extend(begin(current_character,state))
+            if not window(current_character):
+                CombatService._pay_turn_obligations(current_character)
+            CombatService._sync_location_effects_from_character(current_character)
+            db.session.commit()
+            meta=(current_character.character.data.get('health') or {}).get('combatMeta') or {}
+            if not window(current_character) and (not CombatService._can_take_combat_turn(current_character) or (meta.get('pendingAction') or {}).get('remaining_action_points',0)>0):
+                payload=CombatService.end_turn(location_id,user_id,location_character_id=current_character.id,_continue_pending=True)
+            else:
+                payload=CombatService._serialize_state(location,state)
+            payload['detonations']=detonations+payload.get('detonations',[])
+            payload['grenade_reaction_finished']=True
+            return payload
 
         if state.reaction_return_location_character_id is not None:
             if current_character.id != state.current_location_character_id:
@@ -11810,6 +11956,10 @@ class CombatService:
             round_characters = CombatService._unique_location_characters(
                 LocationCharacter.query.filter_by(location_id=location_id).all()
             )
+            area_updates = CombatService._advance_area_effects(state)
+            for round_character in round_characters:
+                CombatService._apply_periodic_health_effects(round_character,phase='round_end')
+                CombatService._sync_location_effects_from_character(round_character)
             CombatService._apply_end_of_round_pain_recovery(round_characters)
             participant_ids = set(state.turn_order or [])
             psy_recovery = CombatService._apply_end_of_round_psi_recovery(
@@ -11821,14 +11971,15 @@ class CombatService:
             detonations.extend(CombatService._process_pending_explosives(
                 state, phase='round_start',
             ))
-            area_updates = CombatService._advance_area_effects(state)
         else:
             area_updates = []
             psy_recovery = []
         state.turn_index = next_index
         state.current_location_character_id = next_character_id
+        detonations.extend(CombatService._process_pending_explosives(state,phase='actor_turn_start',actor_id=next_character_id))
         psi_start = CombatService._resolve_psi_turn_start(next_character,state.round_number)
         CombatService._prepare_character_for_turn(next_character)
+        detonations.extend(getattr(next_character,'_grenade_detonations',[]))
         CombatService._sync_location_effects_from_character(next_character)
         db.session.commit()
 
@@ -11840,25 +11991,29 @@ class CombatService:
         next_health = next_data.get('health') if isinstance(next_data.get('health'), dict) else {}
         next_meta = next_health.get('combatMeta') if isinstance(next_health.get('combatMeta'), dict) else {}
         pending_action = next_meta.get('pendingAction')
-        if isinstance(pending_action, dict) and CombatService._coerce_int(
+        if not window(next_character) and isinstance(pending_action, dict) and CombatService._coerce_int(
             pending_action.get('remaining_action_points'), 0
         ) > 0:
-            return CombatService.end_turn(
+            payload = CombatService.end_turn(
                 location_id,
                 user_id,
                 location_character_id=next_character.id,
                 _continue_pending=True,
             )
+            payload['detonations'] = detonations + payload.get('detonations', [])
+            return payload
         reaction_reserve = next_meta.get('reactionReserve')
-        if isinstance(reaction_reserve, dict) and CombatService._coerce_int(
+        if not window(next_character) and isinstance(reaction_reserve, dict) and CombatService._coerce_int(
             reaction_reserve.get('deferred_action_points'), 0
         ) > 0:
-            return CombatService.end_turn(
+            payload = CombatService.end_turn(
                 location_id,
                 user_id,
                 location_character_id=next_character.id,
                 _continue_pending=True,
             )
+            payload['detonations'] = detonations + payload.get('detonations', [])
+            return payload
 
         if not CombatService._can_take_combat_turn(next_character):
             remaining = (
@@ -11869,6 +12024,7 @@ class CombatService:
             if remaining <= 0:
                 payload = CombatService.end_combat(location_id, location.lobby.gm_id)
                 payload['auto_ended'] = True
+                payload['detonations'] = detonations + payload.get('detonations', [])
                 return payload
             payload = CombatService.end_turn(
                 location_id,
@@ -11882,6 +12038,7 @@ class CombatService:
                 'name': next_character.character.name if next_character.character else '',
                 'condition': CombatService._location_character_condition(next_character),
             })
+            payload['detonations'] = detonations + payload.get('detonations', [])
             return payload
 
         payload = CombatService._serialize_state(location, state)
@@ -11897,7 +12054,7 @@ class CombatService:
         return payload
 
     @staticmethod
-    def add_combat_participant(location_id, user_id, location_character_id):
+    def add_combat_participant(location_id, user_id, location_character_id, *, _commit=True, _allow_incapacitated=False):
         location = CombatService._get_location(location_id)
         CombatService._ensure_access(location, user_id)
         if location.lobby.gm_id != user_id:
@@ -11911,7 +12068,7 @@ class CombatService:
         ).first()
         if not participant:
             raise NotFoundError('Character not found')
-        if not CombatService._can_take_combat_turn(participant):
+        if not _allow_incapacitated and not CombatService._can_take_combat_turn(participant):
             raise ValidationError('Incapacitated character cannot join combat')
         turn_order = list(dict.fromkeys(state.turn_order or []))
         if participant_id in turn_order:
@@ -11930,7 +12087,8 @@ class CombatService:
         turn_order.insert(0, participant_id)
         state.turn_order = turn_order
         state.turn_index = turn_order.index(state.current_location_character_id)
-        db.session.commit()
+        if _commit:
+            db.session.commit()
         return CombatService._serialize_state(location, state)
 
     @staticmethod
@@ -12519,6 +12677,7 @@ class CombatService:
         magazine_selection=None,
         loading=None,
         jump_origin=None,
+        target_floor_level=None,
     ):
         deferred_request = snapshot_action_arguments(locals())
         from app.services.character_jump import balance_state
@@ -12577,6 +12736,8 @@ class CombatService:
             raise ValidationError("Combat is not active")
 
         CombatService._refresh_ugly_appearance_penalties(location_id)
+        from app.services.explosion_choice import require_resolved
+        require_resolved(state)
         if not CombatService._can_end_turn_for_character(character, user_id, is_gm=is_gm):
             raise PermissionDenied('Вы не управляете этим персонажем')
         CombatService._refresh_mutant_pack_bonus(character)
@@ -13055,10 +13216,23 @@ class CombatService:
                 raise ValidationError("Unknown grenade fuse mode")
             if source != 'hand' and fuse_mode != 'normal':
                 raise ValidationError("Only a hand-thrown grenade can be delayed")
-            target_x = CombatService._coerce_int(target_x, -1)
-            target_y = CombatService._coerce_int(target_y, -1)
-            if not (0 <= target_x < location.grid_width and 0 <= target_y < location.grid_height):
+            if any(isinstance(v,bool) or not isinstance(v,(int,float)) or not math.isfinite(v) for v in (target_x,target_y)):
                 raise ValidationError("Choose a valid target point")
+            target_x,target_y = float(target_x),float(target_y)
+            if not (0 <= target_x <= location.grid_width-1 and 0 <= target_y <= location.grid_height-1):
+                raise ValidationError("Choose a valid target point")
+            target_floor_level=(character.floor_level or 0) if target_floor_level is None else target_floor_level
+            if type(target_floor_level) is not int:
+                raise ValidationError('Некорректный этаж точки попадания')
+            from app.services.explosion_geometry import landing_level
+            landing_objects=LocationObject.query.filter_by(location_id=location_id).all()
+            from app.services.location_navigation import level_of
+            available_levels={0,character.floor_level or 0}|{level_of(o) for o in landing_objects}
+            if target_floor_level not in available_levels:
+                raise ValidationError('На выбранном этаже нет поверхности приземления')
+            target_floor_level=landing_level(location,landing_objects,target_x,target_y,target_floor_level)
+            if target_floor_level is None:
+                raise ValidationError('На выбранном этаже нет поверхности приземления')
             if not CombatService._is_in_facing_arc(character, target_x, target_y):
                 raise ValidationError("The target point is outside the character's field of view")
 
@@ -13156,12 +13330,8 @@ class CombatService:
             explosive_profile = CombatService._explosive_profile(explosive_item)
             if not explosive_profile:
                 raise ValidationError("This explosive does not have a damage profile yet")
-            if source == 'hand' and fuse_mode == 'delay':
-                current_fuse = str(explosive_profile.get('fuse') or 'instant')
-                explosive_profile['fuse'] = {
-                    'round': 'turn_end',
-                    'turn_end': 'instant',
-                }.get(current_fuse, current_fuse)
+            if fuse_mode=='delay' and explosive_profile.get('fuse','instant') not in {'round','turn_end'}:
+                raise ValidationError('Мгновенный запал нельзя дополнительно задержать')
             requested_distance = CombatService._point_distance(
                 character.pos_x, character.pos_y, target_x, target_y,
             )
@@ -13179,8 +13349,13 @@ class CombatService:
             )
             target_proxy = type('PointTarget', (), {
                 'pos_x': impact_x, 'pos_y': impact_y, 'posture': 'standing',
+                'floor_level': target_floor_level,
             })()
             sight = CombatService._cover_analysis(location_id, character, target_proxy)
+            if target_floor_level!=(character.floor_level or 0):
+                blocking_ids={z.get('object_id') for z in (sight.get('zones') or {}).values()}
+                if sight.get('grade')=='full' and any(o.id in blocking_ids and o.type in {'floor','ceiling','roof','hatch'} for o in LocationObject.query.filter_by(location_id=location_id).all()):
+                    raise ValidationError('Траектория перекрыта целым межэтажным перекрытием')
             no_direct_sight = not sight.get('targetable', True)
             if no_direct_sight and mode == 'aimed':
                 raise ValidationError("Aimed grenade launcher fire requires direct line of sight")
@@ -13188,6 +13363,9 @@ class CombatService:
             actual_distance = CombatService._point_distance(
                 character.pos_x, character.pos_y, impact_x, impact_y,
             )
+            if target_floor_level!=(character.floor_level or 0):
+                from app.services.explosion_geometry import distance as spatial_distance
+                actual_distance=spatial_distance(location,LocationObject.query.filter_by(location_id=location_id).all(),character.pos_x,character.pos_y,character.floor_level or 0,target_proxy)
             disadvantage = no_direct_sight if source != 'hand' else False
             if source == 'hand':
                 throwing_bonus = sum(
@@ -13207,13 +13385,8 @@ class CombatService:
                 obstacle_difficulty = CombatService._throw_obstacle_difficulty(
                     location_id, character, impact_x, impact_y,
                 )
-                difficulty = max(
-                    1,
-                    round(
-                        3 + actual_distance + posture_penalty + obstacle_difficulty
-                        - throwing_bonus - condition_modifier
-                    ),
-                )
+                difficulty = max(1,3 + actual_distance + posture_penalty + obstacle_difficulty
+                                 - throwing_bonus - condition_modifier)
                 roll_kind = 'throwing'
             else:
                 shooting_bonus = CombatService._base_skill_modifier(
@@ -13252,14 +13425,6 @@ class CombatService:
                         disadvantage = True
                 difficulty = max(1, round(difficulty))
                 roll_kind = 'shooting'
-            rolls = [random.randint(1, 20) for _ in range(2 if disadvantage else 1)]
-            roll = min(rolls) if disadvantage else rolls[0]
-            success = roll == 20 or (roll != 1 and roll >= difficulty)
-            failure = 0 if success else max(1, difficulty - roll)
-            if not success:
-                impact_x, impact_y = CombatService._scatter_point(
-                    impact_x, impact_y, failure, location.grid_width, location.grid_height,
-                )
             explosive_details = {
                 'source': source,
                 'fire_mode': mode if source != 'hand' else None,
@@ -13277,12 +13442,9 @@ class CombatService:
                 'actual_distance': round(actual_distance, 2),
                 'projectile_range': explosive_profile.get('projectile_range'),
                 'airburst': airburst,
+                'floor_level': target_floor_level,
                 'roll_kind': roll_kind,
-                'rolls': rolls,
-                'roll': roll,
                 'difficulty': difficulty,
-                'success': success,
-                'failure': failure,
                 'disadvantage': disadvantage,
                 'direct_sight': not no_direct_sight,
                 'obstacle_difficulty': (
@@ -13312,6 +13474,29 @@ class CombatService:
                 in_combat=True,
             )
             special_action_cost = equipment_module_details['action_points']
+        elif action_key == 'recover_concussion':
+            if not any(e['type']=='concussion' and e.get('active',True) for e in normalize_effect_list(health.get('effects') or [])):
+                raise ValidationError('У персонажа нет контузии')
+        elif action_key=='extinguish_fire':
+            if not any(e['type']=='burning' and e.get('active',True) for e in normalize_effect_list(health.get('effects') or [])):
+                raise ValidationError('Персонаж не горит')
+        elif action_key=='prepare_water':
+            from app.services.burning import water_item
+            from app.services.inventory_access import calculate_inventory_access
+            water,_=water_item(data,item_path)
+            if not CombatService._has_usable_free_hand(character):raise ValidationError('Нет свободной руки для воды')
+            special_action_cost=max(1,int(calculate_inventory_access(data,item_path,water)['retrieval_action_points']))
+        elif action_key=='pour_water':
+            from app.services.burning import water_item
+            held=combat_meta.get('heldWaterItem') or {}
+            if not held.get('path'):raise ValidationError('Сначала возьмите воду в руку')
+            water,_=water_item(data,held['path'])
+            if water.get('id')!=held.get('id'):raise ValidationError('Вода в руке перемещена или заменена')
+            water_target=character if not target_character_id else LocationCharacter.query.filter_by(location_id=location_id,character_id=target_character_id).first()
+            if not water_target:raise NotFoundError('Цель обливания не найдена')
+            from app.services.explosion_geometry import distance as spatial_distance
+            if water_target.id!=character.id and (spatial_distance(location,LocationObject.query.filter_by(location_id=location_id).all(),character.pos_x,character.pos_y,character.floor_level or 0,water_target)>1.5 or CombatService._explosion_cover(location_id,character.pos_x,character.pos_y,water_target,character.floor_level or 0).get('grade')=='full'):
+                raise ValidationError('Цель обливания недоступна')
         elif action_key == 'narrative_action':
             action_name = ' '.join(str(narrative_action_name or '').split())
             if not action_name or len(action_name) > 200:
@@ -14754,7 +14939,8 @@ class CombatService:
             else:
                 raise ValidationError("Not enough action points")
             character.movement_points_max += gain
-            character.movement_points_current += gain
+            from app.services.grenade_reaction import split_movement_gain
+            character.movement_points_current += split_movement_gain(character,gain)
             CombatService._clear_aim(character)
         elif action_key in {'change_posture', 'change_facing'}:
             CombatService._clear_aim(character)
@@ -15511,8 +15697,68 @@ class CombatService:
             else:
                 CombatService._clear_aim(character)
 
+        if action_key=='prepare_water':
+            from app.services.burning import water_item
+            water,litres=water_item(data,item_path)
+            water.setdefault('id',uuid.uuid4().hex)
+            combat_meta['heldWaterItem']={'id':water['id'],'path':list(item_path),'litres':litres,'name':water.get('name','Вода')}
+            character.character.data=data;flag_modified(character.character,'data')
+            narrative_action_details={'name':f'Вода взята в руку: {litres:g} л','action_points':special_action_cost,'roll_required':False}
+        elif action_key=='pour_water':
+            from app.services.burning import pour
+            litres=pour(character,water_target)
+            CombatService._sync_location_effects_from_character(water_target)
+            narrative_action_details={'name':f'Обливание водой: {litres:g} л, горение −{2*litres:g} раунда','action_points':2,'roll_required':False}
+        elif action_key=='extinguish_fire':
+            from app.services.burning import extinguish_difficulty
+            difficulty=extinguish_difficulty(data);roll=random.randint(1,20)
+            check={'roll':roll,'total':roll,'difficulty':difficulty,'success':roll>=difficulty}
+            if check['success']:health['effects']=[e for e in normalize_effect_list(health.get('effects') or []) if e['type']!='burning']
+            narrative_action_details={'name':'Тушить себя','action_points':3,'roll_required':True,'difficulty':difficulty,'check':check}
+            character.character.data=data;flag_modified(character.character,'data')
+            CombatService._sync_location_effects_from_character(character)
+        if action_key=='recover_concussion':
+            check=CombatService._narrative_skill_check(data,'skills.physical.will',
+                advantage=bool(CombatService._consume_help_advantage(character,'skills.physical.will')))
+            check.update(difficulty=12,success=check['total']>=12)
+            if check['success']:
+                data['health']['effects']=[e for e in normalize_effect_list(data['health'].get('effects') or []) if e['type']!='concussion']
+            CombatService._apply_stress_check_consequences(data,'skills.physical.will',check['success'])
+            narrative_action_details={'name':'Преодолеть контузию','action_points':2,'roll_required':True,
+                'skill_path':'skills.physical.will','skill_label':'Воля','difficulty':12,'check':check}
+            character.character.data=data
+            flag_modified(character.character,'data')
+            CombatService._sync_location_effects_from_character(character)
         if explosive_details:
             source = explosive_details['source']
+            # Броски выполняются только после полной оплаты, в том числе многоходовой.
+            if source=='hand' and explosive_details['fuse_mode']=='delay':
+                check=CombatService._narrative_skill_check(data,'skills.other.tactics',
+                    advantage=CombatService._consume_help_advantage(character,'skills.other.tactics'))
+                check.update(difficulty=13,success=check['total']>=13)
+                CombatService._apply_stress_check_consequences(data,'skills.other.tactics',check['success'])
+                original=explosive_details['profile'].get('fuse','instant')
+                if check['success']:
+                    explosive_details['profile']['fuse']={'round':'turn_end','turn_end':'instant'}.get(original,original)
+                explosive_details['delay_check']=check
+                explosive_details['original_fuse']=original
+                explosive_details['delay_attempted']=True
+            disadvantage=explosive_details['disadvantage']
+            rolls=[random.randint(1,20) for _ in range(2 if disadvantage else 1)]
+            roll=min(rolls) if disadvantage else rolls[0]
+            difficulty=explosive_details['difficulty']
+            success=(roll>=difficulty if source=='hand' else roll==20 or (roll!=1 and roll>=difficulty))
+            failure=0 if success else max(1 if source!='hand' else 0,difficulty-roll)
+            explosive_details.update(rolls=rolls,roll=roll,success=success,failure=failure)
+            if not success:
+                x,y=CombatService._scatter_point(explosive_details['impact']['x'],explosive_details['impact']['y'],
+                    failure,location.grid_width,location.grid_height,location=location,floor_level=explosive_details['floor_level'])
+                explosive_details['impact']={'x':x,'y':y}
+            if not explosive_details.get('airburst'):
+                from app.services.explosion_geometry import landing_level
+                landed=landing_level(location,LocationObject.query.filter_by(location_id=location_id).all(),
+                    explosive_details['impact']['x'],explosive_details['impact']['y'],explosive_details['floor_level'])
+                if landed is not None:explosive_details['floor_level']=landed
             if source == 'weapon':
                 explosive_details['shots_fired_this_round'] = CombatService._record_weapon_shots(
                     combat_meta,
@@ -15545,26 +15791,29 @@ class CombatService:
                     explosive_details['impact']['y'],
                     explosive_details['profile'],
                     round_number=current_round,
-                    **({'floor_level':character.floor_level} if character.floor_level else {}),
+                    **({'floor_level':explosive_details['floor_level']} if explosive_details['floor_level'] else {}),
                 )
                 area = explosive_details['explosion'].get('area')
                 if isinstance(area, dict):
                     areas = list(state.area_effects or [])
                     areas.append(area)
                     state.area_effects = areas
-                explosive_details['detonated'] = True
+                explosive_details['detonated'] = not explosive_details['explosion'].get('awaiting_gm',False)
             else:
                 event = {
                     'id': uuid.uuid4().hex,
                     'item_name': explosive_details['item_name'],
                     'x': explosive_details['impact']['x'],
                     'y': explosive_details['impact']['y'],
-                    **({'floor_level':character.floor_level} if character.floor_level else {}),
+                    **({'floor_level':explosive_details['floor_level']} if explosive_details['floor_level'] else {}),
                     'profile': explosive_details['profile'],
                     'actor_id': character.id,
-                    'trigger': 'turn_end' if fuse == 'turn_end' else 'round_start',
+                    'trigger': 'short_fuse' if fuse == 'turn_end' else 'actor_turn_start',
                     'round': current_round + (1 if fuse == 'round' else 0),
                 }
+                if fuse=='turn_end':
+                    from app.services.grenade_reaction import prepare_event
+                    prepare_event(state,event)
                 pending = list(state.pending_explosives or [])
                 pending.append(event)
                 state.pending_explosives = pending
@@ -16039,6 +16288,9 @@ class CombatService:
             combat_meta.pop('completedPendingActionId', None)
             character.character.data = data
             flag_modified(character.character, 'data')
+        if explosive_details and explosive_details['profile'].get('fuse')=='turn_end':
+            from app.services.grenade_reaction import begin
+            explosive_details['reaction_detonations']=begin(character,state)
         character.last_action = db.func.now()
         db.session.commit()
         if action_key == 'recover_from_shock':
@@ -16124,6 +16376,8 @@ class CombatService:
         ).first()
         if not character:
             raise NotFoundError("Character not in location")
+        from app.services.explosion_choice import require_resolved
+        require_resolved(state)
 
         from app.services.character_interaction import CharacterInteractionService
         if CharacterInteractionService.movement_locked(character.id):
@@ -16639,6 +16893,7 @@ class CombatService:
                 meta.pop('shockRecoveryRound', None)
                 meta.pop('movementEvasion', None)
                 meta.pop('slipperyMovement', None)
+                meta.pop('grenadeReaction',None)
                 meta.pop('painShockRecoveredRound', None)
                 meta.pop('painShockRecovered', None)
                 meta.pop('firedRound', None)

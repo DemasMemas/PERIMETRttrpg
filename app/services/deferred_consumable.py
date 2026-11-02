@@ -166,6 +166,8 @@ def resolve_ready(action_id, user_id, *, location_id=None):
     meta = ((actor.character.data or {}).get('health') or {}).get('combatMeta') or {}
     if row.status != 'ready' or not state or state.current_location_character_id != actor.id or meta.get('completedPendingActionId') != row.id:
         raise ConflictError('Процедура ещё не оплачена, завершена, отменена или сейчас не ход врача')
+    if meta.get('grenadeReaction'):
+        raise ConflictError('Сначала завершите реакцию на гранату')
     actor_id, action_id = actor.id, row.id
     try:
         CombatService.ensure_character_can_act(actor)

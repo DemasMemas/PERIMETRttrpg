@@ -23,6 +23,11 @@ module.exports=async({page,request,token,lobby,base,connect,debugPort,safeSessio
     await page.evaluate(`(async()=>{window.L=await import('/static/js/locationScene.js');window.T=await import('three');await enterLocation(${loc.id})})()`);
     await page.until(`window.locationControls&&document.getElementById('scene-loading-screen').classList.contains('is-hidden')`,'Pripyat loaded');
     await page.evaluate(`L.setLocationEditMode(false);window.contextEvents=[];window.addEventListener('contextmenu',e=>contextEvents.push({prevented:e.defaultPrevented,target:e.target.tagName}),false)`);
+    if (safeSession && process.env.VTT_SAFE_SCENARIO === 'grenades') {
+        await require('./grenades.browser.cjs')({page,request,token,lobby,base,connect,debugPort,safeSession,location:loc,actor,player});
+        await require('./grenade_scene.browser.cjs')({page,request,token,lobby,base,safeSession});
+        return;
+    }
     if (safeSession && process.env.VTT_SAFE_SCENARIO === 'slippery') {
         await require('./slippery_movement.browser.cjs')({page,request,token,lobby,base,connect,debugPort,safeSession,location:loc,actor,player});
         return;

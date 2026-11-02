@@ -1954,6 +1954,7 @@ function getHealthRollModifier(data, skillPath, options = {}) {
     const suppressedFractureAreas = new Set(activeEffects
         .filter(effect => effect.suppress_fracture)
         .map(effect => String(effect.area || '').toLowerCase()));
+    if(['physical.shooting','physical.accuracy'].includes(skillPath)&&activeEffects.some(e=>e.type==='burning'))modifier-=3;
     activeEffects.forEach(effect => {
         const penalties = effect.modifiers || {};
         modifier -= Number(effect.rollPenalty ?? effect.roll_penalty ?? effect.skillPenalty ?? 0) || 0;
@@ -11818,7 +11819,7 @@ async function useGrenade(item, itemPath, options = {}) {
                 <p>Выберите подготовку запала перед броском.</p>
                 <div class="form-actions" style="display:grid;gap:8px">
                     <button class="btn btn-primary" data-fuse="normal">Обычный запал</button>
-                    <button class="btn btn-warning" data-fuse="delay">Задержать гранату · +2 ОД</button>
+                    <button class="btn btn-warning" data-fuse="delay">Задержать гранату · +2 ОД, Тактика СЛ13</button>
                     <button class="btn btn-secondary" data-cancel>Отмена</button>
                 </div>
             </div>

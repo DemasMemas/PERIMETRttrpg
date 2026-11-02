@@ -1,4 +1,6 @@
 const EFFECT_TYPE_META = {
+    burning: {label:'Горение',group:'injury'},
+    concussion: {label:'Контузия',group:'injury'},
     // `generic` is a legacy/fallback record. New manual entries use `custom`.
     generic: { label: 'Неопределённый эффект', group: 'technical' },
     custom: { label: 'Пользовательский эффект', group: 'status' },
@@ -63,6 +65,8 @@ const EFFECT_TYPE_META = {
 };
 
 const TYPE_ALIASES = {
+    burning:'burning','горение':'burning',
+    concussion:'concussion','контузия':'concussion',
     custom: 'custom',
     'пользовательский эффект': 'custom',
     organ_failure: 'organ_failure',
@@ -442,6 +446,8 @@ export function normalizeEffect(raw = {}) {
     const name = String(raw.name || raw.label || '').trim();
     const source = raw.source || raw.origin || null;
     let type = canonicalType(raw.type || raw.kind || raw.effectType, name);
+    if(type==='generic'&&name.toLocaleLowerCase()==='контузия')type='concussion';
+    if(type==='generic'&&name.toLocaleLowerCase()==='горение')type='burning';
     if (source === 'stress_manifestation' && type === 'generic') type = 'stress_effect';
     const value = raw.value ?? raw.amount ?? raw.power ?? 0;
     const duration = raw.duration ?? raw.turns ?? raw.remaining ?? null;
@@ -461,12 +467,17 @@ export function normalizeEffect(raw = {}) {
         active: raw.active !== false,
         area: raw.area || raw.zone || raw.bodyPart || raw.target || null,
     };
+    if(type==='concussion')normalized.rollPenalty=3;
     Object.entries(raw).forEach(([key, entryValue]) => {
         if (!['type', 'kind', 'effectType', 'turns', 'tickPhase', 'zone', 'bodyPart', 'target'].includes(key)
             && normalized[key] === undefined) {
             normalized[key] = entryValue;
         }
     });
+    if(type==='burning'){
+        normalized.tick='round_end';normalized.damage_per_round=normalized.damage_per_round||50;
+        normalized.thermal_threshold??=35;
+    }
     if (['', 'общий', 'generic', 'неопределенный эффект', 'неопределённый эффект'].includes(String(normalized.name || '').trim().toLowerCase()) && type !== 'generic') {
         normalized.name = getEffectMeta(type).label;
     }
@@ -624,6 +635,12 @@ export function applyEffectToHealth(healthInput = {}, rawEffect = {}) {
     const signedValue = Number(effect.value);
     const magnitude = Math.abs(Number.isFinite(signedValue) ? signedValue : toInt(effect.value, 0));
     const activeEffects = normalizeEffectList(health.effects || []);
+    if (effect.type === 'concussion') {
+        effect.remaining = Math.max(effect.remaining || 0, ...activeEffects.filter(e => e.type === 'concussion' && e.active !== false).map(e => e.remaining || 0)) || null;
+        health.effects = [...activeEffects.filter(e => e.type !== 'concussion'), effect];
+        syncHealthDerivedStatuses(health);
+        return { health, effect, applied: true, summary: effect.type };
+    }
     if (String(effect.type || '').startsWith('bleeding_')
         && activeEffects.some(item => item.type === 'bleeding_prevention' && item.active !== false)) {
         return { health, effect, applied: false, summary: 'bleeding_blocked' };

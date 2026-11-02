@@ -708,6 +708,12 @@ export const Server = {
         });
     },
 
+    async decideExplosionTarget(lobbyId, locationId, eventId, actorId, choice) {
+        return apiFetch(`/lobbies/${lobbyId}/locations/${locationId}/combat/explosions/${eventId}/targets/${actorId}`, {
+            method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({choice}),
+        });
+    },
+
     async removeLocationCombatParticipant(lobbyId, locationId, locationCharacterId) {
         return apiFetch(`/lobbies/${lobbyId}/locations/${locationId}/combat/participants/${locationCharacterId}`, {
             method: 'DELETE',

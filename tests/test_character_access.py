@@ -381,6 +381,16 @@ def test_sheet_cannot_reset_slippery_movement(access_case, client, transport):
     assert character.data['notes'] == 'new'
 
 
+@pytest.mark.parametrize('transport',['http','socket'])
+def test_sheet_cannot_release_reserved_grenade_resources(access_case,client,transport):
+    case=access_case;character=case['character']
+    state={'event_ids':['grenade'],'held_action_points':3,'held_movement_points':5}
+    character.data={'health':{'combatMeta':{'grenadeReaction':state}}};db.session.commit()
+    assert update(case,client,case['owner'],{'data':{'health':{'combatMeta':{}},'notes':'new'}},transport)==200
+    db.session.refresh(character)
+    assert character.data['health']['combatMeta']['grenadeReaction']==state
+
+
 @pytest.mark.parametrize('transport', ['http', 'socket'])
 def test_skill_xp_awarded_after_manual_level_is_not_reset_again(access_case, client, transport):
     case = access_case
