@@ -1,5 +1,6 @@
 # app/services/character.py
 import logging
+import math
 from collections import Counter
 from copy import deepcopy
 from dataclasses import dataclass
@@ -179,6 +180,7 @@ class CharacterService:
         health = updated_data.get('health')
         current_health = current_data.get('health') if isinstance(current_data.get('health'), dict) else {}
         reset_round_damage = False
+        manual_paths = set(manual_fields)
 
         for raw_path in manual_fields:
             path = str(raw_path or '')
@@ -205,6 +207,17 @@ class CharacterService:
             elif path == 'health.current' and isinstance(health, dict):
                 if health.get('current') != current_health.get('current'):
                     reset_round_damage = True
+            elif (len(parts) == 4 and parts[0] == 'skills'
+                  and parts[1] in {'physical', 'social', 'other'} and parts[3] == 'base'):
+                old, new = current_data, updated_data
+                for part in parts[:3]:
+                    old = old.get(part) if isinstance(old, dict) else None
+                    new = new.get(part) if isinstance(new, dict) else None
+                # Явно переданный xp может уже включать нажатую после ввода кнопку.
+                if (isinstance(new, dict)
+                        and new.get('base') != (old.get('base') if isinstance(old, dict) else None)
+                        and '.'.join(parts[:3] + ['xp']) not in manual_paths):
+                    new['xp'] = 0
 
         if reset_round_damage and isinstance(health, dict):
             combat_meta = health.get('combatMeta')
@@ -217,6 +230,43 @@ class CharacterService:
                 ):
                     combat_meta.pop(key, None)
         return updated_data
+
+    @staticmethod
+    def validate_skill_fields(current_data, updated_data):
+        """Проверяет изменённые числа навыков, сохраняя совместимость старых листов."""
+        skills = updated_data.get('skills')
+        if not isinstance(skills, dict):
+            return
+        previous = (current_data or {}).get('skills') or {}
+        previous = previous if isinstance(previous, dict) else {}
+        for category in ('physical', 'social', 'other'):
+            group = skills.get(category) or {}
+            old_group = previous.get(category) or {}
+            if not isinstance(group, dict):
+                if group == old_group:
+                    continue
+                raise ValidationError('Навыки должны быть объектом')
+            old_group = old_group if isinstance(old_group, dict) else {}
+            for key, skill in group.items():
+                old = old_group.get(key) or {}
+                if not isinstance(skill, dict) or not isinstance(old, dict):
+                    if skill == old:
+                        continue
+                    raise ValidationError('Некорректные данные навыка')
+                for field in ('base', 'bonus', 'xp'):
+                    if field not in skill or (skill[field] == old.get(field) and type(skill[field]) is type(old.get(field))):
+                        continue
+                    value = skill[field]
+                    if (type(value) not in (int, float) or not -2**53 + 1 <= value <= 2**53 - 1 or not math.isfinite(value)
+                            or (field != 'bonus' and (int(value) != value or abs(value) > 2**53 - 1))
+                            or (field == 'xp' and value < 0)):
+                        raise ValidationError('Значение навыка и опыт должны быть корректными числами')
+        for field in ('skillPoints', 'specializations'):
+            if field not in skills or (skills[field] == previous.get(field) and type(skills[field]) is type(previous.get(field))):
+                continue
+            value = skills[field]
+            if type(value) not in (int, float) or not 0 <= value <= 2**53 - 1 or not math.isfinite(value) or int(value) != value:
+                raise ValidationError('Количество свободных очков должно быть целым неотрицательным числом')
 
     @staticmethod
     def _item_totals(character_data):
@@ -311,7 +361,7 @@ class CharacterService:
         character_data = clean_snapshot(data or {})
         jump_meta = (character_data.get('health') or {}).get('combatMeta')
         if isinstance(jump_meta,dict):
-            for key in ('unstableJump','jumpSupport'):
+            for key in ('unstableJump','jumpSupport','slipperyMovement'):
                 jump_meta.pop(key,None)
         normalize_inventory_ammo_stacks(character_data)
         apply_health_maximums(character_data)
@@ -393,6 +443,7 @@ class CharacterService:
                 character_data = merge_sheet_data(base_data, character_data, character.data)
             _preserve_server_medical_retry(character.data, character_data)
             _preserve_server_zombification(character.data,character_data)
+            CharacterService.validate_skill_fields(character.data, character_data)
             CharacterService.apply_manual_field_resets(
                 character.data,
                 character_data,

@@ -20,7 +20,9 @@ test('catalog reuses metal and distinguishes stone tops, walls and new saved ter
     assert.equal(TERRAIN_MATERIALS[terrainMaterialIndex('bare_dirt') - 1].asset, 'sand_03');
     assert.equal(TERRAIN_MATERIALS[terrainMaterialIndex('granite_tiles') - 1].asset, 'concrete_pavement_02');
     assert.match(TERRAIN_MATERIALS[terrainMaterialIndex('wood_floor') - 1].color, /aged_wood/);
-    assert.equal(terrainMaterialIndex('ice'), 0);
+    assert.equal(terrainMaterialIndex('ice'), 12);
+    assert.equal(TERRAIN_MATERIALS[11].asset, 'ice001');
+    assert.equal(TERRAIN_MATERIALS[11].arm, '/static/materials/terrain/ice001/arm.png');
     assert.equal(terrainMaterialIndex({ terrain: null }), 0);
 });
 
@@ -58,6 +60,9 @@ test('tone corrections retain detail, lighten gravel and stone, and preserve the
     const snow = adjusted('snow', [40, 45, 50, 255, 210, 210, 210, 255]);
     assert.ok(snow[0] < 50 && snow[4] > 150 && snow[4] > snow[0], 'snow no longer forces every pixel near white');
     assert.equal(adjusted('snow', [220, 230, 240, 119])[3], 119, 'albedo processing preserves packed roughness');
+    const ice = adjusted('ice', [20, 30, 40, 255, 230, 240, 250, 255]);
+    assert.ok(ice[0] >= 145 && ice[4] - ice[0] < 85, 'лёд светлый, без прежних чёрных пятен и резкого контраста');
+    assert.ok(ice[2] > ice[0], 'сохраняется холодный оттенок');
     for (const kind of ['bare_dirt', 'granite_tiles', 'metal']) {
         assert.deepEqual(adjusted(kind, [110, 70, 30, 255]), [110, 70, 30, 255]);
     }
@@ -73,7 +78,7 @@ test('local editor gains distinct surface IDs without duplicating options', () =
         const select = { options: [{ value: 'concrete', textContent: 'Old label' }],
             appendChild(option) { this.options.push(option); } };
         addTerrainMaterialOptions(select); addTerrainMaterialOptions(select);
-        for (const value of ['concrete', 'granite_tiles', 'bare_dirt', 'wood_floor']) {
+        for (const value of ['concrete', 'granite_tiles', 'bare_dirt', 'wood_floor', 'ice']) {
             assert.equal(select.options.filter(option => option.value === value).length, 1);
         }
         assert.equal(select.options[0].textContent, 'Промышленный бетон');
@@ -149,14 +154,25 @@ test('world and local layers share atlas images and release local renderer textu
     const { THREE, loaded, contexts } = environment();
     const world = createTerrainMaterialLayer(THREE, {world:true}), local = createTerrainMaterialLayer(THREE);
     await world.ready;
-    assert.equal(loaded.length, 32, 'Snow001 loads two resources instead of duplicating three atlas maps');
-    assert.equal(contexts.length, 5);
+    assert.equal(loaded.length, 35, 'Snow001: два ресурса; остальные материалы, включая лёд: по три');
+    assert.equal(contexts.length, 7);
     assert.equal(world.diagnostics().atlasBytes, 64 * 1024 * 1024);
-    assert.equal(world.diagnostics().materials, 11);
+    assert.equal(world.diagnostics().iceBytes, Math.ceil(2 * 512 ** 2 * 4 * 4 / 3));
+    assert.equal(world.diagnostics().materials, 12);
     world.resize(64, 32); local.resize(20, 20);
     world.fill([[{ terrain: 'rock' }, { terrain: 'sand' }]], 31, 10);
     const a = compile(world), b = compile(local);
-    for (const name of ['terrainAtlasColor','terrainAtlasNormal','terrainAtlasArm','terrainSnowColorRoughness','terrainSnowNormal']) {
+    assert.equal(a.uniforms.terrainIceColorRoughness.value.image.width, 512);
+    assert.equal(contexts[5].gray[3], 80, 'в альфа-канал льда упакован зелёный канал шероховатости ARM');
+    const ice = TERRAIN_MATERIALS.find(entry => entry.terrain === 'ice');
+    assert.equal(ice.repeat, 4, 'принятый локальный масштаб сохранён');
+    assert.equal(ice.world.repeat * 100, 120, 'глобальный рисунок укрупнён до полотна 120 м');
+    assert.match(a.fragmentShader, /if \(id == 12\.0\) return vec4\(1\.200,0\.020,/);
+    assert.match(b.fragmentShader, /if \(id == 12\.0\) return vec4\(4\.000,0\.140,/);
+    assert.match(a.fragmentShader, /color = terrainWorldSnowColor\(snowColor, snowUv\)/);
+    assert.doesNotMatch(a.fragmentShader, /vec3\(0\.70, 0\.76, 0\.79\)/);
+    assert.doesNotMatch(b.fragmentShader, /terrainWorldSnowColor/);
+    for (const name of ['terrainAtlasColor','terrainAtlasNormal','terrainAtlasArm','terrainSnowColorRoughness','terrainSnowNormal','terrainIceColorRoughness','terrainIceNormal']) {
         assert.notEqual(a.uniforms[name].value, b.uniforms[name].value);
         assert.equal(a.uniforms[name].value.image, b.uniforms[name].value.image);
         assert.equal(b.uniforms[name].value.needsUpdate, true, 'local wrapper receives completed asynchronous atlas');
@@ -178,7 +194,7 @@ test('world and local layers share atlas images and release local renderer textu
     assert.notEqual(a.uniforms.terrainAtlasColor.value.disposed, true);
     assert.equal(local.diagnostics().lookupBytes, 1600);
     local.dispose(); local.dispose();
-    for (const name of ['terrainAtlasColor','terrainAtlasNormal','terrainAtlasArm','terrainSnowColorRoughness','terrainSnowNormal']) {
+    for (const name of ['terrainAtlasColor','terrainAtlasNormal','terrainAtlasArm','terrainSnowColorRoughness','terrainSnowNormal','terrainIceColorRoughness','terrainIceNormal']) {
         assert.equal(b.uniforms[name].value.disposeCount, 1, 'local renderer callbacks are released exactly once');
         assert.notEqual(a.uniforms[name].value.disposed, true, 'world textures stay valid');
     }
@@ -187,7 +203,7 @@ test('world and local layers share atlas images and release local renderer textu
     const c = compile(reopened);
     assert.equal(c.uniforms.terrainAtlasColor.value.image, a.uniforms.terrainAtlasColor.value.image);
     assert.notEqual(c.uniforms.terrainAtlasColor.value, b.uniforms.terrainAtlasColor.value);
-    assert.equal(loaded.length, 32, 'reopening reuses loaded images');
+    assert.equal(loaded.length, 35, 'reopening reuses loaded images');
     reopened.dispose();
 });
 
@@ -227,6 +243,16 @@ test('failed image loading keeps the original terrain shader path active', async
         assert.match(layer.diagnostics().error, /Terrain map unavailable/);
         assert.equal(compile(layer).uniforms.terrainAtlasReady.value, 0);
     } finally { console.warn = warn; }
+});
+
+test('прозрачность задаётся отдельному слою льда, сохраняя непрозрачность грунта', async () => {
+    const { THREE } = environment(), layer = createTerrainMaterialLayer(THREE, {world:true});
+    await layer.ready;
+    const ground=compile(layer), glaze=compile(layer,{iceGlaze:true});
+    assert.doesNotMatch(ground.fragmentShader,/diffuseColor\.a \*=/);
+    assert.match(glaze.fragmentShader,/diffuseColor\.a \*= clamp\(terrainIceOpacity, 0\.0, 0\.58\)/);
+    assert.notEqual(ground.material.customProgramCacheKey(),glaze.material.customProgramCacheKey());
+    layer.dispose();
 });
 
 
@@ -278,6 +304,7 @@ test('world editor excludes building floors while saved world material IDs remai
         assert.ok(select.options.some(option => option.value === 'concrete'));
         assert.equal(terrainMaterialIndex({ terrain: 'granite_tiles' }), 10);
         assert.equal(terrainMaterialIndex({ terrain: 'wood_floor' }), 11);
+        assert.equal(select.options.find(o => o.value === 'ice')?.textContent, 'Лёд');
         addTerrainMaterialOptions(select);
         for (const kind of ['wood_floor', 'granite_tiles']) {
             assert.equal(select.options.filter(option => option.value === kind).length, 1);

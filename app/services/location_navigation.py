@@ -1,6 +1,7 @@
 """Discrete storeys and stair surfaces. Rendering/viewed floor is never an input."""
 import heapq
 import math
+from app.services.slippery_movement import terrain_segments
 
 STOREY_HEIGHT = 2.4
 
@@ -283,7 +284,7 @@ def connects(a, b):
     return abs(a['height'] - b['height']) <= rise * distance + .21
 
 
-def find_path(location, objects, start, end, maps, terrain_costs=None, can_traverse=None, geometry=None, continuous=False, start_height=None):
+def find_path(location, objects, start, end, maps, terrain_costs=None, can_traverse=None, geometry=None, continuous=False, start_height=None, directional=False):
     """maps(level) returns the established blocked cells and climb costs."""
     levels = {0, start[2], end[2]} | {level_of(o) for o in objects}
     # Surface geometry only uses these structures. Collision maps still include
@@ -306,6 +307,13 @@ def find_path(location, objects, start, end, maps, terrain_costs=None, can_trave
     anchor_buckets = {}
     if continuous:
         anchors = set(geometry.anchor_points() if geometry else ()) | {start,end}
+        if directional:
+            # Одних центров клеток недостаточно для шагов под произвольным углом.
+            # Короткие отрезки сохраняют проверки поверхностей и коллизий графа.
+            steps = max(1,math.ceil(math.hypot(end[0]-start[0],end[1]-start[1])))
+            anchors.update((start[0]+(end[0]-start[0])*i/steps,
+                            start[1]+(end[1]-start[1])*i/steps,level)
+                           for level in levels for i in range(1,steps))
         for x,y,level in anchors:
             if 0 <= x < location.grid_width and 0 <= y < location.grid_height:
                 anchor_buckets.setdefault((math.floor(x),math.floor(y),level),set()).add((x,y,level))
@@ -314,26 +322,7 @@ def find_path(location, objects, start, end, maps, terrain_costs=None, can_trave
         return math.floor(key[0]+.5),math.floor(key[1]+.5)
 
     def weighted_segment(a,b):
-        length = math.hypot(b['x']-a['x'],b['y']-a['y'])
-        if not length:
-            return abs(b['height']-a['height'])
-        cuts = {0.,1.}
-        for axis in ('x','y'):
-            lo,hi = sorted((a[axis]+.5,b[axis]+.5))
-            delta = b[axis]-a[axis]
-            if not delta:
-                continue
-            for boundary in range(math.floor(lo)+1,math.ceil(hi)):
-                t = (boundary-a[axis]-.5)/delta
-                if 0 < t < 1:
-                    cuts.add(t)
-        ordered = sorted(cuts)
-        result = 0
-        for lo,hi in zip(ordered,ordered[1:]):
-            t = (lo+hi)/2
-            x,y = math.floor(a['x']+(b['x']-a['x'])*t+.5),math.floor(a['y']+(b['y']-a['y'])*t+.5)
-            result += length*(hi-lo)*(terrain_costs or {}).get((x,y,b['level']),1)
-        return result
+        return sum(part['cost'] for part in terrain_segments(a, b, terrain_costs))
 
     def node(key):
         if key not in cache:
@@ -409,11 +398,18 @@ def find_path(location, objects, start, end, maps, terrain_costs=None, can_trave
                     before=key
                 surfaces=raised
             climb_cost = sum(previous_climb.get(k,0) for k in keys_in_order[1:]) if continuous else sum(maps(n['level'])[1].get((n['x'], n['y']), 0) for n in nodes[1:])
+            segments = []
+            if continuous:
+                for index, (a, b) in enumerate(zip(nodes, nodes[1:])):
+                    edge = list(terrain_segments(a, b, terrain_costs))
+                    if edge:
+                        edge[0]['climbs'] = previous_climbs.get(keys_in_order[index + 1], [])
+                    segments.extend({**part, 'edge_index': index} for part in edge)
             return {'path': [(n['x'], n['y']) for n in nodes], 'cost': cost,
                     'distance': sum(math.hypot(b['x']-a['x'],b['y']-a['y']) or abs(b['height']-a['height']) for a,b in zip(nodes,nodes[1:])) if continuous else len(nodes)-1,
                     'climb_cost': climb_cost,
                     'climbs': [event for key in keys_in_order[1:] for event in previous_climbs.get(key,[])],
-                    'surfaces': surfaces}
+                    'surfaces': surfaces, 'movement_segments': segments}
         a = node(key)
         positions = {(key[0]+dx,key[1]+dy) for dx,dy in [(0,0),(1,0),(-1,0),(0,1),(0,-1),(1,1),(1,-1),(-1,1),(-1,-1)]} if not continuous else {
             (x,y) for x in range(math.floor(key[0])-1,math.ceil(key[0])+2) for y in range(math.floor(key[1])-1,math.ceil(key[1])+2)

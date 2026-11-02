@@ -276,7 +276,7 @@ if(typeof renderFacingPreview==='function'){const original=renderFacingPreview;r
             return;
         }
         if (safeSession && process.env.VTT_SAFE_SCENARIO === 'skills') {
-            await require('./skills.browser.cjs')({page,request,token,lobby});
+            await require('./skills.browser.cjs')({page,request,token,lobby,base,connect,debugPort,safeSession});
             return;
         }
         if (process.env.VTT_PRIPYAT === '1' || process.env.VTT_MOVEMENT_ONLY === '1') {

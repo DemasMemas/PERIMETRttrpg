@@ -829,6 +829,8 @@ function checkAndLevelUpSkill(skill, skillPath) {
 }
 
 window.addSkillXpFromPoints = function(skillPath) {
+    if (!currentCharacterCanEdit || sheetSaveBlocked) return;
+    updateDataFromFields();
     if (!currentCharacterData.skills) currentCharacterData.skills = {};
     let skill = getSkillByPath(skillPath);
     if (!skill) return;
@@ -841,7 +843,7 @@ window.addSkillXpFromPoints = function(skillPath) {
 
     currentCharacterData.skills.skillPoints = freePoints - 1;
 
-    skill.xp = (skill.xp || 0) + 1;
+    skill.xp = (Number(skill.xp) || 0) + 1;
 
     checkAndLevelUpSkill(skill, skillPath);
 
@@ -850,10 +852,12 @@ window.addSkillXpFromPoints = function(skillPath) {
 };
 
 window.addSkillXpFromUse = function(skillPath) {
+    if (!currentCharacterCanEdit || sheetSaveBlocked) return;
+    updateDataFromFields();
     let skill = getSkillByPath(skillPath);
     if (!skill) return;
 
-    skill.xp = (skill.xp || 0) + 1;
+    skill.xp = (Number(skill.xp) || 0) + 1;
     checkAndLevelUpSkill(skill, skillPath);
 
     renderSkillsTab(currentCharacterData);
@@ -861,6 +865,8 @@ window.addSkillXpFromUse = function(skillPath) {
 };
 
 window.addWeaponXp = function(weaponKey) {
+    if (!currentCharacterCanEdit || sheetSaveBlocked) return;
+    updateDataFromFields();
     if (!currentCharacterData.skills) currentCharacterData.skills = {};
     if (!currentCharacterData.skills.specialized) currentCharacterData.skills.specialized = {};
 
@@ -902,6 +908,8 @@ window.addWeaponXp = function(weaponKey) {
 };
 
 window.setWeaponLevel = function(weaponKey, newLevel) {
+    if (!currentCharacterCanEdit || sheetSaveBlocked) return;
+    updateDataFromFields();
     if (!currentCharacterData.skills) currentCharacterData.skills = {};
     if (!currentCharacterData.skills.specialized) currentCharacterData.skills.specialized = {};
 
@@ -965,6 +973,7 @@ function updateDataFromFields() {
     inputs.forEach(input => {
         const name = input.getAttribute('name');
         if (!name) return;
+        if (name.startsWith('skills.') && input.type === 'number' && !validSkillField(input)) return;
         let value;
         if (input.type === 'checkbox') {
             value = input.checked;
@@ -985,6 +994,13 @@ function updateDataFromFields() {
         // Преобразование для templateId и подобных полей
         if (name.endsWith('templateId') || name.endsWith('Id')) {
             value = value === '' ? null : Number(value);
+        }
+        if (/^skills\.(physical|social|other)\.[^.]+\.base$/.test(name)
+            && Number(characterValueAtPath(currentCharacterData, name)) !== value) {
+            const xpPath = name.replace(/\.base$/, '.xp');
+            setValueByPath(currentCharacterData, xpPath, 0);
+            pendingManualFieldPaths.add(xpPath);
+            pendingManualFieldPaths.add(name);
         }
         setValueByPath(currentCharacterData, name, value);
         const zoneMatch = name.match(/^health\.zones\.([^.]+)\.(current|max)$/);
@@ -1019,6 +1035,42 @@ function consumeManualFieldPaths() {
     const paths = [...pendingManualFieldPaths];
     pendingManualFieldPaths.clear();
     return paths;
+}
+
+function validSkillField(input) {
+    const value = Number(input.value);
+    if (String(input.value).trim() === '' || !Number.isFinite(value) || Math.abs(value) > Number.MAX_SAFE_INTEGER) return false;
+    if (/\.(base|xp)$/.test(input.name) || /^skills\.(skillPoints|specializations)$/.test(input.name)) {
+        return Number.isSafeInteger(value) && (!/\.(xp|skillPoints|specializations)$/.test(input.name) || value >= 0);
+    }
+    return true;
+}
+
+function handleManualFormEdit(event) {
+    const input = event.target, path = input?.getAttribute?.('name') || '';
+    if (!currentCharacterCanEdit || sheetSaveBlocked) return;
+    if (path.startsWith('skills.') && input.type === 'number') {
+        if (!validSkillField(input)) {
+            if (event.type === 'change') {
+                input.value = input.defaultValue = String(characterValueAtPath(currentCharacterData, path) ?? 0);
+                showNotification('Введите корректное числовое значение навыка.', 'system');
+            }
+            return;
+        }
+        trackManualCharacterField(event);
+        updateDataFromFields();
+        const skillPath = path.match(/^skills\.((?:physical|social|other)\.[^.]+)\./)?.[1];
+        if (skillPath) {
+            const skill = getSkillByPath(skillPath);
+            const progress = document.querySelector(`[data-skill-progress="${CSS.escape(skillPath)}"]`);
+            if (skill && progress) progress.textContent = `Опыт: ${skill.xp || 0}/${getRequiredXp(skill.base)}`;
+        }
+        if (event.type === 'change') forceSyncCharacter();
+        else scheduleAutoSave(200);
+        return;
+    }
+    trackManualCharacterField(event);
+    scheduleAutoSave();
 }
 
 function renderCreatedByPlayerBadge(item) {
@@ -1339,13 +1391,13 @@ function persistCurrentSheet() {
     });
 }
 
-function scheduleAutoSave() {
+function scheduleAutoSave(delay = AUTO_SAVE_DELAY) {
     if (!currentCharacterCanEdit) return;
     if (autoSaveTimer) clearTimeout(autoSaveTimer);
     autoSaveTimer = setTimeout(() => {
         autoSaveTimer = null;
         persistCurrentSheet();
-    }, AUTO_SAVE_DELAY);
+    }, delay);
 }
 
 function forceSyncCharacter() {
@@ -2240,10 +2292,6 @@ async function renderCharacterSheet(characterName, data) {
 
     const form = document.getElementById('character-sheet-form');
     if (form && form.dataset.autosaveInitialized !== 'true') {
-        const handleManualFormEdit = event => {
-            trackManualCharacterField(event);
-            scheduleAutoSave();
-        };
         form.addEventListener('input', handleManualFormEdit);
         form.addEventListener('change', handleManualFormEdit);
         form.dataset.autosaveInitialized = 'true';
@@ -3723,14 +3771,6 @@ async function renderSkillsTab(data) {
     const other = skills.other ||= {};
     const specialized = skills.specialized || {};
 
-    // Загружаем шаблоны особых черт
-    let specialTraitTemplates = [];
-    try {
-        specialTraitTemplates = await loadTemplatesForLobby('special_trait');
-    } catch (e) {
-        console.error('Failed to load special trait templates', e);
-    }
-
     const physicalSkills = [
         { key: 'strength', label: 'Сила' },
         { key: 'agility', label: 'Ловкость' },
@@ -3768,7 +3808,7 @@ async function renderSkillsTab(data) {
                 <input type="number" class="form-control number-input" name="skills.${path}.base" value="${base}" style="width: 55px;">
                 <span>+</span>
                 <input type="number" class="form-control number-input" name="skills.${path}.bonus" value="${Number(bonus || 0) + transientBonus}" data-transient-bonus="${transientBonus}" style="width: 55px;">
-                <span style="font-size: 0.7rem;">Опыт: ${xp}/${required}</span>
+                <span data-skill-progress="${path}" style="font-size: 0.7rem;">Опыт: ${xp}/${required}</span>
                 <button type="button" class="btn btn-sm btn-secondary" onclick="addSkillXpFromPoints('${path}')" style="padding: 2px 4px; font-size: 0.7rem;" title="Взять 1 свободное очко навыка">➕</button>
                 <button type="button" class="btn btn-sm btn-secondary" onclick="addSkillXpFromUse('${path}')" style="padding: 2px 4px; font-size: 0.7rem;" title="Добавить опыт за использование">💡</button>
                 <span style="cursor: pointer; font-size: 1.1em;" onclick="window.rollSkill('${path}', '${label}')">🎲</span>
@@ -3858,7 +3898,18 @@ async function renderSkillsTab(data) {
     `;
 
     container.innerHTML = html;
+    applySheetEditPermissions(container);
+    const traitsRoot = document.getElementById('special-traits-container');
+    // Основные навыки готовы сразу; ответ шаблонов не перерисовывает новые строки.
+    let specialTraitTemplates = [];
+    try {
+        specialTraitTemplates = await loadTemplatesForLobby('special_trait');
+    } catch (e) {
+        console.error('Failed to load special trait templates', e);
+    }
+    if (document.getElementById('special-traits-container') !== traitsRoot) return;
     renderSpecialTraits(data.features?.specialTraits || [], specialTraitTemplates);
+    applySheetEditPermissions(container);
 }
 
 function renderSpecialTraits(traits, templates) {

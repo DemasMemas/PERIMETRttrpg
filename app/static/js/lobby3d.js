@@ -78,7 +78,7 @@ const terrainColors = {
     sand: 0xC2B280,
     rock: 0x808080,
     swamp: 0x4B3B2A,
-    concrete: 0xb3b1a8, gravel: 0x82796b, snow: 0xd4d9d9, metal: 0x85654d,
+    concrete: 0xb3b1a8, gravel: 0x82796b, snow: 0xd4d9d9, ice: 0xc2cfd1, metal: 0x85654d,
     bare_dirt: 0x7a694f, granite_tiles: 0xb3b1a8, wood_floor: 0x775635,
     water: 0x1E90FF
 };
@@ -1167,6 +1167,55 @@ const smoothGroundMat = new THREE.MeshStandardMaterial({
 worldTerrainMaterials.apply(groundMat, { sides: true });
 worldTerrainMaterials.apply(smoothGroundMat, { sides: true, smooth: true });
 let worldTerrainSidesPrepared = false;
+let worldIceSurfaceMaterial = null;
+
+function clearWorldIceSurface(entry) {
+    if (!entry.iceSurface) return;
+    scene.remove(entry.iceSurface);
+    entry.iceSurface.geometry.dispose();
+    entry.iceSurface = null;
+}
+
+function refreshWorldIceSurface(entry, source) {
+    // Прозрачен только верхний слой льда. Остальной грунт сохраняет обычный проход.
+    if (!entry.tilesData.some(row => row.some(tile => tile.terrain === 'ice'))) {
+        clearWorldIceSurface(entry);
+        return;
+    }
+    const p = source.getAttribute('position'), n = source.getAttribute('normal');
+    const positions = [], normals = [];
+    for (let i = 0; i < p.count; i += 3) {
+        const x = Math.floor((p.getX(i) + p.getX(i + 1) + p.getX(i + 2)) / 3) - entry.chunkX * CHUNK_SIZE;
+        const z = Math.floor((p.getZ(i) + p.getZ(i + 1) + p.getZ(i + 2)) / 3) - entry.chunkY * CHUNK_SIZE;
+        if (entry.tilesData[z]?.[x]?.terrain !== 'ice') continue;
+        for (let j = i; j < i + 3; j++) {
+            positions.push(p.getX(j), p.getY(j) + 0.002, p.getZ(j));
+            normals.push(n.getX(j), n.getY(j), n.getZ(j));
+        }
+    }
+    if (!positions.length) { clearWorldIceSurface(entry); return; }
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    geometry.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
+    if (entry.iceSurface) {
+        entry.iceSurface.geometry.dispose();
+        entry.iceSurface.geometry = geometry;
+    } else {
+        if (!worldIceSurfaceMaterial) {
+            worldIceSurfaceMaterial = new THREE.MeshStandardMaterial({
+                transparent: true, depthWrite: false, roughness: 0.3,
+                polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2,
+            });
+            worldTerrainMaterials.apply(worldIceSurfaceMaterial, { iceGlaze: true });
+        }
+        entry.iceSurface = new THREE.Mesh(geometry, worldIceSurfaceMaterial);
+        entry.iceSurface.receiveShadow = true;
+        entry.iceSurface.frustumCulled = false;
+        entry.iceSurface.raycast = () => {};
+        scene.add(entry.iceSurface);
+    }
+    entry.iceSurface.visible = entry.terrainVisible;
+}
 function prepareWorldTerrainSides() {
     if (worldTerrainSidesPrepared || renderer.isUnavailableRenderer) return;
     worldTerrainSidesPrepared = true;
@@ -1228,6 +1277,7 @@ function refreshWorldTerrainSurface(entry, smoothData) {
         }
     }
     if (!positions.length) {
+        clearWorldIceSurface(entry);
         if (entry.terrainSurface) {
             scene.remove(entry.terrainSurface);
             entry.terrainSurface.geometry.dispose();
@@ -1247,6 +1297,7 @@ function refreshWorldTerrainSurface(entry, smoothData) {
     geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
     geometry.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
     geometry.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+    refreshWorldIceSurface(entry, geometry);
     if (entry.terrainSurface) {
         const previousGeometry = entry.terrainSurface.geometry;
         entry.terrainSurface.geometry = geometry;
@@ -2267,6 +2318,7 @@ export function removeChunk(cx, cy) {
     const key = `${cx},${cy}`;
     const entry = chunksMap.get(key);
     if (!entry) return;
+    clearWorldIceSurface(entry);
     entry.materialLayer?.clear(cx * CHUNK_SIZE, cy * CHUNK_SIZE, CHUNK_SIZE, CHUNK_SIZE);
     if (entry.pendingRebuild) {
         cancelAnimationFrame(entry.pendingRebuild);
@@ -2792,6 +2844,7 @@ function setVisible(chunk, visible, naturalVisible = false, structureVisible = f
     chunk.terrainVisible = visible;
     if (chunk.ground) chunk.ground.visible = groundVisible;
     if (chunk.terrainSurface) chunk.terrainSurface.visible = groundVisible;
+    if (chunk.iceSurface) chunk.iceSurface.visible = groundVisible;
     if (chunk.smoothTerrain) chunk.smoothTerrain.visible = groundVisible;
     if (chunk.water) chunk.water.visible = waterVisible;
     if (chunk.waterSurface) chunk.waterSurface.visible = waterVisible;

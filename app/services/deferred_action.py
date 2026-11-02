@@ -253,7 +253,7 @@ def preserve_action_payment(current_data, incoming_data):
     meta = health.setdefault('combatMeta', {})
     if not isinstance(meta, dict):
         meta = health['combatMeta'] = {}
-    for key in ('pendingAction', 'completedPendingActionId', 'unstableJump', 'jumpSupport'):
+    for key in ('pendingAction', 'completedPendingActionId', 'unstableJump', 'jumpSupport', 'slipperyMovement'):
         if key in current:
             meta[key] = deepcopy(current[key])
         else:

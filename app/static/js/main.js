@@ -1993,6 +1993,10 @@ if (socket) {
     });
     socket.on('character_moved', (data) => {
         updateCharacterPosition(data.character_id, data.x, data.y, data);
+        for (const check of data.slip_checks || []) {
+            showNotification(`Лёд · Ловкость: ${check.total} против СЛ12 — ${check.success ? 'успех' : 'провал, переход на ходьбу'}`, 'system');
+        }
+        if (data.slip_stopped) showNotification('Оставшихся ОП хватило только на часть маршрута ходьбой.', 'system');
         if (data.fall) {
             const damage = (data.fall.legs || []).reduce((sum,leg)=>sum+Number(leg.damage || 0),0);
             showNotification(`Падение с ${Number(data.fall.height).toFixed(1)} м · урон ногам: ${damage}`, 'system');

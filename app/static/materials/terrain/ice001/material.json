@@ -1,0 +1,39 @@
+{
+  "id": "Ice001",
+  "sourceUrl": "https://ambientcg.com/view?id=Ice001",
+  "license": "CC0",
+  "licenseUrl": "https://docs.ambientcg.com/license/",
+  "resolution": "1k",
+  "normalFormat": "OpenGL",
+  "archiveUrl": "https://ambientcg.com/get?file=Ice001_1K-JPG.zip",
+  "archiveSha256": "721e7fc523524a7f09a90518be17205a2f4f8f99a48e481821e1b6c482ecdf25",
+  "packing": "ARM: AO or neutral 1 / Roughness / metallic 0",
+  "maps": {
+    "color": {
+      "file": "color.jpg",
+      "sha256": "f2b19e3895130f904bce60072ce2418c4e83a0d7376f10ec5c06e28bc2495c6e"
+    },
+    "normal": {
+      "file": "normal.jpg",
+      "sha256": "42f478a473bd8db8b3114b753b42b65d9c2e55018dd1e6eeb2626faa78a4b230"
+    },
+    "arm": {
+      "file": "arm.png",
+      "sha256": "730adba696db9cd81a5a7be6542c9c1391fc5f0b4dcc5d274f109b650329c746"
+    }
+  },
+  "sourceMaps": {
+    "Color": {
+      "entry": "Ice001_1K-JPG_Color.jpg",
+      "sha256": "f2b19e3895130f904bce60072ce2418c4e83a0d7376f10ec5c06e28bc2495c6e"
+    },
+    "NormalGL": {
+      "entry": "Ice001_1K-JPG_NormalGL.jpg",
+      "sha256": "42f478a473bd8db8b3114b753b42b65d9c2e55018dd1e6eeb2626faa78a4b230"
+    },
+    "Roughness": {
+      "entry": "Ice001_1K-JPG_Roughness.jpg",
+      "sha256": "73a6e59e225ef6c8d96443adafbe3515defaa0ac03f90102796b722610990c6a"
+    }
+  }
+}

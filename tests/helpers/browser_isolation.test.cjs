@@ -140,7 +140,7 @@ test('Interception включён до новой HTTP-навигации, по�
 
 
 test('Widgets разрешён только фиксированным переключателем без смешивания сценариев',()=>{
-    assert.deepEqual(guard.BROWSER_SCENARIOS,{pripyat:'VTT_PRIPYAT',widgets:'VTT_WIDGETS_ONLY',skills:'VTT_SKILLS_ONLY',movement:'VTT_MOVEMENT_ONLY',magazine:'VTT_MAGAZINE_ONLY','damage-revoke':'VTT_DAMAGE_REVOKE_ONLY','durable-reload':'VTT_DURABLE_RELOAD_ONLY','medical-retry':'VTT_MEDICAL_RETRY_ONLY','sheet-repro':'VTT_SHEET_REPRO_ONLY',rotation:'VTT_ROTATION_ONLY',surface:'VTT_MOVEMENT_ONLY',height:'VTT_MOVEMENT_ONLY','gm-relocation':'VTT_GM_RELOCATION_ONLY',terrain:'VTT_MOVEMENT_ONLY',walls:'VTT_MOVEMENT_ONLY',psi:'VTT_MOVEMENT_ONLY',climb:'VTT_MOVEMENT_ONLY',jump:'VTT_MOVEMENT_ONLY',graphics:'VTT_MOVEMENT_ONLY','world-loading':'VTT_MOVEMENT_ONLY'});
+    assert.deepEqual(guard.BROWSER_SCENARIOS,{pripyat:'VTT_PRIPYAT',widgets:'VTT_WIDGETS_ONLY',skills:'VTT_SKILLS_ONLY',movement:'VTT_MOVEMENT_ONLY',magazine:'VTT_MAGAZINE_ONLY','damage-revoke':'VTT_DAMAGE_REVOKE_ONLY','durable-reload':'VTT_DURABLE_RELOAD_ONLY','medical-retry':'VTT_MEDICAL_RETRY_ONLY','sheet-repro':'VTT_SHEET_REPRO_ONLY',rotation:'VTT_ROTATION_ONLY',surface:'VTT_MOVEMENT_ONLY',height:'VTT_MOVEMENT_ONLY','gm-relocation':'VTT_GM_RELOCATION_ONLY',terrain:'VTT_MOVEMENT_ONLY',walls:'VTT_MOVEMENT_ONLY',psi:'VTT_MOVEMENT_ONLY',climb:'VTT_MOVEMENT_ONLY',jump:'VTT_MOVEMENT_ONLY',graphics:'VTT_MOVEMENT_ONLY',ice:'VTT_MOVEMENT_ONLY',slippery:'VTT_MOVEMENT_ONLY','world-loading':'VTT_MOVEMENT_ONLY'});
     const widgets={...valid(),VTT_SAFE_SCENARIO:'widgets',VTT_WIDGETS_ONLY:'1'};delete widgets.VTT_PRIPYAT;
     guard.validateEnvironment(widgets);
     for(const extra of [{VTT_PRIPYAT:'1'},{VTT_WIDGETS_FOCUSED:'1'},{VTT_BROWSER_VENDOR_DIR:'x'},{VTT_WIDGETS_ONLY:'0'}])assert.throws(()=>guard.validateEnvironment({...widgets,...extra}));
@@ -159,7 +159,7 @@ test('Skills — отдельный owned-file сценарий без смеш�
     assert.throws(()=>guard.validateEnvironment({...env,VTT_WIDGETS_ONLY:'1'}));
 });
 
-for(const scenario of ['walls','psi','climb','jump','graphics','world-loading']) test(`${scenario} проверяет фиксированный сценарий в собственной файловой БД`,()=>{
+for(const scenario of ['walls','psi','climb','jump','graphics','ice','slippery','world-loading']) test(`${scenario} проверяет фиксированный сценарий в собственной файловой БД`,()=>{
     const {parseBrowserArgs}=require('./run_isolated_browser.cjs');
     assert.equal(parseBrowserArgs(['--confirm-isolated-browser',scenario]).mode,'owned-file');
     assert.throws(()=>parseBrowserArgs(['--confirm-memory-browser',scenario]));

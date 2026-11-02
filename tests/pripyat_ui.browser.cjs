@@ -23,6 +23,14 @@ module.exports=async({page,request,token,lobby,base,connect,debugPort,safeSessio
     await page.evaluate(`(async()=>{window.L=await import('/static/js/locationScene.js');window.T=await import('three');await enterLocation(${loc.id})})()`);
     await page.until(`window.locationControls&&document.getElementById('scene-loading-screen').classList.contains('is-hidden')`,'Pripyat loaded');
     await page.evaluate(`L.setLocationEditMode(false);window.contextEvents=[];window.addEventListener('contextmenu',e=>contextEvents.push({prevented:e.defaultPrevented,target:e.target.tagName}),false)`);
+    if (safeSession && process.env.VTT_SAFE_SCENARIO === 'slippery') {
+        await require('./slippery_movement.browser.cjs')({page,request,token,lobby,base,connect,debugPort,safeSession,location:loc,actor,player});
+        return;
+    }
+    if (safeSession && process.env.VTT_SAFE_SCENARIO === 'ice') {
+        await require('./ice_terrain.browser.cjs')({page,safeSession,request,token,lobby,location:loc,actor});
+        return;
+    }
     if (safeSession && process.env.VTT_SAFE_SCENARIO === 'graphics') {
         await require('./location_graphics.browser.cjs')({page,safeSession,request,token,lobby,location:loc,actor});
         return;

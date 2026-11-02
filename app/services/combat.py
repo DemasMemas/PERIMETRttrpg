@@ -1161,6 +1161,14 @@ class CombatService:
         }
 
     @staticmethod
+    def _movement_forward_step(facing_x, facing_y, dx, dy):
+        length = math.hypot(dx, dy) * math.hypot(facing_x, facing_y)
+        if length <= 1e-9:
+            return None
+        # Диагональ до 45° включительно оплачивается как движение вперёд.
+        return (dx * facing_x + dy * facing_y) / length >= math.sqrt(.5) - 1e-9
+
+    @staticmethod
     def _movement_direction_profile(loc_char, path):
         facing_x = CombatService._coerce_float(getattr(loc_char, 'facing_x', 0), 0)
         facing_y = CombatService._coerce_float(getattr(loc_char, 'facing_y', 1), 1)
@@ -1170,10 +1178,10 @@ class CombatService:
         points = path.get('path') or []
         for before, after in zip(points, points[1:]):
             dx, dy = after[0] - before[0], after[1] - before[1]
-            length = math.hypot(dx, dy) * math.hypot(facing_x, facing_y)
-            if length <= 1e-9:
+            step = CombatService._movement_forward_step(facing_x, facing_y, dx, dy)
+            if step is None:
                 continue
-            if (dx * facing_x + dy * facing_y) / length >= .5 - 1e-9:
+            if step:
                 forward = True
             else:
                 backward = True
@@ -1192,21 +1200,15 @@ class CombatService:
 
     @staticmethod
     def _validate_backward_sideways_path(loc_char, path):
-        facing_x = CombatService._coerce_int(getattr(loc_char, 'facing_x', 0), 0)
-        facing_y = CombatService._coerce_int(getattr(loc_char, 'facing_y', 1), 1)
-        if (facing_x, facing_y) == (0, 0):
-            facing_y = 1
         tiles = path.get('path') if isinstance(path, dict) else None
         if not isinstance(tiles, list):
             raise ValidationError("Movement path is missing")
         for previous, current in zip(tiles, tiles[1:]):
             if not isinstance(previous, (list, tuple)) or not isinstance(current, (list, tuple)):
                 raise ValidationError("Invalid movement path")
-            step_x = CombatService._coerce_float(current[0], 0) - CombatService._coerce_float(previous[0], 0)
-            step_y = CombatService._coerce_float(current[1], 0) - CombatService._coerce_float(previous[1], 0)
-            length = math.hypot(step_x, step_y) * math.hypot(facing_x, facing_y)
-            if length > 1e-9 and (step_x * facing_x + step_y * facing_y) / length >= .5 - 1e-9:
-                raise ValidationError("В режиме движения спиной или боком нельзя идти вперёд")
+        forward, _ = CombatService._movement_direction_profile(loc_char, path)
+        if forward:
+            raise ValidationError("В режиме движения спиной или боком нельзя идти вперёд")
 
     @staticmethod
     def _validate_posture_movement(posture, movement_mode):
@@ -10166,7 +10168,9 @@ class CombatService:
         if not state or state.status!='active':
             return
         mode = actor.movement_mode_this_turn if actor.movement_mode_this_turn not in {None,'correction'} else 'walk'
-        maximum = CombatService._movement_distance_limit(mode,CombatService._posture_key(actor),
+        from app.services.slippery_movement import saved_state
+        limit_mode = saved_state(actor).get('forced_from', mode) if mode == 'walk' else mode
+        maximum = CombatService._movement_distance_limit(limit_mode,CombatService._posture_key(actor),
             CombatService._movement_evasion_active(actor),CombatService._movement_penalty(actor))
         if (actor.movement_distance_this_turn or 0)+distance>maximum+1e-9:
             raise ValidationError('Превышен общий лимит перемещения за ход')
@@ -10198,7 +10202,7 @@ class CombatService:
             for x, tile in enumerate(row):
                 if not isinstance(tile, dict):
                     continue
-                if tile.get('terrain') in {'snow', 'sand', 'swamp'}:
+                if tile.get('terrain') in {'snow', 'sand', 'swamp', 'ice'}:
                     costs[x, y, 0] = 2
                 all_objects.extend({**o, 'tile_x': x, 'tile_y': y}
                                    for o in tile.get('objects') or [] if isinstance(o, dict))
@@ -10228,6 +10232,7 @@ class CombatService:
         companion_offset=None,
         start_level=None,
         end_level=None,
+        movement_mode=None,
     ):
         from app.services.location_navigation import find_path
         from flask import has_app_context
@@ -10239,6 +10244,19 @@ class CombatService:
                 ignored_character_ids = [*(ignored_character_ids or []), actor.character_id, captive.character_id]
         start_level = (getattr(actor, 'floor_level', 0) or 0) if start_level is None else start_level
         end_level = start_level if end_level is None else end_level
+        direction_mode = movement_mode if actor else None
+        facing_x = CombatService._coerce_float(getattr(actor, 'facing_x', 0), 0)
+        facing_y = CombatService._coerce_float(getattr(actor, 'facing_y', 1), 1)
+        if math.hypot(facing_x,facing_y)<=1e-9:
+            facing_x,facing_y = 0,1
+        if direction_mode == 'walk':
+            used_mode = actor.movement_mode_this_turn
+            if used_mode in {'walk','backward_sideways'}:
+                direction_mode = used_mode
+            elif CombatService._movement_forward_step(facing_x,facing_y,end_x-start_x,end_y-start_y) is False:
+                direction_mode = 'backward_sideways'
+        if direction_mode in {'walk','run','sprint'} and CombatService._movement_forward_step(facing_x,facing_y,end_x-start_x,end_y-start_y) is False:
+            return None
         objects = LocationObject.query.filter_by(location_id=location.id).all() if has_app_context() else []
         wall_geometry = CombatService._movement_wall_geometry(location, objects)
         ignores_terrain = bool(actor and actor.character and CombatService._mutant_has_trait(actor.character.data or {}, 'Полёт'))
@@ -10257,6 +10275,13 @@ class CombatService:
                 )
             return maps[level]
         def can_traverse(a,b):
+            if direction_mode in {'walk','run','sprint','backward_sideways'}:
+                step = CombatService._movement_forward_step(facing_x,facing_y,b[0]-a[0],b[1]-a[1])
+                if step is not None and step != (direction_mode != 'backward_sideways'):
+                    return False
+                # Из переднего сектора нельзя вернуться к цели за его границей.
+                if direction_mode != 'backward_sideways' and CombatService._movement_forward_step(facing_x,facing_y,end_x-b[0],end_y-b[1]) is False:
+                    return False
             if not wall_geometry.can_traverse(a,b):
                 return False
             if companion_offset:
@@ -10277,9 +10302,16 @@ class CombatService:
         support = (((actor.character.data or {}).get('health') or {}).get('combatMeta') or {}).get('jumpSupport') if actor else None
         height_options = ({'start_height':CombatService.physical_position(actor)['height']}
                           if support and support.get('position')==[start_x,start_y,start_level] else {})
-        return find_path(location,objects,(start_x,start_y,start_level),(end_x,end_y,end_level),
+        result = find_path(location,objects,(start_x,start_y,start_level),(end_x,end_y,end_level),
                          movement_map,terrain_costs=terrain_costs,can_traverse=can_traverse,
-                         geometry=wall_geometry,continuous=True,**height_options)
+                         geometry=wall_geometry,continuous=True,
+                         directional=direction_mode in {'walk','run','sprint','backward_sideways'},**height_options)
+        if result:
+            from app.services.slippery_movement import slippery_tiles
+            ice = slippery_tiles(location, objects, ignores_terrain)
+            result['slippery'] = any(tuple(part['cell']) in ice for part in result.get('movement_segments', []))
+            result['slippery_start'] = (math.floor(start_x+.5), math.floor(start_y+.5), start_level) in ice
+        return result
 
     @staticmethod
     def _prepare_character_for_turn(loc_char):
@@ -10321,6 +10353,7 @@ class CombatService:
             meta = health.setdefault('combatMeta', {})
             meta['consumableUsage'] = {}
             meta.pop('movementEvasion', None)
+            meta.pop('slipperyMovement', None)
             # A reserve is valid only until the character receives their next regular turn.
             reaction_reserve = meta.get('reactionReserve')
             deferred_help_cost = 0
@@ -10516,6 +10549,7 @@ class CombatService:
             'is_exoskeleton': CombatService._exoskeleton_power_profile(data)['is_exoskeleton'],
             'powered_exoskeleton': CombatService._exoskeleton_power_profile(data)['powered'],
             'movement_mode_this_turn': loc_char.movement_mode_this_turn,
+            'slippery_movement': health.get('combatMeta', {}).get('slipperyMovement', {}) if loc_char.movement_mode_this_turn else {},
             'movement_evasion': CombatService._movement_evasion_active(loc_char),
             'movement_distance_this_turn': loc_char.movement_distance_this_turn or 0,
             'correction_distance_this_turn': loc_char.correction_distance_this_turn or 0,
@@ -16125,6 +16159,8 @@ class CombatService:
             raise ValidationError("Use the anomaly escape action to move")
 
         character._movement_fall = None
+        character._movement_slip_checks = []
+        character._movement_slip_stopped = False
         if special_action == 'drop_down':
             if grapple_captive:
                 raise ValidationError('Release the grapple before jumping down')
@@ -16272,6 +16308,7 @@ class CombatService:
             ignored_character_ids=ignored_character_ids,
             companion_offset=companion_offset,
             end_level=target_level,
+            movement_mode=(movement_mode or 'walk') if state and state.status=='active' else None,
         )
         if not path:
             raise ValidationError("Path is blocked")
@@ -16384,13 +16421,16 @@ class CombatService:
             mode_free_actions = mode['free_actions'] if selecting_mode else 0
             used_distance = character.movement_distance_this_turn or 0
             penalty = CombatService._movement_penalty(character)
-            max_distance = CombatService._movement_distance_limit(movement_mode, posture, evading, penalty)
+            from app.services.slippery_movement import resolve_route, saved_state
+            slip_state = saved_state(character)
+            limit_mode = slip_state.get('forced_from', movement_mode) if movement_mode == 'walk' else movement_mode
+            max_distance = CombatService._movement_distance_limit(limit_mode, posture, evading, penalty)
             if movement_mode == 'correction':
                 if correction_used+distance > 3+1e-9:
                     raise ValidationError('Корректировка ограничена 3 метрами за ход')
                 # Без выбранного основного режима корректировка доступна на 3 м
                 # независимо от штрафа. При выборе режима её путь уже входит в общий счётчик.
-                max_distance = (CombatService._movement_distance_limit(used_mode,posture,evading,penalty)
+                max_distance = (CombatService._movement_distance_limit(slip_state.get('forced_from', used_mode),posture,evading,penalty)
                                 if used_mode else max(3,used_distance+3-correction_used))
             if used_distance + distance > max_distance + 1e-9:
                 raise ValidationError(
@@ -16400,6 +16440,26 @@ class CombatService:
                 raise ValidationError("Not enough action points")
             if character.free_actions_current < mode_free_actions:
                 raise ValidationError("Not enough free actions")
+
+            if movement_cost > character.movement_points_current + 1e-9:
+                raise ValidationError("Not enough movement points")
+            requested_mode = movement_mode
+            if movement_mode in {'run', 'sprint'} and (path.get('slippery', True) or slip_state or path.get('slippery_start')):
+                resolved = resolve_route(location, character, path, movement_mode, posture, climb_payment, max_distance)
+                path, movement_cost, distance = resolved['path'], resolved['cost'], resolved['distance']
+                new_x, new_y = resolved['point']['x'], resolved['point']['y']
+                movement_mode = resolved['mode']
+                mode_action_points += resolved['climb_action_points'] - climb_action_points
+                character._movement_slip_checks = resolved['checks']
+                character._movement_slip_stopped = not resolved['complete']
+                character_data = character.character.data
+                character_data.setdefault('health', {}).setdefault('combatMeta', {})['slipperyMovement'] = resolved['state']
+                if not resolved['complete']:
+                    entered_anomaly = None
+                    end_surface = (path.get('surfaces') or [resolved['point']])[-1]
+                    if end_surface['height'] > resolved['point']['height'] + 1e-8:
+                        character_data['health']['combatMeta']['jumpSupport'] = {
+                            'position':[new_x,new_y,end_surface['level']], 'height':end_surface['height']}
 
             if movement_cost <= character.movement_points_current+1e-9:
                 character.movement_points_current = max(0,round(character.movement_points_current-movement_cost,9))
@@ -16417,7 +16477,7 @@ class CombatService:
                 character.movement_mode_this_turn = movement_mode
             character.movement_distance_this_turn = used_distance + distance
 
-            if movement_mode == 'run':
+            if requested_mode == 'run':
                 superior_runner = CombatService._mutant_has_trait(
                     character_data, 'Превосходный бегун',
                 )
@@ -16432,7 +16492,7 @@ class CombatService:
                         character.strenuous_movement_blocked_until_round or 0,
                         current_round + 1 + artifact_profile['breath_duration_bonus'],
                     )
-            elif movement_mode == 'sprint':
+            elif requested_mode == 'sprint':
                 character.strenuous_movement_blocked_until_round = max(
                     character.strenuous_movement_blocked_until_round or 0,
                     current_round + 2 + artifact_profile['breath_duration_bonus'],
@@ -16578,6 +16638,7 @@ class CombatService:
                 ]
                 meta.pop('shockRecoveryRound', None)
                 meta.pop('movementEvasion', None)
+                meta.pop('slipperyMovement', None)
                 meta.pop('painShockRecoveredRound', None)
                 meta.pop('painShockRecovered', None)
                 meta.pop('firedRound', None)

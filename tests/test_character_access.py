@@ -331,3 +331,98 @@ def test_concurrent_database_sessions_cannot_overwrite_each_other(access_case):
         second.rollback()
     db.session.expire_all()
     assert db.session.get(LobbyCharacter, character_id).data['notes'] == 'first committed'
+
+
+@pytest.mark.parametrize('transport', ['http', 'socket'])
+def test_manual_skill_level_resets_progress_and_preserves_effects(access_case, client, transport):
+    from app.services.combat import CombatService
+    case = access_case
+    character = case['character']
+    character.data = {'skills': {'physical': {'will': {'base': 12, 'bonus': 0, 'xp': 2}}},
+                      'health': {'combatMeta': {'consumableModifiers': [
+                          {'stat': 'will_delta', 'value': 2, 'remaining': 3}]}}}
+    db.session.commit()
+    for level in [9, 10, 11, 12, 13, 14]:
+        draft = deepcopy(character.data)
+        draft['skills']['physical']['will'].update(base=level, xp=2)
+        assert update(case, client, case['gm'], {'data': draft,
+                      '_manual_fields': ['skills.physical.will.base']}, transport) == 200
+        db.session.refresh(character)
+        skill = character.data['skills']['physical']['will']
+        assert skill == {'base': level, 'bonus': 0, 'xp': 0}
+        assert character.data['health']['combatMeta']['consumableModifiers'][0]['value'] == 2
+        assert CombatService._base_skill_modifier(character.data, 'skills.physical.will') == (level + 2 - 10) // 2
+
+
+@pytest.mark.parametrize('transport', ['http', 'socket'])
+def test_manual_new_skill_starts_without_old_progress(access_case, client, transport):
+    case = access_case
+    character = case['character']
+    character.data = {'notes': 'before'}
+    db.session.commit()
+    draft = {'notes': 'before', 'skills': {'other': {'medicine': {'base': 14, 'bonus': 0, 'xp': 2}}}}
+    assert update(case, client, case['gm'], {'data': draft,
+                  '_manual_fields': ['skills.other.medicine.base']}, transport) == 200
+    db.session.refresh(character)
+    assert character.data['skills']['other']['medicine']['xp'] == 0
+
+
+@pytest.mark.parametrize('transport', ['http', 'socket'])
+def test_sheet_cannot_reset_slippery_movement(access_case, client, transport):
+    case = access_case
+    character = case['character']
+    state = {'forced_from':'run','checked_on_ice':False,'position':[3,0,0]}
+    character.data = {'health':{'combatMeta':{'slipperyMovement':state}}}
+    db.session.commit()
+    draft = {'health':{'combatMeta':{'slipperyMovement':{'checked_on_ice':True}}},'notes':'new'}
+    assert update(case, client, case['owner'], {'data':draft}, transport) == 200
+    db.session.refresh(character)
+    assert character.data['health']['combatMeta']['slipperyMovement'] == state
+    assert character.data['notes'] == 'new'
+
+
+@pytest.mark.parametrize('transport', ['http', 'socket'])
+def test_skill_xp_awarded_after_manual_level_is_not_reset_again(access_case, client, transport):
+    case = access_case
+    character = case['character']
+    character.data = {'skills': {'physical': {'will': {'base': 12, 'bonus': 0, 'xp': 2}}}}
+    db.session.commit()
+    draft = deepcopy(character.data)
+    draft['skills']['physical']['will'].update(base=14, xp=1)
+    assert update(case, client, case['gm'], {'data': draft,
+                  '_manual_fields': ['skills.physical.will.base', 'skills.physical.will.xp']}, transport) == 200
+    db.session.refresh(character)
+    assert character.data['skills']['physical']['will'] == {'base': 14, 'bonus': 0, 'xp': 1}
+
+
+@pytest.mark.parametrize('transport', ['http', 'socket'])
+@pytest.mark.parametrize('field,value', [('base', None), ('base', '14'), ('base', 12.5), ('base', True),
+                                        ('base', 10**50), ('bonus', float('inf')), ('xp', -1), ('xp', 1.5)])
+def test_invalid_skill_input_is_rejected_without_partial_save(access_case, client, transport, field, value):
+    case = access_case
+    character = case['character']
+    character.data = {'skills': {'physical': {'will': {'base': 12, 'bonus': 0, 'xp': 2}}}, 'notes': 'before'}
+    db.session.commit()
+    before = deepcopy(character.data)
+    draft = deepcopy(before)
+    draft['skills']['physical']['will'][field] = value
+    draft['notes'] = 'must not save'
+    assert update(case, client, case['gm'], {'data': draft}, transport) >= 400
+    db.session.refresh(character)
+    assert character.data == before
+
+
+@pytest.mark.parametrize('transport', ['http', 'socket'])
+def test_viewer_cannot_change_skill_or_claim_a_manual_reset(access_case, client, transport):
+    case = access_case
+    character = case['character']
+    character.visible_to = [case['viewer'].id]
+    character.data = {'skills': {'physical': {'will': {'base': 12, 'bonus': 0, 'xp': 2}}}}
+    db.session.commit()
+    before = deepcopy(character.data)
+    draft = deepcopy(before)
+    draft['skills']['physical']['will']['base'] = 14
+    assert update(case, client, case['viewer'], {'data': draft,
+                  '_manual_fields': ['skills.physical.will.base']}, transport) == 403
+    db.session.refresh(character)
+    assert character.data == before

@@ -142,16 +142,17 @@ test('facing socket API is exported, idempotent and supports one fog refresh per
 });
 
 test('navigation preview deduplicates requests and rejects responses from an old map version', async () => {
-    let resolve, requests=0;
-    const context=vm.createContext({currentLocationId:1,movementMapVersion:1,
+    let resolve, requests=0;const sent=[];
+    const context=vm.createContext({currentLocationId:1,movementMapVersion:1,combatState:null,armedMovementType:'walk',
         navigationPreviews:new Map(),navigationPreviewRequests:new Set(),navigationPreviewErrors:new Set(),
         navigationPreviewBusy:false,navigationPreviewQueued:null,
         movementPreviewCharacterId:null,window:{currentLobbyId:1},localStorage:{getItem:()=>''},
-        fetch:()=>{requests++;return new Promise(r=>resolve=r);}});
+        fetch:(url,options)=>{sent.push(JSON.parse(options.body));requests++;return new Promise(r=>resolve=r);}});
     for(const name of ['navigationPreviewKey','serverMovementPreview','sendQueuedNavigationPreview'])vm.runInContext(functionSource(name),context);
     context.serverMovementPreview(0,0,3,0,1,0);
     context.serverMovementPreview(0,0,3,0,1,0);
     assert.equal(requests,1);assert.equal(context.navigationPreviewRequests.size,1);
+    assert.equal(sent[0].movement_mode,'walk');
     context.movementMapVersion++;
     resolve({ok:true,json:async()=>({route:{path:[[0,0],[3,0]]}})});
     await new Promise(r=>setImmediate(r));
@@ -169,6 +170,17 @@ test('navigation preview deduplicates requests and rejects responses from an old
     resolve({ok:true,json:async()=>({route:{path:[[0,0],[6,0]]}})});
     await new Promise(r=>setImmediate(r));
     assert.equal(context.navigationPreviewRequests.size,0);
+    context.combatState={status:'active',current_character:{character_id:1,facing_x:0,facing_y:1}};
+    const walking=context.navigationPreviewKey(0,0,3,0,1,0);
+    context.armedMovementType='run';
+    assert.notEqual(context.navigationPreviewKey(0,0,3,0,1,0),walking,'смена режима не использует старый маршрут');
+    context.serverMovementPreview(0,0,3,0,1,0);
+    assert.equal(sent.at(-1).movement_mode,'run','выбранный режим передан серверу');
+    resolve({ok:true,json:async()=>({route:null,reason:'Сначала измените направление взгляда.'})});await new Promise(r=>setImmediate(r));
+    assert.equal(context.serverMovementPreview(0,0,3,0,1,0).blocked_reason,'Сначала измените направление взгляда.','ограничение режима сохраняется отдельно от коллизии');
+    context.armedMovementType='walk';
+    context.combatState.current_character.facing_x=1;
+    assert.notEqual(context.navigationPreviewKey(0,0,3,0,1,0),walking,'поворот не использует старый маршрут');
 });
 function functionSource(name) {
     const start = source.indexOf(`function ${name}(`);
@@ -197,6 +209,18 @@ function movementContext(current = {}) {
     return context;
 }
 
+test('после срыва бега ходьба использует оставшиеся ОП и исходный лимит без повторной платы ОД',()=>{
+    const context=movementContext({movement_mode_this_turn:'walk',movement_distance_this_turn:16,
+        slippery_movement:{forced_from:'run'},movement_points_current:.25,facing_x:1,facing_y:0});
+    context.combatState.status='active';
+    const result=context.getMovementModeAvailability('walk',{path:[[6,0],[6.1,0]],cost:.2,distance:.1});
+    assert.equal(result.allowed,true);
+    assert.equal(result.modeActionPoints,0);
+    assert.equal(result.remainingDistance,4);
+    assert.equal(result.movementPoints,.2);
+    assert.equal(context.getMovementModeAvailability('run').allowed,false);
+});
+
 test('evasion shows reduced movement distances and disallows correction', () => {
     const context = movementContext();
     for (const [mode, distance] of [['walk', 7], ['run', 15], ['sprint', 23]]) {
@@ -216,6 +240,32 @@ test('шаг за спину автоматически получает цен�
     assert.equal(result.movementPoints,2);
     assert.equal(result.remainingDistance,5);
     assert.equal(context.getMovementModeAvailability('run',{path:[[1,1],[1,0]],cost:1,distance:1}).allowed,false);
+});
+
+test('диагональ до 45° включительно оплачивается вперёд; за границей — спиной/боком',()=>{
+    for(const [fx,fy] of [[0,1],[1,0],[1,1],[-1,1],[-1,-1],[1,-1],[0,0]]){
+        const context=movementContext({facing_x:fx,facing_y:fy});
+        context.combatState.status='active';
+        for(const angle of [0,44.999,45,-45,45.001,-45.001,60,90,180]){
+            const x=fx||0,y=(fx||fy)?fy:1,r=angle*Math.PI/180;
+            const route={path:[[0,0],[0,0],[x*Math.cos(r)-y*Math.sin(r),x*Math.sin(r)+y*Math.cos(r)]],cost:1,distance:1};
+            const forward=Math.abs(angle)<=45,result=context.getMovementModeAvailability('walk',route);
+            assert.equal(result.allowed,true,`${fx},${fy}: ${angle}°`);
+            assert.equal(result.movementType,forward?'walk':'backward_sideways');
+            assert.equal(result.movementPoints,forward?1:2);
+            assert.equal(result.remainingDistance,forward?10:5);
+            assert.equal(context.getMovementModeAvailability('backward_sideways',route).allowed,!forward);
+            for(const mode of ['run','sprint'])assert.equal(context.getMovementModeAvailability(mode,route).allowed,forward);
+        }
+    }
+});
+
+test('диагональная цель не отменяет боковой участок обхода препятствия',()=>{
+    const context=movementContext({facing_x:0,facing_y:1});
+    context.combatState.status='active';
+    const result=context.getMovementModeAvailability('walk',{path:[[0,0],[0,1],[1,1]],cost:2,distance:2});
+    assert.equal(result.allowed,false);
+    assert.match(result.reason,/смешивает/);
 });
 
 test('лимиты учитывают штраф, бонус и округление ползком', () => {

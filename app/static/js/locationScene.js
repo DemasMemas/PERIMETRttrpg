@@ -769,7 +769,7 @@ const handlers = {
 };
 
 const terrainColors = {
-    concrete: 0xb3b1a8, gravel: 0x82796b, snow: 0xd4d9d9, metal: 0x85654d,
+    concrete: 0xb3b1a8, gravel: 0x82796b, snow: 0xd4d9d9, ice: 0xc2cfd1, metal: 0x85654d,
     bare_dirt: 0x7a694f, granite_tiles: 0xb3b1a8, wood_floor: 0x775635,
     grass: 0x4e5736,
     sand: 0xC2B280,
@@ -1116,7 +1116,9 @@ let navigationPreviewBusy = false;
 let navigationPreviewQueued = null;
 
 function navigationPreviewKey(startX, startY, endX, endY, characterId, level) {
-    return `${currentLocationId}:${movementMapVersion}:${characterId}:${startX}:${startY}:${endX}:${endY}:${level}`;
+    const actor=combatState?.characters?.find(c=>c.character_id===characterId)||combatState?.current_character;
+    const mode=combatState?.status==='active'?(armedMovementType||'walk'):'';
+    return `${mode}:${actor?.facing_x}:${actor?.facing_y}:${actor?.movement_mode_this_turn}:${currentLocationId}:${movementMapVersion}:${characterId}:${startX}:${startY}:${endX}:${endY}:${level}`;
 }
 
 function hasStoreyNavigation() {
@@ -1178,24 +1180,24 @@ function serverMovementPreview(startX,startY,endX,endY,characterId,level) {
         navigationPreviews.delete(navigationPreviewQueued.key);
     }
     navigationPreviewQueued = {key,id:currentLocationId,version:movementMapVersion,
-        characterId,endX,endY,level};
+        characterId,endX,endY,level,movementMode:armedMovementType||'walk'};
     sendQueuedNavigationPreview();
     return null;
 }
 
 function sendQueuedNavigationPreview() {
     if (navigationPreviewBusy || !navigationPreviewQueued) return;
-    const {key,id,version,characterId,endX,endY,level} = navigationPreviewQueued;
+    const {key,id,version,characterId,endX,endY,level,movementMode} = navigationPreviewQueued;
     navigationPreviewQueued = null;
     navigationPreviewBusy = true;
     fetch(`/lobbies/${window.currentLobbyId}/locations/${id}/movement-preview`, {
         method:'POST',headers:{'Content-Type':'application/json',Authorization:`Bearer ${localStorage.getItem('access_token')}`},
-        body:JSON.stringify({character_id:characterId,x:endX,y:endY,floor_level:level}),
+        body:JSON.stringify({character_id:characterId,x:endX,y:endY,floor_level:level,movement_mode:movementMode}),
     }).then(async response => {
         if (!response.ok) throw new Error('Movement preview unavailable');
         const result = await response.json();
         if (id !== currentLocationId || version !== movementMapVersion) return;
-        navigationPreviews.set(key, result.route);
+        navigationPreviews.set(key, result.route || (result.reason ? {blocked_reason:result.reason} : null));
     }).catch(()=>{
         if (id === currentLocationId && version === movementMapVersion) navigationPreviewErrors.add(key);
     }).finally(()=>{
@@ -1284,7 +1286,8 @@ function resolveMovementType(movementType, route) {
         const before = route.path[index], dx = point[0] - before[0], dy = point[1] - before[1];
         const length = Math.hypot(dx, dy) * Math.hypot(fx, fy);
         if (!length) return;
-        if ((dx * fx + dy * fy) / length >= .5 - 1e-9) forward = true;
+        // Диагональ до 45° включительно оплачивается как движение вперёд.
+        if ((dx * fx + dy * fy) / length >= Math.SQRT1_2 - 1e-9) forward = true;
         else backward = true;
     });
     if (movementType === 'walk' && backward) return {
@@ -1344,13 +1347,15 @@ function getMovementModeAvailability(movementType, route = null, evasion = armed
         : posture === 'prone' ? Math.ceil(base/3) : posture === 'sitting' || type === 'backward_sideways' ? Math.floor(base/2) : base;
     const round = Math.max(1, Number(combatState?.round_number) || 1);
     const usedMode = current.movement_mode_this_turn === 'correction' ? null : current.movement_mode_this_turn || null;
+    const forcedFrom = current.slippery_movement?.forced_from;
+    const limitMode = movementType === 'walk' && forcedFrom ? forcedFrom : movementType;
     const correctionUsed = Number(current.correction_distance_this_turn)||0;
     const evading = usedMode ? Boolean(current.movement_evasion) : evasion;
-    const evasionReduction = evading ? ({ walk: 3, run: 5, sprint: 7 }[movementType] || 0) : 0;
+    const evasionReduction = evading ? ({ walk: 3, run: 5, sprint: 7 }[limitMode] || 0) : 0;
     const usedDistance = Number(current.movement_distance_this_turn)||0;
     const maxDistance = movementType === 'correction'
-        ? Math.min(usedDistance+3-correctionUsed,usedMode ? distanceLimit(usedMode) : Infinity)
-        : Math.max(0,distanceLimit(movementType)-evasionReduction);
+        ? Math.min(usedDistance+3-correctionUsed,usedMode ? distanceLimit(forcedFrom || usedMode) : Infinity)
+        : Math.max(0,distanceLimit(limitMode)-evasionReduction);
     const selectingMode = movementType === 'correction' ? correctionUsed <= 1e-9 : !usedMode;
     const routeCost = getMovementModeRouteCost(route, movementType);
     const modeActionPoints = (selectingMode ? mode.actionPoints : 0)+(routeCost.selectedClimbActionPoints||0);
@@ -1365,24 +1370,11 @@ function getMovementModeAvailability(movementType, route = null, evasion = armed
         && (Number(current.action_points_current) || 0) >= modeActionPoints + climbActionPoints
     );
     let reason = direction.reason;
-    const routeMovesForward = movementType === 'backward_sideways'
-        && Array.isArray(route?.path)
-        && route.path.slice(1).some((tile, index) => {
-            const previous = route.path[index];
-            const stepX = Number(tile?.[0]) - Number(previous?.[0]);
-            const stepY = Number(tile?.[1]) - Number(previous?.[1]);
-            const facingX = Number(current.facing_x) || 0;
-            const facingY = Number(current.facing_y ?? 1) || 0;
-            const length = Math.hypot(stepX, stepY) * Math.hypot(facingX, facingY);
-            return length > 1e-9 && (stepX * facingX + stepY * facingY) / length >= .5 - 1e-9;
-        });
 
     if (reason) {
         // Сначала ошибка направления, затем ограничения ресурсов.
     } else if (evading && !['walk', 'run', 'sprint'].includes(movementType)) {
         reason = 'Уклонение доступно при ходьбе, беге и спринте';
-    } else if (routeMovesForward) {
-        reason = 'Этот режим допускает только шаги спиной или боком';
     } else if (usedMode && usedMode !== movementType && movementType !== 'correction') {
         reason = 'В этом ходу уже выбран другой вид движения';
     } else if (routeCost.climbCost > 0 && posture !== 'standing') {
@@ -1560,9 +1552,9 @@ function updateMovementPreview(clientX, clientY) {
         : `ОП ${formatMovementNumber(cost)}/${formatMovementNumber(available)}`;
     hint.textContent = calculating ? 'Расчёт маршрута…' : previewFailed ? 'Не удалось проверить маршрут. Выберите точку повторно.' : route
         ? isCombatActive
-            ? `${movementMode.label}: ${formatMovementNumber(availability.distance)} м · ${costLabel}${availability.reason ? ` · ${availability.reason}` : ''}`
+            ? `${movementMode.label}: ${formatMovementNumber(availability.distance)} м · ${costLabel}${route.slippery && ['run','sprint'].includes(armedMovementType) ? ' · Лёд: Ловкость СЛ12 при входе' : ''}${availability.reason ? ` · ${availability.reason}` : ''}`
             : `Движение: ${formatMovementNumber(route.distance)} м`
-        : 'Путь заблокирован';
+        : navigationPreviews.get(previewKey)?.blocked_reason || 'Путь заблокирован';
     hint.style.left = `${clientX + 14}px`;
     hint.style.top = `${clientY + 14}px`;
     hint.style.display = 'block';
@@ -1792,7 +1784,7 @@ function commitMovementPreview(clientX, clientY) {
             navigationPreviewErrors.delete(key);
             if (movementPreviewLine?.userData) movementPreviewLine.userData.targetKey = null;
             updateMovementPreview(clientX,clientY);
-        } else showNotification('Путь к выбранной клетке заблокирован', 'system');
+        } else showNotification(navigationPreviews.get(key)?.blocked_reason || 'Путь к выбранной клетке заблокирован', 'system');
         return false;
     }
 
@@ -4914,7 +4906,7 @@ function showJumpMenu(characterId) {
                 const socket=window.socket;
                 const stop=()=>{clearTimeout(timer);socket.off('combat_state_updated',updated);socket.off('movement_rejected',denied);};
                 const updated=state=>{const c=state.characters?.find(c=>c.character_id===characterId);
-                    if(c?.movement_mode_this_turn===mode){stop();setCombatState(state);resolve();}};
+                    if(c?.movement_mode_this_turn===mode || c?.movement_mode_this_turn==='walk'&&c?.slippery_movement?.forced_from===mode){stop();setCombatState(state);resolve();}};
                 const denied=result=>{if(result.character_id===characterId){stop();reject(Error(result.message));}};
                 const timer=setTimeout(()=>{stop();reject(Error('Не получено подтверждение выбора режима'));},8000);
                 socket.on('combat_state_updated',updated);socket.on('movement_rejected',denied);
@@ -7595,6 +7587,9 @@ function renderCombatHud() {
 export function setCombatState(state) {
     combatState = state || null;
     window.locationCombatState = combatState;
+    if (combatState?.current_character?.slippery_movement?.forced_from && armedMovementType && armedMovementType !== 'correction') {
+        armedMovementType = 'walk';
+    }
     if (combatState?.status === 'active') {
         combatStartRequestVersion += 1;
         closeCombatStartRequestMenu();

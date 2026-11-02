@@ -1,3 +1,4 @@
+import math
 import pytest
 from types import SimpleNamespace
 
@@ -312,6 +313,7 @@ def test_backward_sideways_path_rejects_forward_steps():
 
 @pytest.mark.parametrize('destination,expected_mode,expected_cost',[
     ((1,0),'backward_sideways',2),((0,1),'backward_sideways',2),((1,2),'walk',1),
+    ((0,2),'walk',math.sqrt(2)),((2,2),'walk',math.sqrt(2)),
 ])
 def test_walk_preserves_facing_and_charges_backward_steps(client,create_user,auth_headers,destination,expected_mode,expected_cost):
     from app.extensions import db
@@ -325,8 +327,8 @@ def test_walk_preserves_facing_and_charges_backward_steps(client,create_user,aut
         case['actor_character'].id,*destination,movement_mode='walk')
     db.session.expire_all()
     moved = db.session.get(LocationCharacter,actor.id)
-    assert cost == expected_cost
-    assert moved.movement_points_current == 10-expected_cost
+    assert cost == pytest.approx(expected_cost)
+    assert moved.movement_points_current == pytest.approx(10-expected_cost)
     assert moved.movement_mode_this_turn == expected_mode
     assert (moved.facing_x,moved.facing_y) == (0,1)
     assert moved.action_points_current == 5
@@ -336,6 +338,127 @@ def test_running_behind_requires_an_explicit_turn_without_spending_points():
     actor = SimpleNamespace(facing_x=0,facing_y=1)
     with pytest.raises(ValidationError,match='направление взгляда'):
         CombatService._effective_movement_mode(actor,{'path':[(1,1),(1,0)]},'run')
+
+
+@pytest.mark.parametrize('facing',[(0,1),(1,0),(1,1),(-1,1),(-1,-1),(1,-1),(0,0)])
+@pytest.mark.parametrize('angle',[0,44.999,45,-45,45.001,-45.001,60,90,180])
+def test_movement_forward_sector_includes_45_degrees(facing,angle):
+    actor = SimpleNamespace(facing_x=facing[0],facing_y=facing[1])
+    fx,fy = facing if any(facing) else (0,1)
+    radians = math.radians(angle)
+    # Нулевая длина и повторный отрезок не меняют классификацию направления.
+    point = (fx*math.cos(radians)-fy*math.sin(radians),fx*math.sin(radians)+fy*math.cos(radians))
+    route = {'path':[(0,0),(0,0),point]}
+    forward = abs(angle)<=45
+    assert CombatService._movement_direction_profile(actor,route) == (forward,not forward)
+    assert CombatService._effective_movement_mode(actor,route,'walk') == ('walk' if forward else 'backward_sideways')
+    if forward:
+        for mode in ('run','sprint'):
+            assert CombatService._effective_movement_mode(actor,route,mode) == mode
+        with pytest.raises(ValidationError,match='нельзя идти вперёд'):
+            CombatService._validate_backward_sideways_path(actor,route)
+    else:
+        CombatService._validate_backward_sideways_path(actor,route)
+        for mode in ('run','sprint'):
+            with pytest.raises(ValidationError,match='направление взгляда'):
+                CombatService._effective_movement_mode(actor,route,mode)
+
+
+def test_diagonal_target_does_not_hide_sideways_detour():
+    actor = SimpleNamespace(facing_x=0,facing_y=1)
+    route = {'path':[(0,0),(0,1),(1,1)]}
+    assert CombatService._movement_direction_profile(actor,route) == (True,True)
+    with pytest.raises(ValidationError,match='смешивает'):
+        CombatService._effective_movement_mode(actor,route,'walk')
+
+
+@pytest.mark.parametrize('dx',[-2.1,-2.0001,-2,-1.9999,1.9999,2,2.0001,2.1])
+def test_fractional_heading_route_across_45_degree_boundary(client,create_user,auth_headers,dx):
+    from app.extensions import db
+    from test_character_interactions import _setup_pair
+    case=_setup_pair(client,create_user,auth_headers)
+    location,actor=case['location'],case['actor_location']
+    location.grid_width,location.grid_height=10,10
+    location.tiles_data=[[{'terrain':'ice','height':1} for _ in range(10)] for _ in range(10)]
+    actor.pos_x,actor.pos_y=4.1,4.1
+    actor.facing_x,actor.facing_y=0,1
+    actor.movement_points_current=20
+    db.session.commit()
+    route=CombatService._find_movement_path(location,4.1,4.1,4.1+dx,6.1,actor.character_id,movement_mode='walk')
+    assert route,'Открытая поверхность не должна блокироваться из-за угла дробных координат'
+    forward=abs(dx)<=2
+    assert CombatService._movement_direction_profile(actor,route)==(forward,not forward)
+    moved,cost,_=CombatService.move_character(location.id,case['actor_user']['id'],actor.character_id,4.1+dx,6.1,movement_mode='walk')
+    assert moved.movement_mode_this_turn==('walk' if forward else 'backward_sideways')
+    assert route['distance']==pytest.approx(math.hypot(dx,2))
+    assert cost==pytest.approx(math.hypot(dx,2)*(2 if forward else 4))
+    assert (moved.facing_x,moved.facing_y)==(0,1)
+
+
+def test_direction_constrained_planner_on_weighted_terrain(client,create_user,auth_headers):
+    from app.extensions import db
+    from test_character_interactions import _setup_pair
+    case=_setup_pair(client,create_user,auth_headers)
+    location,actor=case['location'],case['actor_location']
+    location.grid_width,location.grid_height=8,10
+    location.tiles_data=[[{'terrain':'ice' if 2<=x<=4 else 'grass','height':1} for x in range(8)] for _ in range(10)]
+    actor.pos_x,actor.pos_y=3.1,1.1
+    actor.facing_x,actor.facing_y=0,1
+    db.session.commit()
+    old=CombatService._find_movement_path(location,3.1,1.1,3.1,8.1,actor.character_id)
+    assert CombatService._movement_direction_profile(actor,old)==(True,True)
+    for mode in ('walk','run','sprint'):
+        route=CombatService._find_movement_path(location,3.1,1.1,3.1,8.1,actor.character_id,movement_mode=mode)
+        assert route and CombatService._movement_direction_profile(actor,route)==(True,False)
+    back=CombatService._find_movement_path(location,3.1,1.1,3.1,.1,actor.character_id,movement_mode='walk')
+    assert back and CombatService._movement_direction_profile(actor,back)==(False,True)
+    actor.movement_mode_this_turn='walk'
+    assert CombatService._find_movement_path(location,3.1,1.1,3.1,.1,actor.character_id,movement_mode='walk') is None
+
+
+def test_pripyat_ice_planner_avoids_mixed_direction_detour(client,create_user,auth_headers):
+    import json
+    from pathlib import Path
+    from app.extensions import db
+    from app.models import LocationObject
+    from test_character_interactions import _setup_pair
+    source_path=Path(__file__).parents[1]/'tmp/pripyat-regression.json'
+    if not source_path.exists():
+        pytest.skip('Нужна локальная копия Припяти')
+    source=json.loads(source_path.read_text(encoding='utf-8'))
+    case=_setup_pair(client,create_user,auth_headers)
+    location,actor=case['location'],case['actor_location']
+    location.grid_width,location.grid_height=source['grid_width'],source['grid_height']
+    location.tiles_data=source['tiles_data']
+    for y in range(47,58):
+        for x in (44,45,46):
+            location.tiles_data[y][x]['terrain']='ice'
+    db.session.add_all(LocationObject(location_id=location.id,**item) for item in source['objects'])
+    actor.facing_x,actor.facing_y=0,1
+    actor.pos_x,actor.pos_y=45.1,48.1
+    actor.movement_points_current=20
+    db.session.commit()
+    old=CombatService._find_movement_path(location,45.1,48.1,45.1,55.1,actor.character_id)
+    route=CombatService._find_movement_path(location,45.1,48.1,45.1,55.1,actor.character_id,movement_mode='walk')
+    assert old and CombatService._movement_direction_profile(actor,old)==(True,True),old
+    assert route and CombatService._movement_direction_profile(actor,route)==(True,False),route
+    base=f'/lobbies/{case["lobby"].id}/locations/{location.id}'
+    preview=client.post(base+'/movement-preview',headers=auth_headers(case['actor_user']),
+        json={'character_id':actor.character_id,'x':45.1,'y':55.1,'movement_mode':'walk'}).get_json()['route']
+    assert preview['path']==[list(point) for point in route['path']]
+    moved,cost,_=CombatService.move_character(location.id,case['actor_user']['id'],actor.character_id,45.1,55.1,movement_mode='walk')
+    assert cost==pytest.approx(preview['cost'])
+    assert moved.movement_mode_this_turn=='walk'
+    assert (moved.facing_x,moved.facing_y)==(0,1)
+    for mode in ('walk','run','sprint'):
+        blocked=client.post(base+'/movement-preview',headers=auth_headers(case['actor_user']),
+            json={'character_id':actor.character_id,'x':45.1,'y':48.1,'movement_mode':mode})
+        assert blocked.status_code==200 and blocked.get_json()['route'] is None
+        assert 'направление взгляда' in blocked.get_json()['reason']
+    invalid=client.post(base+'/movement-preview',headers=auth_headers(case['actor_user']),
+        json={'character_id':actor.character_id,'x':45.1,'y':48.1,'movement_mode':['run']})
+    assert invalid.status_code==400
+    assert moved.movement_points_current==pytest.approx(20-cost)
 
 
 def test_grapple_group_path_keeps_companion_offset(monkeypatch):

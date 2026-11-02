@@ -2457,12 +2457,30 @@ def preview_location_movement(lobby_id, location_id, lobby, participant):
     x, y, level = payload.get('x'), payload.get('y'), payload.get('floor_level', actor.floor_level)
     if any(isinstance(v,bool) or not isinstance(v,(int,float)) or not math.isfinite(v) for v in (x,y)) or type(level) is not int or not (0<=x<=location.grid_width-1 and 0<=y<=location.grid_height-1):
         return jsonify({'error': 'Invalid position'}), 400
-    path = CombatService._find_movement_path(location, actor.pos_x, actor.pos_y, x, y, actor.character_id, end_level=level)
+    movement_mode = payload.get('movement_mode','walk')
+    if movement_mode is None:
+        movement_mode = 'walk'
+    if not isinstance(movement_mode,str) or movement_mode not in {'walk','run','sprint','backward_sideways','correction'}:
+        return jsonify({'error':'Неизвестный режим перемещения'}),400
+    state = LocationCombatState.query.filter_by(location_id=location_id).first()
+    path = CombatService._find_movement_path(location, actor.pos_x, actor.pos_y, x, y, actor.character_id,
+        end_level=level,movement_mode=movement_mode if state and state.status=='active' else None)
     if path is None:
         path = CombatService._vertical_movement_plan(location,actor,x,y,level)
     if path:
         path['climb_agility_bonus']=CombatService._climb_payment_profile(actor.character.data,[])['agility_bonus']
-    return jsonify({'route': path}), 200
+        # Разбиение нужно для серверного исполнения, предпросмотру достаточно цены и флага льда.
+        path.pop('movement_segments', None)
+    result = {'route':path}
+    if path is None and state and state.status=='active':
+        forward,backward = CombatService._movement_direction_profile(actor,{'path':[(actor.pos_x,actor.pos_y),(x,y)]})
+        if backward and movement_mode in {'run','sprint'}:
+            result['reason']='Для бега в этом направлении сначала измените направление взгляда; спиной/боком доступна ходьба.'
+        elif backward and movement_mode=='walk' and actor.movement_mode_this_turn=='walk':
+            result['reason']='В этом ходу уже выбрана ходьба вперёд. Сначала измените направление взгляда.'
+        elif forward and (movement_mode=='backward_sideways' or movement_mode=='walk' and actor.movement_mode_this_turn=='backward_sideways'):
+            result['reason']='В выбранном режиме можно идти только спиной или боком.'
+    return jsonify(result), 200
 
 
 @lobbies_bp.route('/<int:lobby_id>/locations/<int:location_id>', methods=['PUT'])

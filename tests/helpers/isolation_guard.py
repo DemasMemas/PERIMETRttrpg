@@ -6,6 +6,7 @@ import os
 ALLOWED_MODULES = (
     'test_combat_movement.py', 'test_combat_attacks.py',
     'test_character_jumps.py',
+    'test_ice_movement.py',
     'test_effect_lifecycle.py', 'test_regression_combat.py',
     'test_consumable_rules.py', 'test_consumable_catalog_rules.py',
     'test_inventory_ammo_stacks.py', 'test_inventory_access.py',
@@ -31,6 +32,9 @@ ALLOWED_MODULES = (
     'test_regression_catalog_application.py',
 )
 ALLOWED_NODEIDS = (
+    'test_combat_movement.py::test_pripyat_ice_planner_avoids_mixed_direction_detour',
+    'test_combat_movement.py::test_direction_constrained_planner_on_weighted_terrain',
+    'test_combat_movement.py::test_fractional_heading_route_across_45_degree_boundary',
     'test_lobby_api.py::test_gm_rest_event_advances_lobby_time_for_selected_characters',
     'test_location_storeys.py::test_server_preview_is_read_only_and_cover_above_does_not_block_same_floor',
     'test_location_storeys.py::test_hatch_action_validates_reach_lock_and_controls_and_persists_movement',

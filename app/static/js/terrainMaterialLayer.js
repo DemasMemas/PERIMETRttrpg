@@ -35,7 +35,19 @@ function sharedAtlases(THREE) {
         texture.anisotropy = 4;
         return texture;
     });
-    const result = { textures, snowTextures, ready: { value: 0 }, error: null, promise: null };
+    // У мелкого льда собственные mip-уровни: при масштабе 100 м атлас
+    // захватывал соседние материалы и рисовал сетку вместо усреднения деталей.
+    const iceTextures = [0, 1].map(() => {
+        const canvas = document.createElement('canvas');
+        canvas.width = canvas.height = 512;
+        const texture = new THREE.CanvasTexture(canvas);
+        texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
+        texture.minFilter = THREE.LinearMipmapLinearFilter;
+        texture.magFilter = THREE.LinearFilter;
+        texture.anisotropy = 4;
+        return texture;
+    });
+    const result = { textures, snowTextures, iceTextures, ready: { value: 0 }, error: null, promise: null };
     const load = url => new Promise((resolve, reject) => {
         const image = new Image();
         image.onload = () => resolve(image);
@@ -57,6 +69,19 @@ function sharedAtlases(THREE) {
             return;
         }
         const images = await Promise.all(['color', 'normal', 'arm'].map(channel => load(entry[channel])));
+        if (entry.terrain === 'ice') {
+            const context = iceTextures[0].image.getContext('2d', { willReadFrequently: true });
+            context.drawImage(images[2], 0, 0, 512, 512);
+            const arm = context.getImageData(0, 0, 512, 512).data;
+            context.drawImage(images[0], 0, 0, 512, 512);
+            const pixels = context.getImageData(0, 0, 512, 512);
+            adjustTerrainAlbedo(pixels.data, entry);
+            // Ice001: AO=1, металл=0; шероховатость сохраняется в альфа-канале цвета.
+            for (let i = 0; i < pixels.data.length; i += 4) pixels.data[i + 3] = arm[i + 1];
+            context.putImageData(pixels, 0, 0);
+            iceTextures[1].image.getContext('2d').drawImage(images[1], 0, 0, 512, 512);
+            return;
+        }
         images.forEach((image, channel) => {
             const context = canvases[channel].getContext('2d', { willReadFrequently: channel === 0 });
             const x = index % TERRAIN_ATLAS_COLUMNS * size, y = Math.floor(index / TERRAIN_ATLAS_COLUMNS) * size;
@@ -82,6 +107,7 @@ function sharedAtlases(THREE) {
     })).then(() => {
         textures.forEach(texture => { texture.needsUpdate = true; });
         snowTextures.forEach(texture => { texture.needsUpdate = true; });
+        iceTextures.forEach(texture => { texture.needsUpdate = true; });
         result.ready.value = 1;
         return true;
     }).catch(error => {
@@ -102,13 +128,16 @@ export function createTerrainMaterialLayer(THREE, { world = false } = {}) {
     // onTextureDispose listener, its WebGL context and its detached canvas.
     const textures = world ? atlas.textures : atlas.textures.map(texture => texture.clone());
     const snowTextures = world ? atlas.snowTextures : atlas.snowTextures.map(texture => texture.clone());
+    const iceTextures = world ? atlas.iceTextures : atlas.iceTextures.map(texture => texture.clone());
     let disposed = false;
     if (!world) atlas.promise.then(() => {
-        if (!disposed) [...textures, ...snowTextures].forEach(texture => { texture.needsUpdate = true; });
+        if (!disposed) [...textures, ...snowTextures, ...iceTextures].forEach(texture => { texture.needsUpdate = true; });
     });
     const uniforms = { terrainAtlasColor: { value: textures[0] },
         terrainSnowColorRoughness: { value: snowTextures[0] },
         terrainSnowNormal: { value: snowTextures[1] },
+        terrainIceColorRoughness: { value: iceTextures[0] },
+        terrainIceNormal: { value: iceTextures[1] },
         terrainAtlasNormal: { value: textures[1] }, terrainAtlasArm: { value: textures[2] },
         terrainAtlasReady: atlas.ready, terrainKinds: { value: null },
         terrainMaterialDarkness: { value: textures[0] }, terrainMaterialHasDarkness: { value: 0 },
@@ -160,17 +189,18 @@ export function createTerrainMaterialLayer(THREE, { world = false } = {}) {
             if (disposed) return;
             disposed = true;
             texture?.dispose(); texture = null; uniforms.terrainKinds.value = null;
-            if (!world) [...textures, ...snowTextures].forEach(texture => texture.dispose());
+            if (!world) [...textures, ...snowTextures, ...iceTextures].forEach(texture => texture.dispose());
         },
         diagnostics() { return { ready: atlas.ready.value === 1, error: atlas.error,
             atlasBytes: TERRAIN_ATLAS_CELL ** 2 * TERRAIN_ATLAS_COLUMNS * TERRAIN_ATLAS_ROWS * 4 * 4,
             snowBytes: Math.ceil(2 * 1024 ** 2 * 4 * 4 / 3),
+            iceBytes: Math.ceil(2 * 512 ** 2 * 4 * 4 / 3),
             materials: TERRAIN_MATERIALS.length, lookupBytes: texture?.image.data.byteLength || 0 }; },
-        apply(material, { sides = false, smooth = false, shore = false, waterSides = world } = {}) {
+        apply(material, { sides = false, smooth = false, shore = false, waterSides = world, iceGlaze = false } = {}) {
             material.extensions = { ...material.extensions, derivatives: true, shaderTextureLOD: true };
             const previousCompile = material.onBeforeCompile;
             const previousKey = material.customProgramCacheKey?.bind(material);
-            material.customProgramCacheKey = () => `${previousKey?.() || ''}:terrain-pbr-v10:${world}:${sides}:${smooth}:${shore}:${waterSides}`;
+            material.customProgramCacheKey = () => `${previousKey?.() || ''}:terrain-pbr-v14:${world}:${sides}:${smooth}:${shore}:${waterSides}:${iceGlaze}`;
             material.onBeforeCompile = shader => {
                 previousCompile?.(shader);
                 Object.assign(shader.uniforms, uniforms);
@@ -198,10 +228,10 @@ export function createTerrainMaterialLayer(THREE, { world = false } = {}) {
                         ${smooth ? 'vTerrainOwner = vec3(terrainTileCoord, terrainTop);' : ''}
                         #include <project_vertex>`);
                 shader.fragmentShader = shader.fragmentShader
-                    .replace('#include <common>', `#include <common>\n${fragmentHelpers(sides, smooth, world)}
+                    .replace('#include <common>', `#include <common>\n${fragmentHelpers(sides, smooth, world, iceGlaze)}
                         ${shore?'uniform sampler2D terrainShoreEarth; uniform sampler2D terrainShoreForest; uniform float terrainShoreGrassReady;':''}`)
                     // Inject after map/color, before scene darkness and static light callbacks.
-                    .replace('#include <color_fragment>', `#include <color_fragment>\n${fragmentSample(sides, smooth, waterSides, shore, world)}`)
+                    .replace('#include <color_fragment>', `#include <color_fragment>\n${fragmentSample(sides, smooth, waterSides, shore, world, iceGlaze)}`)
                     .replace('#include <roughnessmap_fragment>', `#include <roughnessmap_fragment>
                         roughnessFactor = mix(roughnessFactor, max(0.08, terrainArm.g), terrainCoverage);`)
                     .replace('#include <metalnessmap_fragment>', `#include <metalnessmap_fragment>
@@ -220,16 +250,19 @@ export function createTerrainMaterialLayer(THREE, { world = false } = {}) {
     return layer;
 }
 
-function fragmentHelpers(sides, smooth, world) {
+function fragmentHelpers(sides, smooth, world, iceGlaze) {
     return `
         varying vec3 vTerrainMaterialPosition;
         varying vec3 vTerrainMaterialNormal;
+        ${iceGlaze ? 'float terrainIceCrack; float terrainIceOpacity;' : ''}
         ${smooth ? 'varying vec3 vTerrainOwner;' : ''}
         uniform sampler2D terrainAtlasColor;
         uniform sampler2D terrainAtlasNormal;
         uniform sampler2D terrainAtlasArm;
         uniform sampler2D terrainSnowColorRoughness;
         uniform sampler2D terrainSnowNormal;
+        uniform sampler2D terrainIceColorRoughness;
+        uniform sampler2D terrainIceNormal;
         uniform sampler2D terrainKinds;
         uniform vec2 terrainKindsSize;
         uniform float terrainAtlasReady;
@@ -292,21 +325,59 @@ function fragmentHelpers(sides, smooth, world) {
             ${TERRAIN_MATERIALS.map((entry, index) => `if (id == ${(index + 1).toFixed(1)}) return vec4(${[
                 (world ? entry.world?.repeat : null) ?? entry.repeat ?? TERRAIN_REPEAT_TILES,
                 (world ? entry.world?.normalStrength : null) ?? entry.normalStrength ?? 1,
-                entry.variation ?? 0, entry.warp ?? 0].map(value => value.toFixed(3)).join(',')});`).join('\n')}
+                entry.variation ?? 0, (world ? entry.world?.warp : null) ?? entry.warp ?? 0].map(value => value.toFixed(3)).join(',')});`).join('\n')}
             return vec4(${TERRAIN_REPEAT_TILES.toFixed(1)},1.0,0.0,0.0);
         }
+        ${world ? `// Общая палитра снега и припорошённого льда глобальной карты.
+        vec3 terrainWorldSnowColor(vec3 detail, vec2 uv) {
+            vec3 macroSnow;
+            #if defined(GL_EXT_shader_texture_lod) || __VERSION__ >= 300
+                macroSnow = texture2DLodEXT(terrainSnowColorRoughness, uv * 0.0375, 6.0).rgb;
+            #else
+                macroSnow = texture2D(terrainSnowColorRoughness, uv * 0.0375, 6.0).rgb;
+            #endif
+            return mix(detail, terrainLinear(macroSnow), 0.35) * 0.78;
+        }` : ''}
         void terrainReadMaterial(float id, vec2 uv, vec2 dx, vec2 dy,
             out vec3 color, out vec3 mapNormal, out vec3 arm) {
+            if (id == 12.0) {
+                vec4 ice = terrainSnowSample(terrainIceColorRoughness, uv, dx, dy);
+                color = terrainLinear(ice.rgb);
+                ${world ? `// Тон берётся из снега при том же масштабе и освещении;
+                // исходный лёд задаёт только слабый рисунок, без голубой заливки.
+                float snowScale = terrainParameters(12.0).x / terrainParameters(6.0).x;
+                vec2 snowUv = uv * snowScale;
+                // Крупный цвет снега сохраняет общий тон, без снежной зернистости.
+                vec3 snowColor;
+                #if defined(GL_EXT_shader_texture_lod) || __VERSION__ >= 300
+                    snowColor = texture2DLodEXT(terrainSnowColorRoughness, snowUv * 0.0375, 6.0).rgb;
+                #else
+                    snowColor = texture2D(terrainSnowColorRoughness, snowUv * 0.0375, 6.0).rgb;
+                #endif
+                snowColor = terrainLinear(snowColor);
+                color = terrainWorldSnowColor(snowColor, snowUv);
+                float iceTone = dot(ice.rgb, vec3(0.2126, 0.7152, 0.0722));
+                ${iceGlaze ? `// Высокочастотные светлые линии отделены от широких белых пятен.
+                vec3 broadIce;
+                #if defined(GL_EXT_shader_texture_lod) || __VERSION__ >= 300
+                    broadIce = texture2DLodEXT(terrainIceColorRoughness, uv, 4.0).rgb;
+                #else
+                    broadIce = texture2D(terrainIceColorRoughness, uv, 4.0).rgb;
+                #endif
+                float crack = smoothstep(0.005, 0.045, iceTone - dot(broadIce, vec3(0.2126, 0.7152, 0.0722)));
+                terrainIceCrack = crack;
+                color *= mix(0.96, 1.06, crack);
+                ice.a = mix(0.30, 0.48, crack);` : `color *= 0.94 + (iceTone - 0.72) * 0.20;
+                color *= vec3(0.99, 1.0, 1.005);
+                ice.a = mix(0.48, ice.a, 0.10);`}` : ''}
+                mapNormal = terrainSnowSample(terrainIceNormal, uv, dx, dy).xyz * 2.0 - 1.0;
+                arm = vec3(1.0, ice.a, 0.0);
+                return;
+            }
             if (id == 6.0) {
                 vec4 snow = terrainSnowSample(terrainSnowColorRoughness, uv, dx, dy);
                 color = terrainLinear(snow.rgb);
-                ${world ? `vec3 macroSnow;
-                #if defined(GL_EXT_shader_texture_lod) || __VERSION__ >= 300
-                    macroSnow = texture2DLodEXT(terrainSnowColorRoughness, uv * 0.0375, 6.0).rgb;
-                #else
-                    macroSnow = texture2D(terrainSnowColorRoughness, uv * 0.0375, 6.0).rgb;
-                #endif
-                color = mix(color, terrainLinear(macroSnow), 0.35) * 0.78;` : ''}
+                ${world ? 'color = terrainWorldSnowColor(color, uv);' : ''}
                 mapNormal = terrainSnowSample(terrainSnowNormal, uv, dx, dy).xyz * 2.0 - 1.0;
                 arm = vec3(1.0, clamp(snow.a, 0.88, 0.98), 0.0);
                 return;
@@ -330,6 +401,7 @@ function fragmentHelpers(sides, smooth, world) {
             }
             vec3 materialColor, materialNormal, materialArm;
             terrainReadMaterial(id, uv, dx, dy, materialColor, materialNormal, materialArm);
+            ${iceGlaze ? 'if (id == 12.0) terrainIceOpacity += weight * mix(0.12, 0.40, terrainIceCrack);' : ''}
             // Only sand/snow use a second continuous projection. This retains detail
             // without enlarging one low-resolution atlas cell over 16-18 tiles.
             if (id == 2.0 || id == 6.0) {
@@ -366,9 +438,10 @@ function fragmentHelpers(sides, smooth, world) {
     `;
 }
 
-function fragmentSample(sides, smooth, waterSides, shore, world) {
+function fragmentSample(sides, smooth, waterSides, shore, world, iceGlaze) {
     return `
         float terrainCoverage = 0.0;
+        ${iceGlaze ? 'terrainIceOpacity = 0.0;' : ''}
         ${shore ? `float shoreGrassWeight=${world?'terrainId(vTerrainOwner.xy).g==0.0?1.0:0.0':'0.0'};` : ''}
         vec3 terrainColor = vec3(0.0), terrainNormalSample = vec3(0.0), terrainArm = vec3(0.0);
         // Smooth lighting normals must not switch the bank's UV axis inside a face.
@@ -459,5 +532,6 @@ function fragmentSample(sides, smooth, waterSides, shore, world) {
                 terrainArm /= terrainCoverage;
             }
         }
+        ${iceGlaze ? 'diffuseColor.a *= clamp(terrainIceOpacity, 0.0, 0.58);' : ''}
     `;
 }

@@ -29,6 +29,13 @@ export const TERRAIN_MATERIALS = Object.freeze([
         albedo: { saturation: 0.45, gain: 1, lift: 0.06, tint: [0.9, 1, 1.08] },
         color: '/static/materials/art/aged_wood/color.jpg', normal: '/static/materials/art/aged_wood/normal.jpg',
         arm: '/static/materials/art/aged_wood/arm.jpg' },
+    // Новый материал добавляется в конец, сохраняя индексы существующих покрытий.
+    { terrain: 'ice', asset: 'ice001', ...maps('ice001'),
+        // Локально полотно 4 м; на глобальной карте рисунок укрупнён до 120 м
+        // для читаемости с игровой камеры, без мелкой повторяющейся сетки.
+        arm: '/static/materials/terrain/ice001/arm.png', repeat: 4, normalStrength: 0.14,
+        world: { repeat: 1.2, normalStrength: 0.02, warp: 0.28 },
+        albedo: { saturation: 0.2, gain: 0.32, lift: 0.58, tint: [0.93, 1, 1.04] } },
 ]);
 export const TERRAIN_REPEAT_TILES = 4;
 export const TERRAIN_ATLAS_CELL = 512;
@@ -38,7 +45,7 @@ export const TERRAIN_ATLAS_COLUMNS = 4;
 export const TERRAIN_ATLAS_ROWS = 2 ** Math.ceil(Math.log2(Math.ceil(TERRAIN_MATERIALS.length / TERRAIN_ATLAS_COLUMNS)));
 export const TERRAIN_OPTIONS = Object.freeze([
     ['concrete', 'Промышленный бетон'], ['gravel', 'Гравий'],
-    ['snow', 'Снег'], ['metal', 'Ржавый металл'],
+    ['snow', 'Снег'], ['ice', 'Лёд'], ['metal', 'Ржавый металл'],
     ['bare_dirt', 'Земля без травы'], ['granite_tiles', 'Гранитная плитка'], ['wood_floor', 'Деревянный пол'],
 ]);
 

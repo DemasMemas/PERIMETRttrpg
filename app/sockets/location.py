@@ -222,6 +222,8 @@ def handle_move_in_location(data):
             **CombatService.physical_position(moved_character),
             'path': getattr(moved_character, '_movement_surfaces', []),
             'fall': getattr(moved_character, '_movement_fall', None),
+            'slip_checks': getattr(moved_character, '_movement_slip_checks', []),
+            'slip_stopped': getattr(moved_character, '_movement_slip_stopped', False),
             'movement_cost': cost,
             'movement_mode': getattr(moved_character, '_movement_mode', movement_mode),
         },
