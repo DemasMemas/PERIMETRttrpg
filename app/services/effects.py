@@ -416,6 +416,8 @@ def normalize_effect(raw: Any) -> Dict[str, Any]:
     })
     if effect_type=="concussion":
         data["rollPenalty"]=3
+    if effect_type=='deafness':
+        data['value']=max(0,_to_float(raw.get('value',raw.get('amount',0)),0))
     # Consumables attach executable metadata (delayed adjustments, expiry
     # consequences, wound state). Keep it while still normalizing core fields.
     for key, value in raw.items():

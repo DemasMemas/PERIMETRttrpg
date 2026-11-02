@@ -155,6 +155,7 @@ module.exports=async({page,request,token,lobby,base,connect,debugPort,safeSessio
         await button(page,`[data-explosion-choice="include"][data-actor-id="${outsiderId}"]`);
         await page.until(`L.getCombatState().turn_order.includes(${outsiderId})&&!L.getCombatState().pending_explosives.length`,'добавление и мгновенный взрыв');
         assert.ok((await request(`/lobbies/characters/${outsider.id}`,null,token,'GET')).data.health.current<700);
+        await require('./noise.browser.cjs')({page,peer,request,token,lobby,url,actor,victim,actorId,victimId,safeSession,enter});
         fs.writeFileSync(path.join(safeSession.artifacts,'grenades.png'),Buffer.from((await page.call('Page.captureScreenshot',{format:'png'})).data,'base64'));
         fs.writeFileSync(path.join(safeSession.artifacts,'grenades.json'),JSON.stringify({scene:'копия Припяти',twoClients:true,ownerReactedAndEscaped:true,victimReactedBeforeDamage:true,heldResourcesRestored:true,reloadDidNotRepeatDamage:true,nativeConcussionRecovery:true,gmExcludedShortFuseTarget:true,gmIncludedInstantTarget:true,chatOpensAtEnd:true,victimHealth:saved.data.health.current},null,2));
         completed=true;console.log('Гранаты: настоящий бросок, две личные реакции, выход из радиуса, ОД/ОП, сетевой урон и reload — проверено.');

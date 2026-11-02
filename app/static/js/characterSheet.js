@@ -1,3 +1,4 @@
+import { hearingModifier } from './hearingRules.js';
 // static/js/characterSheet.js
 /*
  * ===================================================================
@@ -2022,12 +2023,14 @@ function getAwarenessModeChoices(data, darkness = false) {
     const vision = getConsumableStatValue(data, 'vision_awareness')
         + getConsumableStatValue(data, darkness ? 'darkness_awareness' : 'light_awareness');
     const deafness = getDeafnessLevel(data);
+    const hearingPenalty=hearingModifier(deafness);
     const signed = value => `${value >= 0 ? '+' : ''}${value}`;
     const visualParts = [
         vision ? `препараты ${signed(vision)}` : '',
     ].filter(Boolean);
     const hearingParts = [
         headphones ? `наушники ${signed(headphones)}` : '',
+        hearingPenalty ? `глухота ${signed(hearingPenalty)}` : '',
     ].filter(Boolean);
     return [
         {
@@ -2037,7 +2040,7 @@ function getAwarenessModeChoices(data, darkness = false) {
         {
             label: deafness >= 90
                 ? `Слух: невозможно (глухота ${deafness})`
-                : `Слух: ${signed(headphones)}${hearingParts.length ? ` (${hearingParts.join(', ')})` : ''}${deafness ? `, глухота ${deafness}` : ''}`,
+                : `Слух: ${signed(headphones+hearingPenalty)}${hearingParts.length ? ` (${hearingParts.join(', ')})` : ''}${deafness ? `, глухота ${deafness}` : ''}`,
             mode: 'hearing',
             disabled: deafness >= 90,
         },
@@ -16290,7 +16293,8 @@ window.rollSkill = async function(skillPath, skillLabel) {
 
     // Можно добавить другие бонусы по необходимости (например, от артефактов, контейнеров и т.д.)
 
-    const statusModifier = getHealthRollModifier(currentCharacterData, skillPath);
+    const statusModifier = getHealthRollModifier(currentCharacterData, skillPath)
+        +(awarenessMode==='hearing'?hearingModifier(getDeafnessLevel(currentCharacterData)):0);
     const totalBonus = selfMod + charismaMod + equipmentBonus + statusModifier;
 
     const deafness = awarenessMode === 'hearing' ? getDeafnessLevel(currentCharacterData) : 0;

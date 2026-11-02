@@ -4967,6 +4967,9 @@ def perform_location_combat_action(lobby_id, location_id, lobby, participant):
         if character_id
     }
     explosion = (result.get('explosive') or {}).get('explosion') or {}
+    affected_character_ids.update(entry['character_id'] for entry in explosion.get('noise_targets',[]))
+    affected_character_ids.update(entry['character_id'] for entry in (result.get('attack') or {}).get('noise_targets',[]))
+    affected_character_ids.update(entry['character_id'] for entry in (result.get('explosive') or {}).get('noise_targets',[]))
     affected_character_ids.update(
         entry.get('character_id')
         for entry in (explosion.get('targets') or [])

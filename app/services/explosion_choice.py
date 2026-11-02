@@ -12,11 +12,13 @@ def candidates(state, event):
     from app.services.explosion_geometry import distance
     location=db.session.get(Location,state.location_id)
     objects=LocationObject.query.filter_by(location_id=state.location_id).all()
-    return [c.id for c in CombatService._unique_location_characters(
-        LocationCharacter.query.filter_by(location_id=state.location_id).all())
+    people=CombatService._unique_location_characters(LocationCharacter.query.filter_by(location_id=state.location_id).all())
+    from app.services.noise import affected_ids
+    affected=affected_ids(location,objects,event,people)
+    return [c.id for c in people
         if c.id not in (state.turn_order or []) and c.character
         and CombatService._character_condition(c.character.data or {})['state']!='dead'
-        and distance(location,objects,event['x'],event['y'],event.get('floor_level',0),c)<=event['profile'].get('radius',0)]
+        and c.id in affected]
 
 
 def require_resolved(state):

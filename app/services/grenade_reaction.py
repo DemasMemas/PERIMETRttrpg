@@ -86,7 +86,8 @@ def begin(actor,state=None):
             continue
         if actor.id not in event.get('remaining_actor_ids',[]):
             continue
-        within=distance(location,objects,event['x'],event['y'],event.get('floor_level',0),actor)<=event['profile'].get('radius',0)
+        from app.services.noise import affected_ids
+        within=actor.id in affected_ids(location,objects,event,[actor])
         if within and CombatService._can_take_combat_turn(actor):
             waiting.append(event['id']);continue
         event['remaining_actor_ids'].remove(actor.id)

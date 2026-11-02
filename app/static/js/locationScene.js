@@ -1,4 +1,5 @@
 import { terrainLineHit, terrainOpeningAt } from './terrainLineOfSight.js';
+import { hearingModifier } from './hearingRules.js';
 import { buildMovementSurfaceCosts, ordinaryHeightTransitionAllowed } from './movementSurfaceCosts.js';
 import { syncWorldNumber } from './worldNumericInputs.js';
 import { setLocalMapSceneContext } from './mapSceneContext.js';
@@ -198,16 +199,18 @@ function bindAwarenessMode(form, getCharacterId) {
             ) || 0;
             const vision = activeConsumableModifier(data, 'vision_awareness');
             const deafness = characterDeafness(data);
+            const hearingPenalty=hearingModifier(deafness);
             const visualParts = [
                 vision ? `препараты ${signedModifier(vision)}` : '',
             ].filter(Boolean);
             const hearingParts = [
                 headphones ? `наушники ${signedModifier(headphones)}` : '',
+                hearingPenalty ? `глухота ${signedModifier(hearingPenalty)}` : '',
             ].filter(Boolean);
             modeInput.options[0].textContent = `Зрение: ${signedModifier(vision)}${visualParts.length ? ` (${visualParts.join(', ')})` : ''}`;
             modeInput.options[1].textContent = deafness >= 90
                 ? `Слух: невозможно (глухота ${deafness})`
-                : `Слух: ${signedModifier(headphones)}${hearingParts.length ? ` (${hearingParts.join(', ')})` : ''}${deafness ? `, глухота ${deafness}` : ''}`;
+                : `Слух: ${signedModifier(headphones+hearingPenalty)}${hearingParts.length ? ` (${hearingParts.join(', ')})` : ''}${deafness ? `, глухота ${deafness}` : ''}`;
             modeInput.options[1].disabled = deafness >= 90;
             if (modeInput.options[1].disabled && modeInput.value === 'hearing') {
                 modeInput.value = 'visual';

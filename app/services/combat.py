@@ -165,6 +165,10 @@ EXPLOSIVE_PROFILES = {
 }
 
 
+# Шум из существующего каталога; отсутствие числа у спецсмеси не заменяется догадкой.
+for _profile_key, _noise in {'rgd5':15,'f1':15,'rgn':15,'rgo':15,'bang793':15,'vog25':10,'n1012':10,'og12':20,'rg60tb':20}.items():
+    EXPLOSIVE_PROFILES[_profile_key]['noise']=_noise
+
 ACTION_CATALOG = [
     {'key':'extinguish_fire','label':'Тушить себя','action_points':3,'free_actions':0,'movement_points':0},
     {'key':'prepare_water','label':'Взять воду в руку','action_points':0,'free_actions':0,'movement_points':0},
@@ -2269,6 +2273,9 @@ class CombatService:
             if awareness_mode == 'hearing'
             else 0
         )
+        from app.services.noise import hearing_modifier
+        hearing_penalty=hearing_modifier(deafness) if awareness_mode=='hearing' else 0
+        status_modifier+=hearing_penalty
         hearing_blocked = awareness_mode == 'hearing' and deafness >= 90
         if hearing_blocked:
             rolls = [0]
@@ -2294,6 +2301,7 @@ class CombatService:
             'awareness_mode': awareness_mode,
             'darkness': bool(darkness) if awareness_mode == 'visual' else None,
             'deafness': deafness,
+            'hearing_modifier': hearing_penalty,
             'automatic_failure': hearing_blocked,
             'failure_reason': 'Персонаж не слышит' if hearing_blocked else None,
             'effective_value': effective_value,
@@ -6209,6 +6217,8 @@ class CombatService:
         profile = deepcopy(base)
         profile['key'] = key
         profile['name'] = str(item.get('name') or profile['label'])
+        if 'noise' in attributes or 'noise' in item:
+            profile['noise']=max(0,CombatService._coerce_float(attributes.get('noise',item.get('noise')),0))
         configured_range = CombatService._coerce_float(
             attributes.get('effective_range', attributes.get('range')),
             profile.get('projectile_range'),
@@ -6371,15 +6381,6 @@ class CombatService:
                     'source': 'flash_grenade',
                     'tick': 'manual',
                 })
-            deafness = max(0, round(CombatService._coerce_float(profile.get('noise'), 0) * 0.5))
-            if distance <= CombatService._coerce_float(profile.get('noise'), 0) / 10:
-                apply_effect_to_health(health, {
-                    'type': 'deafness',
-                    'name': '\u041e\u0433\u043b\u0443\u0448\u0435\u043d\u0438\u0435',
-                    'value': deafness,
-                    'source': 'flash_grenade',
-                    'tick': 'manual',
-                })
             target.character.data = data
             flag_modified(target.character, 'data')
             CombatService._sync_location_effects_from_character(target)
@@ -6390,7 +6391,7 @@ class CombatService:
                 'facing_multiplier': multiplier,
                 'blindness': blindness,
                 'flash_blocked': bool((cover.get('zones') or {}).get('head')),
-                'deafness': deafness if distance <= CombatService._coerce_float(profile.get('noise'), 0) / 10 else 0,
+                'deafness': 0,
             })
         return results
 
@@ -6668,9 +6669,21 @@ class CombatService:
             return {'profile':profile['key'],'name':profile['name'],'epicenter':{'x':epicenter_x,'y':epicenter_y},
                     'radius':profile.get('radius',0),'floor_level':floor_level,'targets':[],'objects':[],
                     'area':None,'awaiting_gm':True}
+        from app.services import noise
+        noise_location=db.session.get(Location,location_id)
+        noise_objects=LocationObject.query.filter_by(location_id=location_id).all()
+        noise_volume=CombatService._coerce_float(profile.get('noise'),0)
+        noise_context=noise.space(noise_location,noise_objects,epicenter_x,epicenter_y,floor_level) if noise_volume>0 else None
+        def finish(payload):
+            payload['noise_targets']=noise.apply(noise_location,epicenter_x,epicenter_y,floor_level,noise_volume,
+                target_ids=target_ids,objects=noise_objects,context=noise_context)
+            by_id={r['character_id']:r for r in payload['noise_targets']}
+            for target in payload.get('targets',[]):
+                if target['character_id'] in by_id:target['deafness']=by_id[target['character_id']]['deafness']
+            return payload
         effect_type = str(profile.get('effect') or '').strip().lower()
         if effect_type == 'flash':
-            return {
+            return finish({
                 'profile': profile['key'],
                 'name': profile['name'],
                 'epicenter': {'x': float(epicenter_x), 'y': float(epicenter_y)},
@@ -6682,7 +6695,7 @@ class CombatService:
                 ),
                 'objects': [],
                 'area': None,
-            }
+            })
         if effect_type in {'smoke', 'smoke_growing', 'gas', 'fire'}:
             area = CombatService._area_from_profile(
                 profile, epicenter_x, epicenter_y, round_number,
@@ -6691,7 +6704,7 @@ class CombatService:
                 area['floor_level'] = floor_level
             from app.services.cloud_geometry import prepare
             prepare(db.session.get(Location,location_id),LocationObject.query.filter_by(location_id=location_id).all(),area)
-            return {
+            return finish({
                 'profile': profile['key'],
                 'name': profile['name'],
                 'epicenter': {'x': float(epicenter_x), 'y': float(epicenter_y)},
@@ -6703,7 +6716,7 @@ class CombatService:
                 ),
                 'objects': [],
                 'area': area if create_area else None,
-            }
+            })
         radius = max(0, CombatService._coerce_float(profile.get('radius'), 0))
         target_results = []
         objects=LocationObject.query.filter_by(location_id=location_id).all()
@@ -6921,7 +6934,7 @@ class CombatService:
             location_id, epicenter_x, epicenter_y, area,
             **({'target_ids':target_ids} if target_ids is not None else {}),
         )
-        return {
+        return finish({
             'profile': profile['key'],
             'name': profile['name'],
             'epicenter': {'x': float(epicenter_x), 'y': float(epicenter_y)},
@@ -6930,7 +6943,7 @@ class CombatService:
             'targets': target_results,
             'objects': object_results,
             'area': area if create_area else None,
-        }
+        })
 
     @staticmethod
     def _activate_explosive_event(state, event, round_number):
@@ -9056,11 +9069,13 @@ class CombatService:
             active_effects=normalize_effect_list(health.get('effects') or [])
         for effect in active_effects:
             effect_type = str(effect.get('type') or '')
-            if phase == 'turn_end' and effect_type in {'blindness', 'deafness'}:
-                value = max(CombatService._coerce_int(effect.get('minimum_value'),0), CombatService._coerce_int(effect.get('value'), 0) - 20)
+            if (phase == 'turn_end' and effect_type=='blindness') or (phase=='round_end' and effect_type=='deafness'):
+                value = max(CombatService._coerce_float(effect.get('minimum_value'),0), CombatService._coerce_float(effect.get('value'), 0) - 20)
                 effect['value'] = value
                 if value <= 0:
                     effect['active'] = False
+        if phase=='round_end' and 'deafness' in health:
+            health['deafness']=max(0,CombatService._coerce_float(health.get('deafness'),0)-20)
         apply_periodic_effects_to_health(health, active_effects, phase=phase)
         apply_expired_effects_to_health(health, active_effects, phase=phase)
         health['effects'] = [
@@ -12615,6 +12630,9 @@ class CombatService:
         flag_modified(character.character, 'data')
         character.last_action = db.func.now()
         CombatService._release_invalid_gunpoints(location.id)
+        from app.services.noise import apply as apply_noise
+        attack_details['noise_targets']=apply_noise(location,character.pos_x,character.pos_y,character.floor_level or 0,
+            CombatService._template_attributes(weapon).get('noise',weapon.get('noise',0)))
         db.session.commit()
         serialized_state = CombatService._serialize_state(location, state)
         return {
@@ -15824,6 +15842,10 @@ class CombatService:
                 }
                 explosive_details['detonated'] = False
             explosive_details['action_points'] = special_action_cost
+            if source in {'weapon','underbarrel'}:
+                from app.services.noise import apply as apply_noise
+                explosive_details['noise_targets']=apply_noise(location,character.pos_x,character.pos_y,character.floor_level or 0,
+                    CombatService._template_attributes(explosive_weapon).get('noise',explosive_weapon.get('noise',0)))
             character.character.data = data
             flag_modified(character.character, 'data')
             CombatService._clear_aim(character)
@@ -16084,6 +16106,9 @@ class CombatService:
                     0,
                 )
                 attack_details['noise'] = weapon_noise
+                from app.services.noise import apply as apply_noise
+                attack_details['noise_targets']=apply_noise(location,character.pos_x,character.pos_y,
+                    character.floor_level or 0,weapon_noise,count=attack_details.get('shot_count',0))
                 attack_details['frightened_mutants'] = (
                     CombatService._resolve_mutant_fear_from_noise(
                         location, character, weapon_noise, current_round,

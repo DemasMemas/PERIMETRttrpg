@@ -468,6 +468,7 @@ export function normalizeEffect(raw = {}) {
         area: raw.area || raw.zone || raw.bodyPart || raw.target || null,
     };
     if(type==='concussion')normalized.rollPenalty=3;
+    if(type==='deafness')normalized.value=Math.max(0,Number(raw.value??raw.amount??0)||0);
     Object.entries(raw).forEach(([key, entryValue]) => {
         if (!['type', 'kind', 'effectType', 'turns', 'tickPhase', 'zone', 'bodyPart', 'target'].includes(key)
             && normalized[key] === undefined) {
