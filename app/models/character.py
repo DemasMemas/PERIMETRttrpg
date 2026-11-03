@@ -24,6 +24,10 @@ class LobbyCharacter(db.Model):
 
     def data_snapshot(self):
         data = deepcopy(self.data or {})
+        from app.services.weapon_catalog import normalize_character_weapons
+        normalize_character_weapons(data)
+        from app.services.character_traits import sync_pocket_capacity
+        sync_pocket_capacity(self.data,data)
         data['_revision'] = self.revision
         data['_character_id'] = self.id
         return data

@@ -207,7 +207,7 @@ def _procedure_requirements(health, direct, application):
     elif application.get('kind') == 'bleeding':
         effect = _selected_effect(health, selected_effect)
         canonical_application = _canonical_bleeding_application(direct, application)
-        _, _, bleeding = _bleeding_outcome(effect, canonical_application)
+        _, _, bleeding = _bleeding_outcome(effect, canonical_application,direct.get('bleeding_rank_bonus',0))
         base_difficulty = BLEEDING_DIFFICULTY[bleeding['stage']]
         required_uses = canonical_application.get('item_uses', 1)
     elif application.get('kind') == 'wound' and direct.get('wound_treatment'):
@@ -283,11 +283,12 @@ def _canonical_bleeding_application(direct, selected):
     raise ValidationError('Этот расходник не поддерживает выбранный способ лечения')
 
 
-def _bleeding_outcome(effect, application):
+def _bleeding_outcome(effect, application,rank_bonus=0):
     bleeding = _bleeding(effect)
     medicine_rank = BLEEDING_STAGE_RANK.get(str(application.get('max_stage') or '').lower(), 0)
     if not bleeding or not medicine_rank:
         raise ValidationError('Выбрано некорректное кровотечение')
+    medicine_rank=min(4,medicine_rank+int(rank_bonus or 0))
     if not application.get('internal') and bleeding['kind'] == 'internal':
         raise ValidationError('Этот расходник не останавливает внутреннее кровотечение')
     if application.get('internal_only') and bleeding['kind'] != 'internal':
@@ -295,7 +296,7 @@ def _bleeding_outcome(effect, application):
     if bleeding['rank'] <= medicine_rank:
         return 'close', None, bleeding
     if application.get('allow_weakening', True) and bleeding['rank'] == medicine_rank + 1:
-        return 'weaken', str(application['max_stage']).lower(), bleeding
+        return 'weaken', next(stage for stage,rank in BLEEDING_STAGE_RANK.items() if rank==medicine_rank), bleeding
     raise ValidationError('Тяжесть кровотечения слишком велика для этого расходника')
 
 
@@ -495,7 +496,8 @@ def _minimum_treatment_cost(character_data, direct, canonical_application=None):
             raise ValidationError('Некорректная стоимость лечения') from error
         if direct.get('treatment_time_uses_medicine', True):
             medicine_level = _medicine_level(character_data)
-            if medicine_level >= 15:
+            from app.services.character_traits import background_is
+            if medicine_level >= 15 and not background_is(character_data,'Фармацевт'):
                 cost -= 1
             elif medicine_level <= 5:
                 cost += 1
@@ -541,12 +543,14 @@ def minimum_consumable_payment(actor_data, target_data, selection, lobby_id=None
         and selection.get('server_authoritative') is True
         and selection.get('server_operation') != 'general'
     ):
+        from app.services.character_medicine import prepare_profile
+        _,direct=prepare_profile({},direct,item,actor_data,template)
         requirements = _procedure_requirements(
             ((target_data or {}).get('health') or {}), direct, application,
         )
         canonical_application = requirements['canonical_application']
         if not direct.get('not_consumed'):
-            _validated_uses(item, requirements['required_uses'], template)
+            _validated_uses(item, requirements['required_uses'], template,actor_data=actor_data)
     if direct is None:
         # Compatibility for old/custom client-calculated actions. Retrieval is
         # still authoritative; imported consumables always use their profile.
@@ -570,8 +574,11 @@ def minimum_consumable_payment(actor_data, target_data, selection, lobby_id=None
     }
 
 
-def _validated_uses(item, amount, template):
+def _validated_uses(item, amount, template,actor_data=None):
     # Общая проверка количества: без изменения предмета и без броска.
+    if actor_data is not None:
+        from app.services.character_medicine import prepare_uses
+        item=deepcopy(item);prepare_uses(item,template,actor_data)
     try:
         quantity = max(0, int(item.get('quantity') or 0))
         maximum = max(1, int(item.get('maxUses') or (template.attributes or {}).get('uses') or 1))
@@ -585,8 +592,10 @@ def _validated_uses(item, amount, template):
     return quantity, maximum, uses, remaining
 
 
-def _consume_uses(parent, index, amount, template):
+def _consume_uses(parent, index, amount, template,actor_data=None):
     item = parent[index]
+    from app.services.character_medicine import prepare_uses
+    prepare_uses(item,template,actor_data or {})
     quantity, maximum, uses, remaining = _validated_uses(item, amount, template)
     while remaining > 0:
         spent = min(uses, remaining)
@@ -718,7 +727,7 @@ def _apply_temporary_limb_effects(health, direct, item):
 
 def _apply_success(
         health, direct, application, item, *, profile=None, in_combat=False,
-        infusion_bonus=0, actor_data=None, procedure_context=None):
+        infusion_bonus=0, actor_data=None, procedure_context=None,recipient_data=None):
     if application.get('kind') == 'blood_type_test':
         if application.get('target') == 'packet':
             packet = (procedure_context or {}).get('blood_packet')
@@ -767,7 +776,7 @@ def _apply_success(
         health['blood'] = stage
         health['bloodStage'] = stage
         from app.services.general_consumable import _apply_profile
-        _apply_profile(health, profile or {}, direct, item, in_combat=in_combat)
+        _apply_profile(health, profile or {}, direct, item, in_combat=in_combat,character_data=recipient_data)
         return {
             'kind': 'blood_collection', 'blood_type': blood_type or None,
             'blood_stage': stage, 'packet_id': packet['id'],
@@ -775,7 +784,7 @@ def _apply_success(
 
     if application.get('kind') == 'self' and direct.get('requires_shock'):
         from app.services.general_consumable import _apply_profile
-        if not _apply_profile(health, profile or {}, direct, item, in_combat=in_combat):
+        if not _apply_profile(health, profile or {}, direct, item, in_combat=in_combat,character_data=recipient_data):
             raise ValidationError('Нашатырь не имеет применимых эффектов')
         return {'kind': 'shock_support'}
 
@@ -790,7 +799,7 @@ def _apply_success(
                 if effect.get('type') == 'blood_recovery' and effect.get('remaining') is not None:
                     effect['remaining'] = _numeric(effect.get('remaining')) + infusion_bonus
         bleeding_before = sum(1 for entry in health.get('effects', []) if _bleeding(entry))
-        changed = _apply_profile(health, profile, direct, item, in_combat=in_combat)
+        changed = _apply_profile(health, profile, direct, item, in_combat=in_combat,character_data=recipient_data)
         temporary_limbs = _apply_temporary_limb_effects(health, direct, item)
         closed_bleeding = 0
         if direct.get('stop_all_bleeding'):
@@ -810,7 +819,7 @@ def _apply_success(
     if application.get('kind') == 'bleeding':
         effect = _selected_effect(health, selected)
         treatment, result_stage, bleeding = _bleeding_outcome(
-            effect, _canonical_bleeding_application(direct, application),
+            effect, _canonical_bleeding_application(direct, application),direct.get('bleeding_rank_bonus',0),
         )
         canonical = _canonical_bleeding_application(direct, application)
         if treatment == 'weaken':
@@ -1044,6 +1053,8 @@ class MedicalProcedureService:
         profile = with_darkness_modifiers(
             (template.attributes or {}).get('consumable') or {}, template.description or '',
         )
+        from app.services.character_medicine import prepare_profile
+        profile,direct=prepare_profile(profile,direct,item,actor_data,template)
         application = payload.get('application')
         if not isinstance(application, dict):
             raise ValidationError('Не выбрана медицинская процедура')
@@ -1051,13 +1062,24 @@ class MedicalProcedureService:
             raise ConflictError('Выбранная процедура не совпадает с оплаченной')
 
         health = target_data.setdefault('health', {})
+        from app.services.character_traits import trait_count,background_is
+        if trait_count(actor_data,'Боязнь крови') and (actor.id==target.id or any(
+            (_bleeding(e) or {}).get('kind')=='external' for e in health.get('effects',[]) if isinstance(e,dict))):
+            raise ValidationError('Боязнь крови не позволяет оказать эту медицинскую помощь')
+        if trait_count(actor_data,'Аккуратные пальчики') and direct.get('surgical_kit') and _numeric(direct.get('pain_delta'))>0:
+            direct=deepcopy(direct);direct['pain_delta']=_numeric(direct['pain_delta'])/2
         requirements = _procedure_requirements(health, direct, application)
         canonical_application = requirements['canonical_application']
         required_uses = requirements['required_uses']
         base_difficulty = requirements['base_difficulty']
         requires_roll = requirements['requires_roll']
+        helper=((actor_data.get('health') or {}).get('combatMeta') or {}).get('helpAdvantage')
+        if helper and helper.get('skill_path') not in {'','skills.other.medicine'}:helper=None
+        if requires_roll and helper:base_difficulty-=_numeric(helper.get('medical_dc_reduction'))
+        if requires_roll and background_is(actor_data,'Врач по бумагам') and not helper:base_difficulty+=4
+        if requires_roll and background_is(actor_data,'Акушер') and actor.id==target.id:base_difficulty+=3
         if not direct.get('not_consumed'):
-            _validated_uses(item, required_uses, template)
+            _validated_uses(item, required_uses, template,actor_data=actor_data)
         generic_self = application.get('kind') == 'self'
         procedure_context = {
             'blood_packet': _blood_test_context(actor_data, application, actor.lobby_id),
@@ -1096,6 +1118,9 @@ class MedicalProcedureService:
         except (TypeError, ValueError):
             medication_bonus = 0
         skill_bonus = _medicine_skill(actor_data)
+        if helper:skill_bonus+=_numeric(helper.get('roll_bonus'))
+        patient_counts=actor_data.setdefault('health',{}).setdefault('combatMeta',{}).setdefault('patientTreatments',{})
+        if trait_count(actor_data,'Личный врач') and _numeric(patient_counts.get(str(target.id)))>10:skill_bonus+=3
         difficulty = max(1, base_difficulty - skill_bonus - medication_bonus) if requires_roll else None
         roll = (
             completion.payload.get('medicine_roll') if completion else random.randint(1, 20)
@@ -1103,16 +1128,19 @@ class MedicalProcedureService:
         if requires_roll and (type(roll) is not int or not 1 <= roll <= 20):
             raise ConflictError('Не удалось восстановить медицинский бросок')
         success = not requires_roll or roll >= difficulty
+        if requires_roll and helper:actor_data['health']['combatMeta'].pop('helpAdvantage',None)
         if not direct.get('not_consumed'):
-            _consume_uses(parent, index, required_uses, template)
+            _consume_uses(parent, index, required_uses, template,actor_data=actor_data)
 
         outcome = None
+        intoxication_before=_numeric(health.get('intoxication'))
         if success:
+            if requires_roll:patient_counts[str(target.id)]=int(_numeric(patient_counts.get(str(target.id))))+1
             outcome = _apply_success(
                 health, direct, application, item,
                 profile=profile, in_combat=actor_model is not None,
                 infusion_bonus=infusion_bonus,
-                actor_data=actor_data, procedure_context=procedure_context,
+                actor_data=actor_data, procedure_context=procedure_context,recipient_data=target_data,
             )
             related_characters = _synchronize_blood_knowledge(
                 actor, target, actor_data, target_data, application, procedure_context, outcome,
@@ -1124,7 +1152,7 @@ class MedicalProcedureService:
                 envelope['side_effects']['exposure'] = {
                     'item_name': item.get('name') or template.name,
                     'price': max(0, _numeric(template.price or item.get('price'))),
-                    'intoxication': max(0, _numeric(direct.get('intoxication_delta'))),
+                    'intoxication': max(0, _numeric(health.get('intoxication'))-intoxication_before),
                     'exhaustion_relief': max(0, -_numeric(direct.get('exhaustion_delta'))),
                     'addiction_block_hours': max(0, _numeric(direct.get('addiction_block_hours'))),
                 }
@@ -1215,6 +1243,8 @@ class MedicalProcedureService:
             (template.attributes or {}).get('consumable') or {}, template.description or '',
         )
         target_data = deepcopy(target.data or {})
+        from app.services.character_medicine import prepare_profile
+        profile,direct=prepare_profile(profile,direct,item,actor.data or {},template)
         health = target_data.setdefault('health', {})
         requirements = _procedure_requirements(health, direct, application)
         if not requirements['requires_roll']:
@@ -1230,7 +1260,7 @@ class MedicalProcedureService:
                 raise ConflictError('Лимит использования этого препарата исчерпан')
         outcome = _apply_success(
             health, direct, application, item, profile=profile, in_combat=True,
-            infusion_bonus=infusion_bonus, actor_data=target_data,
+            infusion_bonus=infusion_bonus, actor_data=actor.data,recipient_data=target_data,
         )
         if application.get('kind') == 'self' and direct.get('use_limit'):
             usage = health.setdefault('combatMeta', {}).setdefault('consumableUsage', {})

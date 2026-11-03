@@ -542,6 +542,8 @@ def sync_health_derived_statuses(health: Dict[str, Any]) -> Dict[str, Any]:
         return health
     effects = normalize_effect_list(health.get("effects") or [])
     combat_meta = health.setdefault("combatMeta", {})
+    tough_nut=combat_meta.get('toughNut') or {}
+    health['painLevel']=max(_to_float(health.get('painLevel'),0),min(5,max(0,_to_float(tough_nut.get('minimumPain'),0))))
     intoxication = _to_float(health.get("intoxication"), 0)
     if intoxication < 100:
         combat_meta.pop("intoxicationDeathChecked", None)

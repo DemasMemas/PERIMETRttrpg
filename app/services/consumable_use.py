@@ -73,6 +73,11 @@ def apply_consumable_use(actor, target, envelope, *, location_id=None, addiction
         )}
         lobby = db.session.get(Lobby, target.lobby_id)
         data = deepcopy(target.data or {})
+        from app.services.character_traits import background_is
+        if background_is(data,'Врач по бумагам'):
+            from app.services.addictions import addiction_profile as profile_for_name
+            selected=profile_for_name(exposure['item_name'],values['price']) if addiction_profile is _UNSET_ADDICTION_PROFILE else addiction_profile
+            if selected:addiction_profile={**selected,'chance':selected['chance']*2}
         result['addiction'] = record_exposure(
             data.setdefault('health', {}), exposure['item_name'], values.pop('price'),
             (lobby.game_day or 1) * 1440 + (lobby.game_time_minutes or 0), **values,

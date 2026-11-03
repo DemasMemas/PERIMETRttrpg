@@ -10,13 +10,14 @@ function token(exp) {
     return `header.${Buffer.from(JSON.stringify({ exp })).toString('base64url')}.signature`;
 }
 
-function createSession() {
+function createSession({hangRefresh=false}={}) {
     let now = 1_700_000_000_000;
     const original = token(Math.floor((now + 30 * 60_000) / 1000));
     const renewed = token(Math.floor((now + 56 * 60_000) / 1000));
     const storage = new Map([['access_token', original]]);
     const listeners = new Map();
     const calls = [];
+    const timers = new Map();let timerId=0;
     const localStorage = {
         getItem: key => storage.get(key) || null,
         setItem: (key, value) => storage.set(key, value),
@@ -31,6 +32,7 @@ function createSession() {
         fetch: async (url, options) => {
             calls.push({ url, options });
             if (url === '/auth/refresh') {
+                if(hangRefresh)return new Promise(()=>{});
                 return { ok: true, status: 200, json: async () => ({ access_token: renewed }) };
             }
             return { ok: true, status: 200 };
@@ -40,11 +42,14 @@ function createSession() {
         static now() { return now; }
     }
     const context = vm.createContext({
-        window, document, localStorage, Headers, URL, Date: Clock,
+        window, document, localStorage, Headers, URL, Date: Clock, AbortController,
+        setTimeout:(callback,delay)=>{const id=++timerId;timers.set(id,{callback,delay});return id;},
+        clearTimeout:id=>timers.delete(id),
         atob: value => Buffer.from(value, 'base64').toString('utf8'),
     });
     vm.runInContext(script, context);
     return { window, document, listeners, calls, original, renewed,
+        expireRefresh:()=>{for(const [id,timer]of timers){if(timer.delay===10000){timers.delete(id);timer.callback();}}},
         setTime: value => { now = value; }, now: () => now, context };
 }
 
@@ -82,6 +87,25 @@ test('idle, hidden and expired sessions do not renew', async () => {
     await session.window.authSession.refreshIfNeeded();
     assert.equal(session.calls.length, 0);
     assert.equal(session.window.authSession.isExpired(), true);
+});
+
+test('зависшее обновление после возврата на вкладку освобождает ожидающие запросы',async()=>{
+    const session=createSession({hangRefresh:true});
+    session.setTime(session.now()+26*60_000);
+    session.listeners.get('visibilitychange')();
+    const headers={Authorization:`Bearer ${session.original}`};
+    const waiting=Promise.all([
+        session.window.fetch('/lobbies/a',{headers}),
+        session.window.fetch('/lobbies/b',{headers}),
+    ]);
+    assert.equal(session.calls.length,1);
+    session.expireRefresh();
+    const responses=await waiting;
+    assert.ok(responses.every(response=>response.ok));
+    assert.equal(session.calls[0].options.signal.aborted,true);
+    assert.equal(session.calls.filter(call=>call.url==='/auth/refresh').length,1);
+    await session.window.fetch('/lobbies/c',{headers});
+    assert.ok(session.calls.some(call=>call.url==='/lobbies/c'));
 });
 
 test('Socket.IO sends the current token rather than a module-cached token', () => {

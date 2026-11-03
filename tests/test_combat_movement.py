@@ -1710,7 +1710,10 @@ def test_gm_can_restore_psi_zombie_sheet_with_current_loot_and_without_heal(clie
     assert response.status_code==200,response.get_json()
     restored=response.get_json()['data']
     assert not is_mutant(restored)
-    assert restored['inventory']==zombie['inventory'] and restored['equipment']==zombie['equipment']
+    # Снимок дополнительно содержит вычисленную вместимость карманов;
+    # сами предметы и снаряжение должны сохраниться без изменений.
+    assert restored['inventory']=={**zombie['inventory'],'pocketMaxVolume':10}
+    assert restored['equipment']==zombie['equipment']
     assert restored['weapons']==[{'id':'ordinary-rifle','name':'Винтовка','durability':37,'ammo':2}]
     assert restored['health']['current']==pytest.approx(33)
     assert restored['health']['zones']['head']['current']==pytest.approx(14)

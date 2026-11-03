@@ -329,12 +329,24 @@ def test_underbarrel_underpayment_or_changed_paid_source_cannot_load(client, pai
         value['inventory']['backpack'][0]['attributes']['batch'] = 'Другой патрон'
         save(pair, value)
         before = snapshot(pair)
-        for _ in range(2):
-            response = action(client, pair, auth_headers,
-                              {'action_key': 'reload_underbarrel', 'resume_pending_action_id': 'i-changed'})
-            assert response.status_code == 400, response.get_json()
-            assert snapshot(pair) == before
-        assert db.session.get(DeferredCombatAction, 'i-changed').status == 'ready'
+        response = action(client, pair, auth_headers,
+                          {'action_key': 'reload_underbarrel', 'resume_pending_action_id': 'i-changed'})
+        assert response.status_code == 400, response.get_json()
+        after = snapshot(pair)
+        expected = deepcopy(before[0])
+        # По согласованному правилу неудавшееся оплаченное действие
+        # автоматически исчезает из панели, потраченные ОД не возвращаются.
+        expected['health']['combatMeta'].pop('pendingAction', None)
+        expected['health']['combatMeta'].pop('completedPendingActionId', None)
+        assert after[0] == expected
+        assert after[2:5] == before[2:5]
+        assert after[6] == before[6]
+        assert db.session.get(DeferredCombatAction, 'i-changed').status == 'cancelled'
+        assert after[5][0][4] == before[5][0][4]
+        response = action(client, pair, auth_headers,
+                          {'action_key': 'reload_underbarrel', 'resume_pending_action_id': 'i-changed'})
+        assert response.status_code == 409, response.get_json()
+        assert snapshot(pair) == after
     assert not data(pair)['weapons'][0]['installedModules'][0].get('loadedGrenade')
     assert data(pair)['inventory']['backpack'][0]['quantity'] == 2
     assert ConsumableUse.query.count() == 0

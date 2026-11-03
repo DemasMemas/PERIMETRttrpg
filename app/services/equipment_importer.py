@@ -8,6 +8,7 @@ from typing import Any, Dict, List, Optional
 
 from app.extensions import db
 from app.models.templates import ItemTemplate
+from app.services.weapon_catalog import attachment_slots, parse_weapon_size
 
 
 NS = {"m": "http://schemas.openxmlformats.org/spreadsheetml/2006/main"}
@@ -364,10 +365,11 @@ def _parse_ranged_weapons(rows: List[Dict[str, str]]) -> List[Dict[str, Any]]:
             "max_durability": _as_int(row.get("K"), 100),
             "fire_rate": _as_int(row.get("L")),
             "min_strength": _as_int(row.get("N")),
-            "size": _as_int(row.get("P")),
+            **parse_weapon_size(row.get("P")),
             "weapon_class": _normalize_text(row.get("Q")),
             "special_rules": _normalize_text(row.get("R")),
             "fixedMagazine": False,
+            "slots": attachment_slots(subcategory),
             "raw_row": row,
         }
         templates.append(
@@ -983,6 +985,9 @@ def upsert_equipment_templates(workbook_path: str | Path, session=None) -> Dict[
             continue
 
         used_ids.add(item.id)
+        if category == "weapon" and isinstance((item.attributes or {}).get("slots"), list):
+            # Сохраняем ограничения слотов, вручную заданные ведущим.
+            data["attributes"]["slots"] = attachment_slots(item.subcategory, item.attributes["slots"])
         changed = False
         for field in ["name", "subcategory", "item_class", "description", "price", "weight", "volume"]:
             value = data[field]

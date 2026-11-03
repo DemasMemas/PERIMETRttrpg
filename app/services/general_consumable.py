@@ -299,7 +299,9 @@ def _add_modifier(health, stat, value, remaining, tick, note, source):
     return True
 
 
-def _apply_profile(health, profile, direct, item, *, in_combat):
+def _apply_profile(health, profile, direct, item, *, in_combat,character_data=None):
+    from app.services.character_traits import consumable_profile
+    profile,direct=consumable_profile(profile,direct,item,character_data)
     changed = False
     source = _source_name(item)
     replaced_types = _effect_types_replaced_by_direct(direct)
@@ -389,10 +391,15 @@ def _apply_profile(health, profile, direct, item, *, in_combat):
     meta = health.setdefault("combatMeta", {})
     duration = direct.get("duration")
     tick = direct.get("duration_phase") or "turn_end"
-    for stat in ("strength", "agility", "accuracy", "weight", "will", "psy_defense"):
+    def positive_duration(stat,value,remaining,phase):
+        beneficial=stat in {'strength','agility','accuracy','will','psy_defense','action_points','organ_toughness_multiplier','hp_max'} and _number(value)>0 or stat in {'weight','movement_points'} and _number(value)<0
+        if beneficial and phase in {'turn_end','round_end'} and _number(remaining)>1:
+            return _number(remaining)+_number(direct.get('positive_duration_bonus'))
+        return remaining
+    for stat in ("strength", "agility", "accuracy", "weight", "movement_points", "will", "psy_defense"):
         value = direct.get(f"{stat}_delta")
         if value is not None:
-            changed |= _add_modifier(health, stat, value, duration, tick, "stat_bonus", source)
+            changed |= _add_modifier(health, stat, value, positive_duration(stat,value,duration,tick), tick, "stat_bonus", source)
     for modifier in profile.get("modifiers") or []:
         if not isinstance(modifier, dict):
             continue
@@ -400,7 +407,7 @@ def _apply_profile(health, profile, direct, item, *, in_combat):
         if direct.get(f"{stat}_delta") is not None:
             continue
         changed |= _add_modifier(
-            health, stat, modifier.get("value"), modifier.get("remaining", duration),
+            health, stat, modifier.get("value"), positive_duration(stat,modifier.get('value'),modifier.get("remaining", duration),modifier.get('tick') or tick),
             modifier.get("tick") or tick, modifier.get("note") or "", source,
         )
 
@@ -412,9 +419,11 @@ def _apply_profile(health, profile, direct, item, *, in_combat):
         and effect.get("source") == crash_source
         and effect.get("active", True)
     ), None)
+    max_return_source=f'{source}:max-health-return'
+    active_max_return=next((e for e in health.get('effects',[]) if e.get('source')==max_return_source and e.get('active',True)),None)
     if direct.get("hp_max_delta") is not None:
         delta = _number(direct.get("hp_max_delta"))
-        if active_crash is None:
+        if active_crash is None and active_max_return is None:
             health["max"] = max(1, _number(health.get("max")) + delta)
         changed = True
     if direct.get("post_duration_hp_delta") is not None or direct.get("hp_max_delta") is not None:
@@ -431,7 +440,13 @@ def _apply_profile(health, profile, direct, item, *, in_combat):
                 "min": 0,
             })
         if direct.get("hp_max_delta") is not None:
-            on_expire.append({"field": "max", "delta": -_number(direct["hp_max_delta"]), "min": 1})
+            adjustment={"field": "max", "delta": -_number(direct["hp_max_delta"]), "min": 1}
+            max_duration=positive_duration('hp_max',direct['hp_max_delta'],duration,tick)
+            if max_duration!=duration:
+                apply_effect_to_health(health,{'type':'temporary_hp_max','name':f'{item_name}: окончание бонуса ОЗ',
+                    'source':max_return_source,'remaining':max_duration,'tick':tick,
+                    'remaining_seconds':_modifier_seconds(max_duration,tick),'onExpire':[adjustment]})
+            else:on_expire.append(adjustment)
         apply_effect_to_health(health, {
             "type": "stimulant_crash", "name": f"{item_name}: окончание действия",
             "remaining": _number(duration, 1), "tick": tick, "source": crash_source,
@@ -442,7 +457,7 @@ def _apply_profile(health, profile, direct, item, *, in_combat):
     if direct.get("organ_toughness_multiplier") is not None:
         changed |= _add_modifier(
             health, "organ_toughness_multiplier", direct.get("organ_toughness_multiplier"),
-            _number(duration, 1), tick, item_name, source,
+            positive_duration('organ_toughness_multiplier',direct.get('organ_toughness_multiplier'),_number(duration,1),tick), tick, item_name, source,
         )
     if direct.get("action_points_duration"):
         changed |= _add_modifier(
@@ -635,6 +650,8 @@ class GeneralConsumableService:
         profile = with_darkness_modifiers(
             (template.attributes or {}).get("consumable") or {}, template.description or "",
         )
+        from app.services.character_medicine import prepare_profile
+        profile,direct=prepare_profile(profile,direct,item,data,template)
         application = payload.get("application")
         _validate_general_profile(direct, application)
         if completion and completion.payload["selection"].get("application") != application:
@@ -657,9 +674,10 @@ class GeneralConsumableService:
         # Spend the selected item first: a prerequisite can live earlier in the
         # same list and removing it would otherwise invalidate the saved index.
         if not direct.get("not_consumed"):
-            _consume_uses(parent, index, 1, template)
+            _consume_uses(parent, index, 1, template,actor_data=data)
         requirements = _consume_requirements(data, direct, character.lobby_id)
-        if not _apply_profile(health, profile, direct, item, in_combat=state is not None):
+        intoxication_before=_number(health.get('intoxication'))
+        if not _apply_profile(health, profile, direct, item, in_combat=state is not None,character_data=data):
             raise ValidationError("Предмет не имеет применимых эффектов")
         if direct.get("use_limit"):
             usage = health.setdefault("combatMeta", {}).setdefault("consumableUsage", {})
@@ -675,7 +693,7 @@ class GeneralConsumableService:
             "exposure": {
                 "item_name": item.get("name") or template.name,
                 "price": max(0, _number(template.price or item.get("price") or 0)),
-                "intoxication": max(0, _number(direct.get("intoxication_delta"))),
+                "intoxication": max(0, _number(health.get('intoxication'))-intoxication_before),
                 "exhaustion_relief": max(0, -_number(direct.get("exhaustion_delta"))),
                 "addiction_block_hours": max(0, _number(direct.get("addiction_block_hours"))),
             },

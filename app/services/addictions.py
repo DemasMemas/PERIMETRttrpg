@@ -79,8 +79,11 @@ def addiction_profile(item_name: str, price=0) -> Optional[Dict[str, Any]]:
         'регенеративный стимулятор', 'стимпак',
     ))
     if pain_regen:
+        key,label=('stimpaks','Стимпаки') if 'стимпак' in name else (
+            ('regenerative_stimulants','Регенеративные стимуляторы') if any(t in name for t in ('регенератив','миколий','препарат 02'))
+            else ('painkiller_stimulants','Обезболивающие стимуляторы'))
         return {
-            'key': 'pain_regen_stimulants', 'label': 'Обезболивающие и регенеративные стимуляторы',
+            'key': key, 'label': label,
             'chance': 10, 'multipliers': {2: 3, 3: 5, 4: 7, 5: 8}, 'kind': 'medicine',
         }
     accelerating = any(token in name for token in (
@@ -104,10 +107,26 @@ def addiction_profile(item_name: str, price=0) -> Optional[Dict[str, Any]]:
 
 def resolve_addiction_profile(consumable_profile, template_name, price=0):
     if isinstance(consumable_profile, dict) and 'addiction' in consumable_profile:
-        return consumable_profile['addiction']
+        stored=consumable_profile['addiction']
+        if isinstance(stored,dict) and stored.get('key')=='pain_regen_stimulants':
+            resolved=addiction_profile(template_name,price)
+            if resolved:return {**stored,'key':resolved['key'],'label':resolved['label']}
+        return stored
     # Existing templates have no stored addiction rule yet. Keep their old
     # behavior, but never infer it from a mutable inventory display name.
     return addiction_profile(template_name, price)
+
+
+def initial_addiction(health,item_name,source,day=1):
+    profile=addiction_profile(item_name)
+    if not profile:raise ValueError('Не найден профиль начальной зависимости')
+    state=_state(health)
+    record=state['records'].setdefault(profile['key'],{
+        'key':profile['key'],'label':profile['label'],'kind':profile['kind'],'active':True,
+        'acquired_day':day,'satisfied_days':[day],'withdrawal_days':0,'withdrawal_remaining':WITHDRAWAL_DAYS,
+        'withdrawal_stage':0,'checks':{'day':day,'attempts':0,'successes':0,'reduction_applied':0},'creationSources':[]})
+    if source not in record['creationSources']:record['creationSources'].append(source)
+    return record
 
 
 def _state(health):

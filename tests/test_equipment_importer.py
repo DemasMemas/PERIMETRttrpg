@@ -12,6 +12,8 @@ from app.services.equipment_importer import (
     _parse_ranged_weapons,
     _parse_tools,
 )
+from app.services.weapon_catalog import attachment_slots, parse_weapon_size, normalize_template
+from app.schemas.templates import ItemTemplateSchema
 
 
 def test_molotov_cocktail_is_not_imported_as_ammunition():
@@ -202,6 +204,47 @@ def test_cyrillic_acp_is_canonicalized():
 
 def test_excel_date_serial_is_not_used_as_magazine_volume():
     assert _magazine_volume("45748", "Клипса СП-4") == 0.25
+
+
+def test_weapon_slots_are_available_without_reimporting_old_catalog():
+    original = {"category": "weapon", "subcategory": "Штурмовые винтовки и карабины", "attributes": {"accuracy": 1}}
+    result = ItemTemplateSchema().dump(original)
+    assert [slot["type"] for slot in result["attributes"]["slots"]] == ["scope", "barrel", "handguard"]
+    assert original["attributes"] == {"accuracy": 1}
+    assert [slot["type"] for slot in attachment_slots("Гранатомёты")] == ["scope", "handguard"]
+    assert attachment_slots("Пистолеты", []) == []
+
+
+def test_dual_weapon_size_survives_excel_date_conversion():
+    expected = {"size": 8, "size_raw": "8/7", "size_options": [8, 7]}
+    for value in ("8/7", "44750", 44750, "2022-07-08T00:00:00"):
+        assert parse_weapon_size(value) == expected
+    assert parse_weapon_size("2,5")["size"] == 2.5
+    rows = [{"B": "Штурмовые винтовки и карабины"}, {"B": "АС 19-Б10", "P": "44750", "Q": "2"}]
+    template = _parse_ranged_weapons(rows)[0]
+    assert template["volume"] == 8
+    assert template["attributes"]["size_options"] == [8, 7]
+    assert template["attributes"]["raw_row"]["P"] == "44750"
+
+
+def test_old_weapon_volume_is_repaired_in_snapshot_without_mutating_saved_data():
+    from app.models import LobbyCharacter
+    original = {"weapons": [{"id": "gun", "volume": 44750}], "inventory": {"backpack": [
+        {"category": "container", "contents": [{"category": "weapon", "volume": 44750, "attributes": {"size": 44750}}]},
+        {"category": "other", "volume": 44750},
+    ]}, "health": {"effects": [{"item_snapshot": {"category": "weapon", "volume": 44750}}]}}
+    character = LobbyCharacter(id=1, revision=3, data=original)
+    snapshot = character.data_snapshot()
+    assert snapshot["weapons"][0]["volume"] == 8
+    item = snapshot["inventory"]["backpack"][0]["contents"][0]
+    assert item["volume"] == 8
+    assert item["attributes"]["size_options"] == [8, 7]
+    assert snapshot["inventory"]["backpack"][1]["volume"] == 44750
+    assert snapshot["health"] == original["health"]
+    assert original["weapons"][0]["volume"] == 44750
+    normalized = normalize_template({"category": "weapon", "volume": 44750, "attributes": {"size": 44750}})
+    assert normalized["volume"] == 8
+    assert normalized["attributes"]["size_raw"] == "8/7"
 
 
 def test_exoskeleton_battery_is_imported_as_one_day_module():

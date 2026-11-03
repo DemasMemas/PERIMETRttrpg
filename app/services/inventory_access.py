@@ -130,6 +130,8 @@ def calculate_inventory_access(character_data, item_path, item=None):
     if path[:2] == ["inventory", "pockets"]:
         base_action_points = 1
         source = "pockets"
+        from app.services.character_traits import passive_profile
+        if not passive_profile(character_data)['pockets_quick_access']:base_action_points=2
     elif path[:2] == ["inventory", "backpack"]:
         base_action_points = 2
         source = "backpack"
@@ -149,7 +151,11 @@ def calculate_inventory_access(character_data, item_path, item=None):
         if path[0] == "equipment" and len(path) > 2 and path[2] == "pouches" and position == 4:
             continue
         container = _value_at_path(character_data, path[:position])
-        base_action_points += item_access_action_points(container)
+        access_cost=item_access_action_points(container)
+        if 'кейс' in str((container or {}).get('name','')).casefold() or _item_category(container)=='case':
+            from app.services.character_traits import action_cost
+            access_cost=action_cost(character_data,'case',access_cost)
+        base_action_points += access_cost
 
     zones = (((character_data or {}).get("health") or {}).get("zones") or {})
     limb_penalty = int(any(

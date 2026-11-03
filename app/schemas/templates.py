@@ -1,6 +1,11 @@
-from marshmallow import Schema, fields
+from marshmallow import Schema, fields, post_dump
 
 class ItemTemplateSchema(Schema):
+    @post_dump
+    def weapon_compatibility(self, data, **kwargs):
+        from app.services.weapon_catalog import normalize_template
+        return normalize_template(data)
+
     id = fields.Int(dump_only=True)
     name = fields.Str(required=True)
     category = fields.Str(required=True)

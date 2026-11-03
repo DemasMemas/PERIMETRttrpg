@@ -119,7 +119,8 @@ def _take_inventory_filter(character_data: Dict[str, Any]) -> Dict[str, Any] | N
 
 def consume_equipped_filter_charges(character_data: Dict[str, Any], amount: float = 1) -> Dict[str, Any]:
     equipment = character_data.get("equipment") if isinstance(character_data.get("equipment"), dict) else {}
-    spent = max(0, _number(amount, 0))
+    from app.services.character_traits import passive_profile
+    spent = max(0, _number(amount, 0))*passive_profile(character_data)['filter_usage_multiplier']
     result = {"changed": False, "consumed": 0, "removed": 0, "replaced": 0, "empty": 0}
     if spent <= 0:
         return result

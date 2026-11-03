@@ -381,6 +381,7 @@ function getBleedingState(health = {}) {
 }
 
 export function syncHealthDerivedStatuses(health = {}) {
+    health.painLevel=Math.max(Number(health.painLevel)||0,Math.min(5,Math.max(0,Number(health.combatMeta?.toughNut?.minimumPain)||0)));
     if (!health || typeof health !== 'object') return health;
     const effects = normalizeEffectList(health.effects || []);
     health.combatMeta = health.combatMeta || {};

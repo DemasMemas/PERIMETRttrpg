@@ -35,6 +35,18 @@ const characterSaver = createCharacterSaver((characterId, updates) => apiFetch(`
 }), getCharacterBase);
 
 export const Server = {
+    async awardCharacterSession(lobbyId,characterId,payload) {
+        return apiFetch(`/lobbies/${lobbyId}/characters/${characterId}/session-reward`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+    },
+    async characterCreationRules(lobbyId) {
+        return apiFetch(`/lobbies/${lobbyId}/character-creation`);
+    },
+    async previewCharacterCreation(lobbyId,name,plan,options={}) {
+        return apiFetch(`/lobbies/${lobbyId}/character-creation`,{...options,method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,plan})});
+    },
+    async settleCharacterHistory(lobbyId,characterId,choices){
+        return apiFetch(`/lobbies/${lobbyId}/characters/${characterId}/creation-history`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({choices})});
+    },
     async applyWorldEditorChange(lobbyId,payload) {
         return apiFetch(`/lobbies/${lobbyId}/world-editor/changes`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
     },

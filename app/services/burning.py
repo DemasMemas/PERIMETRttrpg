@@ -86,7 +86,8 @@ def tick(target,round_number):
            if e['type']=='burning' and e.get('active',True) and (e.get('remaining') or 0)>0]
     if not fires:
         return
-    protection=CombatService._target_elemental_protection(data,'thermal')
+    from app.services.character_traits import background_is
+    protection=CombatService._target_elemental_protection(data,'thermal',**({'target':target} if background_is(data,'Стойкий') else {}))
     harmful=[e for e in fires if not (protection>=e.get('thermal_threshold',35)
         if e.get('threshold_inclusive') else protection>e.get('thermal_threshold',35))]
     damage=max(e.get('damage_per_round') or 50 for e in fires)

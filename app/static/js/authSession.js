@@ -44,9 +44,20 @@
             || document.visibilityState === 'hidden'
             || now - lastFailureAt < retryDelayMs) return Promise.resolve(token);
         if (refreshPromise) return refreshPromise;
-        refreshPromise = nativeFetch('/auth/refresh', {
+        // При возвращении на вкладку зависший refresh не должен навсегда
+        // задержать все последующие запросы страницы.
+        const controller = new AbortController();
+        let timeout;
+        const deadline = new Promise((resolve, reject) => {
+            timeout = setTimeout(() => {
+                controller.abort();
+                reject(new Error('Token refresh timed out'));
+            }, 10000);
+        });
+        const renewal = nativeFetch('/auth/refresh', {
             method: 'POST',
             headers: { Authorization: `Bearer ${token}` },
+            signal: controller.signal,
         }).then(async response => {
             if (response.status === 401) blockedToken = token;
             if (!response.ok) throw new Error(`Token refresh failed: ${response.status}`);
@@ -56,10 +67,11 @@
             blockedToken = null;
             lastFailureAt = -Infinity;
             return getToken();
-        }).catch(() => {
+        });
+        refreshPromise = Promise.race([renewal, deadline]).catch(() => {
             lastFailureAt = Date.now();
             return getToken();
-        }).finally(() => { refreshPromise = null; });
+        }).finally(() => { clearTimeout(timeout); refreshPromise = null; });
         return refreshPromise;
     }
 

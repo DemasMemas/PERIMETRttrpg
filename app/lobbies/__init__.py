@@ -739,8 +739,11 @@ def update_world_group_members(lobby_id, group_id, lobby):
         return jsonify({'error': 'Character does not belong to this lobby'}), 400
     if any(not can_join_world_group(character) for character in existing_characters.values()):
         return jsonify({'error': 'Mutants and non-joining NPCs cannot join a world group'}), 400
+    from app.services.character_starting_purchase import grant_world_entry
+    entered=[character for character in existing_characters.values() if grant_world_entry(character)]
     group.member_character_ids = member_ids
     db.session.commit()
+    for character in entered:emit_character_update({'character_id':character.id,'updates':{'data':character.data_snapshot()},'source':'world_entry'})
     payload = _serialize_world_group(group)
     socketio.emit('world_group_updated', payload, room=f"lobby_{lobby_id}")
     return jsonify(payload), 200
@@ -2284,10 +2287,63 @@ def get_lobby_templates(lobby_id, lobby, participant):
     global_schema = ItemTemplateSchema(many=True)
     local_schema = LobbyItemTemplateSchema(many=True)
 
+    serialized_global=global_schema.dump(global_templates)
+    from app.services.character_creation import builtin_templates
+    known={str((t.get('attributes') or {}).get('ruleId')) for t in serialized_global}
+    serialized_global.extend(t for t in builtin_templates(category) if t['attributes']['ruleId'] not in known and not subcategory)
+    if category in (None,'weapon_module'):
+        from app.services.weapon_modules import missing_templates
+        serialized_global.extend(missing_templates(serialized_global,subcategory))
     return jsonify({
-        'global': global_schema.dump(global_templates),
+        'global': serialized_global,
         'local': local_schema.dump(local_templates)
     })
+
+
+@lobbies_bp.route('/<int:lobby_id>/character-creation', methods=['GET','POST'])
+@jwt_required()
+@requires_participant
+def character_creation_rules(lobby_id,lobby,participant):
+    from app.services.character_creation import catalog,build_character
+    if request.method=='GET':
+        from app.services.character_starting_purchase import catalog as purchase_catalog
+        rules=catalog();rules['startingPurchaseTemplates']=purchase_catalog()
+        return jsonify(rules)
+    payload=request.get_json() or {}
+    data=build_character(str(payload.get('name') or ''),payload.get('plan'),roll_history=False,finalize=False)
+    return jsonify({'data':data})
+
+
+@lobbies_bp.route('/<int:lobby_id>/characters/<int:character_id>/session-reward',methods=['POST'])
+@jwt_required()
+@requires_gm
+def award_character_session(lobby_id,character_id,lobby):
+    from app.services.character_development import award_session
+    character=LobbyCharacter.query.filter_by(id=character_id,lobby_id=lobby_id).first()
+    if not character:raise NotFoundError('Персонаж не найден')
+    data=deepcopy(character.data or {})
+    result=award_session(data,request.get_json() or {})
+    character.data=data
+    flag_modified(character,'data')
+    db.session.commit()
+    emit_character_update({'character_id':character.id,'updates':{'data':character.data_snapshot()},'source':'session_reward'})
+    return jsonify({'result':result,'data':character.data_snapshot()})
+
+
+@lobbies_bp.route('/<int:lobby_id>/characters/<int:character_id>/creation-history',methods=['POST'])
+@jwt_required()
+@requires_participant
+def settle_character_creation_history(lobby_id,character_id,lobby,participant):
+    from app.services.character_history import settle_history
+    character=LobbyCharacter.query.filter_by(id=character_id,lobby_id=lobby_id).first()
+    if not character:raise NotFoundError('Персонаж не найден')
+    CharacterService.check_access(character,int(get_jwt_identity()),edit=True)
+    payload=request.get_json() or {}
+    if not isinstance(payload,dict) or set(payload)!={'choices'}:raise ValidationError('Нужны решения событий')
+    character.data=settle_history(character.data,payload['choices'],max(1,lobby.game_day or 1))
+    flag_modified(character,'data');db.session.commit()
+    emit_character_update({'character_id':character.id,'updates':{'data':character.data_snapshot()},'source':'creation_history'})
+    return jsonify({'data':character.data_snapshot()})
 
 
 @lobbies_bp.route('/<int:lobby_id>/templates', methods=['POST'])
@@ -3039,6 +3095,9 @@ def spawn_character_in_location(lobby_id, location_id):
     if not force_relocate and surface(location, objects, tile_x, tile_y, target_level) is None:
         return jsonify({'error': 'No supporting surface on selected floor'}), 400
 
+    from app.services.character_starting_purchase import grant_world_entry
+    entered=grant_world_entry(character)
+
     if existing:
         # Перемещаем на новые координаты
         previous_position = (existing.pos_x, existing.pos_y)
@@ -3105,6 +3164,7 @@ def spawn_character_in_location(lobby_id, location_id):
         action = 'spawned'
 
     target_user_id = loc_char.controlled_by
+    if entered:emit_character_update({'character_id':character.id,'updates':{'data':character.data_snapshot()},'source':'world_entry'})
     # Уведомляем всех в локации через сокет
     socketio.emit('character_spawned', {
         'action': action,

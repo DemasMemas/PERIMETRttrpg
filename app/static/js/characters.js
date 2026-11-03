@@ -2,6 +2,7 @@
 import { Server } from './api.js';
 import { showNotification } from './utils.js';
 import { createCharacterFolderPanel, createCharacterFolderStore } from './characterFolders.js';
+import { openCharacterCreation } from './characterCreation.js';
 
 let currentLobbyId;
 let mutantCatalog = [];
@@ -376,8 +377,13 @@ export async function createCharacter(name, data) {
     }
 }
 
-export function showCreateCharacterForm(isNpc = false) {
+export async function showCreateCharacterForm(isNpc = false) {
     if (isNpc && !window.isGM) return;
+    if (!isNpc) {
+        try { await openCharacterCreation(currentLobbyId,async()=>{await loadLobbyCharacters();showNotification('Персонаж создан');}); }
+        catch(error) { showNotification(error.message,'error'); }
+        return;
+    }
     const name = prompt('Введите имя персонажа:');
     if (!name) return;
     createCharacter(name, isNpc ? { basic: { is_npc: true } } : {});

@@ -2739,6 +2739,9 @@ function showGmEventMenu() {
                     <option value="deafness_90">Глухота 90+</option>
                     <option value="ally_critical">Критическое состояние союзника</option>
                     <option value="ally_death">Смерть союзника</option>
+                    <option value="frightening_place">Пугающее место</option>
+                    <option value="disgusting_place">Мерзкое место</option>
+                    <option value="unsafe_place">Небезопасное место</option>
                     <option value="inspiration">Воодушевление / снижение стресса</option>
                 </select>
             </label>
@@ -3915,7 +3918,7 @@ function showMeleeCombatMenu(characterId) {
         });
     };
     const actions = [
-        { label: 'Замах · 1 ОД', run: () => directAction('melee_swing', { label: 'Замах подготовлен' }) },
+        { label: `Замах · ${actor.melee_swing_action_points??1} ОД`, run: () => directAction('melee_swing', { label: 'Замах подготовлен' }) },
         { label: 'Выхватить вещь · 3 ОД', run: () => targetAction('melee_disarm') },
         { label: 'Толкнуть · 2 ОД', run: () => targetAction('melee_shove') },
         { label: 'Захват · 4 ОД', run: () => targetAction('grapple') },
@@ -3940,7 +3943,7 @@ function showMeleeCombatMenu(characterId) {
         );
     }
     const blockButtons = [1, 2, 3, 4].map(cost =>
-        `<button type="button" class="btn btn-sm btn-secondary melee-block-option" data-cost="${cost}">Блок · ${cost} ОД</button>`
+        `<button type="button" class="btn btn-sm btn-secondary melee-block-option" data-cost="${cost}">Блок · ${Math.max(0,cost-(actor.melee_block_discount||0))} ОД</button>`
     ).join('');
     menu.innerHTML = `
         <div style="width:min(540px,calc(100vw - 24px)); max-height:calc(100vh - 30px);
@@ -7231,6 +7234,7 @@ async function showCombatParticipantSelection(initiatorLocationCharacterId = nul
                 </div>
                 <button type="button" class="combat-participant-close btn btn-sm btn-secondary">×</button>
             </div>
+            <div><button type="button" class="btn btn-sm btn-secondary combat-participant-clear">Убрать всех</button></div>
             <div class="combat-participant-list" style="
                 display:grid;
                 gap:8px;
@@ -7268,7 +7272,7 @@ async function showCombatParticipantSelection(initiatorLocationCharacterId = nul
             cursor:pointer;
         `;
         row.innerHTML = `
-            <input type="checkbox" value="${character.location_character_id}" checked ${character.location_character_id === initiatorLocationCharacterId ? 'disabled' : ''}>
+            <input type="checkbox" value="${character.location_character_id}" checked ${initiatorLocationCharacterId != null && Number(character.location_character_id) === Number(initiatorLocationCharacterId) ? 'disabled' : ''}>
             <strong class="combat-participant-name" style="overflow:hidden; text-overflow:ellipsis;"></strong>
             <span style="font-size:12px; opacity:.75;">Инициатива ${bonus >= 0 ? '+' : ''}${bonus}</span>
         `;
@@ -7277,6 +7281,12 @@ async function showCombatParticipantSelection(initiatorLocationCharacterId = nul
         );
         list.appendChild(row);
     });
+    combatParticipantMenu.querySelector('.combat-participant-clear').onclick = () => {
+        list.querySelectorAll('input[type="checkbox"]').forEach(input => {
+            input.checked = initiatorLocationCharacterId != null
+                && Number(input.value) === Number(initiatorLocationCharacterId);
+        });
+    };
 
     const close = () => {
         closeCombatParticipantMenu();

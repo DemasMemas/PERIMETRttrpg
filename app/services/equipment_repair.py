@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import math
 import re
+import random
 from typing import Any, Dict, Iterable, List
 
 from app.services.combat import CombatService
@@ -198,6 +199,11 @@ def repair_equipment(
     tool = resolve_item_path(character_data, tool_path)
     target = resolve_item_path(character_data, target_path)
     profile = _repair_profile(tool, tool_template)
+    from app.services.character_traits import trait_count,background_is
+    if isinstance(profile,dict):
+        profile=dict(profile)
+        if profile.get('maximum_damage_stage') is not None:
+            profile['maximum_damage_stage']=min(5,int(profile['maximum_damage_stage'])+trait_count(character_data,'Как новенький'))
     if not isinstance(profile, dict) or profile.get("kind") not in {
         "weapon", "armor", "armor_current_stage", "restore_tool",
     }:
@@ -246,7 +252,9 @@ def repair_equipment(
     if profile.get("consumed_on_use"):
         _remove_or_spend_item(character_data, tool_path)
     else:
-        _spend_tool_use(tool, profile)
+        saved_use=background_is(character_data,'Конструктор') and random.randint(1,100)<=50
+        if not saved_use:_spend_tool_use(tool, profile)
+        result['tool_use_saved']=bool(saved_use)
     result.update({
         "tool_name": tool.get("name") or getattr(tool_template, "name", "Инструменты"),
         "target_name": target.get("name") or getattr(target_template, "name", "Снаряжение"),

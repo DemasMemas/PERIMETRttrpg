@@ -1,4 +1,5 @@
 import { hearingModifier } from './hearingRules.js';
+import { passiveTraits, traitCount, backgroundIs, addLearningXp, backpackItemVolume, pocketCapacity } from './characterTraits.js';
 // static/js/characterSheet.js
 /*
  * ===================================================================
@@ -260,7 +261,7 @@ function clearTemplatesCache(category) {
 
 let allTemplatesCache = null;
 
-function getCategoryDisplay(cat) {
+export function getCategoryDisplay(cat) {
     const map = {
         'weapon': 'Оружие',
         'melee_weapon': 'Оружие ближнего боя',
@@ -290,7 +291,10 @@ function getCategoryDisplay(cat) {
         'glasses': 'Очки',
         'gloves': 'Перчатки',
         'jewelry': 'Бижутерия',
-        'tool': 'Инструменты'
+        'tool': 'Инструменты',
+        'food': 'Еда',
+        'other': 'Прочее',
+        'misc': 'Прочее'
     };
     return map[cat] || cat;
 }
@@ -844,7 +848,7 @@ window.addSkillXpFromPoints = function(skillPath) {
 
     currentCharacterData.skills.skillPoints = freePoints - 1;
 
-    skill.xp = (Number(skill.xp) || 0) + 1;
+    addLearningXp(currentCharacterData,skillPath,skill);
 
     checkAndLevelUpSkill(skill, skillPath);
 
@@ -858,7 +862,7 @@ window.addSkillXpFromUse = function(skillPath) {
     let skill = getSkillByPath(skillPath);
     if (!skill) return;
 
-    skill.xp = (Number(skill.xp) || 0) + 1;
+    addLearningXp(currentCharacterData,skillPath,skill);
     checkAndLevelUpSkill(skill, skillPath);
 
     renderSkillsTab(currentCharacterData);
@@ -1000,6 +1004,7 @@ function updateDataFromFields() {
             && Number(characterValueAtPath(currentCharacterData, name)) !== value) {
             const xpPath = name.replace(/\.base$/, '.xp');
             setValueByPath(currentCharacterData, xpPath, 0);
+            setValueByPath(currentCharacterData,name.replace(/\.base$/,'.learningRemainder'),0);
             pendingManualFieldPaths.add(xpPath);
             pendingManualFieldPaths.add(name);
         }
@@ -1050,6 +1055,8 @@ function validSkillField(input) {
 function handleManualFormEdit(event) {
     const input = event.target, path = input?.getAttribute?.('name') || '';
     if (!currentCharacterCanEdit || sheetSaveBlocked) return;
+    // Выбор модели применяется отдельной кнопкой, до этого сохранять нечего.
+    if (input?.id?.startsWith('weapon-model-select-')) return;
     if (path.startsWith('skills.') && input.type === 'number') {
         if (!validSkillField(input)) {
             if (event.type === 'change') {
@@ -1127,6 +1134,8 @@ function captureSheetViewState() {
         activeName: active?.name || null,
         activeIndex: Array.from(controls).indexOf(active),
         selection,
+        pendingWeaponModels: [...root.querySelectorAll('select[data-weapon-instance]')]
+            .map(select => ({ id: select.id, instance: select.dataset.weaponInstance, value: select.value })),
         details: [...root.querySelectorAll('details')].map(detail => {
             const tab = detail.closest('[id^="sheet-tab-"]');
             return {
@@ -1147,6 +1156,11 @@ function captureSheetViewState() {
 function restoreSheetViewState(state) {
     const root = document.getElementById('character-sheet-modal');
     if (!root || !state) return;
+    for (const entry of state.pendingWeaponModels || []) {
+        const select = document.getElementById(entry.id);
+        if (select?.dataset.weaponInstance === entry.instance
+            && [...select.options].some(option => option.value === entry.value)) select.value = entry.value;
+    }
     for (const entry of state.details) {
         const scope = entry.tab ? document.getElementById(entry.tab) : root;
         const detail = entry.panel
@@ -1865,6 +1879,7 @@ function getTotalWeight(item) {
         const occupiedVolume = singleVolume * qty;
         return (occupiedVolume < 0.5) ? 0.1 : 0.25;
     }
+    if(traitCount(currentCharacterData,'Да не такой и тяжелый')&&getWeaponClass(item)==='grenade_launcher')baseWeight=Math.max(0,baseWeight-3);
     let total = baseWeight * (item.quantity || 1);
     if (item.contents && Array.isArray(item.contents)) {
         total += item.contents.reduce((sum, sub) => sum + getTotalWeight(sub), 0);
@@ -1925,7 +1940,7 @@ function getIntoxicationProfile(data) {
 function getHealthRollModifier(data, skillPath, options = {}) {
     const health = data?.health || {};
     let modifier = 0;
-    if (options.includePain !== false) modifier -= Number(health.painLevel) || 0;
+    if (options.includePain !== false) modifier -= Math.max(0,(Number(health.painLevel)||0)-passiveTraits(data).painIgnored-passiveTraits(data).painReduction);
     modifier -= Number(health.exhaustion) || 0;
     const bleeding = health.bleeding || {};
     modifier -= Number(bleeding.totalSeverity ?? health.bleedingSeverity) || 0;
@@ -1939,6 +1954,9 @@ function getHealthRollModifier(data, skillPath, options = {}) {
     if (['physical.accuracy', 'physical.shooting'].includes(skillPath)) modifier += intoxication.accuracy;
     else if (skillPath === 'physical.agility') modifier += intoxication.agility;
     else if (skillPath === 'social.charisma') modifier += intoxication.charisma;
+    if(['physical.accuracy','physical.shooting'].includes(skillPath)&&backgroundIs(data,'Дядя Толик'))modifier-=2;
+    if(skillPath==='physical.agility'&&backgroundIs(data,'Трюкач'))modifier-=Math.floor((Number(health.stress)||0)/3);
+    if(skillPath==='social.charisma'&&backgroundIs(data,'Прогульщик')&&(Number(health.intoxication)||0)<75)modifier+=Math.floor((Number(health.intoxication)||0)/10);
 
     Object.values(health.zones || {}).forEach(zone => {
         if (!zone || typeof zone !== 'object') return;
@@ -2103,7 +2121,7 @@ function getMovementPenaltyBreakdown(data, suppliedWeight = null) {
     const weightPerPenalty = getWeightPerMovementPenalty(data);
     const rawWeightPenalty = Math.floor(totalWeight / weightPerPenalty);
     const backpackReduction = Math.max(0, Number(eq.backpack?.attributes?.weight_reduction) || 0);
-    let weightPenalty = Math.max(0, rawWeightPenalty - backpackReduction);
+    let weightPenalty = Math.max(0, Math.floor(rawWeightPenalty*passiveTraits(data).weightMultiplier) - backpackReduction);
     let armorPenalty = Number(armor.movementPenalty ?? armor.movement_penalty) || 0;
     const helmet = eq.helmet || {};
     const helmetPenalty = helmet.integratedWithArmor
@@ -2153,7 +2171,7 @@ function getMovementPenaltyBreakdown(data, suppliedWeight = null) {
     }, fractureInjuries);
     const intoxicationPenalty = getIntoxicationProfile(data).movement;
     return {
-        total: Math.max(0, armorPenalty + helmetPenalty + weightPenalty + temporary + injuries + intoxicationPenalty),
+        total: Math.max(0, armorPenalty + helmetPenalty + weightPenalty + temporary + injuries + intoxicationPenalty+passiveTraits(data).movementPenalty),
         totalWeight,
         weightPerPenalty,
         rawWeightPenalty,
@@ -2179,14 +2197,14 @@ function applyModifier(base, mod) {
 
 function getEffectiveWeaponStats(weapon) {
     const base = {
-        accuracy: weapon.accuracy || 0,
-        noise: weapon.noise || 0,
-        range: weapon.range || 0,
-        ergonomics: weapon.ergonomics || 0
+        accuracy: weapon.accuracy ?? weapon.attributes?.accuracy ?? 0,
+        noise: weapon.noise ?? weapon.attributes?.noise ?? 0,
+        range: weapon.range ?? weapon.attributes?.range ?? 0,
+        ergonomics: weapon.ergonomics ?? weapon.attributes?.ergonomics ?? 0
     };
     if (!weapon.installedModules) return base;
     weapon.installedModules.forEach(mod => {
-        const m = mod.modifiers || {};
+        const m = mod.modifiers || mod.attributes?.modifiers || {};
         base.accuracy = applyModifier(base.accuracy, m.accuracy);
         base.noise = applyModifier(base.noise, m.noise);
         base.range = applyModifier(base.range, m.range);
@@ -2200,7 +2218,7 @@ function getEffectiveWeaponStats(weapon) {
         );
         const isProne = combatState?.current_character?.posture === 'prone';
         if (mod.slotType === 'handguard' && (mod.attributes?.bipod || mod.bipod || mod.name === 'Сошки') && (isBraced || isProne)) {
-            base.ergonomics += 75;
+            base.ergonomics += backgroundIs(currentCharacterData, 'Пост принял') ? 50 : 75;
         }
     });
     return base;
@@ -2376,11 +2394,13 @@ async function renderBasicTab(data) {
 
         <hr>
         <h4>Предыстория</h4>
+        <div><strong>Метки персонажа</strong><p>${['Военный','Бандит','Торговец','Проходил военную службу'].map(tag=>`<label style="margin-right:12px"><input type="checkbox" ${basic.tags?.includes(tag)?'checked':''} ${window.isGM?'':'disabled'} onchange="setCharacterRuleTag('${tag}',this.checked)"> ${tag}</label>`).join('')}</p>${(basic.tags||[]).filter(t=>!['Военный','Бандит','Торговец','Проходил военную службу'].includes(t)).map(t=>`<span class="badge">${escapeHtml(t)}</span>`).join(' ')}</div>
+        ${data.creation?.zoneHistory?`<details><summary>Жизнь в Зоне до игры: ${Number(data.creation.zoneHistory.months)} мес.</summary>${(data.creation.zoneHistory.events||[]).map(event=>`<div style="margin:10px 0"><strong>Месяц ${Number(event.month)}: ${escapeHtml(event.title)}</strong><p>${(event.details||[]).map(escapeHtml).join('<br>')}</p><p>Доход: ${(event.incomeOptions||[]).map(v=>Number(v).toLocaleString('ru-RU')).join(' или ')} руб.</p>${(event.pending||[]).map(text=>`<p>${escapeHtml(text)}</p>`).join('')}</div>`).join('')}<p>${data.creation.zoneHistory.settled?`Решения сохранены. Изменение денег от истории: ${Number(data.creation.zoneHistory.cashTotal||0).toLocaleString('ru-RU')} рублей; ${data.creation.worldEntryGranted?'учтено при входе в мир':'будет учтено при первом входе в мир'}.`:'Перед входом в мир завершите выбор Учителя и Закалки.'}</p>${data.creation.zoneHistory.settled?'':'<button type="button" class="btn" onclick="completeCreationHistory()">Завершить выбор событий</button>'}</details>`:''}
         <div style="margin-bottom: 10px;">
             <label>Название</label>
             <select name="basic.background.templateId" class="form-control" style="width:100%;" onchange="fillBackgroundFromTemplate(this)">
                 <option value="">-- Выберите предысторию --</option>
-                ${backgroundTemplates.map(t => `<option value="${t.id}" ${bg.templateId == t.id ? 'selected' : ''}>${t.name}</option>`).join('')}
+                ${backgroundTemplates.map(t => `<option value="${t.id}" ${bg.templateId == t.id || bg.ruleId && bg.ruleId===t.attributes?.ruleId ? 'selected' : ''} ${t.attributes?.available===false?'disabled':''}>${escapeHtml(t.name)}</option>`).join('')}
             </select>
         </div>
         <div style="display: flex; gap: 10px; margin-bottom: 10px;">
@@ -2424,9 +2444,29 @@ async function renderBasicTab(data) {
     container.innerHTML = html;
 
     const healthContainer = document.getElementById('health-right-column');
+    if(data.creation?.completed&&!window.isGM){
+        container.querySelectorAll('[name^="basic.background."],button[onclick^="addBackground"],button[onclick^="removeBackground"]').forEach(el=>el.disabled=true);
+    }
     renderHealthTab(data, healthContainer);
     restoreSheetViewState(viewState);
 }
+
+window.setCharacterRuleTag = function(tag,enabled){
+    if(!window.isGM)return;
+    const basic=currentCharacterData.basic||(currentCharacterData.basic={}),tags=new Set(basic.tags||[]);
+    if(enabled)tags.add(tag);else tags.delete(tag);
+    basic.tags=[...tags];scheduleAutoSave();
+};
+
+window.completeCreationHistory = async function(){
+    try{
+        await forceSyncCharacter();
+        const {completeCharacterHistory}=await import('./characterHistory.js');
+        await completeCharacterHistory(currentLobbyId,currentCharacterId,currentCharacterData,async data=>{
+            currentCharacterData=data;await renderCharacterSheet(data.basic?.name||'',data);
+        });
+    }catch(error){showNotification(error.message);}
+};
 
 window.fillBackgroundFromTemplate = async function(select) {
     const selectedId = parseInt(select.value, 10);
@@ -2439,6 +2479,7 @@ window.fillBackgroundFromTemplate = async function(select) {
         document.getElementById('background-skill-bonuses').innerHTML = '';
         if (currentCharacterData.basic?.background) {
             delete currentCharacterData.basic.background.templateId;
+            delete currentCharacterData.basic.background.ruleId;
             delete currentCharacterData.basic.background.name;
             delete currentCharacterData.basic.background.pluses;
             delete currentCharacterData.basic.background.minuses;
@@ -2488,6 +2529,7 @@ window.fillBackgroundFromTemplate = async function(select) {
     currentCharacterData.basic.background.pluses = template.attributes?.pluses || '';
     currentCharacterData.basic.background.minuses = template.attributes?.minuses || '';
     currentCharacterData.basic.background.skillBonuses = skillBonuses;
+    currentCharacterData.basic.background.ruleId = template.attributes?.ruleId;
 
     ensureHealthMaximums(currentCharacterData);
     refreshHealthPanel();
@@ -3605,6 +3647,10 @@ function renderHealthTab(data, container = null) {
     `;
 
     targetContainer.innerHTML = html;
+    if(backgroundIs(data,'Крепкий орешек')||health.combatMeta?.toughNut){
+        const state=health.combatMeta?.toughNut||{uses:1,minimumPain:0};
+        targetContainer.insertAdjacentHTML('afterbegin',`<section class="health-section"><h4>Крепкий орешек</h4><label>Оставшиеся спасения <input type="number" min="0" max="100" class="form-control" name="health.combatMeta.toughNut.uses" value="${Number(state.uses)||0}" ${window.isGM?'':'disabled'}></label><p>Постоянный минимум боли: ${Number(state.minimumPain)||0}. Запас пополняет ГМ; минимум боли от пополнения не сбрасывается.</p></section>`);
+    }
 }
 
 function refreshHealthPanel(data = currentCharacterData) {
@@ -3893,11 +3939,12 @@ async function renderSkillsTab(data) {
         <hr>
         <div style="display: flex; gap: 15px;">
             <div><label>Очки навыков</label><input type="number" class="form-control number-input" name="skills.skillPoints" value="${skills.skillPoints ?? 30}"></div>
-            <div><label>Специализации</label><input type="number" class="form-control number-input" name="skills.specializations" value="${skills.specializations || 10}"></div>
+            <div><label>Специализации</label><input type="number" class="form-control number-input" name="skills.specializations" value="${skills.specializations ?? 10}"></div>
         </div>
+        ${window.isGM?'<button type="button" class="btn btn-secondary" onclick="openSessionReward()">Награда за сессию или цель</button>':''}
         <h4>Особые черты</h4>
         <div id="special-traits-container"></div>
-        <button type="button" class="btn btn-sm" onclick="addSpecialTrait()">+ Добавить</button>
+        <button type="button" class="btn btn-sm" onclick="addSpecialTrait()" ${data.creation?.completed&&!window.isGM?'disabled':''}>+ Добавить</button>
         ${window.isGM ? `<button type="button" class="btn btn-sm btn-secondary" onclick="openCreateSpecialTraitTemplateModal()">➕ Создать кастом</button>` : ''}
     `;
 
@@ -3913,6 +3960,7 @@ async function renderSkillsTab(data) {
     }
     if (document.getElementById('special-traits-container') !== traitsRoot) return;
     renderSpecialTraits(data.features?.specialTraits || [], specialTraitTemplates);
+    if(data.creation?.completed&&!window.isGM)traitsRoot.querySelectorAll('input,select,textarea,button').forEach(el=>el.disabled=true);
     applySheetEditPermissions(container);
 }
 
@@ -3924,7 +3972,7 @@ function renderSpecialTraits(traits, templates) {
     traits.forEach((trait, index) => {
         const selectedTemplateId = trait.templateId ? parseInt(trait.templateId, 10) : null;
         const optionsHtml = templates.map(t =>
-            `<option value="${t.id}" ${selectedTemplateId === t.id ? 'selected' : ''}>${t.name}</option>`
+            `<option value="${t.id}" ${selectedTemplateId === t.id || trait.ruleId && trait.ruleId===t.attributes?.ruleId ? 'selected' : ''}>${escapeHtml(t.name)}</option>`
         ).join('');
 
         const div = document.createElement('div');
@@ -3935,11 +3983,12 @@ function renderSpecialTraits(traits, templates) {
                     <option value="">-- Выберите особую черту --</option>
                     ${optionsHtml}
                 </select>
-                <input type="text" class="form-control" name="features.specialTraits.${index}.effect" value="${escapeHtml(trait.effect || '')}" placeholder="Эффект" style="flex: 2;">
+                <textarea class="form-control" name="features.specialTraits.${index}.effect" placeholder="Эффект" rows="3" style="flex: 2;">${escapeHtml(trait.effect || '')}</textarea>
                 <input type="number" class="form-control number-input" name="features.specialTraits.${index}.cost" value="${trait.cost || 0}" placeholder="Стоимость" style="width: 70px;">
                 <button type="button" class="btn btn-sm btn-danger" onclick="removeSpecialTrait(${index})">✕</button>
             </div>
         `;
+        if(trait.choices&&Object.keys(trait.choices).length){const note=document.createElement('p');note.textContent=Object.values(trait.choices).join(' · ');div.appendChild(note);}
         container.appendChild(div);
     });
 
@@ -3953,6 +4002,8 @@ function renderSpecialTraits(traits, templates) {
             if (costInput) costInput.value = 0;
             if (currentCharacterData.features?.specialTraits?.[index]) {
                 delete currentCharacterData.features.specialTraits[index].templateId;
+                delete currentCharacterData.features.specialTraits[index].ruleId;
+                delete currentCharacterData.features.specialTraits[index].choices;
                 delete currentCharacterData.features.specialTraits[index].name;
                 currentCharacterData.features.specialTraits[index].effect = '';
                 currentCharacterData.features.specialTraits[index].cost = 0;
@@ -3977,18 +4028,33 @@ function renderSpecialTraits(traits, templates) {
         trait.effect = template.attributes?.effect || '';
         trait.cost = template.attributes?.cost || 0;
         trait.templateId = template.id;
+        trait.ruleId = template.attributes?.ruleId;
+        delete trait.choices;
 
         scheduleAutoSave();
     };
 }
 
 // Функция добавления новой особой черты (без шаблона)
+window.openSessionReward = async function() {
+    if(!window.isGM||!currentCharacterCanEdit)return;
+    await forceSyncCharacter();
+    const characterId=currentCharacterId;
+    const {showSessionReward}=await import('./characterDevelopment.js');
+    await showSessionReward(currentLobbyId,characterId,result=>{
+        if(currentCharacterId!==characterId)return;
+        currentCharacterData=result.data;renderSkillsTab(currentCharacterData);
+        showNotification(`Начислено свободных очков: ${result.result.freePoints}; за обучение: ${result.result.trainingPoints}`,'success');
+    });
+};
+
 window.addSpecialTrait = function() {
     updateDataFromFields();
     if (!currentCharacterData.features) currentCharacterData.features = {};
     if (!Array.isArray(currentCharacterData.features.specialTraits)) {
         currentCharacterData.features.specialTraits = [];
     }
+    if(currentCharacterData.features.specialTraits.length>=3){showNotification('Можно иметь не более трёх особых черт','error');return;}
     currentCharacterData.features.specialTraits.push({ name: '', effect: '', cost: 0 });
     renderSkillsTab(currentCharacterData);
     scheduleAutoSave();
@@ -5366,21 +5432,22 @@ window.chooseMachineGunBurst = function(weaponIndex, fireMode, actionPoints = 3,
     const weapon = currentCharacterData?.weapons?.[weaponIndex];
     if (!weapon) return;
     const available = getWeaponAmmoCount(weapon);
-    if (available < 2) {
-        showNotification('Для пулемётной очереди нужно минимум 2 патрона');
+    const minimum=backgroundIs(currentCharacterData,'Пост принял')?10:2;
+    if (available < minimum) {
+        showNotification(`Для пулемётной очереди нужно минимум ${minimum} патронов`);
         return;
     }
     const fireRate = Math.max(2, Number(weapon.fireRate) || available);
     const maximum = Math.min(Math.floor(available / volleyCount), fireRate);
-    if (maximum < 2) {
-        showNotification(`Для действия нужно минимум ${2 * volleyCount} патрона`);
+    if (maximum < minimum) {
+        showNotification(`Для действия нужно минимум ${minimum * volleyCount} патронов`);
         return;
     }
-    const answer = window.prompt(`Длина очереди (2-${maximum})`, String(Math.min(5, maximum)));
+    const answer = window.prompt(`Длина очереди (${minimum}-${maximum})`, String(Math.min(Math.max(5,minimum), maximum)));
     if (answer === null) return;
     const shots = Number.parseInt(answer, 10);
-    if (!Number.isInteger(shots) || shots < 2 || shots > maximum) {
-        showNotification(`Укажите число от 2 до ${maximum}`);
+    if (!Number.isInteger(shots) || shots < minimum || shots > maximum) {
+        showNotification(`Укажите число от ${minimum} до ${maximum}`);
         return;
     }
     window.useWeaponFromEquipment(weaponIndex, fireMode, shots * volleyCount, actionPoints, volleyCount);
@@ -5489,7 +5556,7 @@ function renderRangedAttackButtons(weapon, template, index, disabled) {
     if (profile.supports_burst) {
         const machineGun = Boolean(profile.machine_gun_burst);
         const burstShots = Number(profile.burst_size) || 0;
-        const burstActionPoints = weaponClass === 'submachine_gun' ? 2 : 3;
+        const burstActionPoints = Math.max(1,(weaponClass === 'submachine_gun' ? 2 : 3)-(backgroundIs(currentCharacterData,'Полицейский')&&['pistol','submachine_gun'].includes(weaponClass)?1:0));
         const action = (mode, actionPoints = 3, volleyCount = 1) => {
             if (machineGun && mode === 'area') {
                 return `useWeaponFromEquipment(${index}, '${mode}', 10, ${actionPoints}, 2)`;
@@ -5510,6 +5577,16 @@ function renderRangedAttackButtons(weapon, template, index, disabled) {
         }
     }
     return buttons.join('');
+}
+
+function weaponAttachmentSlots(template) {
+    const slots = Array.isArray(template?.attributes?.slots) ? template.attributes.slots : [
+        { type: 'scope', label: 'Прицел', maxItems: 1 },
+        { type: 'barrel', label: 'Ствол', maxItems: 1 },
+        { type: 'handguard', label: 'Цевье', maxItems: 1 },
+    ];
+    const launcher = /гранатом[её]т|grenade.launcher/i.test(template?.subcategory || '');
+    return slots.filter(slot => !launcher || slot.type !== 'barrel');
 }
 
 async function renderWeapons(weapons, weaponTemplates, moduleTemplates, weaponModTemplates) {
@@ -5640,6 +5717,10 @@ async function renderWeapons(weapons, weaponTemplates, moduleTemplates, weaponMo
                 `;
             });
             fieldsHtml += '</div>';
+            const sizeOptions = template?.attributes?.size_options;
+            if (Array.isArray(sizeOptions) && sizeOptions.length === 2) {
+                fieldsHtml += `<div style="margin-bottom:8px;">Размер: ${sizeOptions.map(value => escapeHtml(String(value))).join(' / ')} · Объём: ${escapeHtml(String(weapon.volume ?? template.volume ?? sizeOptions[0]))}</div>`;
+            }
             if (combatErgonomics) {
                 fieldsHtml += `
                     <div style="display:flex; flex-wrap:wrap; gap:7px; margin:-2px 0 10px; font-size:12px;">
@@ -5655,6 +5736,7 @@ async function renderWeapons(weapons, weaponTemplates, moduleTemplates, weaponMo
 
         let modelBlock = '';
         if (!weapon.model && !isMelee) {
+            if (!weapon.id) weapon.id = generateItemId();
             const options = Object.entries(groupedWeapons)
                 .sort(([left], [right]) => compareByFixedOrder(left, right, WEAPON_SUBCATEGORY_ORDER))
                 .map(([cat, items]) => `
@@ -5664,7 +5746,7 @@ async function renderWeapons(weapons, weaponTemplates, moduleTemplates, weaponMo
             `).join('');
             modelBlock = `
                 <div style="display: flex; gap: 5px; align-items: center; margin-bottom: 10px; flex-wrap: wrap;">
-                    <select id="weapon-model-select-${index}" class="form-control" style="width: 200px;">
+                    <select id="weapon-model-select-${index}" data-weapon-instance="${escapeHtml(weapon.id)}" class="form-control" style="width: 200px;">
                         <option value="">-- Выберите модель --</option>
                         ${options}
                     </select>
@@ -5677,8 +5759,8 @@ async function renderWeapons(weapons, weaponTemplates, moduleTemplates, weaponMo
         let slotsHtml = '';
         if (!isMelee && weapon.templateId) {
             const weaponTemplate = weaponTemplates.find(t => t.id == weapon.templateId);
-            if (weaponTemplate && weaponTemplate.attributes && weaponTemplate.attributes.slots) {
-                const slots = weaponTemplate.attributes.slots;
+            if (weaponTemplate) {
+                const slots = weaponAttachmentSlots(weaponTemplate);
                 const installed = Array.isArray(weapon.installedModules) ? weapon.installedModules : [];
                 slotsHtml = `<div style="margin-top: 10px; padding: 8px; background: rgba(0,0,0,0.1); border-radius: 4px;"><strong>Слоты:</strong>`;
                 slots.forEach(slot => {
@@ -5686,8 +5768,10 @@ async function renderWeapons(weapons, weaponTemplates, moduleTemplates, weaponMo
                     slotsHtml += `<div style="margin-left: 15px; display: flex; align-items: center; gap: 10px; margin-top: 5px;">`;
                     slotsHtml += `<span style="width: 100px;">${slot.label}:</span>`;
                     if (installedMod) {
-                        slotsHtml += `<span style="flex:1;">${escapeHtml(installedMod.name)}</span>`;
-                        slotsHtml += `<button type="button" class="btn btn-sm btn-danger" onclick="unequipModuleFromWeapon(${index}, '${slot.type}')">Снять</button>`;
+                        slotsHtml += `<span style="flex:1;" title="${escapeHtml(installedMod.description || '')}">${escapeHtml(installedMod.name)}</span>`;
+                        if (installedMod.attributes?.removable!==false && !installedMod.attributes?.permanent) {
+                            slotsHtml += `<button type="button" class="btn btn-sm btn-danger" onclick="unequipModuleFromWeapon(${index}, '${slot.type}')">Снять</button>`;
+                        } else slotsHtml += '<span class="badge">Несъёмный</span>';
                     } else {
                         slotsHtml += `<button type="button" class="btn btn-sm btn-primary" onclick="equipModuleToWeapon(${index}, '${slot.type}')">Установить</button>`;
                     }
@@ -5805,6 +5889,9 @@ async function renderWeapons(weapons, weaponTemplates, moduleTemplates, weaponMo
 
         let grenadeLauncherHtml = '';
         if (!isMelee) {
+            if (weapon.installedModules?.some(m=>m.attributes?.bayonet)) {
+                attackButtonsHtml += `<button type="button" class="btn btn-sm btn-primary" ${combatActionDisabled?'disabled':''} onclick="useMeleeAttack(${index}, 'bayonet')">Колющий штыком · 2 ОД</button>`;
+            }
             const launcher = weapon.installedModules?.find(m => m.slotType === 'handguard' && m.attributes?.type === 'grenade_launcher');
             if (launcher) {
                 const isLoaded = launcher.loaded || false;
@@ -5876,6 +5963,14 @@ window.equipModuleToWeapon = async function(weaponIndex, slotType) {
 
     const weaponTemplates = await loadTemplatesForLobby('weapon');
     const weaponTemplate = weaponTemplates.find(t => t.id == weapon.templateId);
+    if (!weaponTemplate || !weaponAttachmentSlots(weaponTemplate).some(slot => slot.type === slotType)) {
+        showNotification('У этого оружия нет выбранного слота');
+        return;
+    }
+    if ((weapon.installedModules || []).some(module => module.slotType === slotType)) {
+        showNotification('Этот слот уже занят');
+        return;
+    }
     const weaponCaliber = getItemCaliber(weaponTemplate);
     await getAllItemTemplates();
 
@@ -5886,7 +5981,7 @@ window.equipModuleToWeapon = async function(weaponIndex, slotType) {
             if (item.category === 'weapon_module' && item.attributes?.slot_type === slotType) {
                 // Проверка калибра для слота "Ствол"
                 if (slotType === 'barrel' && weaponCaliber) {
-                    const moduleCaliber = item.attributes?.caliber;
+                    const moduleCaliber = normalizeBaseCaliberText(item.attributes?.caliber ?? item.caliber ?? '');
                     if (moduleCaliber && moduleCaliber !== weaponCaliber) return;
                 }
                 inventoryModules.push({ item, path: path.concat(idx) });
@@ -5942,29 +6037,47 @@ window.equipModuleToWeapon = async function(weaponIndex, slotType) {
         // Проверка совместимости для подствольного гранатомёта
         if (slotType === 'handguard' && selected.item.attributes?.type === 'grenade_launcher') {
             const allowedCategories = selected.item.attributes?.compatible_weapon_categories;
-            if (allowedCategories && allowedCategories.length > 0) {
-                const weaponSubcategory = weaponTemplate?.subcategory;
-                if (!weaponSubcategory || !allowedCategories.includes(weaponSubcategory)) {
+            const weaponSubcategory = weaponTemplate?.subcategory;
+            if (!/штурмов|assault/i.test(weaponSubcategory || '')
+                || (allowedCategories?.length && !allowedCategories.includes(weaponSubcategory))) {
                     showNotification('Этот подствольник можно установить только на штурмовые винтовки');
                     return;
-                }
             }
         }
 
-        if (!removeItemByPath(selected.path)) {
+        const source = getItemByPath(selected.path);
+        if (source !== selected.item || currentCharacterData.weapons[weaponIndex] !== weapon
+            || (weapon.installedModules || []).some(module => module.slotType === slotType)) {
+            showNotification('Предметы изменились. Выберите модуль заново');
+            return;
+        }
+        const installedModule = structuredClone(selected.item);
+        if (slotType==='barrel' && installedModule.attributes?.caliber_specific) {
+            if (!weaponCaliber) { showNotification('Укажите калибр оружия перед установкой модуля'); return; }
+            // Первая установка задаёт калибр экземпляра; после снятия он сохраняется.
+            installedModule.attributes.caliber=installedModule.attributes.caliber || weaponCaliber;
+        }
+        if (Number(source.quantity || 1) > 1) {
+            source.quantity -= 1;
+            installedModule.id = generateItemId();
+        } else if (!removeItemByPath(selected.path)) {
             showNotification('Не удалось найти модуль в инвентаре');
             return;
         }
 
         if (!weapon.installedModules) weapon.installedModules = [];
         weapon.installedModules.push({
-            id: selected.item.id,
-            templateId: selected.item.templateId,
-            name: selected.item.name,
+            ...installedModule,
+            quantity: 1,
             slotType: slotType,
-            modifiers: selected.item.attributes?.modifiers || {},
-            attributes: selected.item.attributes
+            modifiers: installedModule.modifiers || installedModule.attributes?.modifiers || {},
         });
+        const sizeReduction=Number(installedModule.attributes?.weapon_size_reduction)||0;
+        if (sizeReduction>0) {
+            weapon.volume=Math.max(0,Number(weapon.volume ?? weaponTemplate.volume ?? 0)-sizeReduction);
+            if (weapon.size!=null) weapon.size=Math.max(0,(Number(weapon.size)||0)-sizeReduction);
+            if (weapon.attributes?.size!=null) weapon.attributes.size=Math.max(0,(Number(weapon.attributes.size)||0)-sizeReduction);
+        }
 
         renderEquipmentTab(currentCharacterData);
         renderInventoryTab(currentCharacterData);
@@ -6016,7 +6129,11 @@ window.unequipModuleFromWeapon = async function(weaponIndex, slotType) {
     if (modIndex === -1) return;
 
     const installedMod = weapon.installedModules[modIndex];
-    weapon.installedModules.splice(modIndex, 1);
+    if (installedMod.attributes?.removable === false || installedMod.attributes?.permanent
+        || /укорочение ствола/i.test(installedMod.name || '')) {
+        showNotification('Этот модуль нельзя снять после установки');
+        return;
+    }
 
     let restoredItem;
     if (installedMod.templateId) {
@@ -6055,6 +6172,12 @@ window.unequipModuleFromWeapon = async function(weaponIndex, slotType) {
         };
     }
 
+    // Состояние конкретного модуля важнее исходного шаблона: патроны,
+    // прочность, батареи и прочие вложения должны вернуться вместе с ним.
+    restoredItem = { ...restoredItem, ...structuredClone(installedMod), category: 'weapon_module', quantity: 1 };
+    delete restoredItem.slotType;
+    delete restoredItem.sourcePath;
+    weapon.installedModules.splice(modIndex, 1);
     const path = installedMod.sourcePath;
     let restored = false;
     if (path) restored = restoreItemToPath(restoredItem, path);
@@ -6165,10 +6288,12 @@ window.equipMagazineToWeapon = async function(weaponIndex) {
                 ? Number(profile.value || 0) - Number(profile.magazine_modifier || 0) + selectedMagazineErgonomics
                 : selectedMagazineErgonomics;
             const baseCost = Math.max(0, Number(selected.item.attributes?.reload_time_od || 0));
-            const useCost = Math.max(
+            const rawUseCost = Math.max(
                 0,
                 baseCost + reloadErgonomicsModifier(effectiveErgonomics) - Number(access.useActionDiscount || 0),
             );
+            const discount=traitCount(currentCharacterData,'Быстрые руки');
+            const useCost=discount?Math.max(1,rawUseCost-discount):rawUseCost;
             const totalCost = useCost + Number(access.retrievalActionPoints || 0);
             paymentRows.push({ label: 'Смена магазина', payment: `${totalCost} ОД` });
         }
@@ -7872,22 +7997,24 @@ window.equipWeaponFromInventory = async function(itemPath) {
 
     // Создаём объект оружия для экипировки (всё как было)
     const weaponToEquip = {
+        ...structuredClone(item),
+        id: item.id || generateItemId(),
         templateId: template.id,
         createdByPlayer: Boolean(item.createdByPlayer),
         name: template.name,
         model: template.name,
-        weight: template.weight,
-        volume: template.volume,
-        accuracy: item.accuracy || template.attributes?.accuracy || 0,
-        noise: item.noise || template.attributes?.noise || 0,
-        range: item.range || template.attributes?.range || 0,
-        ergonomics: item.ergonomics || template.attributes?.ergonomics || 0,
+        weight: item.weight ?? template.weight,
+        volume: item.volume ?? template.volume,
+        accuracy: item.accuracy ?? template.attributes?.accuracy ?? 0,
+        noise: item.noise ?? template.attributes?.noise ?? 0,
+        range: item.range ?? template.attributes?.range ?? 0,
+        ergonomics: item.ergonomics ?? template.attributes?.ergonomics ?? 0,
         burst: item.burst || template.attributes?.burst || '',
         fireModes: item.fireModes || item.attributes?.fire_modes || template.attributes?.fire_modes || null,
-        damage: item.damage || template.attributes?.damage || 0,
+        damage: item.damage ?? template.attributes?.damage ?? 0,
         durability: item.durability ?? template.attributes?.durability ?? template.attributes?.max_durability ?? 100,
         maxDurability: item.maxDurability ?? template.attributes?.max_durability ?? 100,
-        fireRate: item.fireRate || template.attributes?.fire_rate || 0,
+        fireRate: item.fireRate ?? template.attributes?.fire_rate ?? 0,
         caliber: item.caliber || template.attributes?.caliber,
         modifications: item.modifications || [],
         installedModules: installedModulesCopy,
@@ -7929,12 +8056,14 @@ window.equipMeleeWeaponFromInventory = async function(itemPath) {
     }
 
     const weaponToEquip = {
+        ...structuredClone(item),
+        id: item.id || generateItemId(),
         templateId: item.templateId || template.id,
         createdByPlayer: Boolean(item.createdByPlayer),
         name: template.name,
         category: 'melee_weapon',
-        weight: template.weight,
-        volume: template.volume,
+        weight: item.weight ?? template.weight,
+        volume: item.volume ?? template.volume,
         // Состояние
         durability: item.durability ?? template.attributes?.durability ?? 100,
         maxDurability: item.maxDurability ?? template.attributes?.max_durability ?? 100,
@@ -8101,13 +8230,21 @@ window.equipBackpackFromInventory = async function(itemPath) {
     };
     delete backpackToEquip.contents;
 
-    if (!removeItemByPath(itemPath)) {
+    if (Number(item.quantity || 1)>1 && contents.length) {
+        showNotification('Сначала разделите стопку рюкзаков с содержимым');
+        return;
+    }
+    if (Number(item.quantity || 1)>1) {
+        item.quantity-=1;
+        backpackToEquip.id=generateItemId();
+    } else if (!removeItemByPath(itemPath)) {
         showNotification('Не удалось найти рюкзак в инвентаре');
         return;
     }
 
     currentCharacterData.inventory = currentCharacterData.inventory || {};
-    currentCharacterData.inventory.backpack = contents;
+    const unplacedItems = Array.isArray(currentCharacterData.inventory.backpack) ? currentCharacterData.inventory.backpack : [];
+    currentCharacterData.inventory.backpack = [...unplacedItems, ...contents];
     delete currentCharacterData.inventory.backpackModel;
     currentCharacterData.equipment.backpack = backpackToEquip;
 
@@ -8887,7 +9024,7 @@ window.unequipWeapon = async function(weaponIndex) {
         return;
     }
 
-    const restoredItem = createItemFromTemplate(template);
+    const restoredItem = { ...createItemFromTemplate(template), ...structuredClone(weapon), category, quantity: 1 };
     // Копируем текущие характеристики
     restoredItem.durability = weapon.durability ?? template.attributes?.durability ?? template.attributes?.max_durability ?? 100;
     restoredItem.maxDurability = weapon.maxDurability ?? template.attributes?.max_durability ?? 100;
@@ -9194,10 +9331,12 @@ window.useMeleeAttack = function(weaponIndex, attackType, aimed = false) {
     const actorCharacterId = currentCharacterId;
     const isUnarmed = attackType === 'unarmed';
     const isFirearmButt = attackType === 'firearm_butt';
+    const isBayonet = attackType === 'bayonet';
     const weapon = sheetData?.weapons?.[weaponIndex];
     if (!weapon && !isUnarmed) return;
     const template = (allTemplatesCache || []).find(t => t.id == weapon?.templateId);
-    const attrs = template?.attributes || {};
+    const bayonetTemplate = isBayonet ? (allTemplatesCache || []).find(t=>t.category==='melee_weapon'&&t.name?.toLowerCase()==='штык-нож') : null;
+    const attrs = (isBayonet ? bayonetTemplate : template)?.attributes || {};
     const strengthBonus = Math.floor(
         (getSkillEffectiveValue(sheetData, 'physical.strength') - 10) / 2
     );
@@ -9207,12 +9346,12 @@ window.useMeleeAttack = function(weaponIndex, attackType, aimed = false) {
     const baseAP = (isUnarmed || isFirearmButt) ? 0 : (attrs.armor_piercing || 0);
     const modifiers = (isUnarmed || isFirearmButt)
         ? { damage: baseDamage, ap: baseAP }
-        : getMeleeAttackModifiers(attackType, baseDamage, baseAP);
+        : getMeleeAttackModifiers(isBayonet?'Колющий':attackType, baseDamage, baseAP);
     const attackLabel = isUnarmed
         ? 'Удар кулаком'
         : (isFirearmButt
             ? ((Number(weapon.weight ?? template?.weight) || 0) <= 1 ? 'Удар рукояткой' : 'Удар прикладом')
-            : attackType);
+            : (isBayonet?'Колющий штыком':attackType));
     const weaponLabel = isUnarmed ? 'Кулаки' : weapon.name;
     const combatState = window.locationCombatState;
     const isCombatActive = Boolean(combatState && combatState.status === 'active');
@@ -9824,7 +9963,7 @@ async function calculateInventoryAccess(item, itemPath) {
     let source = 'unknown';
 
     if (path[0] === 'inventory' && path[1] === 'pockets') {
-        baseActionPoints = 1;
+        baseActionPoints = traitCount(currentCharacterData,'Глубокие карманы')?2:1;
         source = 'pockets';
     } else if (path[0] === 'inventory' && path[1] === 'backpack') {
         baseActionPoints = 2;
@@ -9847,7 +9986,11 @@ async function calculateInventoryAccess(item, itemPath) {
         if (part !== 'contents') return;
         if (path[0] === 'equipment' && path[2] === 'pouches' && index === 4) return;
         const container = getInventoryValueByPath(currentCharacterData, path.slice(0, index));
-        baseActionPoints += getInventoryItemAccessActionPoints(container);
+        let accessCost=getInventoryItemAccessActionPoints(container);
+        if(String(container?.name||'').toLowerCase().includes('кейс')||getInventoryItemCategory(container)==='case'){
+            const discount=2*traitCount(currentCharacterData,'Мастер хранения');if(discount)accessCost=Math.max(1,accessCost-discount);
+        }
+        baseActionPoints += accessCost;
     });
 
     const limbPenalty = getDisabledArmRetrievalPenalty();
@@ -13356,7 +13499,7 @@ async function renderInventoryTab(data) {
     const eq = data.equipment || {};
     const pockets = Array.isArray(inv.pockets) ? inv.pockets : [];
     const backpack = Array.isArray(inv.backpack) ? inv.backpack : [];
-    const pocketMaxVolume = inv.pocketMaxVolume || 10;
+    const pocketMaxVolume = pocketCapacity(data);
     const pocketFill = pockets.reduce((sum, item) => sum + (item.volume || 0) * (item.quantity || 1), 0);
 
     // Загружаем все возможные шаблоны предметов
@@ -13381,7 +13524,7 @@ async function renderInventoryTab(data) {
     const equippedBackpack = eq.backpack || null;
     const backpackLimit = Number(equippedBackpack?.attributes?.limit || equippedBackpack?.attributes?.capacity || 0);
     const backpackWeightReduction = Number(equippedBackpack?.attributes?.weight_reduction || 0);
-    const backpackFill = backpack.reduce((sum, item) => sum + (item.volume || 0) * (item.quantity || 1), 0);
+    const backpackFill = backpack.reduce((sum, item) => sum + backpackItemVolume(data,item), 0);
 
     const rawTotalWeight = calculateCarriedWeight(data);
     const movementPenalty = getMovementPenaltyBreakdown(data, rawTotalWeight);
@@ -13422,7 +13565,8 @@ async function renderInventoryTab(data) {
             <button type="button" class="btn btn-sm btn-secondary" onclick="openCreateMagazineTemplateModal()">➕ Создать магазин</button>
         </div>` : ''}
         <hr>
-        <section data-widget-block="pockets"><h4>Карманы <span style="font-weight:normal;">(заполнено: <span id="pocket-fill-display">${pocketFill}</span> / <input type="number" class="form-control number-input" name="inventory.pocketMaxVolume" value="${pocketMaxVolume}" style="width:70px; display:inline;">)</span></h4>
+        <section data-widget-block="pockets"><h4>Карманы</h4>
+        <div style="margin-bottom:10px;">Заполнено: <span id="pocket-fill-display">${pocketFill}</span> / <span id="pocket-capacity-display">${pocketMaxVolume}</span></div>
         <div style="display: grid; grid-template-columns: 2fr 1fr 1fr 1fr auto; gap: 5px; font-weight: bold; margin-bottom: 5px; align-items: center;">
             <div>Название</div><div>Вес</div><div>Объём</div><div>Кол-во</div><div></div>
         </div>
@@ -13509,19 +13653,19 @@ async function renderInventoryTab(data) {
         })()}
         ` : ''}
 
-        <section data-widget-block="backpack"><h4 style="margin-top:20px;">Рюкзак</h4>
+        <section data-widget-block="backpack"><h4 style="margin-top:20px;">${!equippedBackpack && backpack.length ? 'Неразмещённое снаряжение' : 'Рюкзак'}</h4>
         <div style="display: flex; gap: 10px; align-items: center; margin-bottom: 10px; flex-wrap: wrap;">
             ${equippedBackpack ? `
                 <strong>${escapeHtml(equippedBackpack.name || 'Рюкзак')}</strong>
                 <span id="backpack-fill-display">Заполнено: ${backpackFill} / ${backpackLimit}</span>
                 <button type="button" class="btn btn-sm btn-danger" onclick="unequipBackpack()">Снять</button>
-            ` : '<span style="opacity:0.7;">Рюкзак не экипирован. Наденьте рюкзак из инвентаря.</span>'}
+            ` : `<span style="opacity:0.7;">${backpack.length ? 'Разложите эти вещи по карманам, подсумкам или наденьте рюкзак.' : 'Рюкзак не экипирован.'}</span>`}
         </div>
-        ${equippedBackpack ? `<div style="display: grid; grid-template-columns: 2fr 1fr 1fr 1fr auto; gap: 5px; font-weight: bold; margin-bottom: 5px; align-items: center;">
+        <div style="display: grid; grid-template-columns: 2fr 1fr 1fr 1fr auto; gap: 5px; font-weight: bold; margin-bottom: 5px; align-items: center;">
             <div>Название</div><div>Вес</div><div>Объём</div><div>Кол-во</div><div></div>
         </div>
         <div id="backpack-container"></div>
-        <div style="margin-top:10px;">
+        ${equippedBackpack ? `<div style="margin-top:10px;">
             <button type="button" class="btn btn-sm btn-secondary" onclick="openInventoryTemplatePicker('backpack')">➕ Добавить предмет</button>
         </div>
         ${window.isGM ? `<button type="button" class="btn btn-sm btn-secondary" onclick="addBackpackItemManual()">📝 Свой предмет</button>` : ''}` : ''}
@@ -13545,9 +13689,7 @@ async function renderInventoryTab(data) {
     const backpackItems = Array.isArray(inv.backpack)
         ? inv.backpack.map(item => migrateOldItemToNew(item))
         : [];
-    if (equippedBackpack) {
-        renderBackpackNew(backpackItems, groupedByCategory, allTemplates);
-    }
+    renderBackpackNew(backpackItems, groupedByCategory, allTemplates);
 
     const pocketsContainerEl = document.getElementById('pockets-container');
     const backpackContainerEl = document.getElementById('backpack-container');
@@ -14408,7 +14550,7 @@ window.addCatalogConsumableComponent = function() {
     renderConsumableProfileTree(document.getElementById('consumable-advanced-fields'), modal._advancedProfile);
 };
 
-function renderInventoryTemplatePicker(templates, query = '') {
+export function renderInventoryTemplatePicker(templates, query = '', options = {}) {
     const normalizedQuery = query.trim().toLowerCase();
     const availableTemplates = templates.filter(t => {
         const isGenericMagazine = t.category === 'magazine'
@@ -14455,22 +14597,22 @@ function renderInventoryTemplatePicker(templates, query = '') {
                 if (attrs.penetration !== undefined && attrs.penetration !== null && t.category === 'ammo') chips.push(`Пробитие: ${escapeHtml(formatAmmoPenetration(attrs.penetration))}`);
                 if (attrs.range !== undefined && attrs.range !== null && t.category === 'ammo') chips.push(`Дальность: ${escapeHtml(String(attrs.range))}`);
                 if (attrs.capacity !== undefined && attrs.capacity !== null && t.category === 'magazine') chips.push(`Ёмкость: ${escapeHtml(String(attrs.capacity))}`);
-                if (t.category === 'ammo') {
+                if (t.category === 'ammo' && !options.purchase) {
                     const ammoVariants = attrs.ammo_variants?.length ? attrs.ammo_variants : (attrs.ammo_variant ? [attrs.ammo_variant] : []);
                     if (ammoVariants.length) chips.push(`Вариации: ${escapeHtml(getAmmoVariantLabels(ammoVariants))}`);
                 }
                 if (attrs.isLoader && t.category === 'magazine') chips.push('Спидлоадер');
                 return `
-                    <button type="button" data-item-template-id="${t.id}" onclick="selectInventoryTemplate(${t.id})" style="text-align:left; width:100%; border:1px solid rgba(255,255,255,0.12); border-radius:8px; padding:10px; background: rgba(255,255,255,0.03); color:inherit; cursor:pointer;">
+                    <button type="button" data-item-template-id="${t.id}" ${options.purchase ? `data-purchase-select="${t.id}" aria-pressed="${Number(options.selectedId)===t.id}"` : `onclick="selectInventoryTemplate(${t.id})"`} style="text-align:left; width:100%; border:1px solid rgba(255,255,255,0.12); border-radius:8px; padding:10px; background: rgba(255,255,255,0.03); color:inherit; cursor:pointer;">
                         <div style="display:flex; justify-content:space-between; gap:8px;">
                             <div style="font-weight:600;">${escapeHtml(t.name)}</div>
-                            <div style="opacity:0.55; font-size:12px;">ID ${t.id}</div>
+                            <div style="opacity:0.75; font-size:12px; white-space:nowrap;">${options.purchase ? `${Number(t.price||0).toLocaleString('ru-RU')} ₽` : `ID ${t.id}`}</div>
                         </div>
                         <div style="display:flex; flex-wrap:wrap; gap:5px; margin-top:6px;">
                             ${chips.map(chip => `<span style="font-size:11px; padding:2px 6px; border-radius:999px; background: rgba(255,255,255,0.08);">${chip}</span>`).join('')}
                         </div>
                     </button>
-                    ${t.source === 'local' && t.category === 'consumable' && window.isGM
+                    ${!options.purchase && t.source === 'local' && t.category === 'consumable' && window.isGM
                         ? `<button type="button" class="btn btn-sm btn-secondary" style="margin-top:4px" onclick="editInventoryConsumableTemplate(${t.id})">Настроить эффекты</button>` : ''}`;
             }).join('')}
         </div>`;
@@ -14498,7 +14640,7 @@ function renderInventoryTemplatePicker(templates, query = '') {
                     </details>`).join('');
         }
         return `
-            <details ${normalizedQuery ? 'open' : ''} style="border:1px solid rgba(255,255,255,0.12); border-radius:10px; padding:8px 10px; background: rgba(0,0,0,0.12); margin-bottom:8px;">
+            <details ${normalizedQuery || options.open ? 'open' : ''} style="border:1px solid rgba(255,255,255,0.12); border-radius:10px; padding:8px 10px; background: rgba(0,0,0,0.12); margin-bottom:8px;">
                 <summary style="cursor:pointer; font-weight:700; list-style:none; display:flex; align-items:center; justify-content:space-between; gap:12px;">
                     <span>${escapeHtml(group)}</span>
                     <span style="opacity:0.65; font-weight:400;">${items.length}</span>
@@ -15150,13 +15292,15 @@ function recalculateInventoryTotals() {
     if (exoskeletonRule) exoskeletonRule.style.display = movementPenalty.poweredExoskeleton ? 'block' : 'none';
 
     // Заполненность карманов
-    const pocketMaxVolume = inv.pocketMaxVolume || 10;
+    const pocketMaxVolume = pocketCapacity(currentCharacterData);
     const pocketFill = pockets.reduce((sum, item) => {
         const vol = getTotalVolume(item);
         return sum + (isNaN(vol) ? 0 : vol);
     }, 0);
     const pocketFillSpan = document.getElementById('pocket-fill-display');
     if (pocketFillSpan) pocketFillSpan.textContent = pocketFill.toFixed(1);
+    const pocketCapacitySpan = document.getElementById('pocket-capacity-display');
+    if (pocketCapacitySpan) pocketCapacitySpan.textContent = pocketMaxVolume;
 }
 
 window.selectPocketItem = async function(index, selectedId) {
@@ -16294,7 +16438,8 @@ window.rollSkill = async function(skillPath, skillLabel) {
     // Можно добавить другие бонусы по необходимости (например, от артефактов, контейнеров и т.д.)
 
     const statusModifier = getHealthRollModifier(currentCharacterData, skillPath)
-        +(awarenessMode==='hearing'?hearingModifier(getDeafnessLevel(currentCharacterData)):0);
+        +(awarenessMode==='hearing'?hearingModifier(getDeafnessLevel(currentCharacterData)):0)
+        +(skillPath==='other.stealth'&&backgroundIs(currentCharacterData,'Ночной дозор')?(darkness?3:-5):0);
     const totalBonus = selfMod + charismaMod + equipmentBonus + statusModifier;
 
     const deafness = awarenessMode === 'hearing' ? getDeafnessLevel(currentCharacterData) : 0;
@@ -16305,7 +16450,7 @@ window.rollSkill = async function(skillPath, skillLabel) {
         awarenessMode === 'visual' ? 'darkness_visual_immunity' : 'darkness_shooting_immunity',
     ) > 0;
     const darknessDisadvantage = darkness && (awarenessMode === 'visual' || skillPath === 'physical.shooting')
-        && !darknessImmunity;
+        && !darknessImmunity && !passiveTraits(currentCharacterData).noDarknessPenalty;
     const disadvantaged = !hearingBlocked && (
         hasHealthRollDisadvantage(currentCharacterData, skillPath) || darknessDisadvantage
     );
@@ -16694,7 +16839,7 @@ async function rerenderContainer(containerPath, parentElement = null, options = 
 window.addWeapon = function() {
     updateDataFromFields();
     if (!currentCharacterData.weapons) currentCharacterData.weapons = [];
-    currentCharacterData.weapons.push({});
+    currentCharacterData.weapons.push({ id: generateItemId() });
     renderEquipmentTab(currentCharacterData);
     scheduleAutoSave();
 };
@@ -16859,13 +17004,16 @@ function setupDropTarget(containerDiv, containerPath, containerItem) {
             : targetContainer.contents;
         if (!Array.isArray(targetItems)) return;
 
-        const newVolume = getTotalVolume(draggedItem);
+        const volumeOf=containerPath[0]==='inventory'&&containerPath[1]==='backpack'?(item=>backpackItemVolume(currentCharacterData,item)):getTotalVolume;
+        const newVolume = volumeOf(draggedItem);
         const sourceContainerPath = draggedItemPath.slice(0, -1);
         const isSameContainer = sourceContainerPath.length === containerPath.length
             && sourceContainerPath.every((value, index) => value === containerPath[index]);
-        const currentUsed = targetItems.reduce((sum, item) => sum + getTotalVolume(item), 0)
+        const currentUsed = targetItems.reduce((sum, item) => sum + volumeOf(item), 0)
             - (isSameContainer ? newVolume : 0);
-        const limit = Number(targetContainer.internalVolume || targetContainer.capacity || targetContainer.volume || 0);
+        const limit = containerPath.length===2&&containerPath[0]==='inventory'&&containerPath[1]==='pockets'
+            ? pocketCapacity(currentCharacterData)
+            : Number(targetContainer.internalVolume || targetContainer.capacity || targetContainer.volume || 0);
         if (currentUsed + newVolume > limit) {
             showNotification('Недостаточно места в контейнере');
             draggedItem = null; draggedItemPath = null;

@@ -4,6 +4,9 @@ from pathlib import Path
 import os
 
 ALLOWED_MODULES = (
+    'test_equipment_importer.py',
+    'test_character_creation.py',
+    'test_weapon_modules.py',
     'test_noise.py',
     'test_combat_explosions.py', 'test_grenade_rules.py',
     'test_combat_movement.py', 'test_combat_attacks.py',
@@ -34,6 +37,9 @@ ALLOWED_MODULES = (
     'test_regression_catalog_application.py',
 )
 ALLOWED_NODEIDS = (
+    'test_combat_movement.py::test_new_turn_resets_distance_but_keeps_run_and_sprint_exhaustion',
+    'test_combat_movement.py::test_pending_action_spends_future_turn_points_until_complete',
+    'test_combat_movement.py::test_gm_can_restore_psi_zombie_sheet_with_current_loot_and_without_heal',
     'test_combat_movement.py::test_pripyat_ice_planner_avoids_mixed_direction_detour',
     'test_combat_movement.py::test_direction_constrained_planner_on_weighted_terrain',
     'test_combat_movement.py::test_fractional_heading_route_across_45_degree_boundary',

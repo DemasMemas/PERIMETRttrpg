@@ -275,6 +275,14 @@ if(typeof renderFacingPreview==='function'){const original=renderFacingPreview;r
             await require('./character_widgets.browser.cjs')({page,request,token,lobby,login,profile,base,connect,debugPort,safeSession});
             return;
         }
+        if (safeSession && process.env.VTT_SAFE_SCENARIO === 'creation') {
+            await require('./character_creation.browser.cjs')({page,request,token,lobby,base,connect,debugPort,safeSession});
+            return;
+        }
+        if (safeSession && process.env.VTT_SAFE_SCENARIO === 'weapons') {
+            await require('./weapon_loadout.browser.cjs')({page,request,token,lobby,base,connect,debugPort,safeSession});
+            return;
+        }
         if (safeSession && process.env.VTT_SAFE_SCENARIO === 'skills') {
             await require('./skills.browser.cjs')({page,request,token,lobby,base,connect,debugPort,safeSession});
             return;

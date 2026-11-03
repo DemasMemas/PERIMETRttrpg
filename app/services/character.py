@@ -218,6 +218,7 @@ class CharacterService:
                         and new.get('base') != (old.get('base') if isinstance(old, dict) else None)
                         and '.'.join(parts[:3] + ['xp']) not in manual_paths):
                     new['xp'] = 0
+                    new['learningRemainder'] = 0
 
         if reset_round_damage and isinstance(health, dict):
             combat_meta = health.get('combatMeta')
@@ -359,11 +360,34 @@ class CharacterService:
         CharacterService.require_membership(lobby_id, owner_id)
 
         character_data = clean_snapshot(data or {})
+        if 'creationRequest' in character_data:
+            from app.services.character_creation import build_character
+            character_data = build_character(name, character_data['creationRequest'])
+            lobby=db.session.get(Lobby,lobby_id)
+            day=max(1,lobby.game_day or 1)
+            for record in ((character_data.get('health') or {}).get('addictions') or {}).get('records',{}).values():
+                record['acquired_day']=day;record['checks']['day']=day
+                record['satisfied_days']=[day]
+            if ((character_data.get('basic') or {}).get('background') or {}).get('name')=='Пожарный':
+                from app.models.templates import ItemTemplate
+                import uuid
+                axe=ItemTemplate.query.filter(ItemTemplate.name=='Топор',ItemTemplate.category.in_(['weapon','melee_weapon'])).first()
+                if axe:
+                    character_data.setdefault('weapons',[]).append({'id':uuid.uuid4().hex,'templateId':axe.id,'name':axe.name,'category':axe.category,
+                        'subcategory':axe.subcategory,'attributes':deepcopy(axe.attributes or {}),'weight':axe.weight,
+                        'volume':axe.volume,'quantity':1,'durability':100,'maxDurability':100})
+                else:character_data['creation']['pendingEquipment']=['Стартовое снаряжение: Топор — шаблон не найден в каталоге комнаты']
         jump_meta = (character_data.get('health') or {}).get('combatMeta')
         if isinstance(jump_meta,dict):
             for key in ('unstableJump','jumpSupport','slipperyMovement','grenadeReaction','heldWaterItem'):
                 jump_meta.pop(key,None)
         normalize_inventory_ammo_stacks(character_data)
+        from app.services.weapon_catalog import normalize_character_weapons
+        normalize_character_weapons(character_data)
+        from app.services.character_creation import validate_trait_selection
+        validate_trait_selection({},character_data)
+        from app.services.character_traits import sync_pocket_capacity
+        sync_pocket_capacity({},character_data)
         apply_health_maximums(character_data)
         character = LobbyCharacter(
             lobby_id=lobby_id,
@@ -443,6 +467,33 @@ class CharacterService:
                 character_data = merge_sheet_data(base_data, character_data, character.data)
             _preserve_server_medical_retry(character.data, character_data)
             _preserve_server_zombification(character.data,character_data)
+            old_survival=(((character.data.get('health') or {}).get('combatMeta') or {}).get('toughNut'))
+            incoming_meta=character_data.setdefault('health',{}).setdefault('combatMeta',{})
+            if old_survival is not None:
+                state=deepcopy(old_survival)
+                if is_gm and isinstance(incoming_meta.get('toughNut'),dict):
+                    uses=incoming_meta['toughNut'].get('uses',state.get('uses',0))
+                    if type(uses) is not int or not 0<=uses<=100:raise ValidationError('Число спасений должно быть целым от 0 до 100')
+                    state['uses']=uses
+                incoming_meta['toughNut']=state
+            else:
+                from app.services.character_traits import background_is
+                if background_is(character_data,'Крепкий орешек'):
+                    uses=(incoming_meta.get('toughNut') or {}).get('uses',1) if is_gm else 1
+                    if type(uses) is not int or not 0<=uses<=100:raise ValidationError('Число спасений должно быть целым от 0 до 100')
+                    incoming_meta['toughNut']={'uses':uses,'minimumPain':0}
+                else:incoming_meta.pop('toughNut',None)
+            old_tags=(character.data.get('basic') or {}).get('tags',[])
+            tags=(character_data.get('basic') or {}).get('tags',[])
+            if not is_gm and tags!=old_tags:raise PermissionDenied('Метки персонажа изменяет только ГМ')
+            if not isinstance(tags,list) or len(tags)>30 or any(not isinstance(t,str) or not t.strip() or len(t)>60 for t in tags) or len(tags)!=len(set(tags)):
+                raise ValidationError('Некорректные метки персонажа')
+            from app.services.character_creation import preserve_creation
+            preserve_creation(character.data,character_data,is_gm=is_gm)
+            from app.services.character_creation import validate_trait_selection
+            validate_trait_selection(character.data,character_data)
+            from app.services.character_traits import sync_pocket_capacity
+            sync_pocket_capacity(character.data,character_data)
             CharacterService.validate_skill_fields(character.data, character_data)
             CharacterService.apply_manual_field_resets(
                 character.data,
@@ -450,6 +501,8 @@ class CharacterService:
                 updates.get('_manual_fields'),
             )
             normalize_inventory_ammo_stacks(character_data)
+            from app.services.weapon_catalog import normalize_character_weapons
+            normalize_character_weapons(character_data)
             if not is_gm:
                 CharacterService.mark_added_items_as_player_created(
                     character.data,
