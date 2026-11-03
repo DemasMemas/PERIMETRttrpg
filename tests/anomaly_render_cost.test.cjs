@@ -13,12 +13,17 @@ function fakeThree() {
             this.userData = {};
             this.position = { x: 0, y: 0, z: 0, set(x, y, z) { Object.assign(this, { x, y, z }); } };
             this.rotation = { x: 0, y: 0, z: 0 };
-            this.scale = { set() {}, setScalar() {} };
+            this.scale = {x:1,y:1,z:1,set(x,y,z){Object.assign(this,{x,y,z});},setScalar(value){this.set(value,value,value);}};
             this.visible = true;
         }
         add(child) { child.parent = this; this.children.push(child); }
         traverse(callback) { callback(this); this.children.forEach(child => child.traverse(callback)); }
         updateMatrix() { this.matrix = {}; }
+        getWorldScale(target){
+            Object.assign(target,this.scale);
+            for(let parent=this.parent;parent;parent=parent.parent)for(const key of ['x','y','z'])target[key]*=parent.scale[key];
+            return target;
+        }
     }
     class Mesh extends Object3D {
         constructor(geometry, material) { super(); this.geometry = geometry; this.material = material; }
@@ -48,6 +53,8 @@ function fakeThree() {
     }
     return {
         Group: Object3D, Object3D, Mesh, InstancedMesh, LineSegments: Mesh,
+        Sprite:class extends Object3D{constructor(material){super();this.material=material;}},
+        SpriteMaterial:class{constructor(options){Object.assign(this,options);}},CanvasTexture:class{},
         BufferGeometry: Geometry, BufferAttribute, Vector3, Sphere,
         LineBasicMaterial: class {}, MeshBasicMaterial: class {}, Color: class {},
         CylinderGeometry: class {}, ConeGeometry: class {}, CircleGeometry: class {},
@@ -74,4 +81,17 @@ test('electric and acid anomaly particles are batched without losing animation',
     assert.ok(acidVisual.children.slice(3).every(mesh => mesh.frustumCulled));
     context.animateAnomalyEffects([acid], 1000);
     assert.ok(acidVisual.children.slice(3).every(mesh => mesh.instanceMatrix.needsUpdate));
+});
+
+test('метка аномалии сохраняет пропорции при независимом масштабе родителя',()=>{
+    const THREE=fakeThree(),canvas={width:0,height:0,getContext(){return{measureText:text=>({width:text.length*20}),fillRect(){},strokeRect(){},fillText(){}};}};
+    const context=vm.createContext({THREE,Math,document:{createElement:()=>canvas}});
+    vm.runInContext(source.replace(/^import[^\n]*\n/,'').replaceAll('export ',''),context);
+    const parent=new THREE.Group(),effect=context.createAnomalyEffect('fire','#ff5500',1,'banya','Баня');
+    parent.add(effect);parent.scale.set(2,.5,3);effect.scale.set(6,2,4);
+    const label=effect.children.find(child=>child.userData.anomalyLabel);
+    context.animateAnomalyEffects([effect],1000);
+    assert.equal(label.scale.x*12,label.userData.labelBaseScale[0]);
+    assert.equal(label.scale.y,label.userData.labelBaseScale[1]);
+    assert.equal(label.material.depthTest,true);assert.equal(label.material.depthWrite,false);
 });

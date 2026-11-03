@@ -37,6 +37,22 @@ def test_complete_source_catalog_and_stable_ids():
     c['backgrounds'].clear();assert len(catalog()['backgrounds'])==56
 
 
+def test_cleaned_rule_linebreaks_do_not_block_player_save_or_allow_changed_rules():
+    from copy import deepcopy
+    from app.services.character_creation import preserve_creation
+    current=build_character('Текст',plan(traits=[trait('Быстрые руки')]))
+    current['basic']['background']['minuses']='Харизма -20,\nесли видят лицо'
+    current['features']['specialTraits'][0]['effect']='Бонус\nпри условии'
+    incoming=deepcopy(current)
+    incoming['basic']['background']['minuses']='Харизма -20, если видят лицо'
+    incoming['features']['specialTraits'][0]['effect']='Бонус при условии'
+    preserve_creation(current,incoming,is_gm=False)
+    assert incoming['basic']['background']==current['basic']['background']
+    assert incoming['features']['specialTraits']==current['features']['specialTraits']
+    incoming['basic']['background']['minuses']='Харизма -10, если видят лицо'
+    with pytest.raises(ValidationError,match='доступно ГМу'):preserve_creation(current,incoming,is_gm=False)
+
+
 def test_all_specializations_are_required_only_at_final_creation():
     partial=plan();partial['specializations']=[]
     assert build_character('Имя',partial,finalize=False)['skills']['specializations']==11
@@ -48,12 +64,34 @@ def test_background_capital_is_separate_from_purchase_and_granted_once(creation_
     from app.services.character_starting_purchase import grant_world_entry
     c=creation_case
     actor=CharacterService.create_character(c['lobby'].id,c['gm'].id,'Богатый',{'creationRequest':plan('Богат деньгами',cashPoints=2)})
-    assert actor.data['inventory']['money']==10400
+    assert actor.data['inventory']['money']==60400
     assert actor.data['creation']['entryMoney']==50000
+    assert actor.data['creation']['creationMoneyGranted']
     assert grant_world_entry(actor)
     assert actor.data['inventory']['money']==60400
     assert not grant_world_entry(actor)
     assert actor.data['inventory']['money']==60400
+
+
+def test_history_money_is_granted_on_create_even_before_teacher_choices(creation_case,monkeypatch):
+    from copy import deepcopy
+    from app.services.character import CharacterService
+    from app.services.character_history import settle_history
+    from app.services.character_starting_purchase import grant_creation_money,grant_world_entry
+    history={'months':1,'settled':False,'events':[{'month':1,'incomeOptions':[2000],'teacher':{'group':'physical','xp':2}}]}
+    monkeypatch.setattr('app.services.character_creation.generate_zone_history',lambda data:deepcopy(history))
+    c=creation_case
+    actor=CharacterService.create_character(c['lobby'].id,c['gm'].id,'Доход сразу',{'creationRequest':plan(zoneHistory=True)})
+    assert actor.data['inventory']['money']==12000 and actor.data['creation']['zoneHistory']['cashTotal']==2000
+    assert not actor.data['creation']['zoneHistory']['settled']
+    with pytest.raises(ValidationError,match='историю'):grant_world_entry(actor)
+    assert not grant_creation_money(actor.data)
+    # Покупки после создания не должны менять уже рассчитанные последствия истории.
+    actor.data['inventory']['money']=100
+    actor.data=settle_history(actor.data,{'1':{'skill':'physical.agility'}})
+    assert actor.data['inventory']['money']==100 and actor.data['creation']['zoneHistory']['cashTotal']==2000
+    assert grant_world_entry(actor) and actor.data['inventory']['money']==100
+    assert not grant_world_entry(actor)
 
 
 def test_starting_purchase_uses_catalog_prices_and_rejects_restricted_templates(app):
@@ -101,6 +139,61 @@ def test_history_traits_are_extra_slots_and_negative_income_cannot_make_debt():
     from app.services.character_creation import validate_trait_selection
     validate_trait_selection({},resolved)
     assert settle_history(resolved,{})==resolved
+
+
+def monthly_history():
+    return {'months':3,'settled':False,'presentationRequired':True,'presentationComplete':False,'confirmedThrough':0,'events':[
+        {'month':1,'title':'Первый месяц','details':['Привыкание к Зоне'],'incomeOptions':[1000],'addiction':'Сигареты'},
+        {'month':2,'title':'Учитель','details':[],'incomeOptions':[1000],'teacher':{'group':'physical','xp':2}},
+        {'month':3,'title':'Закалка','details':[],'incomeOptions':[1000],'hardening':{'limit':5}}]}
+
+
+def test_monthly_history_applies_choices_once_in_order_and_keeps_money():
+    from copy import deepcopy
+    from app.services.character_history import confirm_history_month
+    from app.services.character_starting_purchase import grant_creation_money
+    from app.services.exceptions import ConflictError
+    data=build_character('Путь',plan(traits=[trait('Быстрые руки')]*2+[trait('Заинтересованный',skill='physical.agility')]))
+    data['creation']['zoneHistory']=monthly_history();grant_creation_money(data)
+    assert data['inventory']['money']==13000
+    with pytest.raises(ValidationError,match='по порядку'):confirm_history_month(data,2,{'skill':'physical.agility'})
+    first=confirm_history_month(data,1,{})
+    assert first['creation']['zoneHistory']['confirmedThrough']==1 and not first['creation']['zoneHistory']['settled']
+    assert first['health']['addictions']['records']['nicotine']['active']
+    assert confirm_history_month(first,1,{})==first and not data['creation']['zoneHistory']['events'][0].get('confirmed')
+    with pytest.raises(ValidationError,match='категории'):confirm_history_month(first,2,{'skill':'social.persuasion'})
+    second=confirm_history_month(first,2,{'skill':'physical.agility'})
+    assert second['skills']['physical']['agility']!=first['skills']['physical']['agility']
+    choice={'trait':trait('Пироманьяк')}
+    final=confirm_history_month(second,3,choice)
+    assert len(final['features']['specialTraits'])==4
+    assert final['creation']['zoneHistory']['presentationComplete'] and final['creation']['zoneHistory']['settled']
+    assert final['inventory']['money']==13000
+    assert confirm_history_month(final,3,choice)==final
+    with pytest.raises(ConflictError,match='другим решением'):confirm_history_month(final,3,{'decline':True})
+    from app.services.character_creation import validate_trait_selection
+    validate_trait_selection({},final)
+
+
+def test_monthly_history_api_saves_progress_and_denies_other_users(creation_case,client,monkeypatch):
+    from copy import deepcopy
+    from app.services.character import CharacterService
+    c=creation_case
+    monkeypatch.setattr('app.services.character_creation.generate_zone_history',lambda data:deepcopy(monthly_history()))
+    actor=CharacterService.create_character(c['lobby'].id,c['player'].id,'Помесячно',{'creationRequest':plan(zoneHistory=True)})
+    url=f'/lobbies/{c["lobby"].id}/characters/{actor.id}/creation-history'
+    assert client.patch(url,json={'month':1,'choice':{}},headers=c['headers'][c['outsider'].id]).status_code==403
+    headers=c['headers'][c['player'].id]
+    response=client.patch(url,json={'month':1,'choice':{}},headers=headers)
+    assert response.status_code==200
+    assert response.json['data']['creation']['zoneHistory']['confirmedThrough']==1
+    saved=client.get(f'/lobbies/characters/{actor.id}',headers=headers).json['data']
+    assert saved['creation']['zoneHistory']['events'][0]['confirmed']
+    assert client.patch(url,json={'month':3,'choice':{'decline':True}},headers=headers).status_code==400
+    assert client.patch(url,json={'month':2,'choice':{'skill':'physical.agility'}},headers=headers).status_code==200
+    final=client.patch(url,json={'month':3,'choice':{'decline':True}},headers=headers)
+    assert final.status_code==200 and final.json['data']['creation']['zoneHistory']['settled']
+    assert final.json['data']['inventory']['money']==13000
 
 
 @pytest.mark.parametrize('background',catalog()['backgrounds'],ids=lambda b:b['name'])

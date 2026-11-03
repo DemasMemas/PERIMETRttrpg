@@ -225,7 +225,7 @@ def test_weapon_replacement_rejects_resume_without_consuming_paid_action(client,
     db.session.commit()
     response = resume(client, case, auth_headers)
     assert response.status_code == 400, response.json
-    assert row.status == 'ready'
+    assert row.status == 'cancelled'
 
 
 def test_deferred_table_migration_round_trip():

@@ -44,9 +44,17 @@ def preserve_creation(current,incoming,*,is_gm=False):
     if 'creation' in (current or {}):
         incoming['creation']=deepcopy(current['creation'])
         if not is_gm:
+            def descriptions(value):
+                if isinstance(value,list):return [descriptions(item) for item in value]
+                if not isinstance(value,dict):return value
+                return {key:(' '.join(item.split()) if key in {'pluses','minuses','effect'} and isinstance(item,str) else item) for key,item in value.items()}
             for parent,key in (('basic','background'),('features','specialTraits')):
-                if (incoming.get(parent) or {}).get(key)!=(current.get(parent) or {}).get(key):
+                original=(current.get(parent) or {}).get(key)
+                if descriptions((incoming.get(parent) or {}).get(key))!=descriptions(original):
                     raise ValidationError('Изменение предыстории и черт готового персонажа доступно ГМу')
+                # Переносы исходной таблицы могут отличаться от показанного текста.
+                # Обычное сохранение листа сохраняет авторский снимок правил.
+                if key in (current.get(parent) or {}):incoming.setdefault(parent,{})[key]=deepcopy(original)
     else:incoming.pop('creation',None)
     if 'characterRewards' in (current or {}):incoming['characterRewards']=deepcopy(current['characterRewards'])
     else:incoming.pop('characterRewards',None)
@@ -241,9 +249,7 @@ def build_character(name,plan,*,roll_history=True,finalize=True):
     if type(history) is not bool:raise ValidationError('История в Зоне: требуется да/нет')
     if history and roll_history:
         data['creation']['zoneHistory']=generate_zone_history(data)
-        if not any(e.get('teacher') or e.get('hardening') for e in data['creation']['zoneHistory']['events']):
-            from app.services.character_history import settle_history
-            data=settle_history(data,{})
+        data['creation']['zoneHistory'].update(presentationRequired=True,presentationComplete=False,confirmedThrough=0)
     return data
 
 

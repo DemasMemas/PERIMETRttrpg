@@ -134,7 +134,7 @@ class CharacterService:
         return list(dict.fromkeys([*visible_to, *editable])), editable
 
     @staticmethod
-    def sync_location_health(character, health):
+    def sync_location_health(character, health,character_data=None):
         """Keep sheet effects, body zones and the placed model in sync."""
         health['effects'] = normalize_effect_list(health.get('effects') or [])
         sync_health_derived_statuses(health)
@@ -168,6 +168,8 @@ class CharacterService:
                 model.cover_object_id = None
                 model.weapon_braced = False
                 model.braced_weapon_index = None
+            from app.services.combat import CombatService
+            CombatService._notify_observed_death(model,character_data=character_data)
         return posture_updates
 
     @staticmethod
@@ -363,6 +365,8 @@ class CharacterService:
         if 'creationRequest' in character_data:
             from app.services.character_creation import build_character
             character_data = build_character(name, character_data['creationRequest'])
+            from app.services.character_starting_purchase import grant_creation_money
+            grant_creation_money(character_data)
             lobby=db.session.get(Lobby,lobby_id)
             day=max(1,lobby.game_day or 1)
             for record in ((character_data.get('health') or {}).get('addictions') or {}).get('records',{}).values():
@@ -412,6 +416,10 @@ class CharacterService:
             raise NotFoundError("Character not found")
 
         CharacterService.check_access(character, user_id)
+        from app.services.character_traits import background_is
+        if background_is(character.data,'Пожарный'):
+            from app.services.character_rules import refresh_nearby
+            for model in LocationCharacter.query.filter_by(character_id=character.id).all():refresh_nearby(model.location_id)
         return character
 
     @staticmethod
@@ -492,6 +500,8 @@ class CharacterService:
             preserve_creation(character.data,character_data,is_gm=is_gm)
             from app.services.character_creation import validate_trait_selection
             validate_trait_selection(character.data,character_data)
+            from app.services.character_traits import validate_target_weapons
+            validate_target_weapons(character.data,character_data)
             from app.services.character_traits import sync_pocket_capacity
             sync_pocket_capacity(character.data,character_data)
             CharacterService.validate_skill_fields(character.data, character_data)
@@ -512,7 +522,7 @@ class CharacterService:
             _preserve_server_medical_retry(character.data, character_data)
             _preserve_server_zombification(character.data,character_data)
             health = apply_health_maximums(character_data)
-            posture_updates = CharacterService.sync_location_health(character, health)
+            posture_updates = CharacterService.sync_location_health(character, health,character_data=character_data)
             character.data = character_data
         if 'name' in updates:
             character.name = updates['name']

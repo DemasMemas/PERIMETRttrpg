@@ -19,3 +19,20 @@ def install(app, db, check_database, run_id):
     def creation_fixture():
         check_database()
         return {'run_id':run_id,'templates':ids}
+
+    @app.post(f'/__history_fixture/{run_id}')
+    def history_fixture():
+        check_database()
+        from app.services import character_creation
+        original=character_creation.generate_zone_history
+        class ScriptedRng:
+            def __init__(self):self.values=iter([3,8,1,10,2,2,11,2])
+            def randint(self,low,high):
+                value=next(self.values)
+                assert low<=value<=high
+                return value
+        def once(data):
+            character_creation.generate_zone_history=original
+            return original(data,rng=ScriptedRng())
+        character_creation.generate_zone_history=once
+        return {'armed':True}

@@ -353,10 +353,12 @@ def _validate_infusion(actor_data, target_health, direct, item):
     if not tools:
         raise ValidationError('Для применения нужна капельница или хирургический набор')
     if direct.get('blood_compatibility_required'):
-        recipient_type = int(_numeric((target_health.get('combatMeta') or {}).get('bloodType')))
+        recipient_meta=target_health.get('combatMeta') or {}
+        recipient_type = int(_numeric(recipient_meta.get('bloodType')))
         attributes = item.get('attributes') or {}
         packet_type = int(_numeric(attributes.get('bloodType') or attributes.get('blood_type')))
-        if recipient_type not in {1, 2, 3, 4} or packet_type not in {1, 2, 3, 4}:
+        if (not recipient_meta.get('bloodTypeKnown') or not attributes.get('bloodTypeKnown')
+                or recipient_type not in {1, 2, 3, 4} or packet_type not in {1, 2, 3, 4}):
             raise ValidationError('Сначала нужно определить группу крови получателя и пакета')
         compatible = {1: {1}, 2: {1, 2}, 3: {1, 3}, 4: {1, 2, 3, 4}}
         if packet_type not in compatible[recipient_type]:
@@ -487,7 +489,7 @@ def _synchronize_blood_knowledge(actor, target, actor_data, target_data, applica
     return related
 
 
-def _minimum_treatment_cost(character_data, direct, canonical_application=None):
+def _minimum_treatment_cost(character_data, direct, canonical_application=None,application=None):
     configured = direct.get('treatment_action_points')
     if configured is not None:
         try:
@@ -514,7 +516,13 @@ def _minimum_treatment_cost(character_data, direct, canonical_application=None):
             cost = float(1 if raw_cost is None else raw_cost)
         except (TypeError, ValueError) as error:
             raise ValidationError('Некорректная стоимость лечения') from error
-    return max(0, int(cost))
+    cost=max(0,int(cost))
+    if (application or {}).get('fineWork'):
+        from app.services.character_traits import trait_count
+        if not trait_count(character_data,'Тонкая работа') or cost<3:
+            raise ValidationError('Тонкая работа доступна при лечении за 3 ОД или больше')
+        cost*=2
+    return cost
 
 
 def minimum_consumable_payment(actor_data, target_data, selection, lobby_id=None):
@@ -562,7 +570,7 @@ def minimum_consumable_payment(actor_data, target_data, selection, lobby_id=None
             raise ValidationError('Некорректная стоимость применения предмета')
         use_cost = int(requested_cost)
     else:
-        use_cost = _minimum_treatment_cost(actor_data, direct, canonical_application)
+        use_cost = _minimum_treatment_cost(actor_data, direct, canonical_application,application)
     access = calculate_inventory_access(actor_data, source.get('path'), item)
     discounted_use_cost = max(0, use_cost - int(access['use_action_discount']))
     return {
@@ -858,7 +866,7 @@ def _apply_success(
         except (TypeError, ValueError) as error:
             raise ValidationError('Некорректное изменение боли') from error
         if pain_delta:
-            health['painLevel'] = max(0, min(10, float(health.get('painLevel') or 0) + pain_delta))
+            apply_effect_to_health(health, {'type':'pain','value':pain_delta,'source':'medical_procedure'}, character_data=recipient_data)
         return {'kind': 'wound', 'area': effect.get('area'), 'pain_delta': pain_delta}
 
     if (application.get('kind') == 'injury' and direct.get('surgical_kit')
@@ -870,7 +878,7 @@ def _apply_success(
         except (TypeError, ValueError) as error:
             raise ValidationError('Некорректное изменение боли') from error
         if pain_delta:
-            health['painLevel'] = max(0, min(10, float(health.get('painLevel') or 0) + pain_delta))
+            apply_effect_to_health(health, {'type':'pain','value':pain_delta,'source':'medical_procedure'}, character_data=recipient_data)
         return {'kind': 'surgery', 'mode': plan['mode'], 'area': plan['area'],
                 'uses': plan['uses'], 'restoration': restoration, 'pain_delta': pain_delta}
 
@@ -884,7 +892,7 @@ def _apply_success(
         except (TypeError, ValueError) as error:
             raise ValidationError('Некорректное изменение боли') from error
         if pain_delta:
-            health['painLevel'] = max(0, min(10, float(health.get('painLevel') or 0) + pain_delta))
+            apply_effect_to_health(health, {'type':'pain','value':pain_delta,'source':'medical_procedure'}, character_data=recipient_data)
 
         if plan['mode'] == 'treat_unfixed_fracture':
             apply_effect_to_health(health, {
@@ -900,6 +908,14 @@ def _apply_success(
         restoration = None
         if plan.get('restored_health') is not None:
             restoration = _restore_zone_and_pool(health, plan['area'], plan['restored_health'])
+        elif plan['mode']=='restore_lost_part':
+            organ=(health.get('organs') or {}).get(plan['area'])
+            if isinstance(organ,dict):
+                before=_numeric(organ.get('current'));organ['current']=_numeric(organ.get('max'))
+                restoration={'area':plan['area'],'organ':True,'restored':organ['current']-before,'current':organ['current']}
+            elif plan['area'] in LIMB_AREAS:
+                zone=(health.get('zones') or {}).get(plan['area']) or {}
+                restoration=_restore_zone_and_pool(health,plan['area'],_numeric(zone.get('max')))
         return {'kind': 'surgery', **{key: plan[key] for key in ('mode', 'area', 'uses')},
                 'restoration': restoration, 'pain_delta': pain_delta}
 
@@ -928,7 +944,7 @@ def _apply_success(
         except (TypeError, ValueError) as error:
             raise ValidationError('Некорректное изменение боли') from error
         if pain_delta:
-            health['painLevel'] = max(0, min(10, float(health.get('painLevel') or 0) + pain_delta))
+            apply_effect_to_health(health, {'type':'pain','value':pain_delta,'source':'medical_procedure'}, character_data=recipient_data)
 
         if treatment == 'chimera' and area == 'head':
             apply_effect_to_health(health, {
@@ -1073,6 +1089,11 @@ class MedicalProcedureService:
         required_uses = requirements['required_uses']
         base_difficulty = requirements['base_difficulty']
         requires_roll = requirements['requires_roll']
+        if application.get('fineWork'):
+            from app.services.character_traits import trait_count
+            _minimum_treatment_cost(actor_data,direct,canonical_application,application)
+            if not requires_roll:raise ValidationError('Для этой процедуры не требуется медицинская проверка')
+            base_difficulty-=6 if trait_count(actor_data,'Тонкая работа')>=2 else 4
         helper=((actor_data.get('health') or {}).get('combatMeta') or {}).get('helpAdvantage')
         if helper and helper.get('skill_path') not in {'','skills.other.medicine'}:helper=None
         if requires_roll and helper:base_difficulty-=_numeric(helper.get('medical_dc_reduction'))
@@ -1095,7 +1116,7 @@ class MedicalProcedureService:
             if _numeric(usage.get(usage_key)) >= _numeric(direct.get('use_limit'), 1):
                 raise ConflictError('Лимит использования этого препарата исчерпан')
 
-        minimum_cost = _minimum_treatment_cost(actor_data, direct, canonical_application)
+        minimum_cost = _minimum_treatment_cost(actor_data, direct, canonical_application,application)
         payment_details = minimum_consumable_payment(actor_data, target_data, {
             'source': source,
             'application': application,
@@ -1119,12 +1140,17 @@ class MedicalProcedureService:
             medication_bonus = 0
         skill_bonus = _medicine_skill(actor_data)
         if helper:skill_bonus+=_numeric(helper.get('roll_bonus'))
-        patient_counts=actor_data.setdefault('health',{}).setdefault('combatMeta',{}).setdefault('patientTreatments',{})
+        patient_counts=((actor_data.get('health') or {}).get('combatMeta') or {}).get('patientTreatments') or {}
         if trait_count(actor_data,'Личный врач') and _numeric(patient_counts.get(str(target.id)))>10:skill_bonus+=3
+        from app.services.brigadier_order import consume
+        order=consume(actor_data) if requires_roll else None
+        if order:skill_bonus+=3
         difficulty = max(1, base_difficulty - skill_bonus - medication_bonus) if requires_roll else None
         roll = (
             completion.payload.get('medicine_roll') if completion else random.randint(1, 20)
         ) if requires_roll else None
+        if order and order.get('advantage') and not completion:
+            roll=max(roll,random.randint(1,20))
         if requires_roll and (type(roll) is not int or not 1 <= roll <= 20):
             raise ConflictError('Не удалось восстановить медицинский бросок')
         success = not requires_roll or roll >= difficulty
@@ -1135,7 +1161,9 @@ class MedicalProcedureService:
         outcome = None
         intoxication_before=_numeric(health.get('intoxication'))
         if success:
-            if requires_roll:patient_counts[str(target.id)]=int(_numeric(patient_counts.get(str(target.id))))+1
+            if requires_roll:
+                patient_counts[str(target.id)]=int(_numeric(patient_counts.get(str(target.id))))+1
+                actor_data.setdefault('health',{}).setdefault('combatMeta',{})['patientTreatments']=patient_counts
             outcome = _apply_success(
                 health, direct, application, item,
                 profile=profile, in_combat=actor_model is not None,

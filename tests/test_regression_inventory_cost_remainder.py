@@ -426,10 +426,8 @@ def test_delayed_hand_grenade_pays_retrieval_and_delay_before_one_pending_event(
             'explosive_fuse_mode': 'delay', 'item_path': path, 'target_x': 8, 'target_y': 1,
             'inventory_retrieval_action_points': 0, 'inventory_use_action_discount': 99,
             'action_points': 0}
-    # Текущая реализация бросает d20 и при начале оплаты, и при resume.
-    # Здесь проверяется отсутствие раннего расхода/взрыва, а не отсутствие раннего RNG.
-    with scripted(monkeypatch, combat_module, [('perform_action', 1, 20, 20)]):
-        pending_start(client, pair, auth_headers, identity, body, total - 2)
+    # При неполной оплате бросков нет; проверки задержки и броска — при исполнении.
+    pending_start(client, pair, auth_headers, identity, body, total - 2)
     row = db.session.get(DeferredCombatAction, identity)
     assert row.payload['explosive_fuse_mode'] == 'delay'
     assert row.payload['item_path'] == path and row.payload['target_x'] == 8
@@ -443,23 +441,28 @@ def test_delayed_hand_grenade_pays_retrieval_and_delay_before_one_pending_event(
     recovered = client.get(combat_url(pair), headers=auth_headers(pair['actor_user']))
     assert recovered.status_code == 200, recovered.get_json()
     recovered_action(client, pair, auth_headers, identity, 'explosive_attack')
-    with scripted(monkeypatch, combat_module, [('perform_action', 1, 20, 20)]):
+    throw_draws=[]
+    def throw_roll(low,high):
+        throw_draws.append((low,high));return 20
+    with scripted(monkeypatch, combat_module, [('_narrative_skill_check', 1, 20, 20)]), monkeypatch.context() as throwing:
+        throwing.setattr('random.randint',throw_roll)
         response = resume(client, pair, auth_headers, identity, 'explosive_attack',
                           target_x=0, target_y=0, explosive_fuse_mode='normal',
                           item_path=['inventory', 'backpack', 999])
+    assert throw_draws==[(1,20)]
     assert response.status_code == 200, response.get_json()
     details = response.get_json()['explosive']
     assert details['action_points'] == total
     assert details['target'] == {'x': 8, 'y': 1}
     assert details['impact'] == {'x': 8, 'y': 1}
     assert details['source'] == 'hand' and details['fuse_mode'] == 'delay'
-    assert details['detonated'] is False and details['pending']['trigger'] == 'turn_end'
+    assert details['detonated'] is False and details['pending']['trigger'] == 'short_fuse'
     assert details['rolls'] == [20] and details['success'] is True
     events = explosive_state(pair).pending_explosives
     assert len(events) == 1
     assert events[0]['id'] == details['pending']['id']
     assert (events[0]['x'], events[0]['y'], events[0]['actor_id']) == (8, 1, pair['actor_location'].id)
-    assert events[0]['trigger'] == 'turn_end'
+    assert events[0]['trigger'] == 'short_fuse'
     assert at(data(pair), path) == {**grenade, 'quantity': 1}
     assert damage_state(pair) == target_health
     assert not explosive_state(pair).area_effects

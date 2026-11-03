@@ -349,7 +349,7 @@ def test_manual_skill_level_resets_progress_and_preserves_effects(access_case, c
                       '_manual_fields': ['skills.physical.will.base']}, transport) == 200
         db.session.refresh(character)
         skill = character.data['skills']['physical']['will']
-        assert skill == {'base': level, 'bonus': 0, 'xp': 0}
+        assert skill == {'base': level, 'bonus': 0, 'xp': 0,'learningRemainder':0}
         assert character.data['health']['combatMeta']['consumableModifiers'][0]['value'] == 2
         assert CombatService._base_skill_modifier(character.data, 'skills.physical.will') == (level + 2 - 10) // 2
 

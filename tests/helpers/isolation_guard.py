@@ -6,6 +6,7 @@ import os
 ALLOWED_MODULES = (
     'test_equipment_importer.py',
     'test_character_creation.py',
+    'test_character_traits_runtime.py',
     'test_weapon_modules.py',
     'test_noise.py',
     'test_combat_explosions.py', 'test_grenade_rules.py',

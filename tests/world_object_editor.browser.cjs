@@ -132,6 +132,7 @@ else:
                 headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
                 ...(payload ? { body: JSON.stringify(payload) } : {}),
             });
+            if(response.status===204)return null;
             const body = await response.text();
             assert.ok(response.headers.get('content-type')?.includes('application/json'), `${url}: ${body}`);
             const result = JSON.parse(body);
@@ -168,15 +169,20 @@ else:
         await page.call('Page.enable');
         await page.call('Runtime.enable');
         await page.call('Log.enable');
-        if ((process.env.VTT_GM_RELOCATION_ONLY === '1' || process.env.VTT_UI_REGRESSION === '1' || process.env.VTT_PRIPYAT === '1' || process.env.VTT_MOVEMENT_ONLY === '1') && !process.env.VTT_WATER_BASELINE_DIR) {
+        if ((['traits','creation'].includes(process.env.VTT_SAFE_SCENARIO) || process.env.VTT_GM_RELOCATION_ONLY === '1' || process.env.VTT_UI_REGRESSION === '1' || process.env.VTT_PRIPYAT === '1' || process.env.VTT_MOVEMENT_ONLY === '1') && !process.env.VTT_WATER_BASELINE_DIR) {
             const modules = path.join(profile, 'regression-modules');
             fs.mkdirSync(modules,{recursive:true});
             const source = process.env.VTT_PRIPYAT_LEGACY === '1'
-                ? fs.readFileSync(path.join(root,'tmp/ui-regression-modules/locationScene.js'),'utf8').split('\nexport {showCombatActionMenu,')[0]
+                ? fs.readFileSync(path.join(root,'tmp/ui-regression-modules/locationScene.js'),'utf8').split(/\nexport \{(?:openCharacterAttackSelection, )?(?:showObjectContextMenu, )?showCombatActionMenu,/)[0]
                 : fs.readFileSync(path.join(root,'app/static/js/locationScene.js'),'utf8');
             fs.writeFileSync(path.join(modules,'locationScene.js'), source + `
-export {showCombatActionMenu, showFacingMenu, updateFacingPreview, closeFacingMenu, findMovementPath, hasStoreyNavigation, hasLineOfSight, beginCharacterMoveMode, updateMovementPreview, commitMovementPreview, resolveFacingCell, showMovementTypeMenu, selectEditorAsset};
+export {openCharacterAttackSelection, showObjectContextMenu, showCombatActionMenu, showFacingMenu, updateFacingPreview, closeFacingMenu, findMovementPath, hasStoreyNavigation, hasLineOfSight, beginCharacterMoveMode, updateMovementPreview, commitMovementPreview, resolveFacingCell, showMovementTypeMenu, selectEditorAsset};
 export function sceneGraphicsForTest(){return {scene,renderer,camera,controls,sun:locationDirectionalLight,roots:locationObjectMeshes,roofs:roofMeshes,characters:characterModels,cache:locationShadowCache,shadowPass:locationShadowPass,batches:locationRenderBatches,pickAtScreen:getLocationObjectAtScreen};}
+let anomalyLabelSamplesForTest=null,anomalyLabelEnabledForTest=true;
+const updateAnomalyLabelsForTest=updateAnomalyLabelVisibility;
+updateAnomalyLabelVisibility=(...args)=>{if(!anomalyLabelEnabledForTest)return;const at=performance.now();try{return updateAnomalyLabelsForTest(...args)}finally{anomalyLabelSamplesForTest?.push(performance.now()-at)}};
+export function beginAnomalyLabelProfileForTest(enabled){anomalyLabelEnabledForTest=enabled;anomalyLabelSamplesForTest=[];anomalyLabelVisibilityKey=null;}
+export function endAnomalyLabelProfileForTest(){const samples=anomalyLabelSamplesForTest;anomalyLabelSamplesForTest=null;anomalyLabelEnabledForTest=true;return samples;}
 export function facingPreviewCount(){return facingPreviewMesh?.count || 0;}
 export function navigationPreviewSettled(sx,sy,x,y,c,l){return [...navigationPreviews.entries()].some(([key,value])=>key.endsWith(\`:\${c}:\${sx}:\${sy}:\${x}:\${y}:\${l}\`)&&value!==null);}
 export function characterPose(id){const e=getCharacterModelEntry(id);return {x:e.posX,y:e.posY,fx:e.facingX,fy:e.facingY};}
@@ -277,6 +283,10 @@ if(typeof renderFacingPreview==='function'){const original=renderFacingPreview;r
         }
         if (safeSession && process.env.VTT_SAFE_SCENARIO === 'creation') {
             await require('./character_creation.browser.cjs')({page,request,token,lobby,base,connect,debugPort,safeSession});
+            return;
+        }
+        if (safeSession && process.env.VTT_SAFE_SCENARIO === 'traits') {
+            await require('./character_traits_only.browser.cjs')({page,request,token,lobby,base,connect,debugPort,safeSession});
             return;
         }
         if (safeSession && process.env.VTT_SAFE_SCENARIO === 'weapons') {

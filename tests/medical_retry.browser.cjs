@@ -133,7 +133,9 @@ module.exports=async({page,request,token,lobby,base,connect,debugPort,safeSessio
         check('failed-procedure-and-server-retry');check('medical-http-and-events-public');check('resource-once-on-failure');
         // Save the exact public medical response through the application's normal saver.
         const publicData=copy(failure.actor_data);publicData.notes='MR01 public snapshot save';
-        const saved=await page.evaluate(`(async()=>{const {Server}=await import('/static/js/api.js');return Server.updateCharacter(${physician.id},{data:${JSON.stringify(publicData)}})})()`);assert.ok(saved.data);
+        // Запоминаем медицинский HTTP-снимок так же, как requestJson. Обычный GET
+        // дополнительно проверяет сохранение исходной публичной версии после обновления листа.
+        const saved=await page.evaluate(`(async()=>{const {Server}=await import('/static/js/api.js');const {rememberCharacterSnapshots}=await import('/static/js/characterPersistence.js');rememberCharacterSnapshots(${JSON.stringify(failure)});await Server.getCharacter(${physician.id});return Server.updateCharacter(${physician.id},{data:${JSON.stringify(publicData)}})})()`);assert.ok(saved.data);
         const afterSave=await database('public-sheet-save');assert.deepEqual(doctor(afterSave).data.health.combatMeta.mustDoRetry,trusted);assert.equal(doctor(afterSave).data.notes,publicData.notes);
         // Also exercise the rendered sheet autosave using its real notes field.
         await page.evaluate(`openCharacterSheet(${physician.id})`);await page.until(`document.querySelector('#sheet-tabs [data-tab="notes"]')`,'notes tab');await click(page,'#sheet-tabs [data-tab="notes"]');

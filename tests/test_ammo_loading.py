@@ -71,7 +71,7 @@ def test_deferred_ammo_survives_reconnect_and_is_consumed_once(client, loading_c
 
 
 @pytest.mark.parametrize('change', ['source', 'target', 'quantity', 'caliber'])
-def test_changed_loading_selection_keeps_action_ready(client, loading_case, auth_headers, change):
+def test_changed_loading_selection_cancels_paid_action_without_inventory_loss(client, loading_case, auth_headers, change):
     case = loading_case
     assert start(client, case, auth_headers).status_code == 200
     pay(client, case, auth_headers)
@@ -86,10 +86,17 @@ def test_changed_loading_selection_keeps_action_ready(client, loading_case, auth
         data['inventory']['pockets'][0]['attributes']['caliber'] = '7.62x39'
     case['actor_character'].data = data
     db.session.commit()
+    resources=(case['actor_location'].action_points_current,case['actor_location'].free_actions_current)
     response = resume(client, case, auth_headers)
     assert response.status_code == 400, response.json
-    assert db.session.get(DeferredCombatAction, 'ammo-loading').status == 'ready'
-    assert case['actor_character'].data == data
+    assert db.session.get(DeferredCombatAction, 'ammo-loading').status == 'cancelled'
+    expected=deepcopy(data)
+    expected['health']['combatMeta'].pop('pendingAction',None)
+    expected['health']['combatMeta'].pop('completedPendingActionId',None)
+    assert case['actor_character'].data == expected
+    assert (case['actor_location'].action_points_current,case['actor_location'].free_actions_current)==resources
+    assert resume(client,case,auth_headers).status_code==409
+    assert case['actor_character'].data==expected
 
 
 def test_payment_and_loading_roll_back_together(client, loading_case, auth_headers, monkeypatch):

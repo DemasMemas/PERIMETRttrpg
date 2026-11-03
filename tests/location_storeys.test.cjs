@@ -120,6 +120,7 @@ test('stair movement tolerates a RAF timestamp before the event and ends at serv
     const vector=(x=0,y=0,z=0)=>({x,y,z,set(x,y,z){Object.assign(this,{x,y,z});},copy(v){this.set(v.x,v.y,v.z);},clone(){return vector(this.x,this.y,this.z);}});
     const callbacks=[],entry={floorLevel:0,model:{position:vector(1.5,1,1.5),traverse(){}},label:{position:vector()}};
     const context=createSceneContext({getCharacterModelEntry:()=>entry,STOREY_HEIGHT:2.4,currentLocationData:{objects:[]},
+        queueTrueSightRefresh(){},
         getTileHeight:()=>1,attachStaticLightFieldToRoot(){},locationStaticLightField:null,
         tintLocationMesh(){},darknessFactorAt:()=>1,characterLabelOffset:()=>1.9,
         invalidateMovementMapCache(){},applyFogOfWar(){},performance:{now:()=>100},document:{hidden:false},

@@ -102,7 +102,7 @@ async function harness(tiles, objects = []) {
     const geometry = new Geometry(); geometry.index = { count: 457 * 3 };
     const atlas = { disposals: 0, clone() { return {...this, disposals:0}; }, dispose() { this.disposals++; } };
     const assets = { medium01: { geometry, material: new Material({ map: atlas }), bottom: -0.2, scale: 0.1, spread: 0.3 } };
-    const context = vm.createContext({ THREE, ...grass, ...terrain, ...detail, ...architecture,
+    const context = vm.createContext({ window:{dispatchEvent(){}},Event:class{},THREE, ...grass, ...terrain, ...detail, ...architecture,
         currentLocationData: { tiles_data: tiles, objects, grid_width: tiles[0].length, grid_height: tiles.length },
         scene: new Object3D(),
         grassDetailGroup: null, naturalGrassBuild: null, naturalGrassAssets: assets,

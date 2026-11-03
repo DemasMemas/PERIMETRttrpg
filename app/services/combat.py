@@ -25,7 +25,7 @@ from app.services.anomaly_profiles import anomaly_profile
 from app.services.anomaly_area import anomaly_covers_tile
 from app.services.character_roles import is_npc
 from app.services.health import BASE_ORGAN_MAXIMUMS, apply_health_maximums
-from app.services.character_traits import passive_profile as character_passives, trait_count, background_is, action_cost as trait_action_cost, weapon_accuracy_bonus
+from app.services.character_traits import passive_profile as character_passives, trait_count, background_is, action_cost as trait_action_cost, weapon_accuracy_bonus,facial_profile
 from sqlalchemy.orm.attributes import flag_modified
 
 
@@ -171,6 +171,8 @@ for _profile_key, _noise in {'rgd5':15,'f1':15,'rgn':15,'rgo':15,'bang793':15,'v
     EXPLOSIVE_PROFILES[_profile_key]['noise']=_noise
 
 ACTION_CATALOG = [
+    {'key':'brigadier_order','label':'Дать указание','action_points':2,'free_actions':0,'movement_points':0},
+    {'key':'evade','label':'Уклонение','action_points':4,'free_actions':0,'movement_points':0},
     {'key':'extinguish_fire','label':'Тушить себя','action_points':3,'free_actions':0,'movement_points':0},
     {'key':'prepare_water','label':'Взять воду в руку','action_points':0,'free_actions':0,'movement_points':0},
     {'key':'pour_water','label':'Облить водой','action_points':2,'free_actions':0,'movement_points':0},
@@ -184,6 +186,7 @@ ACTION_CATALOG = [
     {'key': 'reload_weapon', 'label': 'Сменить магазин', 'action_points': 0, 'free_actions': 0, 'movement_points': 0},
     {'key': 'load_ammunition', 'label': 'Зарядка патронов', 'action_points': 0, 'free_actions': 0, 'movement_points': 0},
     {'key': 'reload_underbarrel', 'label': 'Зарядить подствольник', 'action_points': 5, 'free_actions': 0, 'movement_points': 0},
+    {'key':'surgeon_reduction','label':'Вправить конечность без набора','action_points':2,'free_actions':0,'movement_points':0},
     {'key': 'change_equipment', 'label': 'Сменить экипировку', 'action_points': 0, 'free_actions': 0, 'movement_points': 0},
     {'key': 'change_equipment_module', 'label': 'Сменить модуль экипировки', 'action_points': 0, 'free_actions': 0, 'movement_points': 0},
     {'key': 'place_gunpoint', 'label': 'Приставить ствол', 'action_points': 2, 'free_actions': 0, 'movement_points': 0},
@@ -340,6 +343,14 @@ class CombatService:
             return int(value)
         except (TypeError, ValueError):
             return default
+
+    @staticmethod
+    def _display_name(character):
+        if not character:return None
+        name=getattr(character,'name',None);data=getattr(character,'data',None) or {};basic=data.get('basic') or {}
+        if basic.get('is_psi_clone'):
+            return basic.get('psi_clone_display_name') or re.sub(r'\s*—\s*копия\s+\d+$','',str(name or ''))
+        return name
 
     @staticmethod
     def _character_condition(character_data):
@@ -838,6 +849,8 @@ class CombatService:
             + CombatService._coerce_int(current.get('bonus'), 0)
             + CombatService._consumable_stat_value_bonus(character_data, stat_name)
             + equipment_bonus
+            + (2 if skill_path in {'skills.physical.strength','skills.physical.agility'} and background_is(character_data,'Пожарный') and ((character_data.get('health') or {}).get('combatMeta') or {}).get('firefighterNearby') else 0)
+            + (facial_profile(character_data)['charisma_level'] if skill_path=='skills.social.charisma' else 0)
             + artifact_bonus,
         )
 
@@ -1212,9 +1225,22 @@ class CombatService:
             raise ValidationError("В режиме движения спиной или боком нельзя идти вперёд")
 
     @staticmethod
-    def _validate_posture_movement(posture, movement_mode):
+    def _movement_posture_profile(posture,character_data=None):
+        profile=dict(POSTURES.get(posture,POSTURES['standing']))
+        if trait_count(character_data,'Гусь и гусеничка'):
+            if posture=='sitting':profile.update(movement_multiplier=1,walk_max_distance=10,can_run=True)
+            elif posture=='prone':profile.update(movement_multiplier=2,walk_max_distance=5)
+        return profile
+
+    @staticmethod
+    def _sprinter_walk(character_data,movement_mode,posture):
+        return (background_is(character_data,'Спринтер') and movement_mode in {'walk','run','backward_sideways'}
+                and not CombatService._exoskeleton_power_profile(character_data)['is_exoskeleton'])
+
+    @staticmethod
+    def _validate_posture_movement(posture, movement_mode,character_data=None):
         posture_key = posture if posture in POSTURES else 'standing'
-        posture_profile = POSTURES[posture_key]
+        posture_profile = CombatService._movement_posture_profile(posture_key,character_data)
         if movement_mode == 'run' and not posture_profile['can_run']:
             raise ValidationError("Running is only possible while standing")
         if movement_mode == 'sprint' and not posture_profile['can_sprint']:
@@ -1269,11 +1295,11 @@ class CombatService:
         }
 
     @staticmethod
-    def _movement_route_cost(path, movement_mode, posture='standing'):
+    def _movement_route_cost(path, movement_mode, posture='standing',character_data=None):
         mode = MOVEMENT_MODES.get(movement_mode)
         if not mode:
             raise ValidationError("Unknown movement mode")
-        posture_profile = POSTURES.get(posture, POSTURES['standing'])
+        posture_profile = CombatService._movement_posture_profile(posture,character_data)
         route = path if isinstance(path, dict) else {}
         route_tiles = route.get('path') if isinstance(route.get('path'), list) else []
         distance = max(0, CombatService._coerce_float(route.get('distance'),len(route_tiles)-1))
@@ -1281,6 +1307,7 @@ class CombatService:
         climb_cost = max(0, CombatService._coerce_float(route.get('climb_cost'), 0))
         travel_cost = max(0, raw_cost - climb_cost)
         divisor = mode['movement_divisor']
+        if CombatService._sprinter_walk(character_data,movement_mode,posture):divisor=1 if movement_mode=='backward_sideways' else 2
         adjusted_travel_cost = travel_cost * posture_profile['movement_multiplier']
         movement_cost = 0 if divisor is None else adjusted_travel_cost / divisor
         return {
@@ -1376,10 +1403,10 @@ class CombatService:
     def _movement_penalty(loc_char):
         character = loc_char.character
         data = character.data if character and isinstance(character.data, dict) else {}
-        return CombatService._movement_penalty_breakdown(data)['total']
+        return CombatService._movement_penalty_breakdown(data,loc_char)['total']
 
     @staticmethod
-    def _movement_penalty_breakdown(data):
+    def _movement_penalty_breakdown(data,loc_char=None):
         data = data if isinstance(data, dict) else {}
         equipment = data.get('equipment', {}) if isinstance(data, dict) else {}
         armor = equipment.get('armor', {}) if isinstance(equipment, dict) else {}
@@ -1438,6 +1465,11 @@ class CombatService:
         intoxication_penalty = CombatService._intoxication_profile(data)['movement_penalty']
         artifact_penalty = artifact_passive_profile(data)['movement_penalty']
         trait_penalty = character_passives(data)['movement_penalty']
+        drawn_index=CombatService._coerce_int(getattr(loc_char,'drawn_weapon_index',None) if loc_char is not None else data.get('activeWeaponIndex'),-1)
+        weapons=data.get('weapons') or []
+        if background_is(data,'Прорывник') and 0<=drawn_index<len(weapons):
+            if re.search(r'пистолет.пулемет|штурмов|карабин|дробов',CombatService._weapon_subcategory(weapons[drawn_index])):
+                trait_penalty-=2
         exoskeleton = CombatService._exoskeleton_power_profile(data)
         if exoskeleton['is_exoskeleton']:
             if exoskeleton['powered']:
@@ -1634,6 +1666,8 @@ class CombatService:
         if not isinstance(health, dict):
             return 0
         modifier = 0
+        if skill_path in {'skills.physical.shooting','skills.physical.melee','skills.physical.agility'}:
+            modifier+=facial_profile(character_data).get(skill_path.rsplit('.',1)[-1],0)
         if include_pain:
             properties=character_passives(character_data)
             modifier -= max(0,CombatService._coerce_int(health.get('painLevel'), 0)-properties['pain_ignored']-properties['pain_penalty_reduction'])
@@ -2028,7 +2062,9 @@ class CombatService:
         )
         if stress_advantage:
             rolls.append(random.randint(1, 20))
-        roll = max(rolls)
+        from app.services.brigadier_order import boost_roll
+        rolls,roll,order_bonus=boost_roll(data,rolls,advantage=stress_advantage)
+        will_bonus+=order_bonus
         manifested = bool(force_manifest or roll + will_bonus < difficulty)
         result.update({
             'will_bonus': will_bonus, 'difficulty': difficulty, 'rolls': rolls,
@@ -2246,9 +2282,13 @@ class CombatService:
         )
 
     @staticmethod
-    def _narrative_skill_check(character_data, skill_path, advantage=False, darkness=False,roll_bonus=0):
+    def _narrative_skill_check(character_data, skill_path, advantage=False, darkness=False,roll_bonus=0,forced_disadvantage=False,charisma_level_delta=0):
         if skill_path not in CombatService.NARRATIVE_SKILLS:
             raise ValidationError("Unknown skill")
+        from app.services.brigadier_order import consume
+        order=consume(character_data)
+        if order:
+            roll_bonus+=3;advantage=advantage or order.get('advantage',False)
         requested_skill_path = skill_path
         awareness_mode = None
         if skill_path == 'skills.physical.awareness.visual':
@@ -2265,6 +2305,11 @@ class CombatService:
             related_modifier = CombatService._base_skill_modifier(
                 character_data, 'skills.social.charisma'
             )
+        if charisma_level_delta and skill_path.startswith('skills.social.'):
+            charisma=max(0,CombatService._skill_value(character_data,'skills.social.charisma')+charisma_level_delta)
+            charisma_modifier=math.floor((charisma-10)/2)+facial_profile(character_data)['charisma_bonus']
+            if skill_path=='skills.social.charisma':effective_value=charisma;skill_modifier=charisma_modifier
+            else:related_modifier=charisma_modifier
         equipment_modifier = 0
         equipment = character_data.get('equipment') if isinstance(character_data, dict) else {}
         equipment = equipment if isinstance(equipment, dict) else {}
@@ -2275,9 +2320,10 @@ class CombatService:
             ):
                 item = equipment.get(key)
                 if isinstance(item, dict):
-                    equipment_modifier += CombatService._coerce_int(
-                        item.get('charismaBonus', item.get('charisma_bonus')), 0
-                    )
+                    attrs=item.get('attributes') or {}
+                    bonus=CombatService._coerce_int(item.get('charismaBonus',item.get('charisma_bonus',attrs.get('charisma_bonus'))),0)
+                    if key=='glasses' and trait_count(character_data,'Сварщик') and str(item.get('name','')).strip().casefold()=='очки сварщика':bonus=1
+                    equipment_modifier+=bonus
         elif skill_path == 'skills.physical.awareness':
             headphones = equipment.get('headphones')
             if awareness_mode in {None, 'hearing'} and isinstance(headphones, dict):
@@ -2291,8 +2337,8 @@ class CombatService:
                 equipment_modifier += CombatService._consumable_stat_value_bonus(
                     character_data, 'darkness_awareness' if darkness else 'light_awareness',
                 )
-        disadvantage = CombatService._has_roll_disadvantage(
-            character_data, skill_path, darkness=darkness and awareness_mode == 'visual',
+        disadvantage = forced_disadvantage or CombatService._has_roll_disadvantage(
+            character_data, skill_path, darkness=darkness and (awareness_mode == 'visual' or skill_path=='skills.physical.shooting'),
         )
         advantage = bool(
             advantage or CombatService._has_roll_advantage(character_data, skill_path, consume=True)
@@ -2304,9 +2350,10 @@ class CombatService:
         )
         from app.services.noise import hearing_modifier
         hearing_penalty=hearing_modifier(deafness) if awareness_mode=='hearing' else 0
+        if awareness_mode=='hearing':hearing_penalty+=facial_profile(character_data)['hearing']
         status_modifier+=hearing_penalty
         if skill_path=='skills.other.stealth' and background_is(character_data,'Ночной дозор'):status_modifier+=3 if darkness else -5
-        hearing_blocked = awareness_mode == 'hearing' and deafness >= 90
+        hearing_blocked = awareness_mode == 'hearing' and (deafness >= 90 or facial_profile(character_data)['ears']==2)
         if hearing_blocked:
             rolls = [0]
             roll = 0
@@ -2335,6 +2382,7 @@ class CombatService:
             'automatic_failure': hearing_blocked,
             'failure_reason': 'Персонаж не слышит' if hearing_blocked else None,
             'effective_value': effective_value,
+            'brigadier_order':order,
             'rolls': rolls,
             'roll': roll,
             'disadvantage': disadvantage,
@@ -2588,6 +2636,8 @@ class CombatService:
                 maximum_durability,
                 current_durability + durability_refund,
             )
+            refunded=weapon['durability']-current_durability
+            weapon['_combatDurabilityLoss']=max(0,CombatService._coerce_int(weapon.get('_combatDurabilityLoss'),0)-refunded)
         return CombatService._roll_character_weapon_jam(character_data,weapon,attack_roll)
 
     @staticmethod
@@ -3257,9 +3307,10 @@ class CombatService:
         return cosine >= math.cos(math.radians(half_angle_degrees))
 
     @staticmethod
-    def _shooting_movement_modifiers(shooter_mode=None, target_mode=None, target_evading=False):
+    def _shooting_movement_modifiers(shooter_mode=None, target_mode=None, target_evading=False,character_data=None):
         """Movement changes accuracy, not the number of attack dice."""
         shooter_mode = str(shooter_mode or '').lower()
+        if shooter_mode=='run' and background_is(character_data,'Спринтер'):shooter_mode='walk'
         target_mode = str(target_mode or '').lower()
         difficulty_penalty = {'walk': 1, 'backward_sideways': 1, 'run': 2, 'sprint': 3}.get(shooter_mode, 0)
         difficulty_penalty += {'run': 1, 'sprint': 2}.get(target_mode, 0)
@@ -3286,7 +3337,7 @@ class CombatService:
         return 2 if trait_count(data, 'Маленький рост') else 0
 
     @staticmethod
-    def _movement_distance_limit(movement_mode, posture='standing', evading=False, movement_penalty=0):
+    def _movement_distance_limit(movement_mode, posture='standing', evading=False, movement_penalty=0,character_data=None):
         base = max(0,DEFAULT_CONVERSION_BASE-movement_penalty)
         if movement_mode == 'correction':
             maximum = 3
@@ -3300,7 +3351,13 @@ class CombatService:
             maximum = math.floor(base/2)
         else:
             maximum = base
-        reduction = {'walk': 3, 'run': 5, 'sprint': 7}.get(movement_mode, 0) if evading else 0
+        if trait_count(character_data,'Гусь и гусеничка') and movement_mode=='walk':
+            if posture=='sitting':maximum=base
+            elif posture=='prone':maximum=math.ceil(base/2)
+        if CombatService._sprinter_walk(character_data,movement_mode,posture):
+            maximum=2*(base if movement_mode=='run' else maximum)
+        penalty_mode='walk' if CombatService._sprinter_walk(character_data,movement_mode,posture) else movement_mode
+        reduction = {'walk': 3, 'run': 5, 'sprint': 7}.get(penalty_mode, 0) if evading else 0
         return max(0, maximum - reduction)
 
     @staticmethod
@@ -3313,15 +3370,13 @@ class CombatService:
             ),
             default=0,
         )
-        rolls = [random.randint(1, 20)]
-        if disadvantage:
-            rolls.append(random.randint(1, 20))
-        roll = min(rolls)
+        from app.services.brigadier_order import boost_roll
+        rolls,roll,order_bonus=boost_roll(character_data,[],disadvantage=disadvantage)
         return {
             'roll': roll,
             'rolls': rolls,
-            'bonus': skill + attribute,
-            'total': roll + skill + attribute,
+            'bonus': skill + attribute+order_bonus,
+            'total': roll + skill + attribute+order_bonus,
             'critical_success': roll == 20,
             'critical_failure': roll == 1,
         }
@@ -4381,11 +4436,9 @@ class CombatService:
         CombatService._refresh_mutant_pack_bonus(loc_char)
         advantage = CombatService._has_roll_advantage(data, skill_path)
         disadvantage = CombatService._has_roll_disadvantage(data, skill_path)
-        rolls = [random.randint(1, 20) for _ in range(2 if advantage != disadvantage else 1)]
-        roll = max(rolls) if advantage and not disadvantage else (
-            min(rolls) if disadvantage and not advantage else rolls[0]
-        )
-        bonus = CombatService._skill_modifier(data, skill_path)
+        from app.services.brigadier_order import boost_roll
+        rolls,roll,order_bonus=boost_roll(data,[],advantage=advantage,disadvantage=disadvantage)
+        bonus = CombatService._skill_modifier(data, skill_path)+order_bonus
         total = roll + bonus
         return {
             'roll': roll,
@@ -5850,7 +5903,7 @@ class CombatService:
             - CombatService._damage_pain_requirement(previous_damage / multiplier, 0)
         )
         if pain_delta:
-            apply_effect_to_health(health, {'type': 'pain', 'value': pain_delta, 'source': source})
+            apply_effect_to_health(health, {'type': 'pain', 'value': pain_delta, 'source': source},character_data=character_data)
         meta['damageTakenThisRound'] = accumulated
         meta['damagePainAppliedThisRound'] = (
             CombatService._coerce_int(meta.get('damagePainAppliedThisRound'), 0) + pain_delta
@@ -5874,6 +5927,7 @@ class CombatService:
         head_impact=None,
         armor_penetrated=True,
         prepared_trauma_rolls=None,
+        precision_attacker=None,
     ):
         character = target.character
         data = dict(character.data or {})
@@ -6048,7 +6102,7 @@ class CombatService:
                     'value': disabled_zone_pain,
                     'source': 'disabled_body_zone',
                     'area': zone_key,
-                })
+                },character_data=data)
             if zone in {'head', 'chest'}:
                 apply_effect_to_health(health, {
                     'type': 'shock',
@@ -6149,58 +6203,11 @@ class CombatService:
                     'head_impact': deepcopy(impact),
                 }
                 traumas.append(trauma)
-                if trauma_rules['fracture']:
-                    apply_effect_to_health(health, {
-                        'type': 'fracture', 'area': zone_key, 'source': 'combat_attack'
-                    })
-                if allow_bleeding and trauma_rules['bleeding']:
-                    kind, trauma_stage = trauma_rules['bleeding']
-                    created_bleedings.append({
-                        'kind': kind,
-                        'stage': trauma_stage,
-                        'area': zone_key,
-                        'source': 'additional_trauma',
-                    })
-                    apply_effect_to_health(health, {
-                        'type': f'bleeding_{kind}_{trauma_stage}', 'area': zone_key,
-                        'source': 'combat_attack'
-                    })
-                if trauma_rules['pain']:
-                    apply_effect_to_health(health, {
-                        'type': 'pain', 'value': trauma_rules['pain'],
-                        'source': 'combat_attack'
-                    })
-                if trauma_rules['shock']:
-                    apply_effect_to_health(health, {
-                        'type': 'shock', 'area': zone_key, 'source': 'combat_attack'
-                    })
-                organ_keys = []
-                if trauma_rules['organ']:
-                    organ_keys.append(trauma_rules['organ'])
-                if impact and armor_penetrated:
-                    if impact.get('damage_skull_if_penetrated'):
-                        organ_keys.append('skull')
-                    organ_keys.extend(
-                        impact.get('secondary_organs_if_penetrated') or []
-                    )
-                organ_damages = []
-                for organ_key in dict.fromkeys(organ_keys):
-                    organ_damage = CombatService._apply_organ_damage(
-                        health, organ_key, damage, zone_key
-                    )
-                    if organ_damage:
-                        organ_damages.append(organ_damage)
-                        if organ_damage.get('bleeding'):
-                            created_bleedings.append(organ_damage['bleeding'])
-                if organ_damages:
-                    trauma['organ_damage'] = organ_damages[0]
-                    trauma['organ_damages'] = organ_damages
-                    if not trauma.get('organ'):
-                        trauma['organ'] = organ_damages[0].get('organ')
-                if trauma_rules['fall_or_drop']:
-                    trauma['fall_or_drop'] = CombatService._apply_fall_or_drop(
-                        target, data, zone_key,
-                    )
+                from app.services.sniper_trauma import enqueue,apply_trauma
+                if precision_attacker:
+                    enqueue(precision_attacker,target,trauma,damage,zone,armor_penetrated,allow_bleeding)
+                else:
+                    created_bleedings.extend(apply_trauma(target,data,trauma,trauma_rules,damage,impact,armor_penetrated,allow_bleeding))
         sync_health_derived_statuses(health)
         resulting_condition = CombatService._character_condition(data)
         tough_nut=None
@@ -6246,6 +6253,7 @@ class CombatService:
             'death': fatal_vital_hit,
             'tough_nut':tough_nut,
         }
+        if previous_condition!='dead' and resulting_condition['state']=='dead':CombatService._notify_observed_death(target)
         return health
 
     @staticmethod
@@ -6489,6 +6497,7 @@ class CombatService:
             'created_round': max(1, CombatService._coerce_int(current_round, 1)),
             'age': 0,
             'age_step':2 if profile.get('half_duration') else 1,
+            'source_character_id':profile.get('source_character_id'),
             'duration_rounds': CombatService._coerce_int(profile.get('duration_rounds'), 0),
             'grow_rounds': CombatService._coerce_int(profile.get('grow_rounds'), 0),
             'hold_rounds': CombatService._coerce_int(profile.get('hold_rounds'), 0),
@@ -6685,6 +6694,7 @@ class CombatService:
             CombatService.apply_stress_trigger(target, 1, trigger='explosion')
         target.hp_zones = health.get('zones') or target.hp_zones
         flag_modified(target, 'hp_zones')
+        if previous_condition!='dead' and resulting_condition['state']=='dead':CombatService._notify_observed_death(target)
         return {
             'damage': damage,
             'tough_nut':survival,
@@ -6764,12 +6774,20 @@ class CombatService:
         noise_objects=LocationObject.query.filter_by(location_id=location_id).all()
         noise_volume=CombatService._coerce_float(profile.get('noise'),0)
         noise_context=noise.space(noise_location,noise_objects,epicenter_x,epicenter_y,floor_level) if noise_volume>0 else None
+        source_actor=LocationCharacter.query.filter_by(location_id=location_id,character_id=profile.get('source_character_id')).first() if profile.get('source_character_id') else None
+        living={p.id for p in LocationCharacter.query.filter_by(location_id=location_id).all() if p.character and CombatService._character_condition(p.character.data)['state']!='dead'} if source_actor else set()
         def finish(payload):
+            from app.services.character_rules import explosion_occurred
+            if profile.get('blast_base',0)>0 or profile.get('fragment',0)>0 or profile.get('effect')=='flash':explosion_occurred(location_id)
             payload['noise_targets']=noise.apply(noise_location,epicenter_x,epicenter_y,floor_level,noise_volume,
                 target_ids=target_ids,objects=noise_objects,context=noise_context)
             by_id={r['character_id']:r for r in payload['noise_targets']}
             for target in payload.get('targets',[]):
                 if target['character_id'] in by_id:target['deafness']=by_id[target['character_id']]['deafness']
+            if source_actor:
+                from app.services.character_rules import after_kill
+                for victim in LocationCharacter.query.filter_by(location_id=location_id).all():
+                    if victim.character:after_kill(source_actor,victim,victim.id in living)
             return payload
         effect_type = str(profile.get('effect') or '').strip().lower()
         if effect_type == 'flash':
@@ -6966,7 +6984,7 @@ class CombatService:
             )
             if incendiary_rounds and distance <= radius:
                 from app.services.burning import ignite
-                ignite(target,incendiary_rounds,source=profile.get('key'),damage=profile.get('burn_damage') or 50)
+                ignite(target,incendiary_rounds,source=profile.get('key'),damage=profile.get('burn_damage') or 50,source_character_id=profile.get('source_character_id'))
             CombatService._sync_location_effects_from_character(target)
             target_results.append({
                 'character_id': target.character_id,
@@ -7133,7 +7151,7 @@ class CombatService:
             if pain:
                 apply_effect_to_health(health, {
                     'type': 'pain', 'value': pain, 'source': area.get('name') or 'gas',
-                })
+                },character_data=data)
             chance = max(0, min(100, CombatService._coerce_int(area.get('concussion_chance'), 0)))
             if chance and random.randint(1, 100) <= chance:
                 apply_effect_to_health(health, {
@@ -7154,7 +7172,7 @@ class CombatService:
             ignite(target,rounds,source=area.get('name') or 'fire_area',
                 damage=area.get('burn_damage') or 50,threshold=area.get('thermal_threshold',35),
                 inclusive=area.get('threshold_inclusive',False),
-                extinguish_difficulty_modifier=area.get('extinguish_difficulty_modifier',0))
+                extinguish_difficulty_modifier=area.get('extinguish_difficulty_modifier',0),source_character_id=area.get('source_character_id'))
             result['burning_rounds'] = rounds
         target.character.data = data
         flag_modified(target.character, 'data')
@@ -7230,7 +7248,9 @@ class CombatService:
             attacker_data, 'skills.physical.agility'
         )
         roll = random.randint(1, 20)
-        total = roll + agility_bonus
+        from app.services.brigadier_order import boost_roll
+        _rolls,roll,order_bonus=boost_roll(attacker_data,[roll])
+        total = roll + agility_bonus+order_bonus
         success = total >= difficulty
         unscaled_damage = success_damage if success else failure_damage
         multiplier = max(0.0, CombatService._coerce_float(damage_multiplier, 1))
@@ -7647,6 +7667,19 @@ class CombatService:
     ):
         attacker_data = attacker.character.data if attacker.character and isinstance(attacker.character.data, dict) else {}
         target_data = target.character.data if target.character and isinstance(target.character.data, dict) else {}
+        from app.services.character_rules import harm_check,evasion_penalty
+        permission=harm_check(attacker,target,not melee)
+        if permission and not permission['success']:
+            return {'hit':False,'damage':0,'target_character_id':target.character_id,'target_name':CombatService._display_name(target.character),
+                'harm_check':permission,'blocked_by_will':True,'roll':None,'rolls':[],'difficulty':None,'mode':attack_details.get('fire_mode','melee')}
+        was_alive=CombatService._character_condition(target_data)['state']!='dead'
+        if getattr(target,'character_id',getattr(getattr(target,'character',None),'id',None)) in ((attacker_data.get('health') or {}).get('combatMeta') or {}).get('observerTargets',[]):
+            attack_details={**attack_details,'hit_difficulty':attack_details.get('hit_difficulty',12)-1}
+        from app.services.brigadier_order import consume
+        order=consume(attacker_data)
+        if order:
+            attack_details={**attack_details,'hit_difficulty':attack_details.get('hit_difficulty',12)-3}
+            if order.get('advantage'):attack_details['melee_advantage' if melee else 'shooting_advantage']=True
         if CombatService._mutant_has_trait(target_data, 'Миролюбивый'):
             target_data.setdefault('health', {}).setdefault('combatMeta', {})[
                 'mutantProvoked'
@@ -7659,7 +7692,7 @@ class CombatService:
             'character_id',
             getattr(target_character, 'id', None),
         )
-        target_name = getattr(target_character, 'name', None)
+        target_name = CombatService._display_name(target_character)
         weapons = attacker_data.get('weapons') or []
         weapon_index = CombatService._coerce_int(attack_details.get('weapon_index'), -1)
         weapon = weapons[weapon_index] if 0 <= weapon_index < len(weapons) else {}
@@ -7694,6 +7727,9 @@ class CombatService:
                 12 - skill - CombatService._parse_percent(profile.get('accuracy', 0), 0),
             )
             difficulty-=weapon_accuracy_bonus(attacker_data,weapon,melee=True)
+            from app.services.character_traits import target_attack_accuracy
+            difficulty-=target_attack_accuracy(attacker_data,target_data,ranged=False)
+            difficulty+=evasion_penalty(target_data)
             automatic_hit = bool(attack_details.get('automatic_hit'))
             rolls = (
                 []
@@ -7803,6 +7839,11 @@ class CombatService:
             else:
                 profile, _ = CombatService._ranged_damage_profile(weapon)
             difficulty = attack_details['hit_difficulty']
+            difficulty+=evasion_penalty(target_data)
+            from app.services.character_traits import selected_weapon_accuracy
+            difficulty-=selected_weapon_accuracy(attacker_data,weapon,target_data)
+            from app.services.character_traits import target_attack_accuracy
+            difficulty-=target_attack_accuracy(attacker_data,target_data)
             if attack_details.get('fire_mode') == 'area':
                 difficulty += CombatService._shooting_movement_modifiers(
                     target_mode=getattr(target, 'movement_mode_this_turn', None),
@@ -7836,6 +7877,8 @@ class CombatService:
             hit = automatic_hit or roll == 20 or (
                 roll != 1 and roll + stress_check_modifier >= difficulty
             )
+            post_bonus_hit=bool(not hit and attack_details.get('post_bonus_available'))
+            if post_bonus_hit:hit=True
             result = {
                 'roll': roll,
                 'rolls': rolls,
@@ -7843,6 +7886,7 @@ class CombatService:
                 'difficulty': difficulty,
                 'hit': hit,
                 'mode': attack_details['fire_mode'],
+                'post_bonus_hit':post_bonus_hit,
                 'advantage': has_advantage,
                 'disadvantage': has_disadvantage,
                 'strength_requirement': attack_details.get('strength_requirement'),
@@ -8025,6 +8069,10 @@ class CombatService:
             )
             if head_impact_roll is not None else None
         )
+        mercy=attack_details.get('sniper_mode')=='mercy'
+        if mercy and head_impact:
+            head_impact={**head_impact,'damage_head':True,'primary_organ':None,
+                'damage_skull_if_penetrated':False,'secondary_organs_if_penetrated':[]}
         armor_target_data = target_data
         if head_impact:
             armor_target_data = dict(target_data)
@@ -8124,6 +8172,9 @@ class CombatService:
             and armor <= profile['armor_piercing']
         ):
             trauma_checks = 2
+        if mercy:trauma_checks=0
+        zone_key={'left_arm':'leftArm','right_arm':'rightArm','left_leg':'leftLeg','right_leg':'rightLeg'}.get(zone,zone)
+        zone_before=((target_data.get('health') or {}).get('zones') or {}).get(zone_key,{}).get('current',1)
         health = CombatService._apply_attack_damage(
             target,
             final_damage,
@@ -8140,6 +8191,7 @@ class CombatService:
             prepared_trauma_rolls=(
                 [head_impact_roll] if head_impact_roll is not None else None
             ),
+            **({'precision_attacker':attacker} if attack_details.get('sniper_mode')=='precision' else {}),
         )
         attack_outcome = health.pop('_attackOutcome', {})
         final_damage=attack_outcome.get('applied_damage',final_damage)
@@ -8175,6 +8227,10 @@ class CombatService:
             CombatService._apply_mutant_melee_hit_effects(
                 attacker, target, attack_type, final_damage, result,
             )
+        from app.services.character_rules import shotgun_effects,after_kill
+        if not melee:
+            result.update(shotgun_effects(attacker,target,weapon,profile,zone,zone_before,final_damage))
+        after_kill(attacker,target,was_alive)
         if not melee and 'live_shield_result' in locals() and live_shield_result:
             result.update({
                 'live_shield_hit': True,
@@ -8273,11 +8329,15 @@ class CombatService:
         weapon = weapons[weapon_index] if 0 <= weapon_index < len(weapons) else None
         shot_states = []
         triggered_jams = []
+        post_bonus=background_is(attacker_data,'Пост принял') and attack_details.get('fire_mode')=='burst'
+        volley_size=max(1,requested_shots//max(1,CombatService._coerce_int(attack_details.get('volley_count'),1)))
+        post_used=set()
         for index in range(requested_shots):
             if not targets:
                 break
             target = targets[index % len(targets)]
             shot_details = dict(attack_details)
+            shot_details['post_bonus_available']=post_bonus and index//volley_size not in post_used
             jam_effects = (
                 CombatService._weapon_jam_effects(weapon)
                 if isinstance(weapon, dict)
@@ -8341,6 +8401,7 @@ class CombatService:
                 forced_roll=shared_roll if share_hit_roll else None,
             )
             result['shot_number'] = index + 1
+            if result.get('post_bonus_hit'):post_used.add(index//volley_size)
             if index == 0 and share_hit_roll:
                 shared_roll = result.get('roll')
             if share_hit_roll:
@@ -8371,6 +8432,7 @@ class CombatService:
         attack_details['weapon_jams'] = triggered_jams
         attack_details['weapon_jam'] = triggered_jams[-1] if triggered_jams else None
         attack_details['stopped_by_jam'] = len(results) < requested_shots
+        attack_details['post_bonus_hits']=len(post_used)
         return results
 
     @staticmethod
@@ -8611,6 +8673,9 @@ class CombatService:
             if traumas:
                 trauma_labels = []
                 for trauma in traumas:
+                    if trauma.get('pending'):
+                        trauma_labels.append(f"d20 {trauma.get('roll', '—')} — ожидает выбора Микроскопической точности")
+                        continue
                     consequences = []
                     head_impact = trauma.get('head_impact')
                     if isinstance(head_impact, dict):
@@ -8869,6 +8934,10 @@ class CombatService:
             )
         else:
             lines.append("Проверка не требуется.")
+        if details.get('chosen_description'):
+            if details.get('tough_nut'):lines.append('Дополнительная травма отменена Крепким орешком.')
+            elif details.get('trauma'):lines.append(f"Выбранная травма: d20 {details['trauma']['roll']}, {details['chosen_description']}.")
+            else:lines.append(details['chosen_description'])
         return '\n'.join(lines)
 
     @staticmethod
@@ -8900,7 +8969,7 @@ class CombatService:
         if not isinstance(current, dict):
             return 0
         skill_value = CombatService._skill_value(character_data, skill_path)
-        return math.floor((skill_value - 10) / 2)
+        return math.floor((skill_value - 10) / 2)+(facial_profile(character_data)['charisma_bonus'] if skill_path=='skills.social.charisma' else 0)
 
     @staticmethod
     def _must_do_usage_profile(character_data, combat_state, initialize=True):
@@ -9096,7 +9165,9 @@ class CombatService:
         # Проверка кровопотери не является обычной проверкой Воли и не получает
         # Помеху от пси-состояния.
         disadvantage = False
-        total = roll
+        from app.services.brigadier_order import boost_roll
+        _rolls,roll,order_bonus=boost_roll(character_data,[roll])
+        total = roll+order_bonus
         difficulty = profile['difficulty']
         success = total >= difficulty
 
@@ -9133,6 +9204,7 @@ class CombatService:
         character_data['health'] = health
         character.data = character_data
         flag_modified(character, 'data')
+        if stage!='fatal' and health['bloodStage']=='fatal':CombatService._notify_observed_death(loc_char)
         return meta['bleedingCheck']
 
     @staticmethod
@@ -9171,8 +9243,8 @@ class CombatService:
                     effect['active'] = False
         if phase=='round_end' and 'deafness' in health:
             health['deafness']=max(0,CombatService._coerce_float(health.get('deafness'),0)-20)
-        apply_periodic_effects_to_health(health, active_effects, phase=phase)
-        apply_expired_effects_to_health(health, active_effects, phase=phase)
+        apply_periodic_effects_to_health(health, active_effects, phase=phase,character_data=character_data)
+        apply_expired_effects_to_health(health, active_effects, phase=phase,character_data=character_data)
         health['effects'] = [
             effect for effect in tick_effects(active_effects, phase=phase)
             if effect.get('active', True)
@@ -9217,12 +9289,33 @@ class CombatService:
             health,
             health.get('effects') or [],
             elapsed_seconds,
+            character_data=character_data,
         )
         character_data['health'] = health
         loc_char.character.data = character_data
         flag_modified(loc_char.character, 'data')
         CombatService._sync_location_effects_from_character(loc_char)
         return loc_char
+
+    @staticmethod
+    def _notify_observed_death(target,character_data=None):
+        """Дополнительный стресс очевидцам человеческой смерти, один раз за смерть."""
+        from flask import has_app_context
+        if not has_app_context() or not getattr(target,'location_id',None) or not getattr(target,'character',None):return
+        data=character_data if character_data is not None else (target.character.data or {});meta=data.setdefault('health',{}).setdefault('combatMeta',{})
+        if CombatService._character_condition(data)['state']!='dead':
+            meta.pop('observedDeathNotified',None)
+            return
+        if meta.get('observedDeathNotified') or CombatService._is_mutant_character(data):return
+        meta['observedDeathNotified']=True;flag_modified(target.character,'data')
+        for observer in CombatService._unique_location_characters(LocationCharacter.query.filter_by(location_id=target.location_id).all()):
+            if observer.id==target.id or not observer.character:continue
+            observed=observer.character.data or {}
+            amount=int(background_is(observed,'Математик'))+trait_count(observed,'Поставлю за них свечку')
+            if not amount or CombatService._character_condition(observed)['state']!='active' or facial_profile(observed)['eyes']==2:continue
+            if any(e.get('type')=='blindness' and e.get('active',True) and CombatService._coerce_float(e.get('value'),0)>=100 for e in (observed.get('health') or {}).get('effects') or []):continue
+            if CombatService._can_see_location_character(observer,target):
+                CombatService.apply_stress_trigger(observer,amount,trigger='witness_human_death')
 
     @staticmethod
     def _sync_location_effects_from_character(loc_char):
@@ -9265,6 +9358,7 @@ class CombatService:
             loc_char.cover_object_id = None
             loc_char.weapon_braced = False
             loc_char.braced_weapon_index = None
+        CombatService._notify_observed_death(loc_char)
         return loc_char
 
     @staticmethod
@@ -9362,8 +9456,12 @@ class CombatService:
         difficulty = max(1, pain_level * 2 - will_bonus)
         guaranteed = pain_level >= 10
         roll = None if guaranteed else random.randint(1, 20)
+        order_bonus=0
+        if not guaranteed:
+            from app.services.brigadier_order import boost_roll
+            _rolls,roll,order_bonus=boost_roll(data,[roll])
         success = False if guaranteed else (
-            roll == 20 or (roll != 1 and roll >= difficulty)
+            roll == 20 or (roll != 1 and roll+order_bonus >= difficulty)
         )
         result = {
             'kind': 'pain_shock_fall',
@@ -9915,7 +10013,7 @@ class CombatService:
         for effect_type, profile_key in (('pain', 'pain'), ('exhaustion', 'exhaustion')):
             amount = CombatService._coerce_float(profile.get(profile_key), 0) * fraction
             if amount:
-                apply_effect_to_health(health, {'type': effect_type, 'value': amount, 'source': 'anomaly'})
+                apply_effect_to_health(health, {'type': effect_type, 'value': amount, 'source': 'anomaly'},character_data=data)
                 result[profile_key] = amount
         if profile.get('temperature') and fraction:
             delta = CombatService._coerce_float(profile['temperature'], 0) * fraction
@@ -9943,7 +10041,7 @@ class CombatService:
                 if random.randint(1, 100) <= 50:
                     apply_effect_to_health(health, {'type': 'fracture', 'area': random.choice(('left_arm', 'right_arm', 'left_leg', 'right_leg')), 'source': 'anomaly'})
                 else:
-                    apply_effect_to_health(health, {'type': 'pain', 'value': 3, 'source': 'anomaly'})
+                    apply_effect_to_health(health, {'type': 'pain', 'value': 3, 'source': 'anomaly'},character_data=data)
             elif category == 'radiation' and not profile.get('exhaustion'):
                 apply_effect_to_health(health, {'type': 'exhaustion', 'value': 1, 'source': 'anomaly'})
             elif category == 'psi':
@@ -10248,8 +10346,8 @@ class CombatService:
 
     @staticmethod
     def _find_climb_landing(location, object_item, actor_character):
-        from app.services.location_navigation import surface,level_of,pose
-        from app.services.movement_geometry import WallBox,CHARACTER_RADIUS
+        from app.services.location_navigation import surface,level_of,pose,opening_at
+        from app.services.movement_geometry import WallBox,CHARACTER_RADIUS,WALL_CLEARANCE
         occupied_tiles = CombatService._object_footprint_tiles(object_item)
         if not occupied_tiles:
             return None
@@ -10261,54 +10359,52 @@ class CombatService:
             return None
         cx,cy,_,_,angle=pose(object_item)
         width,depth=CombatService._object_dimensions(object_item,axis_aligned=False)
-        local_x,local_y=WallBox(cx,cy,width,depth,angle,level).local((actor_character.pos_x+.5,actor_character.pos_y+.5))
+        barrier=WallBox(cx,cy,width,depth,angle,level)
+        start_world=(actor_character.pos_x+.5,actor_character.pos_y+.5)
+        local_x,local_y=barrier.local(start_world)
         if math.hypot(max(0,abs(local_x)-width/2),max(0,abs(local_y)-depth/2))-CHARACTER_RADIUS>1+1e-9:
             return None
         geometry = CombatService._movement_wall_geometry(location,[o for o in objects if o.id!=object_item.id])
         geometry.add_characters(c for c in CombatService._unique_location_characters(
             LocationCharacter.query.filter_by(location_id=location.id).all()) if c.character_id!=actor_character.character_id)
-        blocked_tiles, climb_cost_tiles = CombatService._build_movement_map(location, actor_character.character_id,floor_level=level)
+        blocked_tiles, climb_cost_tiles = CombatService._build_movement_map(location, actor_character.character_id,floor_level=level,
+            wall_geometry=CombatService._movement_wall_geometry(location,objects),continuous=True)
         actor_x = actor_character.pos_x
         actor_y = actor_character.pos_y
-        nearest_object_distance = min(
-            (max(abs(actor_x - tile_x), abs(actor_y - tile_y)) for tile_x, tile_y in occupied_tiles),
-            default=float('inf'),
-        )
-        if nearest_object_distance > 1:
+        facing_x=CombatService._coerce_float(actor_character.facing_x,0)
+        facing_y=CombatService._coerce_float(actor_character.facing_y,1)
+        length=math.hypot(facing_x,facing_y)
+        if length<1e-9:facing_x,facing_y,length=0,1,1
+        facing_x,facing_y=facing_x/length,facing_y/length
+        ray_length=math.hypot(cx-start_world[0],cy-start_world[1])+math.hypot(width,depth)+2
+        far=(start_world[0]+facing_x*ray_length,start_world[1]+facing_y*ray_length)
+        if barrier.segment_entry(start_world,far) is None:
             return None
-        candidate_tiles = []
-        seen = set()
-        center_x = sum(tile_x + 0.5 for tile_x, _ in occupied_tiles) / len(occupied_tiles)
-        center_y = sum(tile_y + 0.5 for _, tile_y in occupied_tiles) / len(occupied_tiles)
-        actor_vector_x = center_x - (actor_x + 0.5)
-        actor_vector_y = center_y - (actor_y + 0.5)
-
-        for ox, oy in occupied_tiles:
-            for dx in (-1, 0, 1):
-                for dy in (-1, 0, 1):
-                    if dx == 0 and dy == 0:
-                        continue
-                    tx = ox + dx
-                    ty = oy + dy
-                    if tx < 0 or ty < 0 or tx >= location.grid_width or ty >= location.grid_height:
-                        continue
-                    if (tx, ty) in occupied_tiles or (tx, ty) in seen:
-                        continue
-                    seen.add((tx, ty))
-                    candidate_tiles.append((tx, ty))
-
-        candidate_tiles.sort(
-            key=lambda tile: (
-                -(((tile[0] + 0.5) - (actor_x + 0.5)) * actor_vector_x + ((tile[1] + 0.5) - (actor_y + 0.5)) * actor_vector_y),
-                -max(abs(tile[0] - actor_x), abs(tile[1] - actor_y)),
-                abs(tile[0] - actor_x) + abs(tile[1] - actor_y),
-            )
-        )
-
+        exit_distance=ray_length*(1-barrier.segment_entry(far,start_world))
+        clearance=exit_distance+CHARACTER_RADIUS+WALL_CLEARANCE+1e-8
+        ideal=(actor_x+facing_x*clearance,actor_y+facing_y*clearance)
+        directions=((1,0),(1,1),(0,1),(-1,1),(-1,0),(-1,-1),(0,-1),(1,-1))
+        index=math.floor(math.atan2(facing_y,facing_x)/(math.pi/4)+.5)%8
+        dx,dy=directions[index]
+        preferred=(math.floor(ideal[0]+.5),math.floor(ideal[1]+.5))
+        # Округление точки выхода может оставить центр внутри тонкой стены.
+        # Сдвигаемся лишь за выбранное препятствие, не ищем дальше занятых клеток.
+        for _ in range(2):
+            p=(preferred[0]+.5,preferred[1]+.5)
+            if not barrier.intersects_sweep(p,p):break
+            preferred=(preferred[0]+dx,preferred[1]+dy)
+        anchor=(preferred[0]-dx,preferred[1]-dy)
+        sides=[(anchor[0]+sx,anchor[1]+sy) for sx,sy in (directions[(index-1)%8],directions[(index+1)%8])]
+        sides.sort(key=lambda tile:((tile[0]-ideal[0])**2+(tile[1]-ideal[1])**2,tile))
+        candidate_tiles=[preferred,*sides]
+        anomalies=CombatService._anomaly_candidates(location)
         for tx, ty in candidate_tiles:
+            if not (0<=tx<location.grid_width and 0<=ty<location.grid_height):
+                continue
             if tx == actor_x and ty == actor_y:
                 continue
-            if (tx+.5-center_x)*actor_vector_x+(ty+.5-center_y)*actor_vector_y<=0:
+            end_world=(tx+.5,ty+.5)
+            if barrier.intersects_sweep(end_world,end_world) or barrier.segment_entry(start_world,end_world) is None:
                 continue
             if (tx, ty) in blocked_tiles:
                 continue
@@ -10316,7 +10412,9 @@ class CombatService:
                 continue
             start,end = (actor_x,actor_y,level),(tx,ty,level)
             landing = surface(location,objects,*end)
-            if not landing or abs(landing['height']-origin['height'])>=1:
+            if not landing or abs(landing['height']-origin['height'])>=1 or (not landing.get('stair') and opening_at(objects,level,tx+.5,ty+.5)):
+                continue
+            if CombatService._anomalies_at_tile(location,tx,ty,candidates=anomalies,floor_level=level):
                 continue
             if not geometry.can_traverse(start,end) or geometry.climb_edge_events(start,end):
                 continue
@@ -10390,7 +10488,7 @@ class CombatService:
         from app.services.slippery_movement import saved_state
         limit_mode = saved_state(actor).get('forced_from', mode) if mode == 'walk' else mode
         maximum = CombatService._movement_distance_limit(limit_mode,CombatService._posture_key(actor),
-            CombatService._movement_evasion_active(actor),CombatService._movement_penalty(actor))
+            CombatService._movement_evasion_active(actor),CombatService._movement_penalty(actor),actor.character.data)
         if (actor.movement_distance_this_turn or 0)+distance>maximum+1e-9:
             raise ValidationError('Превышен общий лимит перемещения за ход')
 
@@ -10452,6 +10550,7 @@ class CombatService:
         start_level=None,
         end_level=None,
         movement_mode=None,
+        _search_context=None,
     ):
         from app.services.location_navigation import find_path
         from flask import has_app_context
@@ -10476,16 +10575,18 @@ class CombatService:
                 direction_mode = 'backward_sideways'
         if direction_mode in {'walk','run','sprint'} and CombatService._movement_forward_step(facing_x,facing_y,end_x-start_x,end_y-start_y) is False:
             return None
-        objects = LocationObject.query.filter_by(location_id=location.id).all() if has_app_context() else []
-        wall_geometry = CombatService._movement_wall_geometry(location, objects)
-        ignores_terrain = bool(actor and actor.character and CombatService._mutant_has_trait(actor.character.data or {}, 'Полёт'))
-        terrain_costs = CombatService._movement_surface_costs(location, objects, ignores_terrain=ignores_terrain)
-        ignored = set(ignored_character_ids or []) | {moving_character_id}
-        if has_app_context():
-            wall_geometry.add_characters(c for c in CombatService._unique_location_characters(
-                LocationCharacter.query.filter_by(location_id=location.id).all()
-            ) if c.character_id not in ignored)
-        maps = {}
+        # Несколько целей одного поиска используют одну геометрию. Контекст
+        # живёт только в вызвавшем поиске и не переносится между действиями.
+        context={} if _search_context is None else _search_context
+        if 'objects' not in context:
+            context['objects']=LocationObject.query.filter_by(location_id=location.id).all() if has_app_context() else []
+            context['geometry']=CombatService._movement_wall_geometry(location,context['objects'])
+            ignores_terrain=bool(actor and actor.character and CombatService._mutant_has_trait(actor.character.data or {},'Полёт'))
+            context['terrain_costs']=CombatService._movement_surface_costs(location,context['objects'],ignores_terrain=ignores_terrain)
+            ignored=set(ignored_character_ids or [])|{moving_character_id}
+            if has_app_context():context['geometry'].add_characters(c for c in CombatService._unique_location_characters(LocationCharacter.query.filter_by(location_id=location.id).all()) if c.character_id not in ignored)
+        objects=context['objects'];wall_geometry=context['geometry'];terrain_costs=context['terrain_costs']
+        maps=context.setdefault('maps',{})
         def movement_map(level):
             if level not in maps:
                 maps[level] = CombatService._build_movement_map(
@@ -10600,6 +10701,11 @@ class CombatService:
             meta['consumableUsage'] = {}
             meta.pop('movementEvasion', None)
             meta.pop('slipperyMovement', None)
+            meta.pop('fencerUsed',None)
+            for key in ('standaloneEvasion','breakthroughProgress','breakthroughProgressOP','breakthroughMovementImpossible','breakthroughWillPassed','breakthroughWillFailed','grenadirCheck','grenadirMustExplode'):
+                meta.pop(key,None)
+            from app.services.character_rules import start_turn
+            start_turn(loc_char)
             from app.services.grenade_reaction import begin,window
             loc_char._grenade_detonations=begin(loc_char)
             if not window(loc_char):
@@ -10633,7 +10739,10 @@ class CombatService:
                     reaction_reserve['deferred_action_points'] = deferred_help_cost
                     if not deferred_help_cost:
                         reaction_reserve['deferred_help_ready'] = True
+                        state=LocationCombatState.query.filter_by(location_id=loc_char.location_id).first()
                         if state and state.status=='active':meta['lastPaidHelpRound']=state.round_number
+                        health['effects']=[e for e in normalize_effect_list(health.get('effects') or [])
+                                           if e.get('source')!='background_helper_inactive']
             if (
                 not isinstance(reaction_reserve, dict)
                 or reaction_reserve.get('kind') != 'help'
@@ -10665,11 +10774,12 @@ class CombatService:
 
     @staticmethod
     def _serialize_character(loc_char, current_turn_id=None, combat_state=None):
+        from app.services.character_rules import allied_ids
         from app.services.character_jump import balance_state
         character = loc_char.character
         profile = CombatService._combat_profile(loc_char)
         posture = CombatService._posture_key(loc_char)
-        posture_profile = POSTURES[posture]
+        posture_profile = CombatService._movement_posture_profile(posture,character.data if character else {})
         posture_change_options = {}
         for target_posture in POSTURES:
             if target_posture == posture:
@@ -10742,10 +10852,14 @@ class CombatService:
             effect for effect in normalize_effect_list(health.get('effects') or [])
             if effect.get('active', True) and effect.get('type') in {'stress_effect', 'stress_stupor', 'phobia'}
         ]
+        from app.services.sniper_trauma import choices as sniper_choices
+        from app.services.sniper_position import status as sniper_position
         return {
+            'sniper_position':sniper_position(loc_char,combat_state) if (health.get('combatMeta') or {}).get('sniperOldCover') else None,
             'location_character_id': loc_char.id,
             'character_id': character.id if character else None,
-            'name': character.name if character else None,
+            'name': CombatService._display_name(character),
+            'sniper_trauma_choices':sniper_choices(data),
             'is_mutant': is_mutant,
             'melee_swing_action_points':0 if character_passives(data)['free_swing'] else 1,
             'melee_block_discount':character_passives(data)['block_discount'],
@@ -10808,6 +10922,8 @@ class CombatService:
                 if isinstance(health.get('combatMeta'), dict)
                 else None
             ),
+            'trait_state':{key:deepcopy((health.get('combatMeta') or {}).get(key)) for key in ('firefighterNearby','standaloneEvasion','grenadirCheck','grenadirMustExplode','sniperOldCover','sniperPositionCheck','breakthroughCheck','breakthroughProgress','hunterStressDebt')},
+            'ally_character_ids':sorted(allied_ids(loc_char)) if background_is(data,'Бригадир') else [],
             'movement_gain': profile['movement_gain'],
             'is_exoskeleton': CombatService._exoskeleton_power_profile(data)['is_exoskeleton'],
             'powered_exoskeleton': CombatService._exoskeleton_power_profile(data)['powered'],
@@ -10824,7 +10940,7 @@ class CombatService:
             'posture_change_options': posture_change_options,
             'posture_modifiers': {
                 'shooting_bonus': posture_profile['shooting_bonus'],
-                'ergonomics_bonus': posture_profile['ergonomics_bonus'],
+                'ergonomics_bonus': 0 if background_is(data,'Пост принял') else posture_profile['ergonomics_bonus'],
                 'stealth_bonus': posture_profile['stealth_bonus'],
                 'movement_multiplier': posture_profile['movement_multiplier'],
                 'walk_max_distance': posture_profile['walk_max_distance'],
@@ -10836,6 +10952,7 @@ class CombatService:
                 'can_correction': posture_profile['can_correction'],
                 'can_use_low_cover': posture_profile['can_use_low_cover'],
             },
+            'movement_rules':{'sprinter':background_is(data,'Спринтер'),'goose':bool(trait_count(data,'Гусь и гусеничка'))},
             'weapon_ergonomics': weapon_ergonomics,
             'drawn_weapon_index': loc_char.drawn_weapon_index,
             'aimed_target_character_id': loc_char.aimed_target_character_id,
@@ -10849,6 +10966,7 @@ class CombatService:
             'facing_changed_round': loc_char.facing_changed_round,
             'agility_bonus': CombatService._base_skill_modifier(data, 'skills.physical.agility'),
             'melee_swing_round': loc_char.melee_swing_round,
+            'fencer_available':background_is(data,'Фехтовальщик') and not (health.get('combatMeta') or {}).get('fencerUsed'),
             'melee_block_round': loc_char.melee_block_round,
             'melee_block_effectiveness': loc_char.melee_block_effectiveness or 0,
             'grapple_target_id': loc_char.grapple_target_id,
@@ -11141,6 +11259,8 @@ class CombatService:
             mutant_modifier = CombatService.BUTCHERING_MUTANT_MODIFIERS.get(species, 0)
             from app.services.character_traits import butchering_bonus
             property_bonus=butchering_bonus(actor_data,species)
+            from app.services.brigadier_order import boost_roll
+            _rolls,roll,order_bonus=boost_roll(actor_data,[roll]);property_bonus+=order_bonus
             total = max(0, roll + mutant_modifier + weapon['bonus'] + survival_bonus+property_bonus - 5)
             pending = {
                 'actor_location_character_id': actor.id,
@@ -11222,6 +11342,13 @@ class CombatService:
             }
             loot_container.append(item)
             loot.append(deepcopy(item))
+        from app.services.character_rules import mark_hunt
+        mark_hunt(actor)
+        if background_is(actor_data,'Охотник'):
+            hunt_meta=actor_data.setdefault('health',{}).setdefault('combatMeta',{})
+            debt=max(0,CombatService._coerce_float(hunt_meta.pop('hunterStressDebt',0),0))
+            actor_data['health']['stress']=max(0,CombatService._coerce_float(actor_data['health'].get('stress'),0)-debt)
+            hunt_meta['hunterActivityDay']=location.lobby.game_day or 1
         target_meta['butchered'] = True
         target_meta['butcheringResult'] = {'allocation': normalized, 'spent': spent}
         target_meta.pop('butcheringRoll', None)
@@ -11676,6 +11803,8 @@ class CombatService:
         characters = CombatService._unique_location_characters(
             LocationCharacter.query.filter_by(location_id=location.id).all()
         )
+        from app.services.character_rules import refresh_nearby
+        refresh_nearby(location.id,characters)
         turn_order = list(dict.fromkeys(state.turn_order or []))
         order_map = {character_id: index for index, character_id in enumerate(turn_order)}
 
@@ -11735,7 +11864,7 @@ class CombatService:
         profile = CombatService._combat_profile(loc_char)
         movement_gain = profile['movement_gain']
         return [
-            dict(action) if action['key'] != 'convert_free_action_to_movement'
+            ({**action,'action_points':2 if trait_count(loc_char.character.data,'Уклонист') else 4} if action['key']=='evade' else dict(action)) if action['key'] != 'convert_free_action_to_movement'
             else {**action, 'movement_points_gain': movement_gain}
             for action in ACTION_CATALOG
         ]
@@ -11831,7 +11960,8 @@ class CombatService:
                 if loc_char.character and isinstance(loc_char.character.data, dict)
                 else {}
             )
-            weapons = character_data.get('weapons') if isinstance(character_data.get('weapons'), list) else []
+            from app.services.character_traits import carried_weapons
+            weapons = carried_weapons(character_data)
             changed_weapons = False
             for weapon in weapons:
                 if isinstance(weapon, dict):
@@ -11847,7 +11977,9 @@ class CombatService:
                 loc_char.initiative_total = None
                 continue
             loc_char.initiative_roll = random.randint(1, 20)
-            loc_char.initiative_total = loc_char.initiative_roll + loc_char.initiative_bonus
+            from app.services.brigadier_order import boost_roll
+            _rolls,loc_char.initiative_roll,order_bonus=boost_roll(loc_char.character.data,[loc_char.initiative_roll])
+            loc_char.initiative_total = loc_char.initiative_roll + loc_char.initiative_bonus+order_bonus
             loc_char.strenuous_movement_blocked_until_round = 0
             loc_char.drawn_weapon_index = CombatService._persistent_weapon_index(loc_char)
             CombatService._clear_aim(loc_char)
@@ -11901,6 +12033,9 @@ class CombatService:
         state.current_location_character_id = ordered_chars[first_actionable_index].id
         state.pending_explosives = []
         state.area_effects = []
+        from app.services.location_scout import start_combat as apply_scout
+        apply_scout(location_id,ordered_chars)
+        from app.services.character_rules import start_turn
         first_character = ordered_chars[first_actionable_index]
         token=state.started_at.replace(tzinfo=None).isoformat()
         for participant in ordered_chars:
@@ -11908,6 +12043,8 @@ class CombatService:
             meta=data.setdefault('health',{}).setdefault('combatMeta',{})
             meta['firstCombatTurnToken']=token if participant.id==first_character.id else None
             meta['lastPaidHelpRound']=0
+            for key in ('harmAllowedTargets','combatExplosionOccurred','grenadirMustExplode','sniperOldCover'):
+                meta.pop(key,None)
             health=data['health']
             health['effects']=[e for e in normalize_effect_list(health.get('effects') or []) if e.get('source')!='background_aggressor']
             if participant.id==initiator_id and background_is(data,'Агрессор'):
@@ -11923,6 +12060,7 @@ class CombatService:
             CombatService._sync_location_effects_from_character(participant)
             if trait_count(data,'Паникёр') and CombatService._can_take_combat_turn(participant):
                 CombatService.apply_stress_trigger(participant,1,trigger='combat_start_panicker')
+        start_turn(first_character)
         CombatService._update_helper_penalties(state)
         psi_start = CombatService._resolve_psi_turn_start(first_character,1)
         CombatService._sync_location_effects_from_character(first_character)
@@ -11952,6 +12090,8 @@ class CombatService:
             raise ValidationError("Combat is not active")
         from app.services.explosion_choice import require_resolved
         require_resolved(state)
+        from app.services.sniper_trauma import require_resolved as require_trauma
+        require_trauma(state)
         if not state.turn_order:
             raise ValidationError("Turn order is empty")
 
@@ -11974,6 +12114,9 @@ class CombatService:
             raise NotFoundError("Current character not found")
         if not _continue_pending and not CombatService._can_end_turn_for_character(current_character, user_id, is_gm=is_gm):
             raise PermissionDenied("You do not control this character")
+        if not _continue_pending and state.reaction_return_location_character_id is None:
+            from app.services.character_rules import before_end_turn
+            before_end_turn(current_character,state)
 
         from app.services.grenade_reaction import window,finish,begin
         if window(current_character):
@@ -12138,6 +12281,8 @@ class CombatService:
             for round_character in round_characters:
                 CombatService._advance_character_time(round_character, 6)
             state.round_number += 1
+            from app.services.sniper_position import expire as expire_sniper_position
+            expire_sniper_position(location_id,state)
             CombatService._update_helper_penalties(state)
             detonations.extend(CombatService._process_pending_explosives(
                 state, phase='round_start',
@@ -12250,7 +12395,9 @@ class CombatService:
         profile = CombatService._combat_profile(participant)
         participant.initiative_bonus = profile['initiative_bonus']
         participant.initiative_roll = random.randint(1, 20)
-        participant.initiative_total = participant.initiative_roll + participant.initiative_bonus
+        from app.services.brigadier_order import boost_roll
+        _rolls,participant.initiative_roll,order_bonus=boost_roll(participant.character.data,[participant.initiative_roll])
+        participant.initiative_total = participant.initiative_roll + participant.initiative_bonus+order_bonus
         participant.strenuous_movement_blocked_until_round = 0
         participant.drawn_weapon_index = CombatService._persistent_weapon_index(participant)
         CombatService._clear_aim(participant)
@@ -12313,6 +12460,8 @@ class CombatService:
             next_index = removed_index % len(turn_order)
             if removed_index >= len(turn_order):
                 state.round_number = max(1, state.round_number or 1) + 1
+                from app.services.sniper_position import expire as expire_sniper_position
+                expire_sniper_position(location_id,state)
                 CombatService._update_helper_penalties(state)
             next_character_id = turn_order[next_index]
             next_character = LocationCharacter.query.filter_by(
@@ -12707,7 +12856,10 @@ class CombatService:
         if not CombatService._can_end_turn_for_character(character, user_id, is_gm=is_gm):
             raise PermissionDenied('You do not control this character')
         CombatService.ensure_character_can_act(character, 'gunpoint_shot')
+        from app.services.sniper_position import require_reposition
+        require_reposition(character,state)
         data, combat_meta = CombatService._gunpoint_meta(character)
+        if facial_profile(data)['eyes']==2:raise ValidationError('Нельзя стрелять при потере обоих глаз')
         gunpoint = combat_meta.get('gunpoint')
         if not isinstance(gunpoint, dict):
             raise ValidationError('No weapon is currently pressed against a target')
@@ -12739,6 +12891,13 @@ class CombatService:
         if target_zone not in HIT_ZONES:
             CombatService._clear_gunpoint(character)
             raise ValidationError('The selected body part is no longer valid')
+
+        from app.services.character_rules import harm_check
+        permission=harm_check(character,target,True)
+        if permission and not permission['success']:
+            character.action_points_current-=1;flag_modified(character.character,'data');db.session.commit()
+            return {'action':'gunpoint_shot','attack':None,'character':CombatService._serialize_character(character),
+                'state':CombatService._serialize_state(location,state),'narrative_action':{'name':'Воля перед выстрелом','check':permission,'roll_required':True,'blocked_by_will':True}}
 
         attack_details = {
             'weapon_index': weapon_index,
@@ -12872,6 +13031,23 @@ class CombatService:
         if not character:
             raise NotFoundError("Character not found")
 
+        if action_key in {'scout_location','brigadier_refusal'}:
+            if not CombatService._can_end_turn_for_character(character,user_id,is_gm=is_gm):raise PermissionDenied('Вы не управляете персонажем')
+            CombatService.ensure_character_can_act(character)
+            if action_key=='scout_location':
+                from app.services.location_scout import inspect
+                details=inspect(character,attribute_choice)
+            else:
+                from app.services.brigadier_order import refusal
+                details=refusal(character,target_character_id,attribute_choice);db.session.commit()
+            return {'action':action_key,'narrative_action':details,'character':CombatService._serialize_character(character),'state':CombatService.get_state(location_id,user_id)}
+
+        if action_key=='choose_sniper_trauma':
+            from app.services.sniper_trauma import decide
+            choice_result=decide(character,user_id,attribute_choice)
+            return {'character':CombatService._serialize_character(character),'state':CombatService.get_state(location_id,user_id),
+                'action':action_key,'narrative_action':{'name':'Микроскопическая точность','roll_required':False,**choice_result}}
+
         if (not state or state.status != 'active') and action_key == 'mutant_ambush':
             if not CombatService._can_end_turn_for_character(
                 character, user_id, is_gm=is_gm,
@@ -12902,6 +13078,24 @@ class CombatService:
                     'kind': 'ambush', 'detection_difficulty_bonus': 5,
                 },
             }
+        if (not state or state.status != 'active') and action_key=='brigadier_order':
+            if not CombatService._can_end_turn_for_character(character,user_id,is_gm=is_gm):raise PermissionDenied('Вы не управляете Бригадиром')
+            CombatService.ensure_character_can_act(character)
+            from app.services.brigadier_order import prepare,create
+            plan=prepare(character,target_character_id,attribute_choice)
+            details={'name':'Указание Бригадира','order':create(character,user_id,*plan),'roll_required':False}
+            db.session.commit()
+            return {'action':action_key,'narrative_action':details,'character':CombatService._serialize_character(character),'state':CombatService.get_state(location_id,user_id)}
+        if (not state or state.status != 'active') and action_key=='surgeon_reduction':
+            if not CombatService._can_end_turn_for_character(character,user_id,is_gm=is_gm):
+                raise PermissionDenied('Вы не управляете врачом')
+            CombatService.ensure_character_can_act(character)
+            from app.services.surgeon_reduction import prepare,apply
+            if not isinstance(attribute_choice,dict) or set(attribute_choice)-{'consentId'}:raise ValidationError('Некорректное согласие пациента')
+            plan=prepare(location,character,target_character_id,target_zone,attribute_choice.get('consentId'),user_id)
+            result=apply(character,plan,user_id);db.session.commit()
+            return {'character':CombatService._serialize_character(character),'state':CombatService.get_state(location_id,user_id),
+                    'action':action_key,'narrative_action':result}
         if (not state or state.status != 'active') and action_key in {'jump','recover_jump_balance'}:
             if not CombatService._can_end_turn_for_character(character,user_id,is_gm=is_gm):
                 raise PermissionDenied('Вы не управляете этим персонажем')
@@ -12918,9 +13112,13 @@ class CombatService:
         CombatService._refresh_ugly_appearance_penalties(location_id)
         from app.services.explosion_choice import require_resolved
         require_resolved(state)
+        from app.services.sniper_trauma import require_resolved as require_trauma
+        require_trauma(state)
         if not CombatService._can_end_turn_for_character(character, user_id, is_gm=is_gm):
             raise PermissionDenied('Вы не управляете этим персонажем')
         CombatService._refresh_mutant_pack_bonus(character)
+        from app.services.character_rules import refresh_nearby
+        refresh_nearby(location_id)
 
         data = (
             character.character.data
@@ -12979,6 +13177,17 @@ class CombatService:
         resolved_hits = []
         single_fire = False
         current_round = max(1, state.round_number or 1)
+        order_plan=None
+        reduction_plan=None
+        if action_key=='evade':special_action_cost=2 if trait_count(data,'Уклонист') else 4
+        if action_key=='brigadier_order':
+            from app.services.brigadier_order import prepare
+            order_plan=prepare(character,target_character_id,attribute_choice)
+            special_action_cost=4 if order_plan[1]['detailed'] else 2
+        if action_key=='surgeon_reduction':
+            from app.services.surgeon_reduction import prepare
+            if not isinstance(attribute_choice,dict) or set(attribute_choice)-{'consentId'}:raise ValidationError('Некорректное согласие пациента')
+            reduction_plan=prepare(location,character,target_character_id,target_zone,attribute_choice.get('consentId'),user_id)
         if action_key in {'jump','recover_jump_balance'}:
             from app.services.character_jump import prepare_jump, balance_state
             if action_key == 'jump':
@@ -13286,6 +13495,8 @@ class CombatService:
                 else 'skills.physical.agility'
             )
             check = CombatService._narrative_skill_check(data, skill_path)
+            if background_is(data,'Трюкач'):
+                check['modifier']+=4;check['total']+=4;check['trickster_bonus']=4
             long_jump_bonus = (
                 4 if CombatService._mutant_has_trait(data, 'Длинный прыжок') else 0
             )
@@ -13365,8 +13576,9 @@ class CombatService:
                 1,
                 base_difficulty - agility_bonus - melee_bonus + weapon_modifier-2*trait_count(data,'Живой щит'),
             )
-            roll = random.randint(1, 20)
-            success = roll == 20 or (roll != 1 and roll >= difficulty)
+            from app.services.brigadier_order import boost_roll
+            _rolls,roll,order_bonus=boost_roll(data,[])
+            success = roll == 20 or (roll != 1 and roll+order_bonus >= difficulty)
             special_action_cost = 3 if target_zone == 'head' else 2
             gunpoint_details = {
                 'target_location_character_id': target.id,
@@ -13390,6 +13602,10 @@ class CombatService:
             fuse_mode = str(explosive_fuse_mode or 'normal').strip().lower()
             if source not in {'hand', 'underbarrel', 'weapon'}:
                 raise ValidationError("Unknown explosive source")
+            if source!='hand':
+                from app.services.sniper_position import require_reposition
+                require_reposition(character,state)
+            if source!='hand' and facial_profile(data)['eyes']==2:raise ValidationError('Нельзя стрелять при потере обоих глаз')
             if mode not in {'unaimed', 'aimed'}:
                 raise ValidationError("Unknown grenade launcher fire mode")
             if fuse_mode not in {'normal', 'delay'}:
@@ -13456,7 +13672,7 @@ class CombatService:
                     character, explosive_weapon, weapon_index,
                 )
                 launcher_movement = CombatService._shooting_movement_modifiers(
-                    character.movement_mode_this_turn, None,
+                    character.movement_mode_this_turn, None,character_data=data,
                 )
                 if source == 'underbarrel':
                     explosive_module = next((
@@ -13802,9 +14018,9 @@ class CombatService:
                 data, medicine_bonus
             )
             advantage = bool(meta.get('willShockAdvantage'))
-            rolls = [random.randint(1, 20) for _ in range(2 if advantage else 1)]
-            roll = max(rolls)
-            success = roll == 20 or (roll != 1 and roll >= difficulty)
+            from app.services.brigadier_order import boost_roll
+            rolls,roll,order_bonus=boost_roll(data,[],advantage=advantage)
+            success = roll == 20 or (roll != 1 and roll+order_bonus >= difficulty)
             if success:
                 health['effects'] = [
                     effect for effect in normalize_effect_list(health.get('effects') or [])
@@ -13904,7 +14120,8 @@ class CombatService:
             target_bonus = CombatService._skill_modifier(
                 target_data, 'skills.physical.melee'
             )
-            roll = random.randint(1, 20)
+            from app.services.brigadier_order import boost_roll
+            _rolls,roll,order_bonus=boost_roll(data,[]);actor_bonus+=order_bonus
             difficulty = 8 - actor_bonus + target_bonus
             if target.drawn_weapon_index is not None:
                 difficulty += 4
@@ -14157,10 +14374,11 @@ class CombatService:
             elif action_key == 'grapple_choke':
                 holder.grapple_choke_rounds = (holder.grapple_choke_rounds or 0) + 1
                 captive_data = captive.character.data if captive.character else {}
-                will_roll = random.randint(1, 20)
+                from app.services.brigadier_order import boost_roll
+                _rolls,will_roll,order_bonus=boost_roll(captive_data,[])
                 will_bonus = CombatService._skill_modifier(
                     captive_data, 'skills.physical.will'
-                )
+                )+order_bonus
                 difficulty = 10 + 2 * holder.grapple_choke_rounds
                 success = will_roll == 20 or (
                     will_roll != 1 and will_roll + will_bonus >= difficulty
@@ -14184,18 +14402,17 @@ class CombatService:
                 }
             elif action_key == 'grapple_pain_hold':
                 captive_data = captive.character.data if captive.character else {}
-                will_roll = random.randint(1, 20)
+                from app.services.brigadier_order import boost_roll
+                _rolls,will_roll,order_bonus=boost_roll(captive_data,[])
                 will_bonus = CombatService._skill_modifier(
                     captive_data, 'skills.physical.will'
-                )
+                )+order_bonus
                 total = will_roll + will_bonus
                 failed_by = max(0, 14 - total)
                 if failed_by and captive.character:
                     health = captive_data.setdefault('health', {})
                     health.setdefault('combatMeta', {})['injuryRound'] = current_round
-                    health['painLevel'] = CombatService._coerce_int(
-                        health.get('painLevel'), 0
-                    ) + 3
+                    apply_effect_to_health(health, {'type':'pain','value':3,'source':'grapple'},character_data=captive_data)
                     if failed_by > 5:
                         apply_effect_to_health(health, {
                             'type': 'fracture',
@@ -14470,7 +14687,7 @@ class CombatService:
             access = calculate_inventory_access(data, item_path, grenade)
             retrieval_cost = int(access['retrieval_action_points'])
             use_discount = int(access['use_action_discount'])
-            special_action_cost = max(0, 5 - use_discount) + retrieval_cost
+            special_action_cost = trait_action_cost(data,'reload',max(0,5-use_discount)) + retrieval_cost
             underbarrel_reload_details = {
                 'weapon_index': weapon_index,
                 'item_path': list(item_path or []),
@@ -14630,6 +14847,11 @@ class CombatService:
                 ),
             )
             accuracy = CombatService._coerce_int(profile.get('accuracy'), 0)
+            axe=str(weapon.get('name') or '').strip().casefold()=='топор'
+            if background_is(data,'Пожарный') and not axe and attack_type_key not in {'unarmed','firearm_butt'}:accuracy-=1
+            if background_is(data,'Фехтовальщик') and weapon_index is not None and int(weapon_index)>=0:
+                weight_class=str(profile.get('weight_class') or '').lower().replace('ё','е')
+                if 'тяж' in weight_class or weight_class in {'heavy','heavy_plus'}:accuracy-=2
             payment_tokens = {
                 token
                 for token in re.split(r'[^a-z_]+', str(payment or '').strip().lower())
@@ -14666,6 +14888,7 @@ class CombatService:
             ):
                 raise ValidationError("Automatic melee hit is only available against a target from behind")
             melee_cost = CombatService._melee_action_cost(profile, attack_type_key)
+            if background_is(data,'Пожарный') and axe:melee_cost=max(1,melee_cost-1)
             if CombatService._template_attributes(weapon).get('natural_weapon'):
                 cost_profile = {
                     **profile,
@@ -14681,6 +14904,11 @@ class CombatService:
                 )
             if paid_automatic_back_attack:
                 melee_cost += 2
+            fencer='fencer' in payment_tokens
+            if fencer:
+                if not background_is(data,'Фехтовальщик') or combat_meta.get('fencerUsed') or weapon_index is None or int(weapon_index)<0 or attack_type_key=='unarmed' or CombatService._template_attributes(weapon).get('natural_weapon'):
+                    raise ValidationError('Приём Фехтовальщика недоступен')
+                melee_cost=max(1,melee_cost-2)
             attack_details = {
                 'weapon_index': weapon_index,
                 'attack_type': attack_type,
@@ -14690,6 +14918,7 @@ class CombatService:
                 'target_character_ids': target_character_ids if circular_attack else None,
                 'target_distance': distance,
                 'melee': True,
+                'fencer':fencer,
                 'circular_attack': circular_attack,
                 'hit_difficulty': target_profile['difficulty'],
                 'aimed_melee': aimed_melee,
@@ -14712,6 +14941,8 @@ class CombatService:
             }
 
         if action_key == 'attack' and fire_mode:
+            from app.services.sniper_position import require_reposition
+            require_reposition(character,state)
             if fire_mode not in {'unaimed', 'rapid', 'aimed', 'burst', 'suppression', 'area'}:
                 raise ValidationError("Unknown fire mode")
             weapons = (character.character.data or {}).get('weapons') or []
@@ -14761,6 +14992,7 @@ class CombatService:
                     )
 
             single_fire = fire_mode in {'unaimed', 'rapid', 'aimed'}
+            if facial_profile(data)['eyes']==2:raise ValidationError('Нельзя стрелять при потере обоих глаз')
             requested_action_points = CombatService._coerce_int(action_points, 0)
             expected_action_points = {
                 'unaimed': 1 if CombatService._is_pistol_weapon(weapon) else 2,
@@ -14775,6 +15007,9 @@ class CombatService:
                 expected_action_points = requested_action_points
             if fire_mode=='burst' and background_is(data,'Полицейский') and CombatService._weapon_class(weapon) in {'pistol','submachine_gun'}:
                 expected_action_points=max(1,expected_action_points-1)
+            from app.services.sniper_trauma import declared
+            sniper_mode=declared(data,weapon,fire_mode,attribute_choice)
+            if sniper_mode=='precision':expected_action_points+=1
             if requested_action_points != expected_action_points:
                 raise ValidationError("Invalid action point cost")
             allowed_volley_counts = {1}
@@ -14920,6 +15155,7 @@ class CombatService:
                 character.movement_mode_this_turn,
                 target_movement_mode,
                 CombatService._movement_evasion_active(range_target),
+                character_data=data,
             )
             movement_modifiers['difficulty_penalty'] += CombatService._target_evasion_trait_penalty(range_target)
             base_shooting_disadvantage = (
@@ -14962,6 +15198,7 @@ class CombatService:
             attack_details = {
                 'weapon_index': weapon_index,
                 'fire_mode': fire_mode,
+                'sniper_mode':sniper_mode,
                 'shot_count': shots,
                 'volley_count': volley_count,
                 'machine_gun_burst': machine_gun,
@@ -14977,7 +15214,7 @@ class CombatService:
                 'area_center_y': area_center_y,
                 'posture': CombatService._posture_key(character),
                 'posture_shooting_bonus': POSTURES[CombatService._posture_key(character)]['shooting_bonus'],
-                'posture_ergonomics_bonus': POSTURES[CombatService._posture_key(character)]['ergonomics_bonus'],
+                'posture_ergonomics_bonus': 0 if background_is(data,'Пост принял') else POSTURES[CombatService._posture_key(character)]['ergonomics_bonus'],
                 'shooter_movement_mode': character.movement_mode_this_turn,
                 'target_movement_mode': target_movement_mode,
                 'movement_accuracy_penalty': movement_modifiers['difficulty_penalty'],
@@ -15023,7 +15260,7 @@ class CombatService:
                     else 0
                 ),
                 'brace_ergonomics_bonus': (
-                    75
+                    (50 if background_is(data,'Пост принял') else 75)
                     if any(
                         isinstance(module, dict)
                         and module.get('slotType') == 'handguard'
@@ -15225,6 +15462,19 @@ class CombatService:
                 }
             if not resumed_paid_action:
                 character.action_points_current -= action_point_cost
+            if action_key=='evade':
+                combat_meta['standaloneEvasion']=max(0,5+CombatService._skill_modifier(data,'skills.physical.agility'))
+                flag_modified(character.character,'data')
+            if attack_details and attack_details.get('fencer'):combat_meta['fencerUsed']=True
+            if order_plan:
+                from app.services.brigadier_order import create
+                narrative_action_details={'name':'Указание Бригадира','order':create(character,user_id,*order_plan),'roll_required':False}
+            if action_key=='surgeon_reduction':
+                from app.services.surgeon_reduction import apply
+                narrative_action_details=apply(character,reduction_plan,user_id)
+                data=character.character.data
+                health=data.setdefault('health',{})
+                combat_meta=health.setdefault('combatMeta',{})
             if action_key in {'jump','recover_jump_balance'}:
                 from app.services.character_jump import execute_jump, recover_balance
                 jump_details = (execute_jump(location,character,jump_details,current_round)
@@ -15569,6 +15819,7 @@ class CombatService:
             elif action_key == 'mutant_clone' and mutant_action_details:
                 clone_data = deepcopy(data)
                 clone_data.setdefault('basic', {})['psi_clone_source_id'] = character.character_id
+                clone_data['basic']['psi_clone_display_name']=CombatService._display_name(character.character)
                 clone_data['basic']['is_psi_clone'] = True
                 clone_data['basic']['psi_clone_damage'] = mutant_action_details['clone_psy_damage']
                 clone_data['health'] = {
@@ -15909,6 +16160,28 @@ class CombatService:
             else:
                 CombatService._clear_aim(character)
 
+        if action_key in {'attack','explosive_attack'}:
+            from app.services.character_rules import harm_check
+            ids=set((attack_details or {}).get('target_character_ids') or [])
+            if target_character_id:ids.add(target_character_id)
+            if explosive_details and background_is(data,'Истинный пацифист'):
+                from app.services.explosion_geometry import distance as blast_distance
+                blast_objects=LocationObject.query.filter_by(location_id=location_id).all()
+                center=explosive_details['target'];radius=explosive_details['profile'].get('radius',0)
+                ids.update(person.character_id for person in LocationCharacter.query.filter_by(location_id=location_id).all()
+                    if person.character and blast_distance(location,blast_objects,center['x'],center['y'],explosive_details['floor_level'],person)<=radius)
+            checks=[]
+            for identity in ids:
+                intended=LocationCharacter.query.filter_by(location_id=location_id,character_id=identity).first()
+                if intended:
+                    check=harm_check(character,intended,not (attack_details or {}).get('melee') and (not explosive_details or explosive_details['source']!='hand'))
+                    if check:checks.append(check)
+            if any(not check['success'] for check in checks):
+                if resumed_paid_action:combat_meta.pop('completedPendingActionId',None)
+                character.character.data=data;flag_modified(character.character,'data');db.session.commit()
+                return {'action':action_key,'attack':None,'explosive':None,'character':CombatService._serialize_character(character),
+                    'state':CombatService._serialize_state(location,state),'narrative_action':{'name':'Воля перед нанесением вреда','roll_required':True,'checks':checks,'blocked_by_will':True}}
+
         if action_key=='prepare_water':
             from app.services.burning import water_item
             water,litres=water_item(data,item_path)
@@ -15924,7 +16197,9 @@ class CombatService:
         elif action_key=='extinguish_fire':
             from app.services.burning import extinguish_difficulty
             difficulty=extinguish_difficulty(data);roll=random.randint(1,20)
-            check={'roll':roll,'total':roll,'difficulty':difficulty,'success':roll>=difficulty}
+            from app.services.brigadier_order import boost_roll
+            _rolls,roll,order_bonus=boost_roll(data,[roll])
+            check={'roll':roll,'total':roll+order_bonus,'difficulty':difficulty,'success':roll+order_bonus>=difficulty}
             if check['success']:health['effects']=[e for e in normalize_effect_list(health.get('effects') or []) if e['type']!='burning']
             narrative_action_details={'name':'Тушить себя','action_points':3,'roll_required':True,'difficulty':difficulty,'check':check}
             character.character.data=data;flag_modified(character.character,'data')
@@ -15942,6 +16217,8 @@ class CombatService:
             flag_modified(character.character,'data')
             CombatService._sync_location_effects_from_character(character)
         if explosive_details:
+            combat_meta.pop('grenadirMustExplode',None)
+            explosive_details['profile']['source_character_id']=character.character_id
             source = explosive_details['source']
             # Броски выполняются только после полной оплаты, в том числе многоходовой.
             if source=='hand' and explosive_details['fuse_mode']=='delay':
@@ -15956,11 +16233,11 @@ class CombatService:
                 explosive_details['original_fuse']=original
                 explosive_details['delay_attempted']=True
             disadvantage=explosive_details['disadvantage']
-            rolls=[random.randint(1,20) for _ in range(2 if disadvantage else 1)]
-            roll=min(rolls) if disadvantage else rolls[0]
+            from app.services.brigadier_order import boost_roll
+            rolls,roll,order_bonus=boost_roll(data,[],disadvantage=disadvantage)
             difficulty=explosive_details['difficulty']
-            success=(roll>=difficulty if source=='hand' else roll==20 or (roll!=1 and roll>=difficulty))
-            failure=0 if success else max(1 if source!='hand' else 0,difficulty-roll)
+            success=(roll+order_bonus>=difficulty if source=='hand' else roll==20 or (roll!=1 and roll+order_bonus>=difficulty))
+            failure=0 if success else max(1 if source!='hand' else 0,difficulty-roll-order_bonus)
             explosive_details.update(rolls=rolls,roll=roll,success=success,failure=failure)
             if not success:
                 x,y=CombatService._scatter_point(explosive_details['impact']['x'],explosive_details['impact']['y'],
@@ -16128,9 +16405,7 @@ class CombatService:
                 ):
                     target_data = target.character.data if isinstance(target.character.data, dict) else {}
                     health = target_data.setdefault('health', {})
-                    health['painLevel'] = CombatService._coerce_int(
-                        health.get('painLevel'), 0
-                    ) + 3
+                    apply_effect_to_health(health, {'type':'pain','value':3,'source':'grapple'},character_data=target_data)
                     target.character.data = target_data
                     flag_modified(target.character, 'data')
             elif fire_mode == 'suppression':
@@ -16229,7 +16504,7 @@ class CombatService:
                     primary = targets[0] if targets else None
                     if primary:
                         first = CombatService._resolve_attack(
-                            primary, character, attack_details, aimed_zone=target_zone
+                            primary, character, {**attack_details,'post_bonus_available':background_is(data,'Пост принял')}, aimed_zone=target_zone
                         )
                         resolved_hits.append(first)
                         if first.get('hit'):
@@ -16239,6 +16514,10 @@ class CombatService:
                                 attack_details.get('shot_count', 1),
                                 first.get('stress_check_modifier'),
                             )
+                            if background_is(data,'Пост принял'):
+                                ordinary=0 if first.get('post_bonus_hit') else hit_count
+                                hit_count=min(attack_details.get('shot_count',1),ordinary+attack_details.get('volley_count',1))
+                                attack_details['post_bonus_hits']=hit_count-ordinary
                             extra_hits = hit_count - 1
                             for index in range(extra_hits):
                                 target = targets[(index + 1) % len(targets)]
@@ -16511,6 +16790,8 @@ class CombatService:
                 character.character.data = data
                 flag_modified(character.character, 'data')
 
+        if character.cover_object_id and character.cover_object_id!=(combat_meta.get('sniperOldCover') or {}).get('id'):
+            combat_meta.pop('sniperOldCover',None)
         evaporated_action_clones = CombatService._evaporate_dead_psi_clones(
             location_id, state,
         )
@@ -16616,6 +16897,8 @@ class CombatService:
         from app.services.explosion_choice import require_resolved
         require_resolved(state)
 
+        from app.services.sniper_trauma import require_resolved as require_trauma
+        require_trauma(state)
         from app.services.character_interaction import CharacterInteractionService
         if CharacterInteractionService.movement_locked(character.id):
             raise ValidationError("Character cannot move while treatment is in progress")
@@ -16840,10 +17123,12 @@ class CombatService:
             if not mode:
                 raise ValidationError("Choose a movement mode")
             posture = CombatService._posture_key(character)
-            posture_profile = CombatService._validate_posture_movement(posture, movement_mode)
+            character_data=character.character.data if character.character else {}
+            posture_profile = CombatService._validate_posture_movement(posture, movement_mode,character_data)
+            sprinter_walk=CombatService._sprinter_walk(character_data,movement_mode,posture)
 
             current_round = max(1, state.round_number or 1)
-            if CombatService._strenuous_movement_is_blocked(
+            if not sprinter_walk and CombatService._strenuous_movement_is_blocked(
                 character, movement_mode, current_round
             ):
                 raise ValidationError("Running and sprinting are blocked by exhaustion")
@@ -16864,7 +17149,7 @@ class CombatService:
             ):
                 raise ValidationError("Sprinting is unavailable with a disabled leg")
 
-            route_cost = CombatService._movement_route_cost(path, movement_mode, posture)
+            route_cost = CombatService._movement_route_cost(path, movement_mode, posture,character_data)
             if movement_mode == 'backward_sideways':
                 CombatService._validate_backward_sideways_path(character, path)
             if CombatService._mutant_has_trait(character_data, 'Полёт'):
@@ -16906,8 +17191,9 @@ class CombatService:
             if evading and movement_mode not in {'walk', 'run', 'sprint'}:
                 raise ValidationError('Уклонение доступно при ходьбе, беге и спринте')
             mode_action_points = (mode['action_points'] if selecting_mode else 0)+climb_action_points
+            if sprinter_walk:mode_action_points=climb_action_points
             artifact_profile = artifact_passive_profile(character_data)
-            if selecting_mode and movement_mode in {'run', 'sprint'}:
+            if selecting_mode and not sprinter_walk and movement_mode in {'run', 'sprint'}:
                 mode_action_points += artifact_profile['strenuous_action_cost']
             mode_free_actions = mode['free_actions'] if selecting_mode else 0
             used_distance = character.movement_distance_this_turn or 0
@@ -16915,13 +17201,13 @@ class CombatService:
             from app.services.slippery_movement import resolve_route, saved_state
             slip_state = saved_state(character)
             limit_mode = slip_state.get('forced_from', movement_mode) if movement_mode == 'walk' else movement_mode
-            max_distance = CombatService._movement_distance_limit(limit_mode, posture, evading, penalty)
+            max_distance = CombatService._movement_distance_limit(limit_mode, posture, evading, penalty,character_data)
             if movement_mode == 'correction':
                 if correction_used+distance > 3+1e-9:
                     raise ValidationError('Корректировка ограничена 3 метрами за ход')
                 # Без выбранного основного режима корректировка доступна на 3 м
                 # независимо от штрафа. При выборе режима её путь уже входит в общий счётчик.
-                max_distance = (CombatService._movement_distance_limit(slip_state.get('forced_from', used_mode),posture,evading,penalty)
+                max_distance = (CombatService._movement_distance_limit(slip_state.get('forced_from', used_mode),posture,evading,penalty,character_data)
                                 if used_mode else max(3,used_distance+3-correction_used))
             if used_distance + distance > max_distance + 1e-9:
                 raise ValidationError(
@@ -16934,8 +17220,10 @@ class CombatService:
 
             if movement_cost > character.movement_points_current + 1e-9:
                 raise ValidationError("Not enough movement points")
+            from app.services.character_rules import before_move
+            before_move(character,path,movement_mode)
             requested_mode = movement_mode
-            if movement_mode in {'run', 'sprint'} and (path.get('slippery', True) or slip_state or path.get('slippery_start')):
+            if not sprinter_walk and movement_mode in {'run', 'sprint'} and (path.get('slippery', True) or slip_state or path.get('slippery_start')):
                 resolved = resolve_route(location, character, path, movement_mode, posture, climb_payment, max_distance)
                 path, movement_cost, distance = resolved['path'], resolved['cost'], resolved['distance']
                 new_x, new_y = resolved['point']['x'], resolved['point']['y']
@@ -16968,7 +17256,7 @@ class CombatService:
                 character.movement_mode_this_turn = movement_mode
             character.movement_distance_this_turn = used_distance + distance
 
-            if requested_mode == 'run':
+            if requested_mode == 'run' and not sprinter_walk:
                 superior_runner = CombatService._mutant_has_trait(
                     character_data, 'Превосходный бегун',
                 )
@@ -16994,10 +17282,14 @@ class CombatService:
                     )
             cost = movement_cost
 
+        from app.services.character_rules import record_approach
+        if state and state.status=='active':record_approach(character,path,cost)
         previous_x, previous_y = character.pos_x, character.pos_y
         character.pos_x = new_x
         character.pos_y = new_y
         character.floor_level = path['surfaces'][-1]['level'] if path.get('surfaces') else target_level
+        from app.services.character_rules import refresh_nearby
+        refresh_nearby(location_id)
         character._movement_surfaces = path.get('surfaces', [])
         anomaly_changed = False
         if not state or state.status != 'active':
@@ -17078,7 +17370,11 @@ class CombatService:
         if not state:
             raise ValidationError("Combat is not active")
 
+        from app.services.sniper_trauma import require_resolved
+        require_resolved(state)
         state.status = 'idle'
+        from app.services.sniper_position import expire as expire_sniper_position
+        expire_sniper_position(location_id,state)
         state.round_number = 0
         state.turn_index = 0
         state.turn_order = []
@@ -17112,7 +17408,8 @@ class CombatService:
             character = getattr(loc_char, 'character', None)
             if character and isinstance(character.data, dict):
                 data = character.data
-                for weapon in data.get('weapons') or []:
+                from app.services.character_traits import carried_weapons
+                for weapon in carried_weapons(data):
                     if isinstance(weapon, dict):
                         lost=max(0,CombatService._coerce_int(weapon.pop('_combatDurabilityLoss',0),0))
                         if lost and trait_count(data,'Протёрт до блеска') and CombatService._weapon_class(weapon)=='machine_gun':

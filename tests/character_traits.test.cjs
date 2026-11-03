@@ -2,6 +2,12 @@ const test=require('node:test'),assert=require('node:assert/strict'),fs=require(
 const source=fs.readFileSync('app/static/js/characterTraits.js','utf8');
 const rules=import('data:text/javascript;base64,'+Buffer.from(source).toString('base64'));
 const character=(name,count=1)=>({features:{specialTraits:Array.from({length:count},()=>({name}))}});
+test('Текст правил убирает табличные переносы, сохраняя слова, пунктуацию и штраф',async()=>{
+    const {ruleText}=await rules;
+    assert.equal(ruleText('При общении с бандитами Харизма -20,\r\nесли они видят ваше лицо'),'При общении с бандитами Харизма -20, если они видят ваше лицо');
+    assert.equal(ruleText('  Эффект\t +2\n\n  и условие\u00a0  применения.  '),'Эффект +2 и условие применения.');
+    assert.equal(ruleText(null),'');
+});
 test('Рюкзак: порог пяти ячеек, округление вниз и неизменный предмет',async()=>{
     const {backpackItemVolume}=await rules,item={volume:5.9,quantity:2};
     assert.equal(backpackItemVolume({},item),11.8);
@@ -26,4 +32,13 @@ test('Вместимость карманов определяется черт�
     assert.equal(pocketCapacity(character('Глубокие карманы')),40);
     assert.equal(pocketCapacity(character('Узкие карманы',3)),0);
     assert.equal(pocketCapacity({features:{specialTraits:[{name:'Глубокие карманы'},{name:'Узкие карманы'},{name:'Узкие карманы',active:false}]}}),35);
+});
+
+test('Выбор оружия видит носимые контейнеры и не сканирует снимки здоровья',async()=>{
+    const {carriedWeaponEntries}=await rules;
+    const data={weapons:[{id:'drawn'}],inventory:{backpack:[{contents:[{id:'stored',category:'weapon'}]}]},
+        equipment:{vest:{pouches:[{contents:[{id:'knife',category:'melee_weapon'}]}]}},health:{snapshot:{weapons:[{id:'old'}]}}};
+    const entries=carriedWeaponEntries(data);
+    assert.deepEqual(entries.map(entry=>entry.weapon.id),['drawn','stored','knife']);
+    assert.deepEqual(entries[1].path,['inventory','backpack',0,'contents',0]);
 });

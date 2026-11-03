@@ -161,6 +161,13 @@ def validate_deferred_conditions(actor, row):
     payload = row.payload or {}
     kind = payload.get('action_key')
     CombatService.ensure_character_can_act(actor, kind)
+    if kind=='brigadier_order':
+        from app.services.brigadier_order import prepare
+        prepare(actor,payload.get('target_character_id'),payload.get('attribute_choice'))
+    if kind=='surgeon_reduction':
+        from app.services.surgeon_reduction import prepare
+        choice=payload.get('attribute_choice') or {}
+        prepare(actor.location,actor,payload.get('target_character_id'),payload.get('target_zone'),choice.get('consentId'),actor.location.lobby.gm_id)
     if kind=='extinguish_fire':
         from app.services.effects import normalize_effect_list
         if not any(e['type']=='burning' and e.get('active',True) for e in normalize_effect_list((actor.character.data.get('health') or {}).get('effects') or [])):
@@ -281,7 +288,7 @@ def preserve_action_payment(current_data, incoming_data):
     meta = health.setdefault('combatMeta', {})
     if not isinstance(meta, dict):
         meta = health['combatMeta'] = {}
-    for key in ('pendingAction', 'completedPendingActionId', 'unstableJump', 'jumpSupport', 'slipperyMovement', 'grenadeReaction','heldWaterItem'):
+    for key in ('pendingAction', 'completedPendingActionId', 'unstableJump', 'jumpSupport', 'slipperyMovement', 'grenadeReaction','heldWaterItem','surgeonReductions','fencerUsed','observedDeathNotified','sniperTraumaChoices','socialMemory','socialCheckReceipts','diplomatRetry','standaloneEvasion','firefighterNearby','harmAllowedTargets','combatExplosionOccurred','grenadirCheck','grenadirMustExplode','breakthroughProgress','breakthroughProgressOP','breakthroughMovementImpossible','breakthroughWillPassed','breakthroughWillFailed','breakthroughCheck','sniperOldCover','sniperPositionCheck','hunterActivityDay','hunterProcessedDay','hunterStressDebt','brigadierOrder','brigadierRefusals','locationScout','locationScoutPoint','observerTargets'):
         if key in current:
             meta[key] = deepcopy(current[key])
         else:

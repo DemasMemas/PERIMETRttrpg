@@ -27,6 +27,7 @@ module.exports=async({page,request,token,lobby,base,connect,debugPort,safeSessio
             await client.until(`(()=>{try{return L.characterPose(${actor.id})&&window.locationControls}catch{return false}})()`,'Припять загружена');
             await client.evaluate(`window.climbMoves=[];window.climbRejected=[];void socket.on('character_moved',e=>climbMoves.push(e));void socket.on('movement_rejected',e=>climbRejected.push(e))`);
         }
+        await require('./climb_landing.browser.cjs')({page,peer,request,token,lobby,location,actor,player,safeSession,click});
         const barrier=await request(url+'/objects',{type:'box',name:'Проверка перелезания',tile_x:42,tile_y:48,
             properties:{traversal_category:'auto',dimensions:{width:.8,depth:.8,height:.8}}},token);
         let actorLocationId;
@@ -41,7 +42,8 @@ module.exports=async({page,request,token,lobby,base,connect,debugPort,safeSessio
             for(const client of [page,peer])await client.until(`L.characterPose(${actor.id}).x===${x}&&L.characterPose(${actor.id}).y===${y}`,'исходная позиция');
             const idle=await request(url+'/combat',null,token,'GET');
             actorLocationId=idle.characters.find(c=>c.character_id===actor.id).location_character_id;
-            await request(url+'/combat/start',{location_character_ids:[actorLocationId],initiator_location_character_id:actorLocationId,initiator_first:true},token);
+            const started=await request(url+'/combat/start',{location_character_ids:[actorLocationId],initiator_location_character_id:actorLocationId,initiator_first:true},token);
+            if(started.current_character.facing_x!==1||started.current_character.facing_y!==0)await request(url+'/combat/action',{location_character_id:actorLocationId,action_key:'change_facing',facing_x:1,facing_y:0,payment:'action'},player.access_token);
             if(mp)await request(url+'/combat/action',{location_character_id:actorLocationId,action_key:'convert_free_action_to_movement'},player.access_token);
             return (await request(url+'/combat',null,token,'GET')).current_character;
         };
@@ -131,7 +133,6 @@ module.exports=async({page,request,token,lobby,base,connect,debugPort,safeSessio
         results.push({kind:'two-meter-rejection',unchanged:true});save();
         await setup();
         await request(`/lobbies/${lobby.id}/locations/objects/${barrier.id}`,{properties:{dimensions:{width:.2,depth:100,height:.8}}},token,'PATCH');
-        await request(url+'/combat/action',{location_character_id:actorLocationId,action_key:'change_facing',facing_x:1,facing_y:0,payment:'action'},player.access_token);
         const beforeRoute=(await request(url+'/combat',null,token,'GET')).current_character;
         const ordinary=await moveByPointer(43,48,undefined,true);
         assert.equal(ordinary.climbs.length,1);
@@ -152,7 +153,7 @@ module.exports=async({page,request,token,lobby,base,connect,debugPort,safeSessio
         await request(url+'/combat/end',{},token);
         const fresh=await request(sheetUrl,null,token,'GET');
         await request(sheetUrl,{data:{...fresh.data,skills:{physical:{strength:{base:10,bonus:0}}},health:{current:700,max:700,painLevel:0,effects:[],psyState:0}}},token,'PUT');
-        console.log('PASS: Припять, оба способа оплаты/бонусы, выбор кнопками, категория ГМа, подъём/спуск указателем и падение у двух клиентов');
+        console.log('PASS: Припять, оба способа оплаты/бонусы, выбор кнопками, категория ГМа, подъём/спуск указателем, падение и три клетки перелезания у двух клиентов');
     } finally {
         peer?.close();if(context)await protocol.call('Target.disposeBrowserContext',{browserContextId:context.browserContextId});protocol.close();
     }

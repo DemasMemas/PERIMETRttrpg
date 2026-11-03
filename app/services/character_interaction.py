@@ -176,15 +176,17 @@ class CharacterInteractionService:
             if location_character.character and isinstance(location_character.character.data, dict)
             else {}
         )
-        bonus = CombatService._skill_modifier(data, 'skills.physical.strength')
-        die = random.randint(1, 20)
-        return {'roll': die, 'bonus': bonus, 'total': die + bonus}
+        result=CombatService._opposed_roll(data,'skills.physical.strength')
+        return {key:result[key] for key in ('roll','bonus','total')}
 
     @staticmethod
     def respond(request_id, user_id, decision):
         request_row = db.session.get(CharacterInteractionRequest, request_id)
         if not request_row or request_row.status != 'pending':
             raise NotFoundError('Interaction request is no longer pending')
+        if request_row.kind=='order':
+            from app.services.brigadier_order import respond
+            return respond(request_row,user_id,decision)
         if request_row.kind not in {'treatment', 'trade'}:
             raise ValidationError('Use the dedicated endpoint for this request')
         location = CombatService._get_location(request_row.location_id)

@@ -70,7 +70,7 @@ test('quick menu applies a blood collection kit to the doctor without requesting
     const calls = [];
     const helper = functionSource(
         'async function applyQuickMedicalConsumable(',
-        'async function showMedicalConsumableMenu('
+        'export async function showMedicalConsumableMenu('
     ).replace("import('./characterSheet.js')", 'Promise.resolve(sheet)');
     const context = vm.createContext({
         sheet: { async useCharacterInventoryItem(...args) { calls.push(args); return true; } },
@@ -91,7 +91,7 @@ test('quick menu requests consent when treating another conscious character', as
     const calls = [];
     const helper = functionSource(
         'async function applyQuickMedicalConsumable(',
-        'async function showMedicalConsumableMenu('
+        'export async function showMedicalConsumableMenu('
     ).replace("import('./characterSheet.js')", 'Promise.resolve(sheet)');
     const context = vm.createContext({
         sheet: { async useCharacterInventoryItem(...args) { calls.push(args); return true; } },

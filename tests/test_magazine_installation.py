@@ -159,8 +159,10 @@ def test_changed_selection_cannot_consume_another_item(client, case, auth_header
     db.session.commit()
     response = resume(client, case, auth_headers)
     assert response.status_code == 400, response.json
+    meta=data['health']['combatMeta']
+    meta.pop('pendingAction',None);meta.pop('completedPendingActionId',None)
     assert case['actor_character'].data == data
-    assert db.session.get(DeferredCombatAction, 'magazine-install').status == 'ready'
+    assert db.session.get(DeferredCombatAction, 'magazine-install').status == 'cancelled'
     assert case['actor_location'].action_points_current == 1
 
 

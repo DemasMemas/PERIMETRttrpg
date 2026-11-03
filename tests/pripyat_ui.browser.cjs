@@ -36,6 +36,9 @@ module.exports=async({page,request,token,lobby,base,connect,debugPort,safeSessio
         await require('./ice_terrain.browser.cjs')({page,safeSession,request,token,lobby,location:loc,actor});
         return;
     }
+    if(safeSession&&process.env.VTT_SAFE_SCENARIO==='anomaly-boar'){
+        await require('./anomaly_boar.browser.cjs')({page,request,token,lobby,location:loc,actor,base,safeSession});return;
+    }
     if (safeSession && process.env.VTT_SAFE_SCENARIO === 'graphics') {
         await require('./location_graphics.browser.cjs')({page,safeSession,request,token,lobby,location:loc,actor});
         return;

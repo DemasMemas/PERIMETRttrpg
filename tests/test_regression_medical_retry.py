@@ -370,7 +370,7 @@ def test_failed_medical_public_snapshot_save_preserves_trusted_retry_until_one_s
     save_snapshot(missing)
     before_retry = actor_data(pair)
     assert before_retry['health']['combatMeta']['mustDoRetry'] == saved_retry
-    assert before_retry['inventory'] == original['inventory']
+    assert before_retry['inventory'] == {**original['inventory'],'pocketMaxVolume':10}
     assert before_retry['health']['current'] == 100
     assert_public_summary()
     assert ConsumableUse.query.count() == 1
@@ -394,7 +394,7 @@ def test_failed_medical_public_snapshot_save_preserves_trusted_retry_until_one_s
     assert after['health']['current'] == 105
     assert after['health']['stress'] == 1
     assert after['health']['effects'] == before_retry['health']['effects']
-    assert after['inventory'] == original['inventory']
+    assert after['inventory'] == {**original['inventory'],'pocketMaxVolume':10}
     assert 'mustDoRetry' not in after['health']['combatMeta']
     assert after['health']['combatMeta']['mustDoUsage']['used'] == 1
     assert (pair['actor_location'].action_points_current,
@@ -414,7 +414,7 @@ def test_failed_medical_public_snapshot_save_preserves_trusted_retry_until_one_s
     save_snapshot(stale_retry)
     final = actor_data(pair)
     assert 'mustDoRetry' not in final['health']['combatMeta']
-    assert final['health']['current'] == 105 and final['inventory'] == original['inventory']
+    assert final['health']['current'] == 105 and final['inventory'] == {**original['inventory'],'pocketMaxVolume':10}
     assert ConsumableUse.query.count() == 1
     assert db.session.get(DeferredCombatAction, identity).payload == paid_payload
     # И новый private, присланный без существующей серверной процедуры, не принимается.
@@ -423,7 +423,7 @@ def test_failed_medical_public_snapshot_save_preserves_trusted_retry_until_one_s
     save_snapshot(fabricated)
     assert 'mustDoRetry' not in actor_data(pair)['health']['combatMeta']
     assert actor_data(pair)['health']['current'] == 105
-    assert actor_data(pair)['inventory'] == original['inventory']
+    assert actor_data(pair)['inventory'] == {**original['inventory'],'pocketMaxVolume':10}
     assert ConsumableUse.query.count() == 1
     assert (pair['actor_location'].action_points_current,
             pair['actor_location'].free_actions_current,

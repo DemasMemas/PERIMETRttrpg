@@ -28,6 +28,7 @@ import { getUserColor, getUserColorHex } from './colors.js';
 import { Server } from './api.js';
 import { createDeferredActionResumer } from './deferredCombatActions.js';
 import { createAnomalyEffect, animateAnomalyEffects } from './anomalies.js';
+import { createLabelOcclusionIndex } from './locationLabelOcclusion.js';
 import { createMutantModel } from './mutantModels.js';
 import { anomalyCoversTile } from './locationAnomalyArea.js';
 import { sculptHeightChanges } from './locationSculpt.js';
@@ -234,6 +235,16 @@ function bindAwarenessMode(form, getCharacterId) {
 let scene, camera, renderer, labelRenderer, controls;
 let currentLocationId = null;
 let currentLocationData = null;
+let trueSightObserverCharacterId = null;
+let trueSightRefreshTimer = null;
+let trueSightVersion = 0;
+let scoutedCharacters = new Set();
+let scoutObserverId = null;
+let sniperCoverMarks = [];
+let cancelScoutPointSelection = null;
+let anomalyLabelVisibilityKey = null;
+let anomalyLabelVisibilityAt = 0;
+let anomalyLabelOcclusionCache = null;
 let locationAmbientLight = null;
 let locationDirectionalLight = null;
 let locationShadowCache = null;
@@ -1332,11 +1343,17 @@ function getClimbPaymentProfile(route) {
         actionPoints:climbs.reduce((sum,item)=>sum+(item.category==='high'?3:1),0),hasClimbs:climbs.length>0};
 }
 
+function sprinterWalkingMode(type,current=combatState?.current_character||{}) {
+    return current.movement_rules?.sprinter&&!current.is_exoskeleton&&['walk','run','backward_sideways'].includes(type);
+}
+
 function getMovementModeRouteCost(route, movementType = 'walk') {
     movementType = resolveMovementType(movementType, route).mode;
     const mode = COMBAT_MOVEMENT_TYPES[movementType] || COMBAT_MOVEMENT_TYPES.walk;
     const posture = combatState?.current_character?.posture || 'standing';
     const postureProfile = COMBAT_POSTURES[posture] || COMBAT_POSTURES.standing;
+    const multiplier=combatState?.current_character?.posture_modifiers?.movement_multiplier??postureProfile.movementMultiplier;
+    const divisor=sprinterWalkingMode(movementType)?(movementType==='backward_sideways'?1:2):mode.divisor;
     if (!route) return { movementPoints: Infinity, distance: Infinity };
     const rawClimbCost = Math.max(0, Number(route.climbCost ?? route.climb_cost) || 0);
     const climbProfile=getClimbPaymentProfile(route);
@@ -1344,9 +1361,9 @@ function getMovementModeRouteCost(route, movementType = 'walk') {
     const travelCost = combatState?.current_character?.ignores_difficult_surface
         ? Math.max(0, Number(route.distance) || 0)
         : Math.max(0, (Number(route.cost) || 0) - rawClimbCost);
-    const travelMovementPoints = mode.divisor === null
+    const travelMovementPoints = divisor === null
         ? 0
-        : (travelCost * postureProfile.movementMultiplier) / mode.divisor;
+        : (travelCost * multiplier) / divisor;
     const movementPoints = travelMovementPoints + climbCost;
     return {
         movementPoints,
@@ -1366,22 +1383,27 @@ function getMovementModeAvailability(movementType, route = null, evasion = armed
     const current = combatState?.current_character || {};
     const posture = current.posture || 'standing';
     const base = Math.max(0,10-(Number(current.movement_penalty)||0));
-    const distanceLimit = (type) => type === 'correction' ? 3 : type === 'run' ? 2*base : type === 'sprint' ? 3*base
-        : posture === 'prone' ? Math.ceil(base/3) : posture === 'sitting' || type === 'backward_sideways' ? Math.floor(base/2) : base;
+    const goose=Boolean(current.movement_rules?.goose);
+    const distanceLimit = (type) => {
+        const ordinary=type==='correction'?3:type==='run'?2*base:type==='sprint'?3*base
+            :posture==='prone'?Math.ceil(base/(goose&&type==='walk'?2:3))
+            :(posture==='sitting'&&!goose)||type==='backward_sideways'?Math.floor(base/2):base;
+        return sprinterWalkingMode(type,current)?2*(type==='run'?base:ordinary):ordinary;
+    };
     const round = Math.max(1, Number(combatState?.round_number) || 1);
     const usedMode = current.movement_mode_this_turn === 'correction' ? null : current.movement_mode_this_turn || null;
     const forcedFrom = current.slippery_movement?.forced_from;
     const limitMode = movementType === 'walk' && forcedFrom ? forcedFrom : movementType;
     const correctionUsed = Number(current.correction_distance_this_turn)||0;
     const evading = usedMode ? Boolean(current.movement_evasion) : evasion;
-    const evasionReduction = evading ? ({ walk: 3, run: 5, sprint: 7 }[limitMode] || 0) : 0;
+    const evasionReduction = evading ? ({ walk: 3, run: 5, sprint: 7 }[sprinterWalkingMode(limitMode,current)?'walk':limitMode] || 0) : 0;
     const usedDistance = Number(current.movement_distance_this_turn)||0;
     const maxDistance = movementType === 'correction'
         ? Math.min(usedDistance+3-correctionUsed,usedMode ? distanceLimit(forcedFrom || usedMode) : Infinity)
         : Math.max(0,distanceLimit(limitMode)-evasionReduction);
     const selectingMode = movementType === 'correction' ? correctionUsed <= 1e-9 : !usedMode;
     const routeCost = getMovementModeRouteCost(route, movementType);
-    const modeActionPoints = (selectingMode ? mode.actionPoints : 0)+(routeCost.selectedClimbActionPoints||0);
+    const modeActionPoints = (selectingMode&&!sprinterWalkingMode(movementType,current) ? mode.actionPoints : 0)+(routeCost.selectedClimbActionPoints||0);
     const modeFreeActions = selectingMode ? mode.freeActions : 0;
     const availableMovement = Number(current.movement_points_current) || 0;
     const climbActionPoints = getClimbPaymentProfile(route).actionPoints;
@@ -1402,7 +1424,7 @@ function getMovementModeAvailability(movementType, route = null, evasion = armed
         reason = 'В этом ходу уже выбран другой вид движения';
     } else if (routeCost.climbCost > 0 && posture !== 'standing') {
         reason = 'Перед перелезанием нужно встать';
-    } else if (movementType === 'run' && posture !== 'standing') {
+    } else if (movementType === 'run' && posture !== 'standing' && !(posture==='sitting'&&goose)) {
         reason = 'Бег возможен только стоя';
     } else if (movementType === 'sprint' && posture !== 'standing') {
         reason = 'Спринт возможен только стоя';
@@ -1415,6 +1437,7 @@ function getMovementModeAvailability(movementType, route = null, evasion = armed
         reason = 'Корректировка недоступна лёжа';
     } else if (
         ['run', 'sprint'].includes(movementType)
+        && !sprinterWalkingMode(movementType,current)
         && !usedMode
         && (Number(current.strenuous_movement_blocked_until_round) || 0) > 0
         && round <= (Number(current.strenuous_movement_blocked_until_round) || 0)
@@ -2251,11 +2274,15 @@ async function applyQuickMedicalConsumable(characterId, entry, targetCharacterId
     });
 }
 
-async function showMedicalConsumableMenu(characterId, forcedTargetCharacterId = null, actorLocationCharacterIdHint = null) {
+export async function showMedicalConsumableMenu(characterId, forcedTargetCharacterId = null, actorLocationCharacterIdHint = null) {
     ensureMedicalConsumableMenu();
     medicalConsumableMenuState = { characterId };
 
-    const character = await Server.getCharacter(characterId).catch(() => null);
+    const [character,freshState] = await Promise.all([
+        Server.getCharacter(characterId).catch(() => null),
+        Server.getLocationCombatState(window.currentLobbyId,getCurrentLocationId()).catch(() => null),
+    ]);
+    if(freshState)setCombatState(freshState);
     const actorLocationCharacterId = actorLocationCharacterIdHint
         || findCombatCharacterByCharacterId(characterId)?.location_character_id
         || pendingStructureAction?.actorLocationCharacterId;
@@ -2367,6 +2394,70 @@ async function showMedicalConsumableMenu(characterId, forcedTargetCharacterId = 
             };
             body.appendChild(row);
         });
+    }
+
+    if (characterData?.basic?.background?.name === 'Хирург' && actorLocationCharacterId) {
+        const section = document.createElement('form');
+        section.className = 'surgeon-reduction';
+        section.style.cssText = 'display:grid;gap:8px;padding:12px 0;border-top:1px solid rgba(255,255,255,.15);';
+        section.innerHTML = `<strong>Вправить конечность без набора · 2 ОД</strong>
+            <small>Конечность с 0 ОЗ восстанавливается до 1 ОЗ. Пациент получает 5 боли. Повторно — после его 8-часового сна.</small>
+            <label>Пациент <select name="patient" class="form-select"></select></label>
+            <label>Конечность <select name="limb" class="form-select"></select></label>
+            <button type="submit" class="btn btn-secondary">Вправить</button><small class="surgeon-status"></small>`;
+        const patients = section.elements.patient;
+        const limbs = section.elements.limb;
+        const submit = section.querySelector('[type="submit"]');
+        const status = section.querySelector('.surgeon-status');
+        const candidates = (combatState?.characters || []).filter(candidate =>
+            !forcedTargetCharacterId || Number(candidate.character_id) === Number(forcedTargetCharacterId));
+        if (!candidates.some(candidate => Number(candidate.character_id) === Number(characterId)) && !forcedTargetCharacterId) {
+            candidates.unshift({ character_id: characterId, name: character.name || 'Себе' });
+        }
+        for (const candidate of candidates) {
+            patients.add(new Option(Number(candidate.character_id) === Number(characterId) ? 'Себе' : candidate.name || 'Персонаж', candidate.character_id));
+        }
+        let selectionVersion = 0;
+        const loadLimbs = async () => {
+            const version = ++selectionVersion;
+            submit.disabled = true; limbs.replaceChildren(); status.textContent = '';
+            try {
+                const patientId = Number(patients.value);
+                const data = patientId === Number(characterId) ? characterData : (await Server.inspectLocationCharacter(
+                    window.currentLobbyId, getCurrentLocationId(), patientId, actorLocationCharacterId))?.target_data;
+                if (version !== selectionVersion) return;
+                for (const [area, label] of Object.entries({ leftArm: 'Левая рука', rightArm: 'Правая рука', leftLeg: 'Левая нога', rightLeg: 'Правая нога' })) {
+                    const damaged = data?.health?.zones?.[area]?.current === 0;
+                    const lost = (data?.health?.effects || []).some(effect => effect.active !== false && effect.area === area && ['amputation', 'mangled_limb'].includes(effect.type));
+                    if (damaged && !lost && !data?.health?.combatMeta?.surgeonReductions?.[area]) limbs.add(new Option(label, area));
+                }
+                submit.disabled = !limbs.options.length;
+                if (submit.disabled) status.textContent = 'Нет конечностей, которые можно вправить.';
+            } catch (error) { if (version === selectionVersion) status.textContent = error.message || 'Не удалось осмотреть пациента'; }
+        };
+        patients.onchange = loadLimbs;
+        section.onsubmit = async event => {
+            event.preventDefault(); submit.disabled = true;
+            try {
+                const targetId = Number(patients.value);
+                let consentId;
+                if (targetId !== Number(characterId) && getLocationCharacterCondition(targetId).state === 'active') {
+                    const consent = await requestTreatmentConsent(actorLocationCharacterId, targetId, 'Вправление конечности: 2 ОД, +5 боли');
+                    if (!consent.allowed) return;
+                    consentId = consent.requestId;
+                }
+                const payload = { location_character_id: actorLocationCharacterId, action_key: 'surgeon_reduction',
+                    target_character_id: targetId, target_zone: limbs.value, attribute_choice: { consentId },
+                    pending_action_id: `surgeon-${actorLocationCharacterId}-${Date.now()}` };
+                const result = await Server.performLocationCombatAction(window.currentLobbyId, getCurrentLocationId(), payload);
+                if (result?.pending_action) registerDeferredCombatAction(result.pending_action_id, payload);
+                closeMedicalConsumableMenu();
+                showNotification(result?.pending_action ? 'Вправление начато: ожидает полной оплаты 2 ОД.' : `Конечность вправлена: 1 ОЗ, +${Number(result.narrative_action?.pain_delta)||0} боли.`, 'system');
+            } catch (error) { status.textContent = error.message || 'Не удалось вправить конечность'; }
+            finally { submit.disabled = !limbs.options.length; }
+        };
+        body.append(section);
+        await loadLimbs();
     }
 
     const closeBtn = medicalConsumableMenu.querySelector('.medical-close-btn');
@@ -2954,6 +3045,7 @@ function showConsolationMenu(actor) {
 }
 
 function showCombatActionMenu(clientX, clientY, characterId) {
+    if(window.locationScoutView)return;
     ensureCombatActionMenu();
     combatActionMenuCharacterId = characterId;
     const combatCharacter = findCombatCharacterByCharacterId(characterId);
@@ -3031,6 +3123,17 @@ function showCombatActionMenu(clientX, clientY, characterId) {
     ];
 
     if (condition.state === 'active') {
+        if(combatState?.status==='active'&&combatCharacter&&!combatCharacter.is_mutant){
+            menuItems.push({label:'Уклонение',key:'evade',actionKey:'evade',icon:'↶',angle:14,ringRadius:165,requiresCombat:true,
+                title:'Отдельное уклонение до следующего своего хода',
+                action:async()=>{
+                    try{
+                        const sheet=await Server.getCharacter(characterId);
+                        const {showTraitAction}=await import('./traitActions.js');
+                        await showTraitAction(characterId,sheet.data,'evade');
+                    }catch(error){showNotification(error.message||'Не удалось объявить уклонение','system');}
+                }});
+        }
         if (combatCharacter && !combatCharacter.is_mutant && isCurrentTurn) {
             if (combatCharacter.unstable_jump) {
                 menuItems.push({label:'Равновесие',icon:'↔',angle:278,ringRadius:165,
@@ -3628,8 +3731,10 @@ async function openCharacterAttackSelection(characterId) {
         modal.style.display = 'flex';
         modal.innerHTML = `
             <div class="modal-content" style="width:min(520px,calc(100vw - 28px));">
-                <button type="button" class="close mutant-attack-close">&times;</button>
-                <h3>Атаки: ${escapeHtml(character.name)}</h3>
+                <header class="mutant-attack-header">
+                    <h3>Атаки: ${escapeHtml(character.name)}</h3>
+                    <button type="button" class="btn btn-secondary modal-icon-close mutant-attack-close" aria-label="Закрыть атаки мутанта"><svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></button>
+                </header>
                 <div class="mutant-attack-options" style="display:grid;gap:8px;"></div>
             </div>
         `;
@@ -5251,7 +5356,7 @@ async function resolveCombatTargetSelection(targetCharacterId) {
         && isAttackerBehindTarget(actor, target)
         && window.confirm('Атака со спины: потратить дополнительно 2 ОД для гарантированного попадания?')
     ) {
-        payload.payment = [action.meleeAimed ? 'aimed' : null, 'back_auto']
+        payload.payment = [action.payment, 'back_auto']
             .filter(Boolean)
             .join('+');
     }
@@ -5387,6 +5492,7 @@ async function finalizeAreaFire() {
             volley_count: action.volleyCount,
             action_points: action.actionPoints,
             target_character_ids: targetIds,
+            payment:action.payment,
         };
         if (action.targetType === 'multi_character') {
             payload.area_center_x = action.areaAnchor.x;
@@ -5752,7 +5858,7 @@ export function addCharacterToLocation(characterId, name, ownerId, ownerName, po
     const resolvedControlledBy = Number.isFinite(Number(controlledBy)) ? Number(controlledBy) : null;
     const fallbackOwnerId = Number.isFinite(Number(ownerId)) ? Number(ownerId) : null;
     const colorUserId = resolvedControlledBy ?? fallbackOwnerId ?? 0;
-    const model = (isMutant && createMutantModel(mutantType)) || createCharacterModel(colorUserId);
+    const model = (isMutant && createMutantModel(mutantType, renderer.outputEncoding)) || createCharacterModel(colorUserId);
     const tileHeight = physicalHeight ?? getTileHeight(posX, posY) + floorLevel * STOREY_HEIGHT;
     model.position.set(posX + 0.5, tileHeight, posY + 0.5);
     tintLocationMesh(model, darknessFactorAt(posX, posY));
@@ -5784,6 +5890,7 @@ export function addCharacterToLocation(characterId, name, ownerId, ownerName, po
     scene.add(label);
 
     characterModels.set(characterId, {
+        characterId,
         model,
         label,
         name,
@@ -5812,6 +5919,14 @@ export function addCharacterToLocation(characterId, name, ownerId, ownerName, po
         teamColor: null,
     });
     updateCharacterTeamVisual(characterId, teamName, teamColor);
+    model.addEventListener('model-ready',()=>{
+        const entry=getCharacterModelEntry(characterId);
+        if(entry?.model!==model)return;
+        tintLocationMesh(model,darknessFactorAt(entry.posX,entry.posY));
+        attachStaticLightFieldToRoot(model,entry.floorLevel||0);
+        applyCharacterVisibilityVisual(characterId,{gmHidden:entry.gmHidden,camouflaged:entry.camouflaged},true);
+        applyFogOfWar();
+    });
     applyCharacterFacingVisual(characterId, facingX, facingY);
     const combatCharacter = findCombatCharacterByCharacterId(characterId);
     if (combatCharacter?.posture || posture !== 'standing') {
@@ -5853,7 +5968,7 @@ function fogIsActive() {
     return Boolean(
         currentLocationData
         && Number(localStorage.getItem('user_id'))
-        && (!window.isGM || gmVisionCharacterId !== null),
+        && (window.locationScoutView || !window.isGM || gmVisionCharacterId !== null),
     );
 }
 
@@ -5886,6 +6001,7 @@ function clearFogMemoryGhosts() {
 }
 
 function getFogMemoryStorageKey() {
+    if(window.locationScoutView)return null;
     const userId = Number(localStorage.getItem('user_id'));
     const lobbyId = Number(window.currentLobbyId);
     const locationId = Number(getCurrentLocationId());
@@ -6094,7 +6210,7 @@ function getFogGhost(key, createGhost) {
 }
 
 function createCharacterFogGhost(snapshot) {
-    const ghost = setFogGhostAppearance(createMutantModel(snapshot.mutantType)
+    const ghost = setFogGhostAppearance(createMutantModel(snapshot.mutantType, renderer.outputEncoding)
         || createCharacterModel(snapshot.ownerId));
     ghost.position.set(snapshot.posX + 0.5,
         snapshot.height != null && Number.isFinite(Number(snapshot.height))
@@ -6148,6 +6264,13 @@ function syncFogMemoryGhosts(active, sources) {
 }
 
 function getFogVisionSources() {
+    if(window.locationScoutView){
+        const view=window.locationScoutView;
+        if(!view.check?.success)return [];
+        const point=view.point;
+        return [{posX:point.x,posY:point.y,floorLevel:point.floor_level,facingX:point.facing_x,facingY:point.facing_y,
+            posture:'standing',physicalHeight:getTileHeight(point.x,point.y)+(point.floor_level||0)*STOREY_HEIGHT}];
+    }
     if (window.isGM && gmVisionCharacterId !== null) {
         const selected = characterModels.get(gmVisionCharacterId);
         return selected ? [selected] : [];
@@ -6329,6 +6452,7 @@ function isTileVisibleToPlayer(x, y, sources) {
 
 function isCharacterVisibleToPlayer(entry, sources) {
     if (entry.gmHidden || entry.camouflaged) return false;
+    if(scoutedCharacters.has(Number(entry.characterId))||scoutedCharacters.has(Number(entry.id)))return true;
     sources = sources.filter(source => (source.floorLevel || 0) === (entry.floorLevel || 0));
     const height = { standing: 1.7, sitting: 1.1, prone: 0.4 }[entry.posture] ?? 1.7;
     return isPointVisibleToPlayer(
@@ -6338,6 +6462,45 @@ function isCharacterVisibleToPlayer(entry, sources) {
 
 function combatCharacterVisibleToPlayer(character) {
     return Boolean(window.isGM || !(character?.gm_hidden || character?.camouflaged));
+}
+
+function updateAnomalyLabelVisibility(time){
+    if(!camera||time-anomalyLabelVisibilityAt<100)return;
+    anomalyLabelVisibilityAt=time;camera.updateMatrixWorld(true);
+    const signature=[...camera.matrixWorld.elements,...camera.projectionMatrix.elements].map(value=>Math.round(value*10000)).join(':')
+        +':'+movementMapVersion+':'+locationViewLevel+':'+String(updateRoofVisibility.lastState);
+    if(signature===anomalyLabelVisibilityKey)return;
+    anomalyLabelVisibilityKey=signature;
+    const candidates=[...new Set([...anomalyEffectMeshes,...locationObjectMeshes.filter(root=>root.userData.locationObject?.type==='anomaly')])];
+    if(!anomalyLabelOcclusionCache || anomalyLabelOcclusionCache.location!==currentLocationData
+        || anomalyLabelOcclusionCache.version!==movementMapVersion){
+        const roots=[...roofMeshes,...locationObjectMeshes.filter(root=>root.userData.locationObject?.type!=='anomaly'),
+            ...objectMeshes.filter(root=>!['anomaly','campfire','poster'].includes(root.userData.objType))];
+        anomalyLabelOcclusionCache={location:currentLocationData,version:movementMapVersion,
+            index:createLabelOcclusionIndex(THREE,roots),terrain:new Map()};
+    }
+    const picker=new THREE.Raycaster(),origin=camera.getWorldPosition(new THREE.Vector3()),point=new THREE.Vector3(),projected=new THREE.Vector3();
+    for(const root of candidates){
+        const labels=[];root.traverse(child=>{if(child.userData.anomalyLabel)labels.push(child);});
+        if(!labels.length)continue;
+        root.getWorldPosition(point);point.y+=.25;
+        projected.copy(point).project(camera);
+        let visible=root.visible&&Math.abs(projected.x)<=1&&Math.abs(projected.y)<=1&&projected.z>=-1&&projected.z<=1;
+        if(visible){
+            const distance=origin.distanceTo(point);
+            picker.set(origin,point.clone().sub(origin).normalize());picker.far=Math.max(0,distance-.06);
+            // Грунт проверяется по клеткам луча, без треугольников всего квартала.
+            visible=!terrainLineHit(currentLocationData?.tiles_data||[],origin.toArray(),point.toArray(),
+                anomalyLabelOcclusionCache.terrain,
+                hit=>!terrainOpeningAt(currentLocationData?.objects||[],0,hit.x,hit.z))
+                &&!anomalyLabelOcclusionCache.index.blocked(picker,mesh=>visibleEditorHit({object:mesh}),hit=>{
+                if(hit.object.userData?.pickOnly||!visibleEditorHit(hit))return false;
+                const material=Array.isArray(hit.object.material)?hit.object.material[hit.face?.materialIndex||0]:hit.object.material;
+                return material&&material.visible!==false&&Number(material.opacity??1)>=.65;
+            });
+        }
+        for(const label of labels)label.visible=visible;
+    }
 }
 
 function isFogHiddenObject(object) {
@@ -6413,6 +6576,8 @@ function updateFogOverlay(active, sources) {
 
 function applyFogOfWar() {
     if (!scene || !currentLocationData) return;
+    anomalyLabelVisibilityKey=null;
+    anomalyLabelOcclusionCache=null;
     facingPreviewState = null;
     if (pendingFacingSelection && facingPreviewPointer) {
         if (facingPreviewMesh) facingPreviewMesh.count = 0;
@@ -6445,7 +6610,7 @@ function applyFogOfWar() {
     updateFogOverlay(active, sources);
     characterModels.forEach((entry) => {
         const hidden = entry.gmHidden || entry.camouflaged;
-        const visible = (globalThis.window?.isGM && hidden)
+        const visible = (globalThis.window?.isGM && !window.locationScoutView && hidden)
             || (!hidden && (!active || isCharacterVisibleToPlayer(entry, sources)));
         const onViewedFloor = locationLevelVisible(entry.renderFloorLevel ?? entry.floorLevel ?? 0, null, entry.model.position.x, entry.model.position.z);
         entry.model.visible = visible && onViewedFloor;
@@ -6460,7 +6625,7 @@ function applyFogOfWar() {
             return;
         }
         if (mesh.userData?.sourceObject?.gm_hidden) {
-            mesh.visible = Boolean(window.isGM);
+            mesh.visible = Boolean(window.isGM&&!window.locationScoutView);
             return;
         }
         if (mesh.userData?.objType !== 'anomaly') {
@@ -6479,7 +6644,7 @@ function applyFogOfWar() {
     locationObjectMeshes.forEach((mesh) => {
         const object = mesh.userData?.locationObject || {};
         const position = getObjectGridPosition(object);
-        const physicalVisible = object.properties?.gm_hidden ? Boolean(window.isGM)
+        const physicalVisible = object.properties?.gm_hidden ? Boolean(window.isGM&&!window.locationScoutView)
             : !isFogHiddenObject(object) || !active || isPointVisibleToPlayer(
                 position.x ?? 0, position.y ?? 0,
                 getTileHeight(position.x ?? 0, position.y ?? 0) + getFogObjectHeight(object), sources);
@@ -6732,6 +6897,7 @@ export function applyCharacterFacingVisual(characterId, facingX = 0, facingY = 1
     const y = Number(facingY) || 0;
     if (x === 0 && y === 0) return;
     if (entry.facingX === x && entry.facingY === y) return;
+    queueTrueSightRefresh();
     entry.model.rotation.y = Math.atan2(x, y);
     entry.facingX = x;
     entry.facingY = y;
@@ -6827,6 +6993,7 @@ export function applyCharacterVisibilityUpdate(characterId, gmHidden) {
 }
 
 export function updateCharacterPosition(characterId, posX, posY, options = {}) {
+    queueTrueSightRefresh();
     const entry = getCharacterModelEntry(characterId);
     if (!entry) return;
     const origin = options.jump&&options.path?.length
@@ -7000,6 +7167,10 @@ function onViewCharacter(characterId) {
 
 // ========== Очистка персонажей ==========
 function clearAllCharacters() {
+    cancelScoutPointSelection?.();
+    clearSniperCoverMarks();
+    scoutedCharacters.clear();scoutObserverId=null;
+    trueSightObserverCharacterId=null;trueSightVersion++;clearTimeout(trueSightRefreshTimer);trueSightRefreshTimer=null;
     characterVisibilityOverrides.clear();
     characterModels.forEach((entry) => {
         if (entry.model) {
@@ -7146,6 +7317,7 @@ export function handleCombatStartRequestResolved(startRequest) {
 export async function loadCombatStartRequests() {
     if (!window.isGM || !window.isLocationActive) return;
     const locationId = getCurrentLocationId();
+    if(!Number.isInteger(Number(locationId))||Number(locationId)<=0)return;
     const version = combatStartRequestVersion;
     try {
         const requests = await Server.getLocationCombatStartRequests(
@@ -7355,7 +7527,41 @@ function getBloodStageLabel(value) {
     return BLOOD_STAGE_LABELS[key] || key;
 }
 
+function showSniperTraumaChoices() {
+    const actor=(combatState?.characters||[]).find(actor=>actor.sniper_trauma_choices?.length);
+    const choice=actor?.sniper_trauma_choices?.[0];
+    let modal=document.getElementById('sniper-trauma-choice');
+    if (!choice || !(window.isGM || Number(actor.controlled_by ?? actor.owner_id)===getCurrentUserId())) { modal?.remove();return; }
+    if (modal?.dataset.choiceId===choice.id) return;
+    modal?.remove();modal=document.createElement('div');modal.id='sniper-trauma-choice';modal.dataset.choiceId=choice.id;
+    modal.style.cssText='position:fixed;inset:0;z-index:1400;background:rgba(0,0,0,.65);display:grid;place-items:center;padding:20px;';
+    const panel=document.createElement('div');panel.style.cssText='max-width:800px;background:#171b16;border:1px solid #77735b;border-radius:10px;padding:20px;color:#ece9db;';
+    const title=document.createElement('h3');title.textContent=`Микроскопическая точность: ${choice.target_name}`;panel.append(title);
+    const note=document.createElement('p');note.textContent=`Выпало ${choice.original_roll}. Выберите дополнительную травму. ОД и патрон уже потрачены.`;panel.append(note);
+    const cards=document.createElement('div');cards.style.cssText='display:flex;flex-wrap:wrap;gap:12px;';
+    choice.cards.forEach((card,index)=>{
+        const button=document.createElement('button');button.type='button';button.className='btn sniper-trauma-card';
+        button.dataset.index=index;button.style.cssText='flex:1 1 180px;min-height:130px;white-space:normal;text-align:left;';
+        const heading=document.createElement('strong');heading.textContent=`${card.offset===0?'Без сдвига':card.offset<0?'−1':'+1'} · d20 ${card.roll}`;
+        const text=document.createElement('p');text.textContent=card.description;button.append(heading,text);
+        button.onclick=async()=>{
+            cards.querySelectorAll('button').forEach(button=>{button.disabled=true;});
+            try {const result=await Server.performLocationCombatAction(window.currentLobbyId,getCurrentLocationId(),{
+                location_character_id:actor.location_character_id,action_key:'choose_sniper_trauma',attribute_choice:{id:choice.id,index}});
+                modal.remove();setCombatState(result.state);
+            } catch(error) {showNotification(error.message,'system');cards.querySelectorAll('button').forEach(button=>{button.disabled=false;});}
+        };cards.append(button);
+    });panel.append(cards);modal.append(panel);document.body.append(modal);
+}
+
 function renderCombatHud() {
+    if(window.locationScoutView&&window.isLocationActive){
+        ensureCombatHud();
+        combatHud.innerHTML='<div style="padding:10px">Осмотр территории · просмотр из точки ГМа<br><button class="btn btn-secondary scout-view-exit" type="button">Завершить осмотр</button></div>';
+        combatHud.querySelector('.scout-view-exit').onclick=()=>window.exitLocation();
+        return;
+    }
+    showSniperTraumaChoices();
     if (!combatState || !window.isLocationActive) {
         if (combatHud && combatHud.parentNode) {
             combatHud._disposeLayout?.();
@@ -7458,6 +7664,7 @@ function renderCombatHud() {
             ${isCollapsed && combatState.status === 'active' && combatState.current_character && canActWithCombatCharacter(combatState.current_character)
                 ? '<button class="btn btn-sm btn-secondary combat-end-turn-btn" style="margin-left:8px;">Закончить ход</button>'
                 : ''}
+            ${isCollapsed&&!isCombatActive&&window.isGM?'<button class="btn btn-sm btn-primary combat-start-btn">Начать бой</button>':''}
         </div>
         <div class="combat-hud-body" style="display:${isCollapsed ? 'none' : 'block'}; padding:12px 14px; font-size:13px; line-height:1.45;">
             ${isCombatActive ? `
@@ -7473,6 +7680,9 @@ function renderCombatHud() {
                 <div>${character.deferred_action.status === 'ready' ? 'Завершается…' : `Осталось оплатить: ${character.deferred_action.remaining_action_points} ОД`}</div>
                 ${character.deferred_action.status !== 'ready' ? `<button type="button" class="btn btn-sm btn-secondary combat-deferred-cancel" data-character="${character.location_character_id}" data-action="${escapeHtml(character.deferred_action.id)}" title="Без возврата уже потраченных ОД">Отменить действие</button>` : ''}
             </div>`).join('')}
+            ${combatState.current_character?.trait_state?.standaloneEvasion?`<div>Уклонение: штраф атакующему <strong>${Number(combatState.current_character.trait_state.standaloneEvasion)}</strong> до следующего хода</div>`:''}
+            ${combatState.current_character?.trait_state?.grenadirCheck?`<div>Гренадир · Воля: ${Number(combatState.current_character.trait_state.grenadirCheck.total)} против 12${combatState.current_character.trait_state.grenadirMustExplode?' · нужно устроить взрыв':''}</div>`:''}
+            ${combatState.current_character?.sniper_position?.blocked?`<div>Снайпер: новое укрытие · до конца раунда ${Number(combatState.current_character.sniper_position.expires_after_round)}</div>`:''}
             ${combatState.current_character?.movement_evasion ? '<div>Уклонение на ходу: <strong>СЛ стрельбы по вам +2</strong></div>' : ''}
             ${aimedTarget ? `<div>Прицел: <strong>${aimedTarget.name || 'цель'}</strong> · Точность +${combatState.current_character?.aim_accuracy_bonus || 0}</div>` : ''}
             <div>Боль: ${combatState.current_character?.pain_level ?? 0} | Истощение: ${combatState.current_character?.exhaustion ?? 0}</div>
@@ -7641,6 +7851,7 @@ function renderCombatHud() {
         mustDoBtn.onclick = () => performMustDoRetry(combatState.current_character);
     }
     const endTurnBtn = combatHud.querySelector('.combat-end-turn-btn');
+    if (endTurnBtn && (combatState?.characters||[]).some(actor=>actor.sniper_trauma_choices?.length)) endTurnBtn.disabled=true;
     const explosionChoices=(combatState?.pending_explosives||[]).flatMap(event=>(event.gm_choices||[]).map(id=>({event,id})));
     if(explosionChoices.length){
         const panel=document.createElement('div');panel.className='explosion-gm-choices';
@@ -7724,8 +7935,11 @@ function renderCombatHud() {
 }
 
 export function setCombatState(state) {
+    queueTrueSightRefresh();
     combatState = state || null;
+    refreshSniperCoverMarks();
     window.locationCombatState = combatState;
+    window.updateCharacterTraitContext?.(combatState?.characters||[]);
     if (combatState?.current_character?.slippery_movement?.forced_from && armedMovementType && armedMovementType !== 'correction') {
         armedMovementType = 'walk';
     }
@@ -7919,6 +8133,112 @@ async function resumeCompletedCombatAction(state) {
 
 export function getCombatState() {
     return combatState;
+}
+
+function clearSniperCoverMarks(){
+    for(const mark of sniperCoverMarks){scene?.remove(mark);mark.element.remove();}
+    sniperCoverMarks=[];
+}
+
+function refreshSniperCoverMarks(){
+    clearSniperCoverMarks();
+    if(!scene)return;
+    const userId=Number(localStorage.getItem('user_id'));
+    for(const actor of combatState?.characters||[]){
+        const hint=actor.sniper_position;
+        if(window.locationScoutView||!hint?.blocked||!hint.cover||!window.isGM&&Number(actor.controlled_by)!==userId&&Number(actor.owner_id)!==userId)continue;
+        const cover=hint.cover;
+        if(Number(cover.floor_level||0)!==locationViewLevel)continue;
+        const element=document.createElement('div');element.className='location-character-label sniper-cover-mark';
+        element.style.cssText='border-left-color:#a4ad94;pointer-events:none;max-width:220px';
+        element.textContent=`⌖ Укрытие · ${actor.name} · ${formatMovementNumber(cover.distance)} м`;
+        const mark=new CSS2DObject(element);
+        mark.position.set(cover.x+.5,getTileHeight(cover.x,cover.y)+(cover.floor_level||0)*STOREY_HEIGHT+.3,cover.y+.5);
+        scene.add(mark);sniperCoverMarks.push(mark);
+    }
+}
+
+export function registerTraitDeferredAction(id,payload){registerDeferredCombatAction(id,payload);}
+
+export function chooseScoutObservationPoint(){
+    if(!window.isGM||!renderer||!currentLocationData)return Promise.reject(new Error('Точку осмотра выбирает ГМ в открытой подлокации'));
+    const canvas=renderer.domElement;
+    cancelScoutPointSelection?.();
+    return new Promise((resolve,reject)=>{
+        let origin=null;
+        const cleanup=()=>{canvas.removeEventListener('pointerdown',pick,true);window.removeEventListener('keydown',cancel,true);cancelScoutPointSelection=null;};
+        cancelScoutPointSelection=()=>{cleanup();reject(new Error('Выбор точки осмотра отменён'));};
+        const cancel=event=>{if(event.key!=='Escape')return;event.preventDefault();event.stopImmediatePropagation();cleanup();reject(new Error('Выбор точки осмотра отменён'));};
+        const pick=event=>{
+            event.preventDefault();event.stopImmediatePropagation();
+            if(event.button===2){cleanup();reject(new Error('Выбор точки осмотра отменён'));return;}
+            if(event.button!==0)return;
+            if(!origin){
+                origin=localMapToolPoint(event.clientX,event.clientY);
+                if(!origin)return;
+                showNotification('Теперь укажите направление осмотра вторым щелчком. Esc или ПКМ — отмена','system');return;
+            }
+            const end=getPointerWorldPoint(event.clientX,event.clientY,origin.y);
+            if(!end||Math.hypot(end.x-origin.x,end.z-origin.z)<.01)return;
+            cleanup();resolve({location_id:getCurrentLocationId(),x:Math.max(0,origin.x-.5),y:Math.max(0,origin.z-.5),floor_level:origin.floor_level,
+                facing_x:end.x-origin.x,facing_y:end.z-origin.z});
+        };
+        canvas.addEventListener('pointerdown',pick,true);window.addEventListener('keydown',cancel,true);
+        showNotification('Укажите точку наблюдения на карте, затем направление. Esc или ПКМ — отмена','system');
+    });
+}
+
+export function setScoutedCharacters(targets,observerId){
+    scoutObserverId=observerId;scoutedCharacters=new Set(targets.map(target=>Number(target.character_id)));
+    applyFogOfWar();
+    scoutedCharacters.clear();applyFogOfWar();
+}
+
+export async function getSocialTargetCharacters() {
+    const state=await Server.getLocationCombatState(window.currentLobbyId,getCurrentLocationId());
+    setCombatState(state);
+    const sources=getFogVisionSources();
+    return (state.characters||[]).filter(character=>{
+        if(window.isGM)return true;
+        const entry=getCharacterModelEntry(character.character_id);
+        return entry && isCharacterVisibleToPlayer(entry,sources);
+    }).map(character=>({id:character.character_id,name:character.name}));
+}
+
+function clearTrueSightMarks() {
+    for(const entry of characterModels.values())entry.label?.element?.querySelector('.true-sight-mark')?.remove();
+}
+
+function queueTrueSightRefresh() {
+    if(!trueSightObserverCharacterId)return;
+    trueSightVersion++;
+    if(trueSightRefreshTimer===null)clearTrueSightMarks();else clearTimeout(trueSightRefreshTimer);
+    trueSightRefreshTimer=setTimeout(()=>{trueSightRefreshTimer=null;refreshTrueSight().catch(()=>{clearTrueSightMarks();});},150);
+}
+
+async function refreshTrueSight() {
+    const observerId=trueSightObserverCharacterId,locationId=getCurrentLocationId(),version=++trueSightVersion;
+    if(!observerId)return;
+    const result=await Server.inspectTrueSight(window.currentLobbyId,locationId,observerId);
+    if(version!==trueSightVersion||observerId!==trueSightObserverCharacterId||locationId!==getCurrentLocationId())return;
+    clearTrueSightMarks();
+    if(!result.active)return;
+    const sources=getFogVisionSources();
+    for(const mark of result.marks||[]){
+        const entry=getCharacterModelEntry(mark.character_id);
+        if(!entry||!window.isGM&&!isCharacterVisibleToPlayer(entry,sources))continue;
+        const badge=document.createElement('div');badge.className='location-character-label__badge location-character-label__badge--warning true-sight-mark';
+        badge.dataset.kind=mark.kind;badge.dataset.characterId=mark.character_id;badge.style.display='block';
+        badge.textContent=mark.kind==='copy'?'Истинное зрение: копия':'Истинное зрение: оригинал';entry.label.element.append(badge);
+    }
+}
+
+export async function enableTrueSight(characterId) {
+    clearTimeout(trueSightRefreshTimer);trueSightRefreshTimer=null;clearTrueSightMarks();
+    if(trueSightObserverCharacterId===characterId){trueSightObserverCharacterId=null;trueSightVersion++;showNotification('Метки Истинного зрения скрыты','system');return;}
+    trueSightObserverCharacterId=characterId;
+    try{await refreshTrueSight();showNotification('Истинное зрение: видимые оригиналы и копии отмечены','system');}
+    catch(error){trueSightObserverCharacterId=null;clearTrueSightMarks();throw error;}
 }
 
 // ========== Инициализация сцены ==========
@@ -8233,6 +8553,7 @@ export function initLocationScene(containerId) {
         const roofVisibilityMs = profiling ? performance.now() - roofStartedAt : 0;
         animateAnomalyEffects(anomalyEffectMeshes, frameTime);
         for(const root of locationObjectMeshes)if(root.visible&&root.userData.locationObject?.type==='anomaly')animateAnomalyEffects([root],frameTime);
+        updateAnomalyLabelVisibility(frameTime);
         animateFireObjectModels(locationObjectMeshes, frameTime);
         animateFireObjectModels(objectMeshes, frameTime);
         waterSurfaceMesh?.material.map?.offset.set((frameTime * 0.000002) % 1, (frameTime * 0.000001) % 1);
@@ -9526,7 +9847,9 @@ async function showIncomingCharacterInteraction(requestData) {
     if (modal.dataset.interactionRequestId === String(requestData.id) && modal.style.display === 'flex') return;
     modal.dataset.interactionRequestId = String(requestData.id);
     const procedure = requestData.payload?.procedure || {};
-    if (requestData.kind === 'treatment') {
+    if(requestData.kind==='order'){
+        modal.innerHTML=`<div class="modal-content" style="max-width:520px"><h3>Указание союзника</h3><p><strong>${escapeHtml(requestData.actor_name)}</strong>: ${escapeHtml(requestData.payload?.text||'')}</p><p>Следующий бросок: +3${requestData.payload?.advantage?' и Преимущество':''}</p><div class="form-actions"><button class="btn btn-primary interaction-accept">Подчиниться</button><button class="btn btn-secondary interaction-decline">Отказаться</button></div></div>`;
+    } else if (requestData.kind === 'treatment') {
         modal.innerHTML = `
             <div class="modal-content" style="width:min(520px,calc(100vw - 24px));">
                 <h3>Согласие на лечение</h3>
@@ -9615,7 +9938,7 @@ export function handleCharacterInteractionRequest(requestData) {
 }
 
 export function handleCharacterInteractionResolved(requestData) {
-    if (requestData.status === 'cancelled'
+    if (requestData.status !== 'pending'
         && characterTradeModal?.dataset.interactionRequestId === String(requestData.id)) {
         characterTradeModal.style.display = 'none';
     }
@@ -10580,6 +10903,7 @@ function showObjectContextMenu(clientX, clientY, object) {
     }
     createContextMenu();
     contextMenu.innerHTML = '';
+    const isCover=isStructureCoverObject(object);
     const coverClass = object.properties?.cover_class || 'medium';
     const coverDefaults = COVER_CLASS_DEFAULTS[coverClass] || COVER_CLASS_DEFAULTS.medium;
     const coverHp = object.properties?.cover_hp ?? object.properties?.cover_max_hp ?? coverDefaults.maxHp;
@@ -10587,11 +10911,11 @@ function showObjectContextMenu(clientX, clientY, object) {
     const actions = [{
         label: 'Осмотреть',
         action: () => showNotification(
-            `${object.name || object.type}: ${coverDefaults.label}, ОЗ ${coverHp}/${object.properties?.cover_max_hp ?? coverDefaults.maxHp}, защита ${coverProtection}%`,
+            isCover ? `${object.name || object.type}: ${coverDefaults.label}, ОЗ ${coverHp}/${object.properties?.cover_max_hp ?? coverDefaults.maxHp}, защита ${coverProtection}%` : [object.name || object.properties?.anomalyName || object.type,object.properties?.description || object.description || (object.type==='anomaly'?'Аномалия':'')].filter(Boolean).join(' · '),
             'system'
         )
     }];
-    if (window.isGM) {
+    if (window.isGM && isCover) {
         actions.push({
             label: `Класс укрытия: ${coverDefaults.label}`,
             action: async () => {
@@ -12007,6 +12331,7 @@ export function setLocationViewLevel(level) {
     const next = Math.min(locationFloorCount() - 1, Math.max(locationMinimumLevel(), Math.trunc(Number(level) || 0)));
     if (next === locationViewLevel) return;
     locationViewLevel = next;
+    refreshSniperCoverMarks();
     locationObjectPickCache.key=null;
     hideHighlight();
     if (editorSelection) clearEditorSelection();
@@ -16141,6 +16466,12 @@ function* buildLocationStages(data) {
     const distance = Math.max(gridWidth, gridHeight) * 0.8;
     camera.position.set(centerX, distance * 0.6, centerZ + distance);
     controls.target.set(centerX, 0, centerZ);
+    if(window.locationScoutView?.point){
+        const point=window.locationScoutView.point;
+        const x=point.x+.5+point.facing_x*8,z=point.y+.5+point.facing_y*8;
+        const height=getTileHeight(point.x,point.y)+(point.floor_level||0)*STOREY_HEIGHT;
+        controls.target.set(x,height,z);camera.position.set(x,height+20,z+24);
+    }
     controls.update();
     updateLampPreviewLights();
     initializeLocationLightField();
@@ -17436,6 +17767,7 @@ function setupCharacterDragging() {
 
     // pointerdown - начало перетаскивания
     const onPointerDown = (e) => {
+        if(window.locationScoutView)return;
         if(e.button===2){
             cancelledPlacementByRightClick=Boolean(pendingCharacterPlacement);
             if(cancelledPlacementByRightClick){
@@ -17679,6 +18011,7 @@ function setupCharacterDragging() {
     const onContextMenu = (e) => {
         e.preventDefault();
         e.stopImmediatePropagation();
+        if(window.locationScoutView)return;
         if(cancelledPlacementByRightClick){cancelledPlacementByRightClick=false;return;}
         if (pendingCharacterPlacement) {
             cancelCharacterPlacement();
@@ -18053,6 +18386,7 @@ export function setupLocationEditing() {
     handlers.window.pointerMove = onPointerMoveProfiled;
 
     const onPointerDown = (e) => {
+        if(window.locationScoutView)return;
         if (!locationActive) return;
         if (document.activeElement?.closest?.('#location-floor-menu')) document.activeElement.blur();
         if (e.button !== 0) return;
@@ -19094,6 +19428,9 @@ export function addLocationFloorMenu() {
 
 export function destroyLocationScene() {
     visionObjectIndex = null;
+    anomalyLabelOcclusionCache = null;
+    anomalyLabelVisibilityKey = null;
+    anomalyLabelVisibilityAt = 0;
     setLocalMapSceneContext(null);
     clearSculptPreview();
     locationSceneLoading = false;

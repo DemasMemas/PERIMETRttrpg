@@ -300,7 +300,7 @@ def test_blood_packet_uses_server_checked_dropper_and_compatible_blood_type(
     data['inventory']['backpack'].append({
         'id': 'dropper', 'name': 'Капельница', 'category': 'consumable', 'quantity': 1,
     })
-    data['health'].setdefault('combatMeta', {})['bloodType'] = 2
+    data['health'].setdefault('combatMeta', {}).update(bloodType=2,bloodTypeKnown=True)
     pair['actor_character'].data = data
     flag_modified(pair['actor_character'], 'data')
     db.session.commit()

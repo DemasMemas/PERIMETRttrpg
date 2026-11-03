@@ -327,7 +327,7 @@ def _apply_profile(health, profile, direct, item, *, in_combat,character_data=No
             unit_seconds = {"second": 1, "minute": 60, "hour": 3600}
             seconds = unit_seconds.get(str(effect.get("time_unit") or "minute"), 60)
             effect["remaining_seconds"] = _number(effect["remaining"]) * seconds
-        apply_effect_to_health(health, effect)
+        apply_effect_to_health(health, effect, character_data=character_data)
         changed = True
 
     if not has_profile_radiation_filter and _number(direct.get("radiation_filter_percent")) > 0:
@@ -505,7 +505,7 @@ def _apply_profile(health, profile, direct, item, *, in_combat,character_data=No
                 "time_unit": "minute",
                 "remaining_seconds": effect_duration * 60,
             })
-        apply_effect_to_health(health, effect)
+        apply_effect_to_health(health, effect, character_data=character_data)
         changed = True
 
     if direct.get("withdrawal_check_difficulty_reduction"):

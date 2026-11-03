@@ -295,7 +295,8 @@ function clearLocationEditorSubscriptions() {
     }
 }
 
-window.enterLocation = async function(locationId) {
+window.enterLocation = async function(locationId, { scoutView = null } = {}) {
+    window.locationScoutView=scoutView;
     clearLocationEditorSubscriptions();
     window.cancelCommonMapTool?.();
     window.clearDirectWorldObjectSelection?.();
@@ -357,9 +358,9 @@ window.enterLocation = async function(locationId) {
                 character_id: null,
             });
         }
-        if (window.isGM) loadCombatStartRequests();
+        if (window.isGM&&!scoutView) loadCombatStartRequests();
 
-        if (window.isGM) {
+        if (window.isGM&&!scoutView) {
             const locationWorldRules = await Server.getWorldRules(currentLobbyId, { signal }).catch(() => ({ anomalies: [] }));
             if (!isCurrentSceneLoading(loadingToken)) return;
             window.locationAnomalyCatalog = locationWorldRules.anomalies || [];
@@ -1645,6 +1646,7 @@ window.exitLocation = function() {
     if (window.locationLightingHistoryListener) window.removeEventListener('location-editor-lighting-applied', window.locationLightingHistoryListener);
     delete window.locationLightingHistoryListener;
     window.currentLocationId = null;
+    window.locationScoutView=null;
     window.currentLocationCharacterId = null;
 
     setLocationViewActive(false);

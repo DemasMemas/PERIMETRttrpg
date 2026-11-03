@@ -4,7 +4,7 @@ from sqlalchemy.orm.attributes import flag_modified
 from app.services.effects import apply_effect_to_health,normalize_effect_list
 
 
-def ignite(target,rounds,*,source,damage=50,threshold=35,inclusive=False,extinguish_difficulty_modifier=0):
+def ignite(target,rounds,*,source,damage=50,threshold=35,inclusive=False,extinguish_difficulty_modifier=0,source_character_id=None):
     health=target.character.data.setdefault('health',{})
     previous=[e for e in normalize_effect_list(health.get('effects') or [])
               if e['type']=='burning' and e.get('source')==source and e.get('active',True)]
@@ -12,7 +12,7 @@ def ignite(target,rounds,*,source,damage=50,threshold=35,inclusive=False,extingu
     apply_effect_to_health(health,{'type':'burning','name':'Горение','remaining':rounds,
         'tick':'round_end','source':source,'damage_per_round':damage,
         'thermal_threshold':threshold,'threshold_inclusive':inclusive,
-        'extinguish_difficulty_modifier':extinguish_difficulty_modifier})
+        'extinguish_difficulty_modifier':extinguish_difficulty_modifier,'source_character_id':source_character_id})
     flag_modified(target.character,'data')
 
 
@@ -96,9 +96,17 @@ def tick(target,round_number):
         if isinstance(item,dict):
             CombatService._damage_armor_item(item,CombatService._template_attributes(item),damage)
     if harmful:
+        was_alive=CombatService._character_condition(data)['state']!='dead'
         body_damage=max(e.get('damage_per_round') or 50 for e in harmful)
         CombatService._apply_general_damage(target,body_damage,round_number=round_number,
             source='burning',cause_stress=False)
-        apply_effect_to_health(target.character.data['health'],{'type':'pain','value':2,'source':'burning'})
+        apply_effect_to_health(target.character.data['health'],{'type':'pain','value':2,'source':'burning'},character_data=target.character.data)
         CombatService.apply_stress_trigger(target,1,trigger='burning')
+        source=next((e.get('source_character_id') for e in harmful if e.get('source_character_id') and e.get('damage_per_round',50)==body_damage),None)
+        if source:
+            from app.extensions import db
+            from app.models import LocationCharacter
+            from app.services.character_rules import after_kill
+            attacker=LocationCharacter.query.filter_by(location_id=target.location_id,character_id=source).first()
+            if attacker:after_kill(attacker,target,was_alive)
     flag_modified(target.character,'data')

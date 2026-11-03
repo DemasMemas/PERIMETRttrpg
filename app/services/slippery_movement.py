@@ -134,7 +134,7 @@ def resolve_route(location, actor, path, mode, posture, climb_payment, maximum_d
     remaining_distance = max(0, maximum_distance - (actor.movement_distance_this_turn or 0))
     start_cell = (math.floor(actor.pos_x + .5), math.floor(actor.pos_y + .5), actor.floor_level or 0)
     if start_cell not in ice and not any(tuple(part['cell']) in ice for part in parts):
-        profile = CombatService._movement_route_cost(path, mode, posture)
+        profile = CombatService._movement_route_cost(path, mode, posture,actor.character.data)
         fees = CombatService._climb_payment_profile(actor.character.data, path.get('climbs') or (
             [{'base_cost':path['climb_cost'], 'category':'high' if path['climb_cost'] >= 12 else 'low'}]
             if path.get('climb_cost') else []))
@@ -164,7 +164,7 @@ def resolve_route(location, actor, path, mode, posture, climb_payment, maximum_d
         events = part.get('climbs') or []
         fees = CombatService._climb_payment_profile(actor.character.data, events)
         fee = fees['movement_points'] if climb_payment == 'movement' else 0
-        travel = CombatService._movement_route_cost({'distance': part['distance'], 'cost': part['cost']}, mode, posture)['movement_points']
+        travel = CombatService._movement_route_cost({'distance': part['distance'], 'cost': part['cost']}, mode, posture,actor.character.data)['movement_points']
         available = max(0, actor.movement_points_current - spent - fee)
         take = min(1., available / travel if travel > EPS else 1.,
                    remaining_distance / part['distance'] if part['distance'] > EPS else 1.)

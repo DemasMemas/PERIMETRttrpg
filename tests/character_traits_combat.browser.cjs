@@ -60,5 +60,6 @@ module.exports=async({page,peer,request,token,lobby,character,rules,safeSession,
     state=await request(url+'/combat',null,token,'GET');
     assert.equal(state.round_number,4);assert.equal(state.current_character.action_points_current,5,'с четвёртого раунда бонус ОД закончился');
     await request(url+'/combat/end',{},token);
+    await require('./character_traits_runtime.browser.cjs')({page,peer,request,token,lobby,location,url,rules,safeSession,click,partnerCharacter:character});
     fs.writeFileSync(path.join(safeSession.artifacts,'character-traits-combat.json'),JSON.stringify({scene:'копия Припяти',bulkInitiativeClear:true,initiatorPreserved:true,firstRoundAp:6,freeSwing:true,discountedBlock:true,liveShotBothClients:true,roundFourAp:5},null,2));
 };

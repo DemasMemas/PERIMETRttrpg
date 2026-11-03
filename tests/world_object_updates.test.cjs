@@ -60,7 +60,7 @@ function setup() {
     let frameId = 0;
     const landmarkTypes = ['forest', 'hamlet', 'village', 'factory', 'base', 'camp'];
     const shared = { dispose() { throw new Error('shared resource disposed'); } };
-    const context = vm.createContext({
+    const context = vm.createContext({refreshWorldIceSurface() {},clearWorldIceSurface() {},
         CHUNK_SIZE: 32, chunksMap: new Map(), sampleWorldGroundHeight: () => 1,
         THREE: { Vector3, Object3D, InstancedMesh, InstancedBufferAttribute: class {},
             SphereGeometry: class {}, MeshBasicMaterial: class {}, Color: class {},

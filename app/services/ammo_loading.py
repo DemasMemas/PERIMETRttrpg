@@ -111,6 +111,8 @@ def _validate_combat_payment(data, request, target, source, quantity, fixed, dev
             tariff = [(2, 0), (1, 1)]
         else:
             tariff = [(_fixed_weapon_loading_cost(data, target, quantity, prepared), 0)]
+        from app.services.character_traits import action_cost
+        tariff=[(action_cost(data,'reload',ap) if ap else 0,free) for ap,free in tariff]
         groups.append(tariff)
     else:
         target_id = target.get('id') or '.'.join(map(str, request['target_path']))
@@ -247,6 +249,9 @@ def validate_loading(data, request, *, combat=False):
             if quantity not in (1, 3):
                 raise ValidationError('Россыпью заряжают по 1 или 3 патрона')
             minimum = 2 if quantity == 3 else 1
+        if fixed:
+            from app.services.character_traits import action_cost
+            minimum=action_cost(data,'reload',minimum)
         if ap + free < minimum:
             raise ValidationError('Не оплачена зарядка патронов')
         _validate_combat_payment(data, request, target, source, quantity, fixed, device)

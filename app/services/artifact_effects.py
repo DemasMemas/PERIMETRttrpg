@@ -179,10 +179,8 @@ def apply_artifact_world_movement(character_data):
         )
     pain_delta = profile['pain_per_movement']
     if pain_delta:
-        health['painLevel'] = max(
-            0,
-            int(health.get('painLevel') or 0) + pain_delta,
-        )
+        from app.services.effects import apply_effect_to_health
+        apply_effect_to_health(health,{'type':'pain','value':pain_delta,'source':'artifact_movement'},character_data=character_data)
     after = {key: health.get(key) for key in before}
     return {
         'changed': before != after,

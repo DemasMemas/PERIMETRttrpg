@@ -1,0 +1,200 @@
+const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path');
+
+module.exports=async({page,peer,request,token,lobby,location,url,rules,safeSession,click,partnerCharacter})=>{
+    const skills=Object.fromEntries(Object.entries(rules.skills).map(([group,items])=>[group,Object.fromEntries(Object.keys(items).map(key=>[key,{base:10,xp:0}]))]));
+    const data={basic:{background:{name:'Хирург'}},skills,features:{specialTraits:[{name:'Микроскопическая точность'}]},
+        health:{current:700,max:700,painLevel:0,effects:[],zones:{head:{current:100,max:100},chest:{current:200,max:200},leftArm:{current:0,max:100}}},
+        inventory:{pockets:[],backpack:[]},equipment:{},weapons:[{id:'runtime-sniper',name:'Проверочная снайперская винтовка',category:'weapon',subcategory:'Снайперские винтовки',
+            accuracy:100,ergonomics:100,damage:20,range:20,durability:100,maxDurability:100,ammo:10,fixedMagazine:true,
+            attributes:{damage:20,accuracy:100,range:20,min_strength:0,noise:0,magazine_size:10}}]};
+    const actor=await request(`/lobbies/${lobby.id}/characters`,{name:'Проверка действующих свойств',data},token);
+    const patient=await request(`/lobbies/${lobby.id}/characters`,{name:'Цель снайперского выбора',data:{skills,health:{current:700,max:700,effects:[]}}},token);
+    await request(url+'/spawn_character',{character_id:actor.id,tile_x:41,tile_y:48},token);
+    await request(url+'/spawn_character',{character_id:patient.id,tile_x:41,tile_y:50},token);
+    const screenshot=async name=>fs.writeFileSync(path.join(safeSession.artifacts,name+'.png'),Buffer.from((await page.call('Page.captureScreenshot',{format:'png'})).data,'base64'));
+    await page.evaluate(`window.openCharacterSheet(${actor.id},'basic')`);
+    await page.until('document.querySelector(".surgeon-menu-btn")','действие Хирурга в листе');
+    await click('.surgeon-menu-btn');
+    await page.until('document.querySelector(".surgeon-reduction")','Хирург доступен без предметов');
+    await page.evaluate(`(()=>{const select=document.querySelector('.surgeon-reduction [name=patient]');select.value='${actor.id}';select.dispatchEvent(new Event('change',{bubbles:true}))})()`);
+    await page.until('document.querySelector(".surgeon-reduction [name=limb]")?.value==="leftArm"&&!document.querySelector(".surgeon-reduction [type=submit]").disabled','выбрана выбитая рука');
+    await screenshot('surgeon-without-kit');
+    await click('.surgeon-reduction [type=submit]');
+    await page.until('!document.querySelector(".surgeon-reduction")?.getClientRects().length','вправление выполнено');
+    let saved=await request(`/lobbies/characters/${actor.id}`,null,token,'GET');
+    assert.equal(saved.data.health.zones.leftArm.current,1);assert.equal(saved.data.health.painLevel,5);
+    await request(`/lobbies/characters/${actor.id}`,{data:{...saved.data,health:{...saved.data.health,painLevel:0}}},token,'PUT');
+    let state=await request(url+'/combat',null,token,'GET');
+    const actorId=state.characters.find(c=>c.character_id===actor.id).location_character_id;
+    const targetId=state.characters.find(c=>c.character_id===patient.id).location_character_id;
+    state=await request(url+'/combat/start',{location_character_ids:[actorId,targetId],initiator_location_character_id:actorId,initiator_first:true},token);
+    const action=payload=>request(url+'/combat/action',{location_character_id:actorId,...payload},token);
+    await action({action_key:'draw_weapon',weapon_index:0});
+    await action({action_key:'aim',weapon_index:0,target_character_id:patient.id});
+    state=await request(url+'/combat',null,token,'GET');
+    const cost=state.current_character.weapon_ergonomics[0].aimed_shot_action_points;
+    await page.evaluate(`window.openCharacterSheet(${actor.id},'equipment')`);
+    await page.until('document.querySelector("#sheet-tab-equipment")?.textContent.includes("Проверочная снайперская винтовка")','снайперское оружие в листе');
+    await page.evaluate(`void window.useWeaponFromEquipment(0,'aimed',1,${cost})`);
+    await page.until('document.querySelector("#consumable-application-modal")?.textContent.includes("Микроскопическая точность")','объявление снайперского выстрела');
+    await click('#consumable-application-modal .cancel-btn');
+    await page.evaluate('window.closeCharacterSheet()');
+    let shot;
+    for(let attempt=0;attempt<5;attempt++){
+        state=await request(url+'/combat',null,token,'GET');
+        if(state.current_character.action_points_current<cost+1){
+            await request(url+'/combat/end_turn',{location_character_id:actorId},token);
+            await request(url+'/combat/end_turn',{location_character_id:targetId},token);
+            await action({action_key:'aim',weapon_index:0,target_character_id:patient.id});
+        }
+        shot=await action({action_key:'attack',weapon_index:0,fire_mode:'aimed',shot_count:1,action_points:cost+1,
+            target_character_id:patient.id,target_zone:'head',attribute_choice:{sniperMode:'precision'}});
+        if(shot.character.sniper_trauma_choices?.length)break;
+    }
+    assert.ok(shot.character.sniper_trauma_choices?.length,'настоящий выстрел породил выбор травмы');
+    const rolled=shot.character.sniper_trauma_choices[0].original_roll;
+    assert.deepEqual(shot.character.sniper_trauma_choices[0].cards.map(card=>card.roll),[-1,0,1].map(offset=>(rolled+offset+19)%20+1),'таблица замыкается по кругу');
+    for(const client of [page,peer])await client.until('document.querySelectorAll("#sniper-trauma-choice .sniper-trauma-card").length===3','три карточки у обоих клиентов');
+    await screenshot('sniper-three-trauma-cards');
+    page.events.delete('Page.loadEventFired');
+    await page.call('Page.reload');
+    for(let attempt=0;attempt<100&&!page.events.has('Page.loadEventFired');attempt++)await new Promise(resolve=>setTimeout(resolve,100));
+    assert.ok(page.events.has('Page.loadEventFired'),'новый документ загружен');
+    await page.until('Boolean(window.openCharacterSheet)','приложение после перезагрузки');
+    await page.evaluate(`(async()=>{window.L=await import('/static/js/locationScene.js');await enterLocation(${location.id})})()`);
+    await page.until('document.querySelectorAll("#sniper-trauma-choice .sniper-trauma-card").length===3','выбор сохранён после перезагрузки');
+    await click('#sniper-trauma-choice .sniper-trauma-card[data-index="1"]');
+    for(const client of [page,peer])await client.until('!document.getElementById("sniper-trauma-choice")','один выбор доставлен обоим клиентам');
+    state=await request(url+'/combat',null,token,'GET');
+    assert.equal(state.characters.find(c=>c.character_id===actor.id).sniper_trauma_choices.length,0);
+    const after=await request(`/lobbies/characters/${patient.id}`,null,token,'GET');
+    assert.equal(after.data.health.lastTrauma.roll,shot.character.sniper_trauma_choices[0].original_roll);
+    await request(url+'/combat/end',{},token);
+    saved=await request(`/lobbies/characters/${actor.id}`,null,token,'GET');
+    const socialSkills=structuredClone(saved.data.skills);socialSkills.social.persuasion={base:20};socialSkills.social.charisma={base:11};
+    await request(`/lobbies/characters/${actor.id}`,{data:{...saved.data,basic:{...saved.data.basic,background:{name:'Балабол'}},skills:socialSkills,
+        features:{specialTraits:[{name:'Блатной жаргон'}]}}},token,'PUT');
+    const partner=partnerCharacter;
+    assert.ok(partner,'собеседник доступен в комнате');
+    const partnerSaved=await request(`/lobbies/characters/${partner.id}`,null,token,'GET');
+    await request(`/lobbies/characters/${partner.id}`,{data:{...partnerSaved.data,basic:{...partnerSaved.data.basic,tags:['Бандит']}}},token,'PUT');
+    await page.evaluate(`window.openCharacterSheet(${actor.id},'skills')`);
+    await page.until('document.querySelector("#sheet-tab-skills")?.textContent.includes("Убеждение")','социальные навыки открыты');
+    await page.evaluate(`void window.rollSkill('social.persuasion','Убеждение')`);
+    await page.until('document.getElementById("social-check-modal")','проверка с выбором собеседника');
+    await page.evaluate(`(()=>{const form=document.querySelector('#social-check-modal form');form.elements.target.value='${partner.id}';form.elements.difficulty.value='1'})()`);
+    await click('#social-check-modal [type=submit]');
+    await page.until('document.querySelector(".social-check-result")?.textContent.includes("Балабол: +0")','первая проверка без накопленного бонуса');
+    await click('#social-check-modal [type=submit]');
+    await page.until('document.querySelector(".social-check-result")?.textContent.includes("Балабол: +1")','вторая проверка с накопленным бонусом');
+    assert.ok(await page.evaluate('document.querySelector(".social-check-result").textContent.includes("Блатной жаргон")'));
+    await screenshot('social-check-tags-memory');
+    await click('#social-check-modal .social-check-close');
+    saved=await request(`/lobbies/characters/${actor.id}`,null,token,'GET');
+    assert.equal(saved.data.health.combatMeta.socialMemory[String(partner.id)].skills['skills.social.persuasion'],2);
+    await page.evaluate('window.closeCharacterSheet()');
+    await request(`/lobbies/characters/${actor.id}`,{data:{...saved.data,basic:{...saved.data.basic,background:{name:'Один для бандитов\nВторой для мутантов'}},
+        inventory:{...saved.data.inventory,backpack:[{id:'stored-choice-gun',name:'Оружие в рюкзаке',category:'weapon',quantity:1}]}}},token,'PUT');
+    await page.evaluate(`window.openCharacterSheet(${actor.id},'basic')`);
+    await page.until('document.querySelectorAll(".target-weapon-choices select").length===2','два отдельных выбора оружия');
+    await page.evaluate(`(()=>{for(const [key,name] of [['human','Проверочная снайперская винтовка'],['mutant','Оружие в рюкзаке']]){const select=document.querySelector('[data-target-weapon='+key+']');select.value=[...select.options].find(option=>option.value&&JSON.parse(option.value).name===name).value;select.dispatchEvent(new Event('change',{bubbles:true}));}})()`);
+    await page.until(`(async()=>{const response=await fetch('/lobbies/characters/${actor.id}',{headers:{Authorization:'Bearer '+localStorage.getItem('access_token')}});const data=(await response.json()).data;return data.ruleChoices?.targetWeapons?.human==='runtime-sniper'&&data.ruleChoices?.targetWeapons?.mutant==='stored-choice-gun'})()`,'выбор экземпляров сохранён, включая оружие в рюкзаке');
+    await screenshot('background-two-owned-weapons');
+    await page.evaluate('window.closeCharacterSheet()');
+    saved=await request(`/lobbies/characters/${actor.id}`,null,token,'GET');
+    await request(`/lobbies/characters/${actor.id}`,{data:{...saved.data,basic:{...saved.data.basic,background:{name:'Охотник',choices:{favoredMutant:'Кабан'}}},
+        features:{specialTraits:[{name:'Человек-куст'}]}}},token,'PUT');
+    await page.evaluate(`window.openCharacterSheet(${actor.id},'skills')`);
+    await page.until('document.querySelector("#sheet-tab-skills")?.textContent.includes("Скрытность")','Скрытность открыта');
+    await page.evaluate(`void window.rollSkill('other.stealth','Скрытность')`);
+    await page.until('document.querySelector("#social-check-modal [name=vegetation]")','выбор растительного укрытия');
+    await page.evaluate(`(()=>{const form=document.querySelector('#social-check-modal form');form.elements.vegetation.checked=true;form.elements.related_favored.checked=true;form.elements.difficulty.value='1'})()`);
+    await click('#social-check-modal [type=submit]');
+    await page.until('document.querySelector(".social-check-result")?.textContent.includes("Человек-куст")&&document.querySelector(".social-check-result")?.textContent.includes("Избранный мутант")','оба контекстных бонуса применены');
+    await screenshot('hunter-vegetation-context');
+    await click('#social-check-modal .social-check-close');await page.evaluate('window.closeCharacterSheet()');
+    saved=await request(`/lobbies/characters/${actor.id}`,null,token,'GET');
+    await request(`/lobbies/characters/${actor.id}`,{data:{...saved.data,features:{specialTraits:[{name:'Истинное зрение'}]}}},token,'PUT');
+    const original=await request(`/lobbies/characters/${patient.id}`,null,token,'GET');
+    await request(`/lobbies/characters/${patient.id}`,{data:{...original.data,is_mutant:true,basic:{mutant_type:'Галлюцинат'},
+        mutant:{profile:'Галлюцинат',traits:['Клонирование. До 2 копий. Копия наносит 10 Пси урона.']},
+        health:{current:700,max:700,effects:[],zones:Object.fromEntries(['head','chest','abdomen','leftArm','rightArm','leftLeg','rightLeg'].map(area=>[area,{current:100,max:100}]))}}},token,'PUT');
+    await request(url+'/combat/start',{location_character_ids:[targetId,actorId],initiator_location_character_id:targetId,initiator_first:true},token);
+    const cloneResult=await request(url+'/combat/action',{location_character_id:targetId,action_key:'mutant_clone'},token);
+    assert.equal(cloneResult.mutant_action.clone.name,patient.name,'обычная подпись не выдаёт служебное имя копии');
+    await page.evaluate(`window.openCharacterSheet(${actor.id},'basic')`);
+    await page.until('document.querySelector(".true-sight-btn")','способность Истинного зрения в листе');
+    await click('.true-sight-btn');
+    await page.until('document.querySelectorAll(".true-sight-mark[data-kind=original]").length===1&&document.querySelectorAll(".true-sight-mark[data-kind=copy]").length===1','настоящая копия и её оригинал различаются');
+    assert.equal(await peer.evaluate('document.querySelectorAll(".true-sight-mark").length'),0,'личные метки не передаются другому клиенту');
+    await screenshot('true-sight-real-clone');
+    await page.evaluate(`L.enableTrueSight(${actor.id})`);
+    await page.until('!document.querySelector(".true-sight-mark")','метки можно скрыть');
+    await request(url+'/combat/end',{},token);
+    await page.evaluate('window.closeCharacterSheet()');
+    saved=await request(`/lobbies/characters/${actor.id}`,null,token,'GET');
+    await request(`/lobbies/characters/${actor.id}`,{data:{...saved.data,basic:{...saved.data.basic,background:{name:'Бригадир'}},features:{specialTraits:[]}}},token,'PUT');
+    const formerMutant=await request(`/lobbies/characters/${patient.id}`,null,token,'GET');
+    const humanAgain=structuredClone(formerMutant.data);delete humanAgain.mutant;delete humanAgain.is_mutant;delete humanAgain.isMutant;
+    humanAgain.basic={};await request(`/lobbies/characters/${patient.id}`,{data:humanAgain},token,'PUT');
+    await request(url+'/teams',{assignments:[{location_character_id:actorId,team_name:'Проверочный отряд'},{location_character_id:targetId,team_name:'Проверочный отряд'}]},token,'PUT');
+    await page.evaluate(`window.openCharacterSheet(${actor.id},'basic')`);
+    await page.until('document.querySelector(".brigadier-order-btn")','кнопка Бригадира в настоящем листе');
+    await click('.brigadier-order-btn');
+    await page.until('document.querySelector("#trait-action-modal [name=target]")','выбор союзника');
+    await page.evaluate(`(()=>{const form=document.querySelector('#trait-action-modal form');form.elements.target.value='${patient.id}';form.elements.detailed.value='yes';form.elements.text.value='Осмотри проход'})()`);
+    await click('#trait-action-modal [type=submit]');
+    await peer.until('document.querySelector(".interaction-accept")?.textContent==="Подчиниться"','указание доставлено второму клиенту');
+    await screenshot('brigadier-order-response');
+    await click('.interaction-accept',peer);
+    for(const client of [page,peer])await client.until('!document.querySelector(".interaction-accept")?.getClientRects().length','ответ закрыл запрос обоим клиентам');
+    let recipient=await request(`/lobbies/characters/${patient.id}`,null,token,'GET');
+    assert.equal(recipient.data.health.combatMeta.brigadierOrder.advantage,true);
+    await page.evaluate(`window.openCharacterSheet(${patient.id},'skills')`);
+    await page.until('document.querySelector("#sheet-tab-skills")?.getClientRects().length','лист адресата открыт');
+    await page.evaluate(`void window.rollSkill('other.engineering','Инженерия')`);
+    await page.until('document.getElementById("social-check-modal")','следующий несоциальный бросок проходит через сервер');
+    await click('#social-check-modal [type=submit]');
+    await page.until('document.querySelector(".social-check-result")?.textContent.includes("Указание Бригадира")','бонус указания применён к настоящему броску');
+    await click('#social-check-modal .social-check-close');
+    recipient=await request(`/lobbies/characters/${patient.id}`,null,token,'GET');
+    assert.ok(!recipient.data.health.combatMeta.brigadierOrder,'бонус расходуется один раз');
+    await page.evaluate(`window.openCharacterSheet(${actor.id},'basic')`);
+    await page.until('document.querySelector(".scout-territory-btn")','осмотр доступен в листе');
+    await click('.scout-territory-btn');
+    await page.until('document.querySelector("#trait-action-modal [name=instrument]")','выбор инструмента осмотра');
+    await screenshot('scout-territory');
+    await click('#trait-action-modal [type=submit]');
+    await page.until('document.querySelector(".trait-result")?.textContent.includes("Осмотр:")','осмотр завершён настоящим броском');
+    await click('#trait-action-modal .trait-close');
+    await page.evaluate('window.closeCharacterSheet()');
+    state=await request(url+'/combat/start',{location_character_ids:[actorId,targetId],initiator_location_character_id:actorId,initiator_first:true},token);
+    await page.evaluate(`window.openCharacterSheet(${actor.id},'basic')`);
+    assert.equal(await page.evaluate('Boolean(document.querySelector(".standalone-evade-btn"))'),false,'Уклонение убрано из листа');
+    await page.evaluate('window.closeCharacterSheet()');
+    await page.evaluate('L.showCombatActionMenu(500,300,'+actor.id+')');
+    await click('.combat-radial-action[aria-label="Уклонение"]');await page.until('document.querySelector("#trait-action-modal [type=submit]")','Уклонение объявляется из боевого колеса');
+    await click('#trait-action-modal [type=submit]');
+    for(const client of [page,peer])await client.until(`L.getCombatState()?.characters?.find(c=>c.character_id===${actor.id})?.trait_state?.standaloneEvasion>=5`,'Уклонение сохранено и доставлено обоим клиентам');
+    await request(url+'/combat/end_turn',{location_character_id:actorId},token);
+    await request(url+'/combat/end_turn',{location_character_id:targetId},token);
+    state=await request(url+'/combat',null,token,'GET');
+    assert.ok(!state.characters.find(c=>c.character_id===actor.id).trait_state.standaloneEvasion,'Уклонение завершилось к своему следующему ходу');
+    await request(url+'/combat/end',{},token);
+    saved=await request(`/lobbies/characters/${actor.id}`,null,token,'GET');
+    await request(`/lobbies/characters/${actor.id}`,{data:{...saved.data,basic:{...saved.data.basic,background:{name:'Пожарный'}}}},token,'PUT');
+    state=await request(url+'/combat',null,token,'GET');
+    const thirdId=state.characters.find(c=>c.character_id===partner.id).location_character_id;
+    await request(url+'/teams',{assignments:[{location_character_id:actorId,team_name:'Проверочный отряд'},{location_character_id:targetId,team_name:'Проверочный отряд'},{location_character_id:thirdId,team_name:'Проверочный отряд'}]},token,'PUT');
+    for(const client of [page,peer]){
+        await client.evaluate(`window.openCharacterSheet(${actor.id},'skills')`);
+        await client.until('document.querySelector(\'[name="skills.physical.strength.bonus"]\')?.dataset.transientBonus==="2"','два союзника дают временные +2 в листе');
+    }
+    await request(url+'/spawn_character',{character_id:partner.id,tile_x:2,tile_y:2,force_relocate:true},token);
+    for(const client of [page,peer])await client.until('document.querySelector(\'[name="skills.physical.strength.bonus"]\')?.dataset.transientBonus==="0"','перемещение союзника убрало бонус у обоих клиентов');
+    saved=await request(`/lobbies/characters/${actor.id}`,null,token,'GET');
+    assert.equal(Number(saved.data.skills.physical.strength.bonus)||0,0,'временный бонус не записывается в постоянный');
+    await require('./character_scout.browser.cjs')({page,peer,request,token,lobby,location,url,safeSession,click});
+    fs.writeFileSync(path.join(safeSession.artifacts,'traits-runtime.json'),JSON.stringify({scene:'копия Припяти',surgeonWithoutKit:true,surgeonLimbHp:1,surgeonPain:5,
+        sniperAnnouncement:true,threeCardsBothClients:true,preservedAfterReload:true,oneSelectionBothClients:true,cyclicTraumaTable:true,socialTargetTags:true,balabolMemory:true,twoOwnedWeaponsIncludingBackpack:true,hunterVegetationContext:true,trueSightRealClonePrivate:true,brigadierRealResponseBothClients:true,brigadierNextNonSocialRoll:true,scoutTerritoryUi:true,standaloneEvasionExpiryBothClients:true,firefighterNearbyBothClients:true},null,2));
+};

@@ -542,6 +542,7 @@ def sync_health_derived_statuses(health: Dict[str, Any]) -> Dict[str, Any]:
         return health
     effects = normalize_effect_list(health.get("effects") or [])
     combat_meta = health.setdefault("combatMeta", {})
+    health["stress"]=max(_to_float(health.get("stress"),0),min(10,max(0,_to_float(combat_meta.get("hunterStressDebt"),0))))
     tough_nut=combat_meta.get('toughNut') or {}
     health['painLevel']=max(_to_float(health.get('painLevel'),0),min(5,max(0,_to_float(tough_nut.get('minimumPain'),0))))
     intoxication = _to_float(health.get("intoxication"), 0)
@@ -642,7 +643,16 @@ def summarize_effect_impact(effect: Any) -> str:
     return f"{impact['name']}{bleeding_part}, {areas} ({treatment})"
 
 
-def _adjust_field(health: Dict[str, Any], field: str, delta: int, minimum: Optional[int] = 0, maximum: Optional[int] = None) -> None:
+def pain_gain_allowed(health,character_data):
+    from app.services.character_traits import background_is
+    if not background_is(character_data,'Дядя Толик'):return True
+    chance=max(0,min(100,100-_to_float(health.get('intoxication'),0)))
+    return chance>=100 or chance>0 and random.randint(1,100)<=chance
+
+
+def _adjust_field(health: Dict[str, Any], field: str, delta: int, minimum: Optional[int] = 0, maximum: Optional[int] = None, *, character_data=None) -> None:
+    if field=='painLevel' and delta>0 and not pain_gain_allowed(health,character_data):return
+    if field=="stress":minimum=max(minimum or 0,min(10,_to_float((health.get("combatMeta") or {}).get("hunterStressDebt"),0)))
     current = _to_int(health.get(field, 0), 0)
     health[field] = _clamp(current + delta, minimum, maximum)
 
@@ -747,7 +757,7 @@ def health_blocks_new_stress(health: Dict[str, Any]) -> bool:
     )
 
 
-def apply_effect_to_health(health: Dict[str, Any], raw_effect: Any) -> Dict[str, Any]:
+def apply_effect_to_health(health: Dict[str, Any], raw_effect: Any, *, character_data=None) -> Dict[str, Any]:
     effect = normalize_effect(raw_effect)
     if effect['type']=='concussion':
         current=normalize_effect_list(health.get('effects') or [])
@@ -809,6 +819,7 @@ def apply_effect_to_health(health: Dict[str, Any], raw_effect: Any) -> Dict[str,
 
     if effect_type == "pain":
         pain_delta = int(signed_value) if float(signed_value).is_integer() else signed_value
+        if pain_delta>0 and not pain_gain_allowed(health,character_data):return health
         blockers = [item for item in active_effects if item.get("blocks_new_pain") and item.get("active", True)]
         if pain_delta > 0 and blockers:
             meta = health.setdefault("combatMeta", {})
@@ -921,7 +932,7 @@ def apply_effect_to_health(health: Dict[str, Any], raw_effect: Any) -> Dict[str,
     return health
 
 
-def tick_effect(effect: Dict[str, Any], phase: str = "turn_end") -> Dict[str, Any]:
+def tick_effect(effect: Dict[str, Any], phase: str = "turn_end", *, character_data=None) -> Dict[str, Any]:
     normalized = normalize_effect(effect)
     if not normalized.get("active", True):
         return normalized
@@ -932,7 +943,7 @@ def tick_effect(effect: Dict[str, Any], phase: str = "turn_end") -> Dict[str, An
     return normalized
 
 
-def apply_periodic_effects_to_health(health: Dict[str, Any], effects: Iterable[Any], phase: str = "turn_end") -> Dict[str, Any]:
+def apply_periodic_effects_to_health(health: Dict[str, Any], effects: Iterable[Any], phase: str = "turn_end", *, character_data=None) -> Dict[str, Any]:
     if not isinstance(health, dict):
         return health
     for raw_effect in effects or []:
@@ -959,12 +970,12 @@ def apply_periodic_effects_to_health(health: Dict[str, Any], effects: Iterable[A
                     continue
                 field = str(adjustment.get("field") or "").strip()
                 if field:
-                    _adjust_field(health, field, _to_float(adjustment.get("delta", 0), 0), adjustment.get("min", 0), adjustment.get("max"))
+                    _adjust_field(health, field, _to_float(adjustment.get("delta", 0), 0), adjustment.get("min", 0), adjustment.get("max"),character_data=character_data)
     sync_health_derived_statuses(health)
     return health
 
 
-def apply_expired_effects_to_health(health: Dict[str, Any], effects: Iterable[Any], phase: str = "turn_end") -> Dict[str, Any]:
+def apply_expired_effects_to_health(health: Dict[str, Any], effects: Iterable[Any], phase: str = "turn_end", *, character_data=None) -> Dict[str, Any]:
     activated: List[Dict[str, Any]] = []
     cured_fracture_areas = set()
     for raw_effect in effects or []:
@@ -978,14 +989,14 @@ def apply_expired_effects_to_health(health: Dict[str, Any], effects: Iterable[An
                 continue
             field = str(adjustment.get("field") or "").strip()
             if field:
-                _adjust_field(health, field, _to_float(adjustment.get("delta", 0), 0), adjustment.get("min", 0), adjustment.get("max"))
+                _adjust_field(health, field, _to_float(adjustment.get("delta", 0), 0), adjustment.get("min", 0), adjustment.get("max"),character_data=character_data)
         if effect.get("type") in {"delayed_adjustment", "delayed_treatment"}:
             for adjustment in effect.get("adjustments") or []:
                 if not isinstance(adjustment, dict):
                     continue
                 field = str(adjustment.get("field") or "").strip()
                 if field:
-                    _adjust_field(health, field, _to_float(adjustment.get("delta", 0), 0), adjustment.get("min", 0), adjustment.get("max"))
+                    _adjust_field(health, field, _to_float(adjustment.get("delta", 0), 0), adjustment.get("min", 0), adjustment.get("max"),character_data=character_data)
         for activated_effect in effect.get("activate_effects") or effect.get("activateEffects") or []:
             if isinstance(activated_effect, dict):
                 activated.append(activated_effect)
@@ -999,7 +1010,7 @@ def apply_expired_effects_to_health(health: Dict[str, Any], effects: Iterable[An
             meta = health.setdefault("combatMeta", {})
             blocked = _to_float(meta.pop("blockedPain", 0), 0)
             returned = blocked * _to_float(effect.get("return_fraction", 1), 1)
-            _adjust_field(health, "painLevel", returned, 0, 10)
+            _adjust_field(health, "painLevel", returned, 0, 10,character_data=character_data)
             _adjust_field(health, "exhaustion", _to_float(effect.get("exhaustion_on_expire", 0), 0), 0, 10)
         if effect.get("type") == "temporary_limb_restoration" and effect.get("restore_on_expire", True):
             zone = (health.get("zones") or {}).get(effect.get("area"))
@@ -1014,7 +1025,7 @@ def apply_expired_effects_to_health(health: Dict[str, Any], effects: Iterable[An
                 cured_fracture_areas.add(area)
             _restore_limb_health_and_pool(health, area, effect.get("restore_limb_health"))
     for activated_effect in activated:
-        apply_effect_to_health(health, activated_effect)
+        apply_effect_to_health(health, activated_effect,character_data=character_data)
     if cured_fracture_areas:
         health["effects"] = [
             effect for effect in normalize_effect_list(health.get("effects") or [])
@@ -1047,6 +1058,7 @@ def advance_timed_effects(
     elapsed_seconds: float,
     *,
     include_turn_effects: bool = False,
+    character_data=None,
 ) -> List[Dict[str, Any]]:
     """Advance real-time effects without simulating thousands of combat ticks."""
     unit_seconds = {"second": 1, "minute": 60, "movement": 600, "hour": 3600}
@@ -1127,7 +1139,7 @@ def advance_timed_effects(
                 _adjust_field(
                     health, str(adjustment["field"]),
                     _to_float(adjustment.get("delta", 0), 0),
-                    adjustment.get("min", 0), adjustment.get("max"),
+                    adjustment.get("min", 0), adjustment.get("max"),character_data=character_data,
                 )
         if effect.get("type") in {"delayed_adjustment", "delayed_treatment", "deferred_adjustment"}:
             for adjustment in effect.get("adjustments") or []:
@@ -1135,7 +1147,7 @@ def advance_timed_effects(
                     _adjust_field(
                         health, str(adjustment["field"]),
                         _to_float(adjustment.get("delta", 0), 0),
-                        adjustment.get("min", 0), adjustment.get("max"),
+                        adjustment.get("min", 0), adjustment.get("max"),character_data=character_data,
                     )
         activated.extend(
             item for item in (effect.get("activate_effects") or effect.get("activateEffects") or [])
@@ -1216,7 +1228,7 @@ def advance_timed_effects(
         ]
     health["effects"] = survivors
     for effect in activated:
-        apply_effect_to_health(health, effect)
+        apply_effect_to_health(health, effect,character_data=character_data)
     sync_health_derived_statuses(health)
     return normalize_effect_list(health.get("effects") or [])
 

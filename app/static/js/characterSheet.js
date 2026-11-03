@@ -1,5 +1,5 @@
 import { hearingModifier } from './hearingRules.js';
-import { passiveTraits, traitCount, backgroundIs, addLearningXp, backpackItemVolume, pocketCapacity } from './characterTraits.js';
+import { passiveTraits, traitCount, backgroundIs, addLearningXp, backpackItemVolume, pocketCapacity,facialProfile,carriedWeaponEntries,ruleText } from './characterTraits.js';
 // static/js/characterSheet.js
 /*
  * ===================================================================
@@ -1322,7 +1322,9 @@ async function applyRemoteSheetData(remoteData, characterId = currentCharacterId
     const structuralTouches = root => changes.structuralPaths.some(path => pathTouches(path, root));
     const missingTouches = root => [...missingFields].some(path => pathTouches(path, root));
     const tasks = [];
-    const rerenderBasic = structuralTouches('basic') || missingTouches('basic');
+    const rerenderBasic = structuralTouches('basic') || missingTouches('basic')
+        || touches('health') && backgroundIs(remoteData,'Бригадир')
+        || backgroundIs(remoteData,'Один для бандитов\nВторой для мутантов') && ['weapons','equipment','inventory','ruleChoices'].some(touches);
 
     if ((touches('health') || touches('skills.physical.will')) && !rerenderBasic) {
         refreshHealthPanel(remoteData);
@@ -1911,12 +1913,15 @@ function getSkillEffectiveValue(data, skillPath) {
     const equipmentValue = skillPath === 'physical.strength'
         ? getExoskeletonPowerProfile(data).strengthLevelBonus
         : 0;
-    return (Number.isFinite(base) ? base : 0) + bonus + temporaryValue + equipmentValue;
+    return (Number.isFinite(base) ? base : 0) + bonus + temporaryValue + equipmentValue
+        +(skillPath==='social.charisma'?facialProfile(data).charismaLevel:0)
+        +(backgroundIs(data,'Пожарный')&&data.health?.combatMeta?.firefighterNearby&&['physical.strength','physical.agility'].includes(skillPath)?2:0);
 }
 
 function getSkillRollModifier(data, skillPath) {
     const effectiveValue = getSkillEffectiveValue(data, skillPath);
     return Math.floor((effectiveValue - 10) / 2)
+        +(skillPath==='social.charisma'?facialProfile(data).charismaBonus:0)
         + getHealthRollModifier(data, skillPath);
 }
 
@@ -1940,6 +1945,7 @@ function getIntoxicationProfile(data) {
 function getHealthRollModifier(data, skillPath, options = {}) {
     const health = data?.health || {};
     let modifier = 0;
+    if(['physical.shooting','physical.melee','physical.agility'].includes(skillPath))modifier+=facialProfile(data)[skillPath.split('.').at(-1)]||0;
     if (options.includePain !== false) modifier -= Math.max(0,(Number(health.painLevel)||0)-passiveTraits(data).painIgnored-passiveTraits(data).painReduction);
     modifier -= Number(health.exhaustion) || 0;
     const bleeding = health.bleeding || {};
@@ -1963,7 +1969,7 @@ function getHealthRollModifier(data, skillPath, options = {}) {
         const penalties = zone.penalties || {};
         modifier -= Number(zone.rollPenalty ?? zone.roll_penalty ?? zone.skillPenalty ?? 0) || 0;
         modifier -= Number(penalties.all ?? penalties.roll ?? 0) || 0;
-        modifier -= Number(penalties[skillPath] ?? 0) || 0;
+        modifier -= Number(penalties[skillPath] ?? penalties[`skills.${skillPath}`] ?? 0) || 0;
         modifier -= Number(skillPath.startsWith('physical.') ? penalties.physical : penalties.other) || 0;
     });
 
@@ -2171,7 +2177,7 @@ function getMovementPenaltyBreakdown(data, suppliedWeight = null) {
     }, fractureInjuries);
     const intoxicationPenalty = getIntoxicationProfile(data).movement;
     return {
-        total: Math.max(0, armorPenalty + helmetPenalty + weightPenalty + temporary + injuries + intoxicationPenalty+passiveTraits(data).movementPenalty),
+        total: armorPenalty + helmetPenalty + weightPenalty + temporary + injuries + intoxicationPenalty+passiveTraits(data).movementPenalty,
         totalWeight,
         weightPerPenalty,
         rawWeightPenalty,
@@ -2394,8 +2400,14 @@ async function renderBasicTab(data) {
 
         <hr>
         <h4>Предыстория</h4>
+        ${backgroundIs(data,'Бригадир')?`<button type="button" class="btn btn-secondary brigadier-order-btn" onclick="performCharacterTraitAction('brigadier_order')">Дать указание союзнику</button>`:''}
+        ${traitCount(data,'Истинное зрение')?'<button type="button" class="btn btn-secondary true-sight-btn" onclick="activateTrueSight()">Истинное зрение: различить оригиналы и копии</button>':''}
+        ${backgroundIs(data,'Хирург') ? '<button type="button" class="btn btn-secondary surgeon-menu-btn" onclick="openSurgeonMenu()">Вправить конечность без набора · 2 ОД</button>' : ''}
+        ${data.health?.combatMeta?.brigadierOrder?'<p>Принято указание: следующий бросок +3'+(data.health.combatMeta.brigadierOrder.advantage?' и Преимущество':'')+'</p>':''}
+        ${backgroundIs(data,'Бригадир')?Object.entries(data.health?.combatMeta?.brigadierRefusals||{}).map(([id,entry])=>`<div style="margin:8px 0"><span>Отказ от указания · персонаж №${Number(id)}</span> ${entry.choice_pending?`<button class="btn btn-secondary" type="button" onclick="resolveBrigadierRefusal(${Number(id)},'stress')">Получить 1 стресс</button><button class="btn btn-secondary" type="button" onclick="resolveBrigadierRefusal(${Number(id)},'provoke')">Провоцировать</button>`:entry.must_provoke?`<button class="btn btn-secondary" type="button" onclick="resolveBrigadierRefusal(${Number(id)},'provoked')">Провокация разыграна</button>`:''}</div>`).join(''):''}
+        ${backgroundIs(data,'Один для бандитов\nВторой для мутантов') ? `<div class="target-weapon-choices" style="display:grid;gap:8px;margin-bottom:12px;">${[['human','Против людей: +2, против мутантов: −5'],['mutant','Против мутантов: +2, против людей: −5']].map(([key,label])=>`<label>${label}<select class="form-control" data-target-weapon="${key}" onchange="setBackgroundTargetWeapon('${key}',this.value)"><option value="">Не выбрано</option>${carriedWeaponEntries(data).map(({weapon,path},index)=>`<option value="${escapeHtml(JSON.stringify({path,id:weapon.id||null,name:weapon.name}))}" ${weapon.id && data.ruleChoices?.targetWeapons?.[key]===weapon.id?'selected':''}>${escapeHtml(weapon.name||'Оружие')} · ${index+1}</option>`).join('')}</select></label>`).join('')}<small>Можно переназначить. Бонус действует только у владельца этой предыстории.</small></div>` : ''}
         <div><strong>Метки персонажа</strong><p>${['Военный','Бандит','Торговец','Проходил военную службу'].map(tag=>`<label style="margin-right:12px"><input type="checkbox" ${basic.tags?.includes(tag)?'checked':''} ${window.isGM?'':'disabled'} onchange="setCharacterRuleTag('${tag}',this.checked)"> ${tag}</label>`).join('')}</p>${(basic.tags||[]).filter(t=>!['Военный','Бандит','Торговец','Проходил военную службу'].includes(t)).map(t=>`<span class="badge">${escapeHtml(t)}</span>`).join(' ')}</div>
-        ${data.creation?.zoneHistory?`<details><summary>Жизнь в Зоне до игры: ${Number(data.creation.zoneHistory.months)} мес.</summary>${(data.creation.zoneHistory.events||[]).map(event=>`<div style="margin:10px 0"><strong>Месяц ${Number(event.month)}: ${escapeHtml(event.title)}</strong><p>${(event.details||[]).map(escapeHtml).join('<br>')}</p><p>Доход: ${(event.incomeOptions||[]).map(v=>Number(v).toLocaleString('ru-RU')).join(' или ')} руб.</p>${(event.pending||[]).map(text=>`<p>${escapeHtml(text)}</p>`).join('')}</div>`).join('')}<p>${data.creation.zoneHistory.settled?`Решения сохранены. Изменение денег от истории: ${Number(data.creation.zoneHistory.cashTotal||0).toLocaleString('ru-RU')} рублей; ${data.creation.worldEntryGranted?'учтено при входе в мир':'будет учтено при первом входе в мир'}.`:'Перед входом в мир завершите выбор Учителя и Закалки.'}</p>${data.creation.zoneHistory.settled?'':'<button type="button" class="btn" onclick="completeCreationHistory()">Завершить выбор событий</button>'}</details>`:''}
+        ${data.creation?.zoneHistory?`<details ${data.creation.zoneHistory.settled?'':'open'}><summary>Жизнь в Зоне до игры: ${Number(data.creation.zoneHistory.months)} мес.</summary>${(data.creation.zoneHistory.events||[]).filter(event=>!data.creation.zoneHistory.presentationRequired||data.creation.zoneHistory.settled||event.confirmed).map(event=>`<div style="margin:10px 0"><strong>Месяц ${Number(event.month)}: ${escapeHtml(event.title)}</strong><p>${(event.details||[]).map(escapeHtml).join('<br>')}</p><p>Доход: ${(event.incomeOptions||[]).map(v=>Number(v).toLocaleString('ru-RU')).join(' или ')} руб.</p>${(event.pending||[]).map(text=>`<p>${escapeHtml(text)}</p>`).join('')}</div>`).join('')}${data.creation.zoneHistory.settled?'':'<p>Перед входом в мир завершите историю жизни в Зоне.</p>'}${data.creation.zoneHistory.settled?'':'<button type="button" class="btn" onclick="completeCreationHistory()">Продолжить историю</button>'}</details>`:''}
         <div style="margin-bottom: 10px;">
             <label>Название</label>
             <select name="basic.background.templateId" class="form-control" style="width:100%;" onchange="fillBackgroundFromTemplate(this)">
@@ -2406,11 +2418,11 @@ async function renderBasicTab(data) {
         <div style="display: flex; gap: 10px; margin-bottom: 10px;">
             <div style="flex: 1;">
                 <label>Плюсы</label>
-                <textarea class="form-control" name="basic.background.pluses" rows="5" style="min-height: auto;">${escapeHtml(bg.pluses || '')}</textarea>
+                <textarea class="form-control" name="basic.background.pluses" rows="5" style="min-height: auto;">${escapeHtml(ruleText(bg.pluses))}</textarea>
             </div>
             <div style="flex: 1;">
                 <label>Минусы</label>
-                <textarea class="form-control" name="basic.background.minuses" rows="5" style="min-height: auto;">${escapeHtml(bg.minuses || '')}</textarea>
+                <textarea class="form-control" name="basic.background.minuses" rows="5" style="min-height: auto;">${escapeHtml(ruleText(bg.minuses))}</textarea>
             </div>
         </div>
         <div>
@@ -2429,6 +2441,7 @@ async function renderBasicTab(data) {
                 <input type="number" class="form-control number-input" name="inventory.money" value="${inv.money || 0}" style="width: 100px;">
             </div>
         </div>
+        <button type="button" class="btn btn-secondary scout-territory-btn" onclick="performCharacterTraitAction('scout_location')">Осмотреть территорию</button>
     `;
 
     // Правая колонка со здоровьем
@@ -2450,6 +2463,64 @@ async function renderBasicTab(data) {
     renderHealthTab(data, healthContainer);
     restoreSheetViewState(viewState);
 }
+
+window.updateCharacterTraitContext = function(actors) {
+    if(!currentCharacterData||!backgroundIs(currentCharacterData,'Пожарный'))return;
+    const actor=actors.find(actor=>Number(actor.character_id)===Number(currentCharacterId));if(!actor)return;
+    const meta=(currentCharacterData.health||(currentCharacterData.health={})).combatMeta||(currentCharacterData.health.combatMeta={});
+    const active=Boolean(actor.trait_state?.firefighterNearby);if(Boolean(meta.firefighterNearby)===active)return;
+    meta.firefighterNearby=active;if(document.querySelector('#sheet-tabs .tab-btn.active')?.dataset.tab==='skills')renderSkillsTab(currentCharacterData);
+};
+
+window.resolveBrigadierRefusal = async function(targetId,choice) {
+    const id=currentCharacterId;
+    try{await forceSyncCharacter();const scene=await import('./locationScene.js');
+        const state=await Server.getLocationCombatState(window.currentLobbyId,scene.getCurrentLocationId());
+        const actor=state.characters.find(actor=>Number(actor.character_id)===Number(id));
+        if(!actor)throw new Error('Персонаж не размещён');
+        const result=await Server.performLocationCombatAction(window.currentLobbyId,scene.getCurrentLocationId(),{location_character_id:actor.location_character_id,action_key:'brigadier_refusal',target_character_id:targetId,attribute_choice:choice});
+        scene.setCombatState(result.state);const saved=await Server.getCharacter(id);queueRemoteSheetData(saved.data,id);
+    }catch(error){showNotification(error.message,'system');}
+};
+
+window.performCharacterTraitAction = async function(kind) {
+    const id=currentCharacterId;
+    try{await forceSyncCharacter();if(id!==currentCharacterId)return;
+        const {showTraitAction}=await import('./traitActions.js');
+        await showTraitAction(id,currentCharacterData,kind);
+    }catch(error){showNotification(error.message||'Действие недоступно','system');}
+};
+
+window.activateTrueSight = async function(){
+    const characterId=currentCharacterId;
+    if(!window.isLocationActive){showNotification('Нужно находиться в подлокации','system');return;}
+    closeCharacterSheet();
+    try{const scene=await import('./locationScene.js');await scene.enableTrueSight(characterId);}
+    catch(error){showNotification(error.message||'Истинное зрение недоступно','system');}
+};
+
+window.openSurgeonMenu = async function(){
+    const characterId=currentCharacterId;
+    if(!window.isLocationActive){showNotification('Нужно находиться в подлокации','system');return;}
+    closeCharacterSheet();
+    const scene=await import('./locationScene.js');await scene.showMedicalConsumableMenu(characterId);
+};
+
+window.setBackgroundTargetWeapon = function(key,selection){
+    if(!['human','mutant'].includes(key))return;
+    const choices=currentCharacterData.ruleChoices||(currentCharacterData.ruleChoices={});
+    const selected=choices.targetWeapons||(choices.targetWeapons={});
+    if(selection==='')delete selected[key];
+    else{
+        const entry=JSON.parse(selection),weapon=carriedWeaponEntries(currentCharacterData).find(item=>JSON.stringify(item.path)===JSON.stringify(entry.path))?.weapon;
+        if(!weapon||entry.id&&weapon.id!==entry.id||!entry.id&&weapon.name!==entry.name){showNotification('Снаряжение изменилось. Выберите оружие заново','system');renderBasicTab(currentCharacterData);return;}
+        weapon.id ||= crypto.randomUUID();
+        const other=key==='human'?'mutant':'human';
+        if(selected[other]===weapon.id){showNotification('Выберите два разных экземпляра оружия','system');renderBasicTab(currentCharacterData);return;}
+        selected[key]=weapon.id;
+    }
+    scheduleAutoSave();
+};
 
 window.setCharacterRuleTag = function(tag,enabled){
     if(!window.isGM)return;
@@ -2498,8 +2569,8 @@ window.fillBackgroundFromTemplate = async function(select) {
     // Заполняем поля
     const plusesInput = document.querySelector('textarea[name="basic.background.pluses"]');
     const minusesInput = document.querySelector('textarea[name="basic.background.minuses"]');
-    if (plusesInput) plusesInput.value = template.attributes?.pluses || '';
-    if (minusesInput) minusesInput.value = template.attributes?.minuses || '';
+    if (plusesInput) plusesInput.value = ruleText(template.attributes?.pluses);
+    if (minusesInput) minusesInput.value = ruleText(template.attributes?.minuses);
 
     // Обновляем бонусы к навыкам
     const skillBonuses = template.attributes?.skillBonuses || [];
@@ -2526,8 +2597,8 @@ window.fillBackgroundFromTemplate = async function(select) {
     if (!currentCharacterData.basic.background) currentCharacterData.basic.background = {};
     currentCharacterData.basic.background.templateId = template.id;
     currentCharacterData.basic.background.name = template.name;
-    currentCharacterData.basic.background.pluses = template.attributes?.pluses || '';
-    currentCharacterData.basic.background.minuses = template.attributes?.minuses || '';
+    currentCharacterData.basic.background.pluses = ruleText(template.attributes?.pluses);
+    currentCharacterData.basic.background.minuses = ruleText(template.attributes?.minuses);
     currentCharacterData.basic.background.skillBonuses = skillBonuses;
     currentCharacterData.basic.background.ruleId = template.attributes?.ruleId;
 
@@ -3291,7 +3362,7 @@ function renderHealthTab(data, container = null) {
         const progressText = record.kind === 'alcohol'
             ? `Опьянение за сутки: ${Math.min(50, Number(progress.intoxication || 0))}/50`
             : (record.kind === 'nicotine'
-                ? `Выведено истощения табаком: ${Math.min(1, Number(progress.exhaustion_relief || 0))}/1`
+                ? `Выведено истощения табаком: ${Math.round(Number(progress.exhaustion_relief || 0)*1000)/1000}/1`
                 : `Подходящий препарат сегодня: ${Math.min(1, Number(progress.uses || 0))}/1`);
         const status = withdrawalDays > 0
             ? `Ломка, неделя ${Math.max(1, Number(record.withdrawal_stage || 1))} · осталось ${remaining} дн.`
@@ -3846,12 +3917,8 @@ async function renderSkillsTab(data) {
 
     function renderSkillRow(label, base, bonus, xp, path) {
         const required = getRequiredXp(base);
-        const transientBonus = (
-            path === 'physical.strength'
-            && getExoskeletonPowerProfile(data).powered
-        )
-            ? 8
-            : 0;
+        const transientBonus = (path==='physical.strength'&&getExoskeletonPowerProfile(data).powered?8:0)
+            +(backgroundIs(data,'Пожарный')&&data.health?.combatMeta?.firefighterNearby&&['physical.strength','physical.agility'].includes(path)?2:0);
         return `
             <div style="display: flex; align-items: center; gap: 3px; margin-bottom: 5px; flex-wrap: wrap;">
                 <span style="width: 125px; word-break: break-word; line-height: 1.3;" onclick="window.rollSkill('${path}', '${label}')" title="${label}">${label}</span>
@@ -3983,7 +4050,7 @@ function renderSpecialTraits(traits, templates) {
                     <option value="">-- Выберите особую черту --</option>
                     ${optionsHtml}
                 </select>
-                <textarea class="form-control" name="features.specialTraits.${index}.effect" placeholder="Эффект" rows="3" style="flex: 2;">${escapeHtml(trait.effect || '')}</textarea>
+                <textarea class="form-control" name="features.specialTraits.${index}.effect" placeholder="Эффект" rows="3" style="flex: 2;">${escapeHtml(ruleText(trait.effect))}</textarea>
                 <input type="number" class="form-control number-input" name="features.specialTraits.${index}.cost" value="${trait.cost || 0}" placeholder="Стоимость" style="width: 70px;">
                 <button type="button" class="btn btn-sm btn-danger" onclick="removeSpecialTrait(${index})">✕</button>
             </div>
@@ -4018,14 +4085,14 @@ function renderSpecialTraits(traits, templates) {
 
         const effectInput = document.querySelector(`[name="features.specialTraits.${index}.effect"]`);
         const costInput = document.querySelector(`[name="features.specialTraits.${index}.cost"]`);
-        if (effectInput) effectInput.value = template.attributes?.effect || '';
+        if (effectInput) effectInput.value = ruleText(template.attributes?.effect);
         if (costInput) costInput.value = template.attributes?.cost || 0;
 
         if (!currentCharacterData.features) currentCharacterData.features = {};
         if (!currentCharacterData.features.specialTraits) currentCharacterData.features.specialTraits = [];
         const trait = currentCharacterData.features.specialTraits[index];
         trait.name = template.name;
-        trait.effect = template.attributes?.effect || '';
+        trait.effect = ruleText(template.attributes?.effect);
         trait.cost = template.attributes?.cost || 0;
         trait.templateId = template.id;
         trait.ruleId = template.attributes?.ruleId;
@@ -5876,7 +5943,8 @@ async function renderWeapons(weapons, weaponTemplates, moduleTemplates, weaponMo
                 : `<button type="button" class="btn btn-sm btn-primary" ${combatActionDisabled ? 'disabled' : ''} onclick="drawWeaponFromEquipment(${index})">${isCombatActive ? 'Достать оружие' : 'Взять в руки'}</button>`;
             const swingPrepared = combatState?.current_character?.melee_swing_round === combatState?.round_number;
             attackButtonsHtml = handsButton + allowedAttacks.map((attackType) => {
-                const meleeCost = Number(meleeAttributes.action_points) || getMeleeActionPointCost(weightClass, attackType);
+                let meleeCost = Number(meleeAttributes.action_points) || getMeleeActionPointCost(weightClass, attackType);
+                if(backgroundIs(currentCharacterData,'Пожарный')&&weapon.name?.trim().toLowerCase()==='топор')meleeCost=Math.max(1,meleeCost-1);
                 const circular = String(attackType).toLowerCase().includes('круг');
                 const aimedButton = circular
                     ? ''
@@ -9174,7 +9242,7 @@ function getMeleeActionPointCost(weightClass, attackType) {
     return Math.max(1, baseCost + modifier);
 }
 
-window.useWeaponFromEquipment = function(
+window.useWeaponFromEquipment = async function(
     weaponIndex,
     fireMode = 'unaimed',
     shotCount = 1,
@@ -9308,6 +9376,18 @@ window.useWeaponFromEquipment = function(
         return;
     }
 
+    let sniperMode;
+    if (fireMode === 'aimed' && getWeaponClass(weapon, weaponTemplate) === 'sniper_rifle') {
+        const options = [{ label: 'Обычный выстрел' }];
+        if (traitCount(sheetData,'Снайперское милосердие')) options.push({label:'Снайперское милосердие · без дополнительных травм',mode:'mercy'});
+        if (traitCount(sheetData,'Микроскопическая точность')) options.push({label:'Микроскопическая точность · +1 ОД, выбор травмы',mode:'precision'});
+        if (options.length > 1) {
+            const selected=await chooseConsumableApplication('Снайперский выстрел',options);
+            if (!selected) return;
+            sniperMode=selected.mode;
+            if (sniperMode === 'precision') actionPoints=Number(actionPoints)+1;
+        }
+    }
     closeCharacterSheet();
     import('./locationScene.js').then((module) => {
         module.queueCombatActionFromSheet({
@@ -9315,6 +9395,7 @@ window.useWeaponFromEquipment = function(
             actionKey: 'attack',
             weaponIndex,
             fireMode,
+            attributeChoice: sniperMode ? {sniperMode} : undefined,
             shotCount: shots,
             actionPoints,
             volleyCount,
@@ -9372,6 +9453,8 @@ window.useMeleeAttack = function(weaponIndex, attackType, aimed = false) {
         return;
     }
 
+    const fencer = !isUnarmed && Number(weaponIndex)>=0 && combatState?.current_character?.fencer_available
+        && window.confirm('Использовать приём Фехтовальщика: на 2 ОД дешевле, минимум 1 ОД? Один раз за ход.');
     closeCharacterSheet();
     import('./locationScene.js').then((module) => {
         module.queueCombatActionFromSheet({
@@ -9379,7 +9462,7 @@ window.useMeleeAttack = function(weaponIndex, attackType, aimed = false) {
             actionKey: 'attack',
             weaponIndex,
             attackType,
-            payment: aimed ? 'aimed' : null,
+            payment: [aimed ? 'aimed' : null, fencer ? 'fencer' : null].filter(Boolean).join('+') || null,
             meleeAimed: aimed,
             targetType: String(attackType).toLowerCase().includes('круг')
                 ? 'multi_melee'
@@ -9833,7 +9916,7 @@ function getMedicalTreatmentActionPoints(direct, fallbackActionPoints) {
         : Math.max(0, Number(fallbackActionPoints) || 0);
     if (hasConfiguredCost && direct?.treatment_time_uses_medicine !== false) {
         const medicineLevel = getMedicineSkillLevel();
-        if (medicineLevel >= 15) actionPoints -= 1;
+        if (medicineLevel >= 15 && !backgroundIs(currentCharacterData,'Фармацевт')) actionPoints -= 1;
         else if (medicineLevel <= 5) actionPoints += 1;
     }
     return Math.max(0, actionPoints);
@@ -10369,7 +10452,9 @@ function weaponSpecializationKey(template) {
 
 function fixedMagazineLoadingPlans(template, source, needed, prepared) {
     const sourceKind = ammoLoadingKind(source);
-    if (sourceKind !== 'loose') return magazineLoadingPlans(source, needed);
+    const discount=traitCount(currentCharacterData,'Быстрые руки');
+    const discounted=payments=>payments.map(p=>({...p,actionPoints:p.actionPoints?Math.max(1,p.actionPoints-discount):0}));
+    if (sourceKind !== 'loose') return magazineLoadingPlans(source, needed).map(plan=>({...plan,includesStart:true,payments:discounted(plan.payments)}));
     const specialization = weaponSpecializationKey(template);
     const level = currentCharacterData?.skills?.specialized?.[specialization]?.level || 'unfamiliar';
     const quantity = level === 'professional' ? 2 : 1;
@@ -10397,7 +10482,7 @@ function fixedMagazineLoadingPlans(template, source, needed, prepared) {
             }],
         });
     }
-    return plans;
+    return plans.map(plan=>({...plan,includesStart:true,payments:discounted(plan.payments.map(p=>({...p,actionPoints:p.actionPoints+(!prepared&&!plan.includesStart?1:0)})))}));
 }
 
 window.calculateInventoryAccess = calculateInventoryAccess;
@@ -11153,6 +11238,16 @@ async function useConsumable(item, itemPath, options = {}) {
         && !unsupportedGeneralFields.some(key => Boolean(direct[key]))
     );
     let medicalOperationId = options.deferredActionId || null;
+    if (serverMedicalProcedure && !options.skipCombatPayment && !application.fineWork
+        && traitCount(currentCharacterData,'Тонкая работа') && Number(application.actionPoints)>=3) {
+        const cost=Number(application.actionPoints),reduction=traitCount(currentCharacterData,'Тонкая работа')>=2?6:4;
+        const choice=await chooseConsumableApplication('Способ лечения',[
+            {label:`Обычное лечение · ${cost} ОД`,fineWork:false},
+            {label:`Тонкая работа · ${cost*2} ОД, СЛ −${reduction}`,fineWork:true},
+        ]);
+        if (!choice) return false;
+        if (choice.fineWork) { application.fineWork=true;application.actionPoints=cost*2; }
+    }
     if (isCombatActive && !options.skipCombatPayment) {
         let pendingActionId = null;
         try {
@@ -16368,6 +16463,16 @@ export function importCharacter(file) {
 
 window.rollSkill = async function(skillPath, skillLabel) {
     if (!currentCharacterData) return;
+    if(skillPath.startsWith('social.')||currentCharacterData.health?.combatMeta?.brigadierOrder) {
+        const characterId=currentCharacterId,lobbyId=currentLobbyId;
+        await forceSyncCharacter();
+        if(Number(currentCharacterId)!==Number(characterId))return;
+        const {showSocialCheck}=await import('./socialChecks.js');
+        await showSocialCheck({characterId,lobbyId,skillPath:`skills.${skillPath}`,skillLabel,
+            favoredMutant:backgroundIs(currentCharacterData,'Охотник')?currentCharacterData.basic?.background?.choices?.favoredMutant:'',
+            onSaved:data=>queueRemoteSheetData(data,characterId)});
+        return;
+    }
     let darkness = isWorldDarkTime(window.lobbyGameTimeMinutes ?? 480);
     if (window.isLocationActive && (skillPath === 'physical.awareness' || skillPath === 'physical.shooting')) {
         const scene = await import('./locationScene.js');
@@ -16384,6 +16489,16 @@ window.rollSkill = async function(skillPath, skillLabel) {
         awarenessMode = choice.mode;
         skillLabel = `${skillLabel} (${awarenessMode === 'visual' ? 'зрение' : 'слух'})`;
     }
+    if(backgroundIs(currentCharacterData,'Охотник')||skillPath==='other.stealth'&&traitCount(currentCharacterData,'Человек-куст')) {
+        const characterId=currentCharacterId,lobbyId=currentLobbyId;
+        await forceSyncCharacter();
+        if(Number(currentCharacterId)!==Number(characterId))return;
+        const {showSocialCheck}=await import('./socialChecks.js');
+        await showSocialCheck({characterId,lobbyId,skillPath:awarenessMode?`skills.physical.awareness.${awarenessMode}`:`skills.${skillPath}`,skillLabel,
+            favoredMutant:backgroundIs(currentCharacterData,'Охотник')?currentCharacterData.basic?.background?.choices?.favoredMutant:'',
+            vegetation:skillPath==='other.stealth'&&Boolean(traitCount(currentCharacterData,'Человек-куст')),onSaved:data=>queueRemoteSheetData(data,characterId)});
+        return;
+    }
     const parts = skillPath.split('.');
     let skillObj = currentCharacterData.skills;
     for (const part of parts) {
@@ -16393,13 +16508,13 @@ window.rollSkill = async function(skillPath, skillLabel) {
     if (!skillObj) return;
 
     const effectiveValue = getSkillEffectiveValue(currentCharacterData, skillPath);
-    const selfMod = Math.floor((effectiveValue - 10) / 2);
+    const selfMod = Math.floor((effectiveValue - 10) / 2)+(skillPath==='social.charisma'?facialProfile(currentCharacterData).charismaBonus:0);
 
     // Харизма для социальных навыков (кроме самой харизмы)
     let charismaMod = 0;
     if (skillPath.startsWith('social.') && skillPath !== 'social.charisma') {
         const charismaValue = getSkillEffectiveValue(currentCharacterData, 'social.charisma');
-        charismaMod = Math.floor((charismaValue - 10) / 2);
+        charismaMod = Math.floor((charismaValue - 10) / 2)+facialProfile(currentCharacterData).charismaBonus;
     }
 
     // Бонус от экипировки
@@ -16408,18 +16523,12 @@ window.rollSkill = async function(skillPath, skillLabel) {
 
     // --- Бонус к Харизме (от очков, перчаток, бижутерии) ---
     if (skillPath === 'social.charisma') {
-        let eqBonus = 0;
-        const eq = currentCharacterData.equipment || {};
-        if (eq.glasses?.charismaBonus) eqBonus += eq.glasses.charismaBonus;
-        if (eq.gloves?.charismaBonus) eqBonus += eq.gloves.charismaBonus;
-        if (eq.ring?.charismaBonus) eqBonus += eq.ring.charismaBonus;
-        if (eq.necklace?.charismaBonus) eqBonus += eq.necklace.charismaBonus;
-        if (eq.earrings?.charismaBonus) eqBonus += eq.earrings.charismaBonus;
-        if (eq.bracelet1?.charismaBonus) eqBonus += eq.bracelet1.charismaBonus;
-        if (eq.bracelet2?.charismaBonus) eqBonus += eq.bracelet2.charismaBonus;
-        if (eq.helmet?.charismaBonus) eqBonus += eq.helmet.charismaBonus;
-        if (eq.gasMask?.charismaBonus) eqBonus += eq.gasMask.charismaBonus;
-        equipmentBonus += eqBonus;
+        for (const key of ['glasses','gloves','ring','necklace','earrings','bracelet1','bracelet2','helmet','gasMask']) {
+            const item=eq[key];if(!item)continue;
+            let bonus=Number(item.charismaBonus ?? item.charisma_bonus ?? item.attributes?.charisma_bonus)||0;
+            if(key==='glasses'&&traitCount(currentCharacterData,'Сварщик')&&item.name?.trim().toLowerCase()==='очки сварщика')bonus=1;
+            equipmentBonus+=bonus;
+        }
     }
 
     // --- Канальные бонусы к Внимательности ---
@@ -16439,11 +16548,12 @@ window.rollSkill = async function(skillPath, skillLabel) {
 
     const statusModifier = getHealthRollModifier(currentCharacterData, skillPath)
         +(awarenessMode==='hearing'?hearingModifier(getDeafnessLevel(currentCharacterData)):0)
+        +(awarenessMode==='hearing'?facialProfile(currentCharacterData).hearing:0)
         +(skillPath==='other.stealth'&&backgroundIs(currentCharacterData,'Ночной дозор')?(darkness?3:-5):0);
     const totalBonus = selfMod + charismaMod + equipmentBonus + statusModifier;
 
     const deafness = awarenessMode === 'hearing' ? getDeafnessLevel(currentCharacterData) : 0;
-    const hearingBlocked = awarenessMode === 'hearing' && deafness >= 90;
+    const hearingBlocked = awarenessMode === 'hearing' && (deafness >= 90 || facialProfile(currentCharacterData).ears===2);
     const firstDice = hearingBlocked ? 0 : Math.floor(Math.random() * 20) + 1;
     const darknessImmunity = getConsumableStatValue(
         currentCharacterData,

@@ -14,6 +14,7 @@ function sheet(data) {
         loadTemplatesForLobby: async () => [], getExoskeletonPowerProfile: () => ({ powered: false }),
         renderSpecialTraits() {}, applySheetEditPermissions(){},updateDataFromFields(){},showNotification() {}, scheduleAutoSave() { saves++; },
     });
+    vm.runInContext(fs.readFileSync(path.join(__dirname,'../app/static/js/characterTraits.js'),'utf8').replaceAll('export ',''),context);
     vm.runInContext(source.slice(source.indexOf('function getRequiredXp('), source.indexOf('// ========== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ')), context);
     vm.runInContext(source.slice(source.indexOf('async function renderSkillsTab('), source.indexOf('function renderSpecialTraits(')), context);
     return { context, container, saves: () => saves, render: () => context.renderSkillsTab(data) };
@@ -68,7 +69,7 @@ test('ручной ввод немедленно меняет модель и ц
     vm.runInContext(source.slice(start,end),ui.context);
     ui.context.characterValueAtPath=(value,path)=>path.split('.').reduce((v,p)=>v?.[p],value);
     ui.context.handleManualFormEdit({type:'input',target:input,isTrusted:true});
-    assert.deepEqual(data.skills.physical.will,{base:14,bonus:0,xp:0});
+    assert.deepEqual(data.skills.physical.will,{base:14,bonus:0,xp:0,learningRemainder:0});
     assert.equal(progress.textContent,'Опыт: 0/5');
     ui.context.window.addSkillXpFromUse('physical.will');
     assert.equal(data.skills.physical.will.xp,1);

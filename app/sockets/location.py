@@ -112,7 +112,7 @@ def handle_join_location(data):
             continue
         state.append({
             'character_id': character.id,
-            'name': character.name,
+            'name': CombatService._display_name(character),
             'owner_id': character.owner_id,
             'controlled_by': lc.controlled_by,
             'team_name': lc.team_name,

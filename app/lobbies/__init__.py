@@ -532,8 +532,11 @@ def _advance_world_time(lobby, minutes):
             health,
             health.get('effects') or [],
             minutes * 60,
+            character_data=character_data,
         )
         advance_addictions(health, previous_day, lobby.game_day)
+        from app.services.character_rules import advance_hunter_days
+        advance_hunter_days(character_data,previous_day, lobby.game_day,character)
         character.data = character_data
         flag_modified(character, 'data')
         updated_characters.append(character)
@@ -1293,8 +1296,11 @@ def update_lobby_time(lobby_id, lobby):
                 health,
                 health.get('effects') or [],
                 elapsed_seconds,
+                character_data=character_data,
             )
             advance_addictions(health, previous_absolute_minutes // 1440, game_day)
+            from app.services.character_rules import advance_hunter_days
+            advance_hunter_days(character_data,previous_absolute_minutes // 1440, game_day,character)
             character.data = character_data
             flag_modified(character, 'data')
             updated_characters.append(character)
@@ -1331,7 +1337,7 @@ def _normalize_character_needs(health):
     }
 
 
-def _resolve_character_day(health, effects, *, slept):
+def _resolve_character_day(health, effects, *, slept,character_data=None):
     needs = _normalize_character_needs(health)
     missed = []
     missed_days = needs['missedDays']
@@ -1344,7 +1350,8 @@ def _resolve_character_day(health, effects, *, slept):
         missed_days[key] = 0 if satisfied else missed_days[key] + 1
         if not satisfied:
             missed.append(label)
-            exhaustion_gain += missed_days[key]
+            from app.services.character_traits import background_is
+            exhaustion_gain += missed_days[key]*(2 if key in {'food','water'} and background_is(character_data,'Повар') else 1)
     exhaustion = max(0, float(health.get('exhaustion') or 0))
     if slept:
         exhaustion -= math.floor(exhaustion / 2)
@@ -1485,6 +1492,7 @@ def start_lobby_rest(lobby_id, lobby):
             health.get('effects') or [],
             elapsed_seconds,
             include_turn_effects=selected,
+            character_data=character_data,
         )
         healed = 0
         if selected:
@@ -1502,6 +1510,8 @@ def start_lobby_rest(lobby_id, lobby):
             )
             maximum = float(health.get('max') or 700)
             healed = maximum * (0.5 if rest_type == 'sleep' else 0.05) * multiplier
+            from app.services.character_traits import background_is
+            if background_is(character_data,'Атлет'):healed*=1.5
             apply_effect_to_health(health, {'type': 'heal', 'value': healed})
             effects = [effect for effect in effects if effect.get('type') != 'next_rest_healing']
             if isinstance(health.get('combatMeta'), dict):
@@ -1510,11 +1520,15 @@ def start_lobby_rest(lobby_id, lobby):
                     if not isinstance(modifier, dict) or modifier.get('stat') != 'rest_heal_multiplier'
                 ]
             if rest_type == 'sleep':
-                health['intoxication'] = max(0, float(health.get('intoxication') or 0) - 75)
-                effects = _resolve_character_day(health, effects, slept=True)
+                health['intoxication'] = max(0, float(health.get('intoxication') or 0) - (25 if background_is(character_data,'Дядя Толик') else 75))
+                if background_is(character_data,'Дядя Толик'):health['painLevel']=min(10,max(0,float(health.get('painLevel') or 0))+1)
+                health.setdefault('combatMeta',{}).pop('surgeonReductions',None)
+                effects = _resolve_character_day(health, effects, slept=True,character_data=character_data)
                 _advance_exoskeleton_battery_day(character_data)
         health['effects'] = normalize_effect_list(effects)
         advance_addictions(health, previous_day, lobby.game_day)
+        from app.services.character_rules import advance_hunter_days
+        advance_hunter_days(character_data,previous_day, lobby.game_day,character)
         sync_health_derived_statuses(health)
         character.data = character_data
         flag_modified(character, 'data')
@@ -2330,17 +2344,20 @@ def award_character_session(lobby_id,character_id,lobby):
     return jsonify({'result':result,'data':character.data_snapshot()})
 
 
-@lobbies_bp.route('/<int:lobby_id>/characters/<int:character_id>/creation-history',methods=['POST'])
+@lobbies_bp.route('/<int:lobby_id>/characters/<int:character_id>/creation-history',methods=['POST','PATCH'])
 @jwt_required()
 @requires_participant
 def settle_character_creation_history(lobby_id,character_id,lobby,participant):
-    from app.services.character_history import settle_history
+    from app.services.character_history import settle_history,confirm_history_month
     character=LobbyCharacter.query.filter_by(id=character_id,lobby_id=lobby_id).first()
     if not character:raise NotFoundError('Персонаж не найден')
     CharacterService.check_access(character,int(get_jwt_identity()),edit=True)
     payload=request.get_json() or {}
-    if not isinstance(payload,dict) or set(payload)!={'choices'}:raise ValidationError('Нужны решения событий')
-    character.data=settle_history(character.data,payload['choices'],max(1,lobby.game_day or 1))
+    expected={'month','choice'} if request.method=='PATCH' else {'choices'}
+    if not isinstance(payload,dict) or set(payload)!=expected:raise ValidationError('Нужны решения событий')
+    day=max(1,lobby.game_day or 1)
+    character.data=(confirm_history_month(character.data,payload['month'],payload['choice'],day) if request.method=='PATCH'
+                    else settle_history(character.data,payload['choices'],day))
     flag_modified(character,'data');db.session.commit()
     emit_character_update({'character_id':character.id,'updates':{'data':character.data_snapshot()},'source':'creation_history'})
     return jsonify({'data':character.data_snapshot()})
@@ -3018,7 +3035,7 @@ def manage_location_teams(lobby_id, location_id):
             target.team_color = team_color or None
         db.session.commit()
         socketio.emit('location_teams_updated', {'location_id': location_id}, room=f"location_{location_id}")
-    return jsonify({'characters': [{'location_character_id': item.id, 'character_id': item.character_id, 'name': item.character.name if item.character else '', 'team_name': item.team_name, 'team_color': item.team_color} for item in characters]})
+    return jsonify({'characters': [{'location_character_id': item.id, 'character_id': item.character_id, 'name': CombatService._display_name(item.character) or '', 'team_name': item.team_name, 'team_color': item.team_color} for item in characters]})
 
 
 @lobbies_bp.route('/<int:lobby_id>/locations/<int:location_id>/spawn_character', methods=['POST'])
@@ -3170,7 +3187,7 @@ def spawn_character_in_location(lobby_id, location_id):
         'action': action,
         'character': {
             'id': character.id,
-            'name': character.name,
+            'name': CombatService._display_name(character),
             'owner_id': character.owner_id,           # создатель
             'controlled_by': target_user_id,          # <-- кто управляет
             'owner_username': User.query.get(target_user_id).username if target_user_id else None,
@@ -3498,6 +3515,43 @@ def _public_medical_character_snapshot(snapshot):
     return public
 
 
+@lobbies_bp.route('/<int:lobby_id>/locations/<int:location_id>/true-sight/<int:character_id>', methods=['GET'])
+@jwt_required()
+@requires_participant
+def inspect_true_sight(lobby_id,location_id,character_id,lobby,participant):
+    if not Location.query.filter_by(id=location_id,lobby_id=lobby_id).first():return jsonify({'error':'Location not found'}),404
+    from app.services.true_sight import inspect
+    return jsonify(inspect(location_id,participant.user_id,character_id)),200
+
+
+@lobbies_bp.route('/characters/<int:character_id>/location-scout', methods=['GET','PUT','POST'])
+@jwt_required()
+def inspect_location_from_point(character_id):
+    from app.services.location_scout import observation_point,remote_inspect
+    user_id=int(get_jwt_identity())
+    if request.method=='GET':return jsonify(observation_point(character_id,user_id)),200
+    payload=request.get_json() or {}
+    result=observation_point(character_id,user_id,payload) if request.method=='PUT' else remote_inspect(character_id,user_id,payload)
+    actor=db.session.get(LobbyCharacter,character_id)
+    emit_character_update({'character_id':character_id,'updates':{'data':actor.data},'updated_by':user_id,'source':'location_scout'})
+    return jsonify(result),200
+
+
+@lobbies_bp.route('/characters/<int:character_id>/social-check', methods=['POST'])
+@lobbies_bp.route('/characters/<int:character_id>/skill-check', methods=['POST'])
+@jwt_required()
+def perform_social_check(character_id):
+    from app.services.social_check import run
+    user_id=int(get_jwt_identity())
+    result=run(character_id,user_id,request.get_json() or {})
+    emit_character_update({'character_id':character_id,'updates':{'data':result['data']},'updated_by':user_id,'source':'social_check'})
+    if not result.get('replayed'):
+        actor=db.session.get(LobbyCharacter,character_id);check=result['check']
+        outcome=check.get('failure_reason') if check.get('blocked') else f"d20 {'/'.join(str(roll) for roll in check.get('rolls',[]))}, итог {check.get('total')} против СЛ {check['difficulty']} — {'успех' if check['success'] else 'провал'}"
+        _emit_lobby_chat_message(actor.lobby_id,user_id,f"{actor.name}: {check['skill_label']} — {result['target_name']}: {outcome}",username='Проверка')
+    return jsonify(result),200
+
+
 @lobbies_bp.route('/characters/<int:character_id>/medical-procedure', methods=['POST'])
 @jwt_required()
 def apply_medical_procedure(character_id):
@@ -3812,7 +3866,7 @@ def create_character_interaction(lobby_id, location_id, lobby, participant):
             result,
             room=f"user_{result['actor_user_id']}",
         )
-    if result['kind'] == 'trade' and result['status'] == 'completed':
+    if result['kind'] == 'order' or result['kind'] == 'trade' and result['status'] == 'completed':
         for location_character_id in (
             result['actor_location_character_id'],
             result['target_location_character_id'],
@@ -3854,7 +3908,7 @@ def respond_character_interaction(lobby_id, request_id, lobby, participant):
         result,
         room=f"user_{result['target_user_id']}",
     )
-    if result['kind'] == 'trade' and result['status'] == 'completed':
+    if result['kind'] == 'order' or result['kind'] == 'trade' and result['status'] == 'completed':
         actor = db.session.get(LocationCharacter, result['actor_location_character_id'])
         target = db.session.get(LocationCharacter, result['target_location_character_id'])
         for location_character in (actor, target):
@@ -4790,6 +4844,14 @@ def perform_location_combat_action(lobby_id, location_id, lobby, participant):
             },
         )
     medical_retry_result = (result.get('must_do_it') or {}).get('medical_result')
+    reduction=result.get('narrative_action') or {}
+    if reduction.get('order'):
+        socketio.emit('character_interaction_requested',reduction['order'],room=f"user_{reduction['order']['target_user_id']}")
+    if result.get('action') in {'surgeon_reduction','choose_sniper_trauma'} and reduction.get('target_character_id'):
+        target=db.session.get(LobbyCharacter,reduction['target_character_id'])
+        if target and (not actor or target.id!=actor.id):emit_character_update({'character_id':target.id,'updates':{'data':target.data_snapshot()},'source':'surgeon_reduction'})
+        for posture_update in reduction.get('posture_updates') or []:
+            socketio.emit('location_character_posture_updated',posture_update,room=f"location_{posture_update['location_id']}")
     if isinstance(medical_retry_result, dict):
         posture_updates = medical_retry_result.pop('_posture_updates', [])
         target = db.session.get(LobbyCharacter, medical_retry_result.get('target_character_id'))

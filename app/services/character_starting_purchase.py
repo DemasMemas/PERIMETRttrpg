@@ -87,15 +87,33 @@ def apply_purchase(data,selection,budget,*,allow_debt=False):
     data['creation']['startingPurchase']={'budget':budget,'spent':spent,'remaining':budget-spent,'items':receipt,'completed':not allow_debt}
 
 
+def grant_creation_money(data):
+    """Деньги выдаются один раз после создания, отдельно от допуска в мир."""
+    creation=data.get('creation')
+    if not isinstance(creation,dict) or creation.get('creationMoneyGranted') or creation.get('worldEntryGranted') or 'entryMoney' not in creation:return False
+    inventory=data.setdefault('inventory',{})
+    initial=inventory.get('money',0)+creation.get('entryMoney',0)
+    balance=initial
+    history=creation.get('zoneHistory') or {}
+    for event in history.get('events') or []:
+        balance=max(0,balance+(event.get('incomeOptions') or [0])[0])
+    if history:history['cashTotal']=balance-initial
+    inventory['money']=max(0,balance)
+    creation.update(creationMoneyGranted=True,creationMoneyBase=initial,creationMoneyAmount=balance-(initial-creation.get('entryMoney',0)))
+    return True
+
+
 def grant_world_entry(character):
     from sqlalchemy.orm.attributes import flag_modified
     data=deepcopy(character.data or {});creation=data.get('creation')
     if not isinstance(creation,dict) or creation.get('worldEntryGranted') or 'entryMoney' not in creation:return False
     history=creation.get('zoneHistory') or {}
+    if history.get('presentationRequired') and not history.get('presentationComplete'):
+        raise ValidationError('Сначала завершите помесячную историю жизни в Зоне')
     if history and not history.get('settled'):raise ValidationError('Сначала завершите выбор событий жизни в Зоне в листе персонажа')
-    amount=creation.get('entryMoney',0)+history.get('cashTotal',0)
+    amount=creation.get('creationMoneyAmount',0) if creation.get('creationMoneyGranted') else creation.get('entryMoney',0)+history.get('cashTotal',0)
     inventory=data.setdefault('inventory',{})
-    inventory['money']=max(0,inventory.get('money',0)+amount)
+    if not creation.get('creationMoneyGranted'):inventory['money']=max(0,inventory.get('money',0)+amount)
     creation.update(worldEntryGranted=True,worldEntryAmount=amount)
     character.data=data;flag_modified(character,'data')
     return True

@@ -38,7 +38,7 @@ test('interaction menu remains open until an outside click', () => {
 test('leaving a model does not close the interaction menu, and selecting an action ends it first', () => {
     assert.match(source, /if \(pendingStructureAction && !pendingObjectMoveId\) \{\s*const menuOpen = structureActionMenu\?\.style\.display === 'block';/);
     assert.match(source, /if \(!menuOpen\) clearStructureActionMenu\(\)/);
-    assert.match(source, /\/\/ pointerdown -[^\n]*\n\s*const onPointerDown = \(e\) => \{\s*if \(e\.button !== 0\) return;\s*if \(structureActionMenu\?\.style\.display === 'block'\) \{\s*e\.preventDefault\(\);\s*e\.stopImmediatePropagation\(\);\s*hideStructureInteraction\(\)/);
+    assert.match(source, /if \(structureActionMenu\?\.style\.display === 'block'\) \{\s*e\.preventDefault\(\);\s*e\.stopImmediatePropagation\(\);\s*hideStructureInteraction\(\)/);
     assert.match(source, /button\.onclick = async event => \{\s*event\.stopPropagation\(\);\s*hideStructureInteraction\(\);\s*try \{\s*await action\.run\(\)/);
     assert.match(source, /const actorCharacterId = pendingStructureAction\?\.actorCharacterId \|\| null;\s*hideStructureInteraction\(\);\s*await executeStructureAction\(object, item\.actionKey, actorCharacterId\)/);
 });
@@ -53,6 +53,7 @@ test('hovering another valid target swaps the open interaction menu', () => {
         isDraggingCharacter: true,
         armedMoveCharacterId: null,
         pendingFacingSelection: null,
+        pendingCharacterPlacement:null,
         pendingCombatAction: null,
         pendingObjectMoveId: null,
         pendingStructureAction: { actorCharacterId: 1 },

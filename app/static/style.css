@@ -2122,6 +2122,8 @@ body.light-theme .lobby-time-field input[type="time"] {
   cursor: pointer;
   font-size: 1.5rem;
 }
+.mutant-attack-header { display:flex; align-items:center; justify-content:space-between; gap:16px; margin-bottom:16px; }
+.mutant-attack-header h3 { margin:0; }
 .modal-content .form-group {
   margin-bottom: 15px;
 }
@@ -3749,7 +3751,7 @@ input[type=range]::-webkit-slider-thumb {
 .creation-header { grid-column:1/-1; display:flex; align-items:center; justify-content:space-between; padding:18px 24px; border-bottom:1px solid var(--panel-border); }
 .creation-header h2 { margin:2px 0 0; font-size:1.4rem; }
 .creation-eyebrow { margin:0; color:var(--username-color); font-size:.7rem; text-transform:uppercase; letter-spacing:.13em; }
-.creation-dialog .creation-close { display:grid; place-items:center; width:36px; height:36px; padding:6px; border-radius:50%; flex:none; }
+.creation-dialog .creation-close, .modal-content .modal-icon-close { display:grid; place-items:center; width:36px; height:36px; padding:6px; border-radius:50%; flex:none; }
 .creation-nav { grid-column:1; grid-row:2/4; display:flex; flex-direction:column; gap:5px; padding:16px 10px; overflow:auto; border-right:1px solid var(--panel-border); background:#0002; }
 .creation-nav button { display:flex; align-items:center; gap:9px; text-align:left; padding:10px 8px; border:1px solid transparent; border-radius:9px; background:transparent; color:var(--text-color); font:inherit; font-size:.8rem; cursor:pointer; }
 .creation-nav button span { display:grid; place-items:center; width:24px; height:24px; border:1px solid var(--panel-border); border-radius:50%; flex:none; opacity:.7; }

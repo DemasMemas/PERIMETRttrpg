@@ -39,8 +39,10 @@ module.exports = async ({page,request,token,lobby,base,connect,debugPort,safeSes
         assert.equal(event.movement_cost,before.route.cost);
         const idle = await request(url+'/combat',null,token,'GET');
         const placed = idle.characters.find(c=>c.character_id===actor.id);
-        await request(url+'/combat/start',{location_character_ids:[placed.location_character_id],
+        const started=await request(url+'/combat/start',{location_character_ids:[placed.location_character_id],
             initiator_location_character_id:placed.location_character_id,initiator_first:true},token);
+        if(started.current_character.facing_x!==0||started.current_character.facing_y!==1)
+            await request(url+'/combat/action',{location_character_id:placed.location_character_id,action_key:'change_facing',facing_x:0,facing_y:1,payment:'action'},player.access_token);
         await request(url+'/combat/action',{location_character_id:placed.location_character_id,
             action_key:'convert_free_action_to_movement'},player.access_token);
         const beforeBackward = await request(url+'/combat',null,token,'GET');

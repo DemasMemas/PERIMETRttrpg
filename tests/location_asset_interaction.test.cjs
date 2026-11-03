@@ -8,6 +8,21 @@ const createSceneContext = values => vm.createContext(sceneContext(values));
 
 const read = name => fs.readFileSync(path.join(__dirname, '../app/static/js', name), 'utf8');
 
+test('осмотр аномалии не выдаёт параметры или класс укрытия',()=>{
+    const source=read('locationScene.js'),buttons=[],messages=[];
+    const menu={style:{},appendChild:button=>buttons.push(button),getBoundingClientRect:()=>({width:200,height:60})};
+    const context=vm.createContext({combatState:{status:'idle'},pendingStructureAction:null,
+        contextMenu:menu,createContextMenu(){},window:{isGM:true,innerWidth:1000,innerHeight:800},
+        COVER_CLASS_DEFAULTS:{medium:{maxHp:1000,protection:50,label:'Среднее'}},getObjectActions:()=>[],
+        isStructureCoverObject:object=>object.type!=='anomaly',document:{createElement:()=>({style:{}})},showNotification:message=>messages.push(message)});
+    const start=source.indexOf('function showObjectContextMenu('),end=source.indexOf('function disposeLocationObject(',start);
+    vm.runInContext(source.slice(start,end),context);
+    context.showObjectContextMenu(300,300,{name:'Баня',type:'anomaly',properties:{cover_hp:999,cover_physical_protection:100}});
+    assert.deepEqual(buttons.map(button=>button.textContent),['Осмотреть']);
+    buttons[0].onclick({stopPropagation(){}});
+    assert.equal(messages[0],'Баня · Аномалия');
+});
+
 test('camera drag suppresses one menu, but a stationary right click still opens it', async () => {
     const source = read('locationEditorPointer.js');
     const url = `data:text/javascript;base64,${Buffer.from(source).toString('base64')}`;

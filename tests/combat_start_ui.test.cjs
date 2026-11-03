@@ -41,8 +41,20 @@ test('attack shortcut expands equipped weapon and scrolls to its actions', async
     assert.equal(equippedPanel.scrolled.block, 'start');
 });
 
+test('запросы начала боя не загружаются для ещё не открытой локации',async()=>{
+    const code=fs.readFileSync(path.join(__dirname,'../app/static/js/locationScene.js'),'utf8');
+    const start=code.indexOf('export async function loadCombatStartRequests('),end=code.indexOf('\nasync function showCombatParticipantSelection(',start);
+    const calls=[],context=vm.createContext({window:{isGM:true,isLocationActive:true,currentLobbyId:1},
+        getCurrentLocationId:()=>null,combatStartRequestVersion:0,combatState:{status:'active'},
+        Server:{async getLocationCombatStartRequests(...args){calls.push(args);return[];}},
+        showNotification(){throw Error('Не должно быть запроса к локации null');}});
+    vm.runInContext(code.slice(start,end).replace('export ',''),context);
+    await context.loadCombatStartRequests();assert.equal(calls.length,0);
+    context.getCurrentLocationId=()=>4;await context.loadCombatStartRequests();assert.deepEqual(calls,[[1,4]]);
+});
+
 test('attack on a sublocation outside combat requests approval without spending ammunition', async () => {
-    const start = source.indexOf('window.useWeaponFromEquipment = function(');
+    const start = source.indexOf('window.useWeaponFromEquipment = async function(');
     const end = source.indexOf('\nwindow.useMeleeAttack = function(', start);
     assert.ok(start >= 0 && end > start);
     let requestedCharacterId = null;

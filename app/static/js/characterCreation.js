@@ -1,4 +1,5 @@
 import { Server } from './api.js';
+import { ruleText } from './characterTraits.js';
 
 const escape = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const money = value => `${Number(value || 0).toLocaleString('ru-RU')} ₽`;
@@ -48,7 +49,7 @@ export async function openCharacterCreation(lobbyId, onCreated) {
     const categories = [...new Set(shop.map(template => template.category))].sort((a, b) => getCategoryDisplay(a).localeCompare(getCategoryDisplay(b), 'ru'));
     const contents = [
         `<div class="creation-intro-fields"><label>Имя персонажа<input name="characterAlias" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="100" class="form-control" placeholder="Имя или прозвище в игре"></label>
-        <label>Предыстория<select name="backgroundId" class="form-control"><option value="">Выберите предысторию</option>${rules.backgrounds.filter(background => background.available).map(background => `<option value="${background.id}">${escape(background.name)}</option>`).join('')}</select></label></div>
+        <label>Предыстория<select name="backgroundId" class="form-control"><option value="">Выберите предысторию</option>${rules.backgrounds.filter(background => background.available).map(background => `<option value="${background.id}">${escape(ruleText(background.name))}</option>`).join('')}</select></label></div>
         <div data-background-description></div>
         <label data-background-weapon-field hidden><span data-background-weapon-label>Владение оружием от предыстории</span><small id="creation-background-weapon-hint" data-background-weapon-hint class="creation-hint"></small><select name="backgroundWeapon" aria-describedby="creation-background-weapon-hint" class="form-control"><option value="">Выберите вид оружия</option>${Object.entries(rules.weaponTypes).map(([key, label]) => `<option value="${key}">${escape(label)}</option>`).join('')}</select></label>
         <label data-favored-mutant-field hidden>Избранный мутант<select name="favoredMutant" class="form-control"><option value="">Выберите мутанта</option>${(rules.mutants || []).map(mutant => `<option value="${escape(mutant.name)}">${escape(mutant.name)}</option>`).join('')}</select></label>
@@ -57,7 +58,7 @@ export async function openCharacterCreation(lobbyId, onCreated) {
         skillCards('raises'),
         skillCards('lowers'),
         `<div data-background-negative></div>${skillCards('background_negative', false)}`,
-        [0, 1, 2].map(index => `<section class="creation-trait-card" data-trait-row="${index}"><label>Черта ${index + 1}<select data-trait="${index}" class="form-control"><option value="">Без черты</option>${rules.traits.map(trait => `<option value="${trait.id}">${escape(trait.name)} · ${trait.cost} очк.</option>`).join('')}</select></label><p data-trait-description="${index}"></p><div data-trait-choice="${index}"></div></section>`).join(''),
+        [0, 1, 2].map(index => `<section class="creation-trait-card" data-trait-row="${index}"><label>Черта ${index + 1}<select data-trait="${index}" class="form-control"><option value="">Без черты</option>${rules.traits.map(trait => `<option value="${trait.id}">${escape(ruleText(trait.name))} · ${trait.cost} очк.</option>`).join('')}</select></label><p data-trait-description="${index}"></p><div data-trait-choice="${index}"></div></section>`).join(''),
         skillCards('finalRaises'),
         `<div class="creation-shop-budget"><div><span>Доступно</span><strong data-purchase-balance>${money(10000)}</strong></div><label class="creation-exchange">Обмен очков<div class="creation-stepper"><button type="button" class="btn btn-sm" data-cash-adjust="-1" aria-label="Обменять меньше очков">−</button><input name="cashPoints" type="number" min="0" value="0" class="form-control" aria-label="Очки в деньги"><button type="button" class="btn btn-sm" data-cash-adjust="1" aria-label="Обменять больше очков">+</button></div><small>1 очко = 200 ₽</small></label></div>
         <div class="creation-shop-filters"><label>Категория<select data-purchase-category class="form-control">${categories.map(category => `<option value="${category}">${escape(getCategoryDisplay(category))}</option>`).join('')}</select></label><label>Поиск<input type="search" data-purchase-search class="form-control" placeholder="Название, калибр..." autocomplete="off"></label></div>
@@ -103,10 +104,10 @@ export async function openCharacterCreation(lobbyId, onCreated) {
         find('[data-background-weapon-field]').hidden = !weaponRule;
         find('[data-background-weapon-label]').textContent = professional ? 'Профессиональное владение оружием' : 'Знакомство с оружием';
         find('[data-background-weapon-hint]').textContent = weaponRule
-            ? `Предыстория «${background.name}» даёт ${professional ? 'профессиональное владение одним видом оружия' : 'знакомство с одним видом оружия'} на ваш выбор.`
+            ? `Предыстория «${ruleText(background.name)}» даёт ${professional ? 'профессиональное владение одним видом оружия' : 'знакомство с одним видом оружия'} на ваш выбор.`
             : '';
         find('[data-favored-mutant-field]').hidden = background?.name !== 'Охотник';
-        find('[data-background-description]').innerHTML = background ? `<article class="creation-background-card"><h4>${escape(background.name)}</h4><p>${escape(background.pluses)}</p><p class="creation-hint">${escape(background.minuses)}</p></article>` : '';
+        find('[data-background-description]').innerHTML = background ? `<article class="creation-background-card"><h4>${escape(ruleText(background.name))}</h4><p>${escape(ruleText(background.pluses))}</p><p class="creation-hint">${escape(ruleText(background.minuses))}</p></article>` : '';
         const describe = positive => background?.entries.filter(entry => ['skill', 'group', 'all_skills', 'points', 'specializations'].includes(entry.type) && (entry.amount > 0) === positive).map(entry => {
             const label = entry.type === 'skill' ? rules.skills[entry.skill.split('.')[0]][entry.skill.split('.')[1]] : entry.type === 'group' ? `${GROUPS[entry.group]} навыки` : { all_skills: 'Все навыки', points: 'Очки навыков', specializations: 'Специализации' }[entry.type];
             return `<span class="creation-bonus">${escape(label)} ${entry.amount > 0 ? '+' : ''}${entry.amount}</span>`;
@@ -229,7 +230,7 @@ export async function openCharacterCreation(lobbyId, onCreated) {
     }
     function traitDetails(index) {
         const trait = rules.traits.find(entry => entry.id === find(`[data-trait="${index}"]`).value);
-        find(`[data-trait-description="${index}"]`).textContent = trait ? `${trait.effect}${trait.limitText ? '\n' + trait.limitText : ''}` : '';
+        find(`[data-trait-description="${index}"]`).textContent = trait ? ruleText([trait.effect,trait.limitText].filter(Boolean).join(' ')) : '';
         const plan = readPlan();
         const specialized = [...plan.specializations, ...plan.traits.filter(choice => rules.traits.find(entry => entry.id === choice.id)?.name === 'Специалист').map(choice => choice.skill).filter(Boolean)];
         find(`[data-trait-choice="${index}"]`).innerHTML = traitChoiceFields(rules, trait, { specialized });
@@ -328,7 +329,12 @@ export async function openCharacterCreation(lobbyId, onCreated) {
         const button = find('[type=submit]'); button.disabled = true; button.textContent = 'Создаём…';
         try {
             const character = await Server.createLobbyCharacter(lobbyId, form.elements.characterAlias.value.trim(), { creationRequest: readPlan() });
-            busy = false; close(); await onCreated(character);
+            busy = false; close();
+            if(character.data?.creation?.zoneHistory&&!character.data.creation.zoneHistory.settled){
+                const {completeCharacterHistory}=await import('./characterHistory.js');
+                character.data=await completeCharacterHistory(lobbyId,character.id,character.data);
+            }
+            await onCreated(character);
         } catch (failure) { busy = false; button.disabled = false; button.textContent = 'Создать персонажа'; error(failure.message); }
     };
     backgroundDetails(); renderCart(); refreshView();

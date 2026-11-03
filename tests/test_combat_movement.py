@@ -174,6 +174,107 @@ def test_climb_requires_explicit_choice_and_cannot_silently_fallback_to_ap(verti
         assert (actor.pos_x,actor.pos_y,actor.action_points_current,actor.movement_points_current)==(2,3,5,0)
 
 
+@pytest.fixture
+def broken_partition(vertical_game):
+    from app.extensions import db
+    from app.models import LocationObject
+    wall=LocationObject(location_id=vertical_game['location'].id,type='wall',tile_x=3,tile_y=5,
+        name='Сломанная внутренняя перегородка',
+        properties={'visual_asset':'inner_wall','rotation':-math.pi/2,'dimensions':{'width':8,'depth':.14,'height':1.2}})
+    db.session.add(wall);db.session.commit()
+    return vertical_game,wall
+
+
+def test_climb_long_partition_prefers_cell_in_facing_not_far_end(broken_partition):
+    case,wall=broken_partition;actor=case['actor_location']
+    assert CombatService._find_climb_landing(case['location'],wall,actor)==(4,3)
+    plan=CombatService._object_climb_plan(case['location'],actor,wall)
+    assert plan['path']==[(2,3),(4,3)] and plan['distance']==2
+
+
+def test_climb_uses_only_two_adjacent_alternatives_if_front_is_occupied(broken_partition):
+    from app.extensions import db
+    from app.models import LocationObject
+    case,wall=broken_partition;actor=case['actor_location'];other=case['target_location']
+    other.pos_x,other.pos_y=4,3;db.session.commit()
+    assert CombatService._find_climb_landing(case['location'],wall,actor)==(4,2)
+    obstruction=LocationObject(location_id=case['location'].id,type='box',tile_x=4,tile_y=2,
+        properties={'dimensions':{'width':.7,'depth':.7,'height':2.5}})
+    db.session.add(obstruction);db.session.commit()
+    assert CombatService._find_climb_landing(case['location'],wall,actor)==(4,4)
+    db.session.add(LocationObject(location_id=case['location'].id,type='box',tile_x=4,tile_y=4,properties=obstruction.properties))
+    db.session.commit()
+    before=(actor.pos_x,actor.pos_y,actor.action_points_current,actor.movement_points_current)
+    assert CombatService._find_climb_landing(case['location'],wall,actor) is None
+    with pytest.raises(ValidationError,match='места приземления'):
+        CombatService.move_character(case['location'].id,case['actor_user']['id'],actor.character_id,4,3,
+            special_action='climb',object_id=wall.id,climb_payment='action')
+    assert (actor.pos_x,actor.pos_y,actor.action_points_current,actor.movement_points_current)==before
+
+
+@pytest.mark.parametrize('unsafe',['hole','height','anomaly','low_obstacle'])
+def test_climb_skips_unsafe_front_cell_without_searching_along_partition(broken_partition,unsafe):
+    from copy import deepcopy
+    from app.extensions import db
+    from app.models import LocationObject
+    case,wall=broken_partition;actor=case['actor_location'];location=case['location']
+    if unsafe=='hole':
+        actor.floor_level=1
+        wall.properties={**wall.properties,'level':1}
+        db.session.add(LocationObject(location_id=location.id,type='floor',tile_x=4,tile_y=4,
+            properties={'level':1,'dimensions':{'width':10,'depth':10}}))
+        db.session.add(LocationObject(location_id=location.id,type='floor_opening',tile_x=4,tile_y=3,
+            properties={'level':1,'dimensions':{'width':.8,'depth':.8}}))
+    elif unsafe=='height':
+        tiles=[[{'height':1} for _ in range(10)] for _ in range(10)]
+        tiles[3][4]['height']=3;location.tiles_data=tiles
+    elif unsafe=='anomaly':
+        db.session.add(LocationObject(location_id=location.id,type='anomaly',tile_x=4,tile_y=3,
+            properties={'anomaly_key':'otboynik','dimensions':{'width':1,'depth':1}}))
+    else:
+        db.session.add(LocationObject(location_id=location.id,type='box',tile_x=4,tile_y=3,
+            properties={'dimensions':{'width':.8,'depth':.8,'height':.8}}))
+    db.session.commit()
+    assert CombatService._find_climb_landing(location,wall,actor)==(4,2)
+
+
+@pytest.mark.parametrize('direction',[(1,0),(1,1),(0,1),(-1,1),(-1,0),(-1,-1),(0,-1),(1,-1)])
+def test_climb_front_cell_follows_all_eight_facings(vertical_game,direction):
+    from app.extensions import db
+    from app.models import LocationObject
+    actor=vertical_game['actor_location'];actor.pos_x=actor.pos_y=4
+    actor.facing_x,actor.facing_y=direction;dx,dy=direction
+    wall=LocationObject(location_id=actor.location_id,type='wall',tile_x=4+dx,tile_y=4+dy,
+        properties={'visual_asset':'inner_wall','dimensions':{'width':.8,'depth':.8,'height':.8}})
+    db.session.add(wall);db.session.commit()
+    assert CombatService._find_climb_landing(vertical_game['location'],wall,actor)==(4+2*dx,4+2*dy)
+
+
+@pytest.mark.parametrize('facing',[(-1,0),(0,1),(0,-1)])
+def test_climb_cannot_choose_a_partition_outside_forward_direction(broken_partition,facing):
+    case,wall=broken_partition;actor=case['actor_location'];actor.facing_x,actor.facing_y=facing
+    assert CombatService._find_climb_landing(case['location'],wall,actor) is None
+
+
+def test_pripyat_inner_partition_lands_directly_across_from_actor(vertical_game):
+    import json
+    from pathlib import Path
+    from app.extensions import db
+    from app.models import LocationObject
+    source=json.loads((Path(__file__).parents[1]/'tmp/pripyat-regression.json').read_text(encoding='utf-8'))
+    location=vertical_game['location'];actor=vertical_game['actor_location']
+    location.grid_width,location.grid_height=source['grid_width'],source['grid_height'];location.tiles_data=source['tiles_data']
+    wall=None
+    for item in source['objects']:
+        obj=LocationObject(location_id=location.id,type=item['type'],name=item.get('name'),tile_x=item['tile_x'],tile_y=item['tile_y'],properties=item.get('properties') or {})
+        db.session.add(obj)
+        if obj.type=='wall' and obj.tile_x==57 and obj.tile_y==10 and (obj.properties.get('visual_asset')=='inner_wall'):wall=obj
+    actor.pos_x,actor.pos_y=57,10;actor.facing_x,actor.facing_y=-1,0
+    db.session.commit()
+    assert wall is not None
+    assert CombatService._find_climb_landing(location,wall,actor)==(56,10)
+
+
 @pytest.mark.parametrize('delta,payment,ap,op',[(1,'movement',0,12),(1.99,'action',3,0),(-1,'action',1,0),(-2,'action',1,0)])
 def test_terrain_step_up_or_controlled_descent_uses_explicit_action_without_fall(vertical_game,monkeypatch,delta,payment,ap,op):
     from app.extensions import db

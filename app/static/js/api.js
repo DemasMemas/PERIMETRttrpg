@@ -47,6 +47,9 @@ export const Server = {
     async settleCharacterHistory(lobbyId,characterId,choices){
         return apiFetch(`/lobbies/${lobbyId}/characters/${characterId}/creation-history`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({choices})});
     },
+    async confirmCharacterHistoryMonth(lobbyId,characterId,month,choice){
+        return apiFetch('/lobbies/'+lobbyId+'/characters/'+characterId+'/creation-history',{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({month,choice})});
+    },
     async applyWorldEditorChange(lobbyId,payload) {
         return apiFetch(`/lobbies/${lobbyId}/world-editor/changes`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
     },
@@ -105,6 +108,22 @@ export const Server = {
     async applyMedicalProcedure(characterId, payload) {
         return apiFetch(`/lobbies/characters/${characterId}/medical-procedure`, {
             method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+        });
+    },
+    async performSocialCheck(characterId,payload) {
+        return apiFetch(`/lobbies/characters/${characterId}/social-check`, {
+            method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload),
+        });
+    },
+    async inspectTrueSight(lobbyId,locationId,characterId) {
+        return apiFetch(`/lobbies/${lobbyId}/locations/${locationId}/true-sight/${characterId}`);
+    },
+    async getLocationScoutPoint(characterId){return apiFetch(`/lobbies/characters/${characterId}/location-scout`);},
+    async setLocationScoutPoint(characterId,point){return apiFetch(`/lobbies/characters/${characterId}/location-scout`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(point)});},
+    async scoutFromPoint(characterId,instrument){return apiFetch(`/lobbies/characters/${characterId}/location-scout`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(instrument)});},
+    async performSkillCheck(characterId,payload) {
+        return apiFetch(`/lobbies/characters/${characterId}/skill-check`, {
+            method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload),
         });
     },
     async applyGeneralConsumable(characterId, payload) {

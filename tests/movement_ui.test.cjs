@@ -8,7 +8,7 @@ const source = fs.readFileSync(path.join(__dirname, '../app/static/js/locationSc
 
 test('отмена размещения очищает очередь и призрак, не отправляя перенос',()=>{
     let cleared=0;
-    const context=vm.createContext({pendingCharacterPlacement:{gmRelocation:true},pendingCharacterPlacementQueue:[{},{}],
+    const context=vm.createContext({scoutedCharacters:new Set(),pendingCharacterPlacement:{gmRelocation:true},pendingCharacterPlacementQueue:[{},{}],
         renderer:{domElement:{style:{cursor:'crosshair'}}},clearCharacterPlacementPreview:()=>cleared++});
     vm.runInContext(functionSource('cancelCharacterPlacement'),context);
     context.cancelCharacterPlacement();
@@ -18,7 +18,7 @@ test('отмена размещения очищает очередь и при�
 
 test('перенос ГМа использует существующий запрос без смены управляющего',async()=>{
     let payload;
-    const context=vm.createContext({window:{currentLobbyId:7,isGM:true},getCurrentLocationId:()=>8,locationViewLevel:0,
+    const context=vm.createContext({scoutedCharacters:new Set(),window:{currentLobbyId:7,isGM:true},getCurrentLocationId:()=>8,locationViewLevel:0,
         localStorage:{getItem:()=>''},fetch:async(url,options)=>{payload=JSON.parse(options.body);return{ok:true,json:async()=>({})};}});
     vm.runInContext('async '+functionSource('spawnCharacterAtTile'),context);
     await context.spawnCharacterAtTile(5,3.2,3.7,undefined,{forceRelocate:true,floorLevel:2});
@@ -29,7 +29,7 @@ test('перенос ГМа использует существующий зап
 test('при завершении размещения удаляются оба вида предпросмотра',()=>{
     const disposed=[];
     const sprite={material:{map:{dispose:()=>disposed.push('texture')},dispose:()=>disposed.push('material')}};
-    const context=vm.createContext({previewSprite:sprite,scene:{remove:item=>disposed.push(item===sprite?'sprite':'other')},clearMovementPreview:()=>disposed.push('ghost')});
+    const context=vm.createContext({scoutedCharacters:new Set(),previewSprite:sprite,scene:{remove:item=>disposed.push(item===sprite?'sprite':'other')},clearMovementPreview:()=>disposed.push('ghost')});
     vm.runInContext(functionSource('clearCharacterPlacementPreview'),context);
     context.clearCharacterPlacementPreview();
     assert.equal(context.previewSprite,null);
@@ -38,7 +38,7 @@ test('при завершении размещения удаляются оба
 
 test('повторное размещение ГМом не открывает выбор владельца',async()=>{
     let request,finished=false;
-    const context=vm.createContext({window:{isGM:true},clearCharacterPlacementPreview(){},getCharacterModelEntry:()=>({controlledBy:9}),
+    const context=vm.createContext({scoutedCharacters:new Set(),window:{isGM:true},clearCharacterPlacementPreview(){},getCharacterModelEntry:()=>({controlledBy:9}),
         spawnCharacterAtTile:async(...args)=>{request=args;},document:{createElement:()=>{throw Error('Окно владельца не требуется');}}});
     vm.runInContext('async '+functionSource('openOwnerSelectionModal'),context);
     await context.openOwnerSelectionModal(5,3.2,3.7,9,{onSuccess:()=>{finished=true;}});
@@ -46,7 +46,7 @@ test('повторное размещение ГМом не открывает �
 });
 
 test('цель на улице сбрасывает этаж независимо от этажа персонажа',()=>{
-    const context=vm.createContext({navigationPointer:null,movementTargetLevel:1,
+    const context=vm.createContext({scoutedCharacters:new Set(),navigationPointer:null,movementTargetLevel:1,
         getPointerWorldPoint:()=>({x:25,y:3.4,z:3}),locationObjectMeshes:[],tileCubes:[],
         raycaster:{intersectObjects:objects=>objects===context.tileCubes?[{point:{x:25,y:1,z:3}}]:[]},
         locationHitOccludedByTerrain:()=>false});
@@ -56,7 +56,7 @@ test('цель на улице сбрасывает этаж независим�
 });
 
 test('обновляемая линия маршрута не исчезает из-за старой области видимости',()=>{
-    const context=vm.createContext({THREE:{BufferGeometry:class{setFromPoints(){}},
+    const context=vm.createContext({scoutedCharacters:new Set(),THREE:{BufferGeometry:class{setFromPoints(){}},
         Vector3:class{},LineBasicMaterial:class{constructor(options){Object.assign(this,options);}},
         Line:class{constructor(geometry,material){Object.assign(this,{geometry,material});}}}});
     vm.runInContext(functionSource('createPreviewLine'),context);
@@ -67,7 +67,7 @@ test('обновляемая линия маршрута не исчезает �
 test('одноэтажная сцена со стеной использует серверный маршрут для preview', () => {
     const route = { cost: 1, path: [[5,5],[5,6]] };
     let requests = 0;
-    const context = vm.createContext({
+    const context = vm.createContext({scoutedCharacters:new Set(),
         currentLocationData: { objects: [{ type: 'wall' }] }, hasStoreyNavigation: () => false,
         serverMovementPreview: () => { requests++; return route; },
     });
@@ -78,13 +78,13 @@ test('одноэтажная сцена со стеной использует �
 });
 
 test('встроенная в клетку стена также требует серверный preview', () => {
-    const context = vm.createContext({currentLocationData:{objects:[],tiles_data:[[{objects:[{type:'wall'}]}]]}});
+    const context = vm.createContext({scoutedCharacters:new Set(),currentLocationData:{objects:[],tiles_data:[[{objects:[{type:'wall'}]}]]}});
     vm.runInContext(functionSource('hasPreciseWallNavigation'),context);
     assert.equal(context.hasPreciseWallNavigation(),true);
 });
 
 test('указатель движения выбирает десятые метра вместо пиксельной точности', () => {
-    const context = vm.createContext({currentLocationData:{grid_width:10,grid_height:10}});
+    const context = vm.createContext({scoutedCharacters:new Set(),currentLocationData:{grid_width:10,grid_height:10}});
     vm.runInContext(functionSource('movementPointerPosition'),context);
     const point = context.movementPointerPosition({x:6.75,z:5.125});
     assert.equal(point.x,6.3);
@@ -94,7 +94,7 @@ test('указатель движения выбирает десятые мет
 });
 
 test('дистанция и ОП отображаются до десятых без изменения исходного расчёта',()=>{
-    const context=vm.createContext({});vm.runInContext(functionSource('formatMovementNumber'),context);
+    const context=vm.createContext({scoutedCharacters:new Set(),});vm.runInContext(functionSource('formatMovementNumber'),context);
     assert.equal(context.formatMovementNumber(3.4343467365764),'3.4');
     assert.equal(context.formatMovementNumber(7.999999999),'8');
     assert.equal(context.formatMovementNumber(Infinity),'—');
@@ -102,7 +102,7 @@ test('дистанция и ОП отображаются до десятых б
 
 test('видимость между дробными позициями не зацикливает обход клеток', () => {
     let calls = 0;
-    const context = vm.createContext({
+    const context = vm.createContext({scoutedCharacters:new Set(),
         currentLocationData:{tiles_data:[],objects:[]},getTileHeight:()=>1,
         getVisionObjectIndex:()=>({terrainCache:new Map(),walls:[]}),terrainLineHit:()=>null,
         getVisionBlockerHeight:()=>{calls++;return -Infinity;},lightPathOpen:()=>true,
@@ -114,7 +114,7 @@ test('видимость между дробными позициями не з�
 });
 
 test('horizontal facing preserves zero Y when calculating turn angle and payment', () => {
-    const context=vm.createContext({});
+    const context=vm.createContext({scoutedCharacters:new Set(),});
     vm.runInContext(functionSource('getFacingChangeOptions'),context);
     const character={facing_x:1,facing_y:0,posture:'standing'};
     assert.equal(context.getFacingChangeOptions(character,1,0).degrees,0);
@@ -128,7 +128,7 @@ test('facing socket API is exported, idempotent and supports one fog refresh per
     assert.match(source, /export function applyCharacterFacingVisual\(/);
     let refreshes = 0;
     const entry = {model:{rotation:{}},facingX:0,facingY:1};
-    const context = vm.createContext({getCharacterModelEntry:()=>entry,applyFogOfWar:()=>refreshes++});
+    const context = vm.createContext({scoutedCharacters:new Set(),getCharacterModelEntry:()=>entry,applyFogOfWar:()=>refreshes++,queueTrueSightRefresh(){}});
     vm.runInContext(functionSource('applyCharacterFacingVisual'),context);
     context.applyCharacterFacingVisual(1,1,0,{deferRefresh:true});
     assert.equal(entry.model.rotation.y,Math.PI/2);
@@ -143,7 +143,7 @@ test('facing socket API is exported, idempotent and supports one fog refresh per
 
 test('navigation preview deduplicates requests and rejects responses from an old map version', async () => {
     let resolve, requests=0;const sent=[];
-    const context=vm.createContext({currentLocationId:1,movementMapVersion:1,combatState:null,armedMovementType:'walk',
+    const context=vm.createContext({scoutedCharacters:new Set(),currentLocationId:1,movementMapVersion:1,combatState:null,armedMovementType:'walk',
         navigationPreviews:new Map(),navigationPreviewRequests:new Set(),navigationPreviewErrors:new Set(),
         navigationPreviewBusy:false,navigationPreviewQueued:null,
         movementPreviewCharacterId:null,window:{currentLobbyId:1},localStorage:{getItem:()=>''},
@@ -189,7 +189,7 @@ function functionSource(name) {
 }
 
 function movementContext(current = {}) {
-    const context = vm.createContext({
+    const context = vm.createContext({scoutedCharacters:new Set(),
         armedMovementEvasion: false,
         combatState: { round_number: 1, current_character: {
             action_points_current: 20, free_actions_current: 1,
@@ -202,6 +202,7 @@ function movementContext(current = {}) {
         vm.runInContext(source.slice(start, source.indexOf('\n};', start) + 3), context);
     }
     vm.runInContext(functionSource('resolveMovementType'), context);
+    vm.runInContext(functionSource('sprinterWalkingMode'), context);
     vm.runInContext(functionSource('getClimbPaymentProfile'), context);
     vm.runInContext(functionSource('getSpecialMovementAvailability'), context);
     vm.runInContext(functionSource('getMovementModeRouteCost'), context);
@@ -308,7 +309,8 @@ test('remembered models stay at the observed position and cannot be picked', () 
         userData: {}, rotation: {}, position: { set(...values) { this.values = values; } },
         traverse(callback) { callback(child); },
     };
-    const context = vm.createContext({
+    const context = vm.createContext({scoutedCharacters:new Set(),
+        renderer:{outputEncoding:3000},
         createCharacterModel: () => root,
         createMutantModel: () => null,
         setFogGhostAppearance: (model) => { child.raycast = disabledRaycast; return model; },
@@ -324,7 +326,7 @@ test('remembered models stay at the observed position and cannot be picked', () 
 test('a crouching target hidden by a low cover keeps its last visible snapshot', () => {
     const entry = { posX: 2, posY: 0, posture: 'standing', facingY: 0 };
     const memory = new Map([['2:0', { height: 1 }], ['3:0', { height: 1 }]]);
-    const context = vm.createContext({
+    const context = vm.createContext({scoutedCharacters:new Set(),
         fogMemory: memory, characterModels: new Map([[42, entry]]),
         getTileHeight: () => 1,
         isPointVisibleToPlayer: (x, y, height) => x === 2 && height > 2.5,
@@ -350,7 +352,7 @@ test('a crouching target hidden by a low cover keeps its last visible snapshot',
 test('an empty visible tile forgets a removed or moved character', () => {
     const memory = new Map([['2:0', { characters: [{ characterId: 42, posX: 2, posY: 0 }] }]]);
     const models = new Map();
-    const context = vm.createContext({
+    const context = vm.createContext({scoutedCharacters:new Set(),
         fogMemory: memory, characterModels: models,
         isTileVisibleToPlayer: () => true,
         isCharacterVisibleToPlayer: () => false,
@@ -368,7 +370,7 @@ test('actual sight ray sees a standing head but not a crouching head behind low 
     const geometryUrl = 'data:text/javascript;base64,' + Buffer.from(fs.readFileSync(path.join(__dirname, '../app/static/js/locationTerrain.js'), 'utf8')).toString('base64');
     const lineSource = fs.readFileSync(path.join(__dirname, '../app/static/js/terrainLineOfSight.js'), 'utf8').replace("'./locationTerrain.js'", JSON.stringify(geometryUrl));
     const terrain = await import('data:text/javascript;base64,' + Buffer.from(lineSource).toString('base64'));
-    const context = vm.createContext({
+    const context = vm.createContext({scoutedCharacters:new Set(),
         FOG_VIEW_RADIUS: 25, FOG_VIEW_HALF_ANGLE: Math.PI / 3,
         getTileHeight: () => 1,
         getVisionBlockerHeight: (x, y) => x === 1 && y === 0 ? 2.5 : -Infinity,
@@ -424,7 +426,7 @@ test('evasion is an unchecked independent checkbox next to automatic MP conversi
 
 
 function traversalContext() {
-    const context = vm.createContext({});
+    const context = vm.createContext({scoutedCharacters:new Set(),});
     for (const name of ['LOW_CLIMB_OBJECT_TYPES', 'HIGH_CLIMB_OBJECT_TYPES',
         'TOO_HIGH_OBJECT_TYPES', 'PASSABLE_OBJECT_TYPES']) {
         const start = source.indexOf(`const ${name} =`);

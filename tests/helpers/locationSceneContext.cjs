@@ -5,6 +5,8 @@ const architecture = vm.runInNewContext(fs.readFileSync(path.join(__dirname, '..
 // Neutral editor state for unit tests that exercise an isolated scene function.
 // History/command integration is covered by location_editor_history tests.
 module.exports = function sceneContext(values) {
+    const browserWindow=values.window||{};
+    if(!browserWindow.dispatchEvent)browserWindow.dispatchEvent=()=>{};
     return {
         ...architecture,
         currentLocationData: null, editorHeldRotation: null, objectEdit: null, editorPaste: null, eraserMode: false,
@@ -14,6 +16,8 @@ module.exports = function sceneContext(values) {
         locationSceneLoading: false, locationBuildingViewsDirty: false,
         locationObjectPickCache: { key: null, result: null },
         updateRoofVisibility() {}, updateLocationSculpt() {}, assetSurfacePlacement: () => null, alignFloorRugToSurface() {},
+        refreshSniperCoverMarks() {},
+        updateAnomalyLabelVisibility() {},
         lampDisplayLevel: () => 0, // These isolated functions operate on the ground floor.
         refreshObjectLightSource() {}, touchStrokeCell() {}, refreshLocationFloorMenu() {},
         runLocationObjectCommand: action => action(),
@@ -22,5 +26,6 @@ module.exports = function sceneContext(values) {
         editorDeleteObject: (...args) => values.Server.deleteLocationObject(...args),
         editorChangeObjects: (...args) => values.Server.changeLocationObjects(...args),
         ...values,
+        window: browserWindow,
     };
 };

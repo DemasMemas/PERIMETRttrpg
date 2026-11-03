@@ -24,9 +24,13 @@ function anomalyLabel(text) {
     const sprite = new THREE.Sprite(new THREE.SpriteMaterial({
         map: new THREE.CanvasTexture(canvas),
         transparent: true,
-        depthTest: false,
+        depthTest: true,
+        depthWrite: false,
     }));
     sprite.scale.set(Math.max(1.2, canvas.width / 150), 0.38, 1);
+    sprite.userData.anomalyLabel=true;
+    sprite.userData.anomalyLabelText=text;
+    sprite.userData.labelBaseScale=[sprite.scale.x,sprite.scale.y];
     sprite.position.y = 2.25;
     sprite.renderOrder = 20;
     return sprite;
@@ -86,6 +90,7 @@ function updateLightning(lines, time) {
 }
 
 const particleDummy = new THREE.Object3D();
+const labelWorldScale = new THREE.Vector3();
 
 function updateAcidParticles(mesh, time) {
     const { phases, radii, vapor } = mesh.userData.acidParticles;
@@ -200,6 +205,12 @@ export function animateAnomalyEffects(roots, time) {
         if (node.parent?.isLOD && typeof node.parent.getCurrentLevel === 'function' && node.parent.levels?.[node.parent.getCurrentLevel()]?.object !== node) return;
         const t = time * 0.001 + effect.phase;
         const visual = node.userData.anomalyVisual || node;
+        node.children.forEach(child=>{
+            if(!child.userData.anomalyLabel)return;
+            node.getWorldScale(labelWorldScale);
+            const base=child.userData.labelBaseScale;
+            child.scale.set(base[0]/Math.max(.0001,Math.abs(labelWorldScale.x)),base[1]/Math.max(.0001,Math.abs(labelWorldScale.y)),1);
+        });
         node.children.forEach(child => {
             if (child.userData.anomalyMarkerSpeed) child.rotation.z = t * child.userData.anomalyMarkerSpeed;
         });

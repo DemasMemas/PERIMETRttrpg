@@ -15,7 +15,7 @@ test('smooth terrain picking retains full triangle order and restores render ind
     const indices = { array: [3, 4, 5] };
     const geometry = { index: indices, setIndex(index) { this.index = index; } };
     let fail = false;
-    const context = vm.createContext({ THREE: { Mesh: { prototype: { raycast(ray, hits) {
+    const context = vm.createContext({refreshWorldIceSurface() {},clearWorldIceSurface() {}, THREE: { Mesh: { prototype: { raycast(ray, hits) {
         assert.equal(this.geometry.index, null);
         if (fail) throw new Error('pick failed');
         hits.push({ faceIndex: 0 });
@@ -64,7 +64,7 @@ function harness({ deferTimers = false } = {}) {
     const timers = [];
     let terrainBuilds = 0;
     let waterBuilds = 0;
-    const context = vm.createContext({ worldWaterProfiles: { updateRegion() {} },
+    const context = vm.createContext({refreshWorldIceSurface() {},clearWorldIceSurface() {}, worldWaterProfiles: { updateRegion() {} },
         THREE: { Object3D, Color }, terrainColors: { grass: 1, rock: 2 },
         CHUNK_SIZE: 2, chunksMap: new Map([['0,0', entry]]),
         markWorldShadowsDirty() {}, updateTileObjectsPositions() {}, refreshWorldFenceNeighborhood() {}, invalidateFenceGround() {},
@@ -168,7 +168,7 @@ test('baked world surface covers land tops, skips water, and reuses its texture 
         constructor(options) { createdMaterial++; Object.assign(this, options); }
         dispose() { disposedMaterial++; }
     }
-    const context = vm.createContext({ worldWaterProfiles: { updateRegion() {} },
+    const context = vm.createContext({refreshWorldIceSurface() {},clearWorldIceSurface() {}, worldWaterProfiles: { updateRegion() {} },
         CHUNK_SIZE: 2, chunksMap: new Map([['0,0', entry]]),
         window: { worldLoadMetrics: metrics }, performance,
         worldGrassGroundPixelsEnabled: true,
@@ -267,7 +267,7 @@ test('water-only world chunks skip terrain texture and release it across land tr
         constructor(options) { counts.materials++; Object.assign(this, options); }
         dispose() { counts.disposedMaterials++; }
     }
-    const context = vm.createContext({ worldWaterProfiles: { updateRegion() {} },
+    const context = vm.createContext({refreshWorldIceSurface() {},clearWorldIceSurface() {}, worldWaterProfiles: { updateRegion() {} },
         CHUNK_SIZE: 2, chunksMap: new Map([['0,0', entry]]),
         worldGrassGroundPixelsEnabled: true,
         worldGrassDetail: { apply(material) { material.worldGrassDetail = true; } },
@@ -398,7 +398,7 @@ test('releasing the world brush schedules its pending terrain refresh without ca
     assert.ok(start >= 0 && end > start);
     let scheduled = 0;
     let removed = 0;
-    const context = vm.createContext({ worldWaterProfiles: { updateRegion() {} },
+    const context = vm.createContext({refreshWorldIceSurface() {},clearWorldIceSurface() {}, worldWaterProfiles: { updateRegion() {} },
         brushActive: true, isMouseDown: true, lastProcessedTileKey: '0,0,1,1',
         window: {},
         controlsDisabled: true, controls: { enabled: false },
@@ -450,7 +450,7 @@ test('slope overlay hides only its cube and restores it when the slope disappear
         }
         updateMatrix() {}
     }
-    const context = vm.createContext({ worldWaterProfiles: { updateRegion() {} },
+    const context = vm.createContext({refreshWorldIceSurface() {},clearWorldIceSurface() {}, worldWaterProfiles: { updateRegion() {} },
         CHUNK_SIZE: 2, chunksMap: new Map([['0,0', entry]]), chunkBounds: [],
         scene: { add() {}, remove() {} }, terrainColors: { grass: 0x123456 }, smoothGroundMat: {},
         refreshWorldTerrainSurface() {},
@@ -513,7 +513,7 @@ async function neighborRefreshHarness(terrain = 'grass') {
         }
         updateMatrix() {}
     }
-    const context = vm.createContext({ worldWaterProfiles: { updateRegion() {} },
+    const context = vm.createContext({refreshWorldIceSurface() {},clearWorldIceSurface() {}, worldWaterProfiles: { updateRegion() {} },
         window: { worldLoadMetrics: metrics }, performance,
         CHUNK_SIZE: 2, chunksMap, chunkBounds: [], isSmoothTerrainTile,
         scene: { add() {}, remove() {} }, terrainColors: { grass: 1, sand: 2 },
@@ -586,7 +586,7 @@ test('chunk arrival order schedules full builds only for new chunks; edits still
         const chunksMap = new Map();
         const calls = [];
         const roads = [];
-        const context = vm.createContext({ worldWaterProfiles: { updateRegion() {} },
+        const context = vm.createContext({refreshWorldIceSurface() {},clearWorldIceSurface() {}, worldWaterProfiles: { updateRegion() {} },
             CHUNK_SIZE: 2, chunksMap, brushActive: false, performance,
             refreshWorldTerrainChunk(entry, neighborOnly) {
                 calls.push({ key: `${entry.chunkX},${entry.chunkY}`, neighborOnly });
@@ -619,7 +619,7 @@ test('world landmarks use their actual lowest vertex as the ground offset', () =
     const end = source.indexOf('\nfunction getDefaultColorForType(', start);
     assert.ok(start >= 0 && end > start);
     const landmark = { geometry: { boundingBox: null, computeBoundingBox() { this.boundingBox = { min: { y: -0.31 } }; } } };
-    const context = vm.createContext({ worldWaterProfiles: { updateRegion() {} },
+    const context = vm.createContext({refreshWorldIceSurface() {},clearWorldIceSurface() {}, worldWaterProfiles: { updateRegion() {} },
         WORLD_LANDMARKS: { forest: landmark },
         getBaseDimensions: type => ({ height: type === 'tree' ? 1 : 1.5 }),
     });
@@ -649,7 +649,7 @@ test('removing a chunk releases instance buffers but keeps shared terrain resour
     chunksMap.set('1,1', diagonal);
     chunksMap.set('0,1', { hasRoadNodes: false });
     chunksMap.set('2,0', { hasRoadNodes: true });
-    const context = vm.createContext({ worldWaterProfiles: { updateRegion() {} },
+    const context = vm.createContext({refreshWorldIceSurface() {},clearWorldIceSurface() {}, worldWaterProfiles: { updateRegion() {} },
         chunksMap, chunkBounds: [{ key: '0,0' }], fenceGroundSamplers: new Map(), refreshFenceChunkNeighbors() {},
         scene: { remove(object) { removed.push(object); } },
         cancelAnimationFrame(id) { cancelled.push(id); },
@@ -717,7 +717,7 @@ test('world chunks wait for one shared grass image load and keep a consistent fa
         const counters = { imageLoads: 0, fetches: 0, warnings: 0, errors: 0 };
         const chunksMap = new Map();
         const window = { MAP_CHUNKS_WIDTH: 1, MAP_CHUNKS_HEIGHT: 1, isLocationActive: false };
-        const context = vm.createContext({ worldWaterProfiles: { updateRegion() {} },
+        const context = vm.createContext({refreshWorldIceSurface() {},clearWorldIceSurface() {}, worldWaterProfiles: { updateRegion() {} },
             window, chunksMap, currentLobbyId: 1,
             performance: { now: () => 10, mark() {}, measure() {} },
             Server: { async getChunks(id, minX, maxX, minY, maxY) {
@@ -777,7 +777,7 @@ test('side-only ground rendering preserves full-box picking and restores geometr
     const rendered = {}, fullBox = {}, ray = {}, hits = [];
     const mesh = { geometry: rendered };
     let fail = false;
-    const context = vm.createContext({ worldWaterProfiles: { updateRegion() {} },
+    const context = vm.createContext({refreshWorldIceSurface() {},clearWorldIceSurface() {}, worldWaterProfiles: { updateRegion() {} },
         groundGeo: fullBox,
         THREE: { InstancedMesh: { prototype: { raycast(raycaster, intersections) {
             assert.equal(this, mesh);

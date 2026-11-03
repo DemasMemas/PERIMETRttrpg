@@ -1,4 +1,31 @@
 import * as THREE from 'three';
+import { mountLocationModel } from './locationModelAssets.js';
+
+const BOAR_ASSET={dimensions:[1.05,2.12,1.1],visual:{renderMode:'glb',modelPath:'/static/models/mutants/boar/sekach-game.glb'}};
+
+function importedBoar(outputEncoding){
+    const group=new THREE.Group(),placeholder=quadruped('Кабан');
+    group.userData={isCharacter:true,mutantModel:true,labelHeight:1.4};
+    group.add(placeholder);
+    mountLocationModel(group,BOAR_ASSET,{width:1.05,depth:2.12,height:1.1},model=>{
+        group.remove(placeholder);
+        placeholder.traverse(child=>{child.geometry?.dispose();if(child.material)child.material.dispose();});
+        model.traverse(child=>{
+            if(!child.isMesh)return;
+            child.castShadow=true;child.receiveShadow=true;
+            for(const material of Array.isArray(child.material)?child.material:[child.material]){
+                // Как у растительности: цветовая карта должна соответствовать выводу сцены.
+                // Иначе sRGB декодируется, но обратно не кодируется, и шкура чернеет.
+                if(material?.map && material.map.encoding!==outputEncoding){
+                    material.map.encoding=outputEncoding;material.map.needsUpdate=true;material.needsUpdate=true;
+                }
+            }
+        });
+        group.add(model);group.userData.importedModelReady=true;
+        group.dispatchEvent({type:'model-ready'});
+    },error=>{group.userData.importedModelError=error.message;});
+    return group;
+}
 
 export const ALL_MUTANT_TYPES = [
     'Слепыш', 'Собака', 'Лжепёс', 'Кот', 'Кабан', 'Туша', 'Электроворона',
@@ -140,8 +167,9 @@ function humanoid(type) {
     return mergeParts(group);
 }
 
-export function createMutantModel(type) {
+export function createMutantModel(type, outputEncoding = THREE.LinearEncoding) {
     if (!MODELED_MUTANT_TYPES.includes(type)) return null;
+    if(type==='Кабан')return importedBoar(outputEncoding);
     if (type === 'Электроворона') return crow();
     if (['Кровопийца', 'Зомбированный', 'Одичалый'].includes(type)) return humanoid(type);
     return quadruped(type);

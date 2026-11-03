@@ -14,6 +14,24 @@ function section(start, end) {
     return scene.slice(first, last).replaceAll('export ', '');
 }
 
+test('осмотр использует только точку ГМа, а не обзор размещённых союзников',()=>{
+    const context=vm.createContext({window:{isGM:false,locationScoutView:{check:{success:true},point:{x:4,y:5,floor_level:2,facing_x:1,facing_y:0}}},
+        STOREY_HEIGHT:2.4,getTileHeight:()=>1,characterModels:new Map([[1,{posX:20,posY:20}]])});
+    vm.runInContext(section('function getFogVisionSources(', 'function blocksVision('),context);
+    const sources=context.getFogVisionSources();
+    assert.equal(sources.length,1);assert.equal(sources[0].posX,4);assert.equal(sources[0].floorLevel,2);assert.equal(sources[0].physicalHeight,5.8);
+    context.window.locationScoutView.check.success=false;
+    assert.equal(context.getFogVisionSources().length,0);
+});
+
+test('осмотр ГМа тоже включает туман и не изменяет постоянную память карты',()=>{
+    const context=vm.createContext({window:{isGM:true,locationScoutView:{point:{x:1,y:1}}},currentLocationData:{},
+        localStorage:{getItem:()=>1},gmVisionCharacterId:null});
+    vm.runInContext(section('function fogIsActive(', 'function toggleGmVision('),context);
+    vm.runInContext(section('function getFogMemoryStorageKey(', 'function loadFogMemory('),context);
+    assert.equal(context.fogIsActive(),true);assert.equal(context.getFogMemoryStorageKey(),null);
+});
+
 test('GM-hidden and camouflaged models restore their original appearance independently', () => {
     const material = { opacity: 1, clone() { return { ...this }; }, dispose() {} };
     const child = { isMesh: true, material, castShadow: true, receiveShadow: true };
@@ -23,7 +41,7 @@ test('GM-hidden and camouflaged models restore their original appearance indepen
         gmHidden: false, camouflaged: false,
     };
     let refreshes = 0;
-    const context = vm.createContext({
+    const context = vm.createContext({scoutedCharacters:new Set(),
         window: { isGM: true },
         getCharacterModelEntry: () => entry,
         makeGmHiddenGhost(model) { model.userData.gmHiddenGhost = true; child.material.opacity = 0.38; },
@@ -46,7 +64,7 @@ test('GM-hidden and camouflaged models restore their original appearance indepen
 });
 
 test('hidden or camouflaged characters are not visible through fog memory', () => {
-    const context = vm.createContext({
+    const context = vm.createContext({scoutedCharacters:new Set(),
         isPointVisibleToPlayer: () => true,
         getTileHeight: () => 1,
     });
@@ -64,7 +82,7 @@ test('location labels keep a dark surface while owner and team colors stay narro
             backgroundColor: 'rgba(17, 23, 20, 0.84)',
             setProperty(name, value) { this[name] = value; },
         } } } };
-    const context = vm.createContext({
+    const context = vm.createContext({scoutedCharacters:new Set(),
         getCharacterModelEntry: () => entry,
         characterModels: new Map([[1, entry]]),
         getUserColorHex: () => '#ff0000',
@@ -92,7 +110,7 @@ test('character labels switch from full to name to marker with hysteresis and se
         else classes.delete(name);
     } } };
     const entry = { label: { position: { distance: 8 }, element } };
-    const context = vm.createContext({
+    const context = vm.createContext({scoutedCharacters:new Set(),
         camera: { position: { distanceTo(position) { return position.distance; } } },
         characterModels: new Map([[1, entry]]),
         window: { currentLocationCharacterId: null },

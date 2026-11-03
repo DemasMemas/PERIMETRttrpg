@@ -1,4 +1,5 @@
 from copy import deepcopy
+import pytest
 
 from sqlalchemy.orm.attributes import flag_modified
 
@@ -44,6 +45,41 @@ def install_consumable(pair, name, description, *, quantity=2, health=None):
 
 def application():
     return {"kind": "self", "actionPoints": 0}
+
+
+@pytest.mark.parametrize('name',['Сигареты Тест','Самокрутка','Сигары'])
+@pytest.mark.parametrize('exhaustion',[0,.1,2])
+def test_tobacco_counts_nominal_relief_even_at_zero_exhaustion(client,pair,auth_headers,monkeypatch,name,exhaustion):
+    from app.services.addictions import initial_addiction
+    LocationCombatState.query.one().status='idle'
+    item,_=install_consumable(pair,name,'-0.25 Истощения. Снижение стресса через 5 минут.',quantity=1,health={'exhaustion':exhaustion})
+    data=deepcopy(pair['actor_character'].data)
+    initial_addiction(data.setdefault('health',{}),name,'Проверка')
+    data['inventory']['pockets']=[{'id':'fire','name':'Спички','category':'misc','quantity':2}]
+    pair['actor_character'].data=data;db.session.commit()
+    monkeypatch.setattr('app.services.addictions.random.random',lambda:1)
+    response=apply_general(client,pair,auth_headers,item,operation='zero-exhaustion-tobacco')
+    assert response.status_code==200,response.json
+    health=response.json['data']['health']
+    assert health['exhaustion']==max(0,exhaustion-.25)
+    assert health['addictions']['records']['nicotine']['daily_progress']['exhaustion_relief']==.25
+
+
+def test_tobacco_daily_counter_keeps_counting_after_one_at_zero_exhaustion(client,pair,auth_headers):
+    from app.services.addictions import initial_addiction
+    LocationCombatState.query.one().status='idle'
+    item,_=install_consumable(pair,'Сигареты Тест','-0.25 Истощения. Снижение стресса через 5 минут. 20 использований.',quantity=1,health={'exhaustion':0})
+    data=deepcopy(pair['actor_character'].data)
+    initial_addiction(data.setdefault('health',{}),'Сигареты Тест','Проверка')
+    data['inventory']['pockets']=[{'id':'lighter','name':'Зажигалка','category':'misc','quantity':1}]
+    pair['actor_character'].data=data;db.session.commit()
+    for index in range(5):
+        response=apply_general(client,pair,auth_headers,item,operation=f'tobacco-counter-{index}')
+        assert response.status_code==200,response.json
+        item=deepcopy(response.json['data']['inventory']['backpack'][0])
+    health=response.json['data']['health']
+    assert health['exhaustion']==0
+    assert health['addictions']['records']['nicotine']['daily_progress']['exhaustion_relief']==1.25
 
 
 def source(item):
