@@ -20,6 +20,9 @@ module.exports=async({page,request,token,lobby,base,connect,debugPort,safeSessio
     await request(api+'/join',{},player.access_token);
     const actor=await request(api+'/characters',{name:'Pripyat regression actor',data:{}},player.access_token);
     await request(url+'/spawn_character',{character_id:actor.id,tile_x:41,tile_y:48,assign_to_user_id:player.user_id},token);
+    if (safeSession && ['movement','surface'].includes(process.env.VTT_SAFE_SCENARIO)) {
+        await request(url+'/characters/'+actor.id+'/facing',{facing_x:1,facing_y:0},token,'PATCH');
+    }
     await page.evaluate(`(async()=>{window.L=await import('/static/js/locationScene.js');window.T=await import('three');await enterLocation(${loc.id})})()`);
     await page.until(`window.locationControls&&document.getElementById('scene-loading-screen').classList.contains('is-hidden')`,'Pripyat loaded');
     await page.evaluate(`L.setLocationEditMode(false);window.contextEvents=[];window.addEventListener('contextmenu',e=>contextEvents.push({prevented:e.defaultPrevented,target:e.target.tagName}),false)`);

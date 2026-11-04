@@ -5,6 +5,10 @@ from datetime import datetime, timedelta
 import re
 
 
+def is_standard_nvg(item):
+    return re.sub(r'\s+','',str((item or {}).get('name') or '')).casefold() in {'пнв-1п','сидр-1г','supernova'}
+
+
 def parse_weapon_size(value):
     raw = str(value if value is not None else "").strip().replace(",", ".")
     # Excel превращает размеры вроде 8/7 в дату 8 июля. В XML остаётся
@@ -55,6 +59,7 @@ def normalize_character_weapons(data):
             for child in value:
                 visit(child, weapon)
         elif isinstance(value, dict):
+            if is_standard_nvg(value):value.update(weight=1,volume=1)
             if weapon or value.get("category") == "weapon":
                 _repair_size_fields(value)
             for key in ("contents", "pouches", "installedModules", "storedItem", "installedMagazine"):
@@ -80,6 +85,7 @@ def attachment_slots(subcategory, configured=None):
 
 
 def normalize_template(data):
+    if is_standard_nvg(data):data={**data,'weight':1,'volume':1}
     if data.get('category') == 'weapon_module':
         from app.services.weapon_modules import normalize_module_template
         return normalize_module_template(data)

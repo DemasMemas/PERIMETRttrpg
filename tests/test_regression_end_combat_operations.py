@@ -2,6 +2,7 @@
 from collections import deque
 from contextlib import contextmanager
 from copy import deepcopy
+from helpers.journal_assertions import assert_same_game_state
 import sys
 from types import SimpleNamespace
 
@@ -119,7 +120,7 @@ def reject_unchanged(pair, operation, status):
     before = full_snapshot(pair)
     response = operation()
     body_error(response, status)
-    assert full_snapshot(pair) == before
+    assert_same_game_state(full_snapshot(pair), before)
 
 
 def end_battle(client, pair, auth_headers, identity):

@@ -15,7 +15,7 @@ from app.services.character import CharacterService
 from app.services.consumable_use import apply_consumable_use, validate_consumable_use
 from app.services.consumable_effects import with_darkness_modifiers
 from app.services.deferred_consumable import claim_completion, finish_completion
-from app.services.effects import apply_effect_to_health, normalize_effect_list, sync_health_derived_statuses
+from app.services.effects import apply_effect_to_health, apply_intoxication_dose, normalize_effect_list, sync_health_derived_statuses
 from app.services.exceptions import ConflictError, NotFoundError, ValidationError
 from app.services.item_template_lookup import resolve_item_template
 from app.services.magazine import inventory_slot
@@ -26,6 +26,7 @@ from app.services.medical_procedure import (
     minimum_consumable_payment,
 )
 from app.services.transaction import atomic_operation
+from app.services.action_journal import journaled
 
 
 UNSUPPORTED_GENERAL_FIELDS = {
@@ -62,6 +63,10 @@ def _adjust(health, field, delta, minimum=0, maximum=None):
     amount = _number(delta)
     if not amount:
         return False
+    if field == 'stress' and amount > 0:
+        from app.services.effects import health_blocks_new_stress
+        if health_blocks_new_stress(health):
+            return True
     current = _number(health.get(field), 36 if field == "temperature" else 0)
     value = current + amount
     if minimum is not None:
@@ -228,10 +233,10 @@ def _consume_requirements(data, direct, lobby_id=None):
 
 def _is_water_supply(item, lobby_id=None):
     template = resolve_item_template(item, lobby_id)
-    profile = ((template.attributes or {}).get("consumable") or {}) if template else {}
+    profile = ((template.attributes or {}).get("consumable") or {}) if template else (item.get('attributes') or {}).get('consumable') or {}
     direct = profile.get("direct") if isinstance(profile, dict) else None
     if isinstance(direct, dict) and direct:
-        return bool(direct.get("water_source") or (direct.get("satisfy_water") and direct.get("nutrition") is None))
+        return bool(direct.get("water_source") or str(item.get('name') or '').strip().casefold()=='вода')
     return str(item.get("name") or "").strip().casefold() == "вода"
 
 
@@ -300,6 +305,8 @@ def _add_modifier(health, stat, value, remaining, tick, note, source):
 
 
 def _apply_profile(health, profile, direct, item, *, in_combat,character_data=None):
+    from app.services.consumable_catalog_rules import correct_owl_profile
+    profile, direct = correct_owl_profile(profile, direct, item.get('name'))
     from app.services.character_traits import consumable_profile
     profile,direct=consumable_profile(profile,direct,item,character_data)
     changed = False
@@ -370,6 +377,9 @@ def _apply_profile(health, profile, direct, item, *, in_combat,character_data=No
     changed |= _adjust(health, "temperature", direct.get("temperature_delta"), 0)
     changed |= _adjust(health, "psyState", direct.get("psy_delta"), 0, 50)
     changed |= _adjust(health, "infection", direct.get("infection_delta"), 0, 100)
+    if direct.get('infection_multiplier') is not None:
+        health['infection'] = max(0, min(100, _number(health.get('infection')) * _number(direct['infection_multiplier'], 1)))
+        changed = True
     changed |= _adjust(health, "painLevel", direct.get("pain_delta"), 0, 10)
     changed |= _adjust(health, "exhaustion", direct.get("exhaustion_delta"), 0, 10)
     stress_before = _number(health.get("stress"))
@@ -386,7 +396,9 @@ def _apply_profile(health, profile, direct, item, *, in_combat,character_data=No
                 effect["active"] = False
             if stress_after == 0 and effect.get("expires_on_stress_zero"):
                 effect["active"] = False
-    changed |= _adjust(health, "intoxication", direct.get("intoxication_delta"), 0, 100)
+    if _number(direct.get('intoxication_delta')):
+        apply_intoxication_dose(health, _number(direct['intoxication_delta']))
+        changed = True
 
     meta = health.setdefault("combatMeta", {})
     duration = direct.get("duration")
@@ -396,6 +408,15 @@ def _apply_profile(health, profile, direct, item, *, in_combat,character_data=No
         if beneficial and phase in {'turn_end','round_end'} and _number(remaining)>1:
             return _number(remaining)+_number(direct.get('positive_duration_bonus'))
         return remaining
+    if _number(direct.get('hp_per_turn')) > 0 and not any(
+        effect.get('type') == 'regeneration' and effect.get('source') != 'direct'
+        for effect in profile.get('effects') or [] if isinstance(effect, dict)
+    ):
+        apply_effect_to_health(health, {
+            'type': 'regeneration', 'name': 'Регенерация', 'value': _number(direct['hp_per_turn']),
+            'remaining': duration, 'tick': tick, 'source': source,
+        }, character_data=character_data)
+        changed = True
     for stat in ("strength", "agility", "accuracy", "weight", "movement_points", "will", "psy_defense"):
         value = direct.get(f"{stat}_delta")
         if value is not None:
@@ -426,8 +447,12 @@ def _apply_profile(health, profile, direct, item, *, in_combat,character_data=No
         if active_crash is None and active_max_return is None:
             health["max"] = max(1, _number(health.get("max")) + delta)
         changed = True
-    if direct.get("post_duration_hp_delta") is not None or direct.get("hp_max_delta") is not None:
+    if any(direct.get(key) is not None for key in ('post_duration_hp_delta','hp_max_delta','post_duration_exhaustion_delta','post_duration_pain_delta','post_duration_modifiers')):
         on_expire = []
+        if direct.get('post_duration_pain_delta') is not None:
+            on_expire.append({'field':'painLevel','delta':_number(direct['post_duration_pain_delta']),'min':0,'max':10})
+        if direct.get('post_duration_exhaustion_delta') is not None:
+            on_expire.append({'field':'exhaustion','delta':_number(direct['post_duration_exhaustion_delta']),'min':0,'max':10})
         if direct.get("post_duration_hp_delta") is not None:
             previous_delta = sum(
                 _number(adjustment.get("delta"))
@@ -441,17 +466,22 @@ def _apply_profile(health, profile, direct, item, *, in_combat,character_data=No
             })
         if direct.get("hp_max_delta") is not None:
             adjustment={"field": "max", "delta": -_number(direct["hp_max_delta"]), "min": 1}
+            maximum_expiry = [adjustment]
+            if _number(direct.get('temporary_hp_return')) > 0:
+                previous = sum(_number(a.get('delta')) for a in (active_max_return or {}).get('onExpire', []) if a.get('field')=='current')
+                maximum_expiry.insert(0, {'field':'current','delta':previous-_number(direct['temporary_hp_return']),'min':0})
             max_duration=positive_duration('hp_max',direct['hp_max_delta'],duration,tick)
             if max_duration!=duration:
                 apply_effect_to_health(health,{'type':'temporary_hp_max','name':f'{item_name}: окончание бонуса ОЗ',
                     'source':max_return_source,'remaining':max_duration,'tick':tick,
-                    'remaining_seconds':_modifier_seconds(max_duration,tick),'onExpire':[adjustment]})
-            else:on_expire.append(adjustment)
+                    'remaining_seconds':_modifier_seconds(max_duration,tick),'onExpire':maximum_expiry})
+            else:on_expire.extend(maximum_expiry)
         apply_effect_to_health(health, {
             "type": "stimulant_crash", "name": f"{item_name}: окончание действия",
             "remaining": _number(duration, 1), "tick": tick, "source": crash_source,
             "remaining_seconds": _modifier_seconds(_number(duration, 1), tick),
             "onExpire": on_expire,
+            "activate_modifiers": deepcopy(direct.get('post_duration_modifiers') or []),
         })
         changed = True
     if direct.get("organ_toughness_multiplier") is not None:
@@ -474,6 +504,24 @@ def _apply_profile(health, profile, direct, item, *, in_combat,character_data=No
             "return_fraction": _number(direct.get("blocked_pain_return_fraction"), 1),
             "exhaustion_on_expire": _number(direct.get("exhaustion_on_expire")),
         })
+        changed = True
+    for field, kind, name, extra in (
+        ('stress_block_turns', 'stress_resistance', 'Блок нового стресса', {'blocks_new_stress': True}),
+        ('sleep_block_hours', 'sleep_support', 'Поддержка без сна', {}),
+    ):
+        remaining = _number(direct.get(field))
+        if remaining <= 0:
+            continue
+        health['effects'] = [effect for effect in health.get('effects') or []
+                             if not (effect.get('type') == kind and effect.get('source') == source
+                                     and (kind == 'sleep_support' or effect.get('blocks_new_stress')))]
+        effect = {'type': kind, 'name': name, 'remaining': remaining, 'source': source,
+                  'tick': 'turn_end' if field == 'stress_block_turns' else 'time_elapsed', **extra}
+        if field == 'sleep_block_hours':
+            effect.update(time_unit='hour', remaining_seconds=remaining * 3600)
+        else:
+            health.setdefault('combatMeta', {})['stressBlockTracked'] = True
+        apply_effect_to_health(health, effect, character_data=character_data)
         changed = True
     for field, target in (
         ("pain_block_turns", "painBlockTurns"), ("stress_block_turns", "stressBlockTurns"),
@@ -558,6 +606,8 @@ def _apply_profile(health, profile, direct, item, *, in_combat,character_data=No
         changed = True
 
     if direct.get("clear_breathless"):
+        meta['clearBreathlessOnce'] = True
+        changed = True
         old = health.get("effects") or []
         health["effects"] = [
             effect for effect in old
@@ -609,11 +659,15 @@ def _apply_profile(health, profile, direct, item, *, in_combat,character_data=No
             needs["drinksToday"] = min(3, needs["drinksToday"] + 1)
         changed = True
 
+    for effect in health.get('effects') or []:
+        if str(effect.get('source') or '').startswith(source):
+            effect['medication_clock'] = True
     return changed
 
 
 class GeneralConsumableService:
     @staticmethod
+    @journaled(kind='consumable_use')
     @atomic_operation
     def apply(user_id, character_id, payload):
         if not isinstance(payload, dict):

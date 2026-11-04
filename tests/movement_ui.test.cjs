@@ -126,9 +126,9 @@ test('horizontal facing preserves zero Y when calculating turn angle and payment
 
 test('facing socket API is exported, idempotent and supports one fog refresh per state batch', () => {
     assert.match(source, /export function applyCharacterFacingVisual\(/);
-    let refreshes = 0;
+    let refreshes = 0, lightRefreshes = 0;
     const entry = {model:{rotation:{}},facingX:0,facingY:1};
-    const context = vm.createContext({scoutedCharacters:new Set(),getCharacterModelEntry:()=>entry,applyFogOfWar:()=>refreshes++,queueTrueSightRefresh(){}});
+    const context = vm.createContext({scoutedCharacters:new Set(),getCharacterModelEntry:()=>entry,applyFogOfWar:()=>refreshes++,queueTrueSightRefresh(){},syncPortableLights(){lightRefreshes++;}});
     vm.runInContext(functionSource('applyCharacterFacingVisual'),context);
     context.applyCharacterFacingVisual(1,1,0,{deferRefresh:true});
     assert.equal(entry.model.rotation.y,Math.PI/2);
@@ -139,6 +139,7 @@ test('facing socket API is exported, idempotent and supports one fog refresh per
     assert.equal(refreshes,1);
     context.applyCharacterFacingVisual(1,0,0);
     assert.equal(refreshes,1);
+    assert.equal(lightRefreshes,2,'луч поворачивается только при изменении направления');
 });
 
 test('navigation preview deduplicates requests and rejects responses from an old map version', async () => {

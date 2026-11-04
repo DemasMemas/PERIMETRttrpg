@@ -2,6 +2,8 @@ import pytest
 
 from app.services.consumable_effects import parse_consumable_effects
 from app.services.effects import (
+    advance_timed_effects,
+    apply_intoxication_dose,
     apply_effect_to_health,
     apply_expired_effects_to_health,
     apply_periodic_effects_to_health,
@@ -9,6 +11,112 @@ from app.services.effects import (
     tick_effects,
     sync_health_derived_statuses,
 )
+
+
+@pytest.mark.parametrize('value', [99, 100, 101])
+def test_intoxication_coma_threshold_and_single_saved_roll(monkeypatch, value):
+    draws = []
+    monkeypatch.setattr('app.services.effects.random.randint', lambda *args: draws.append(args) or 16)
+    health = {'intoxication': value, 'effects': []}
+    sync_health_derived_statuses(health)
+    sync_health_derived_statuses(health)
+    coma = [e for e in health['effects'] if e['source'] == 'deadly_intoxication']
+    assert len(draws) == (value >= 100)
+    assert len(coma) == (value >= 100)
+    if coma:
+        assert coma[0]['type'] == 'unconsciousness'
+        assert coma[0]['remaining_seconds'] == 86400
+
+
+def test_intoxication_coma_persists_below_threshold_and_wakes_at_24_hours(monkeypatch):
+    from copy import deepcopy
+    monkeypatch.setattr('app.services.effects.random.randint', lambda *_: 100)
+    health = {'intoxication': 120, 'effects': []}
+    sync_health_derived_statuses(health)
+    health['effects'] = advance_timed_effects(health, health['effects'], 3600)
+    reloaded = deepcopy(health)
+    apply_intoxication_dose(reloaded, -30)
+    reloaded['effects'] = advance_timed_effects(reloaded, reloaded['effects'], 23 * 3600 - 1)
+    assert reloaded['effects'][0]['remaining_seconds'] == 1
+    reloaded['effects'] = advance_timed_effects(reloaded, reloaded['effects'], 1)
+    assert reloaded['intoxication'] == 20
+    assert not reloaded['effects']
+
+
+def test_new_alcohol_dose_rechecks_death_without_resetting_coma_clock(monkeypatch):
+    draws = iter([16, 100, 15])
+    monkeypatch.setattr('app.services.effects.random.randint', lambda *_: next(draws))
+    health = {'intoxication': 100, 'effects': []}
+    sync_health_derived_statuses(health)
+    health['effects'] = advance_timed_effects(health, health['effects'], 3600)
+    apply_intoxication_dose(health, 20)
+    assert health['intoxication'] == 120
+    assert health['effects'][0]['remaining_seconds'] == 23 * 3600
+    sync_health_derived_statuses(health)
+    apply_intoxication_dose(health, 20)
+    assert [e['type'] for e in health['effects']] == ['death']
+    apply_intoxication_dose(health, 20)  # На уже мёртвом персонаже новых бросков нет.
+
+
+@pytest.mark.parametrize('hours,expected,roll_count,remaining', [
+    (24, 170, 2, 86400), (48, 100, 3, 86400), (72, 30, 3, None),
+    (49, 100, 3, 23 * 3600),
+])
+def test_intoxication_wake_repeats_days_and_handles_large_time_steps(
+        monkeypatch, hours, expected, roll_count, remaining):
+    draws = []
+    monkeypatch.setattr('app.services.effects.random.randint', lambda *args: draws.append(args) or 100)
+    health = {'intoxication': 240, 'effects': []}
+    sync_health_derived_statuses(health)
+    health['effects'] = advance_timed_effects(health, health['effects'], hours * 3600)
+    assert health['intoxication'] == expected
+    assert len(draws) == roll_count
+    assert (health['effects'][0]['remaining_seconds'] if health['effects'] else None) == remaining
+
+
+def test_intoxication_can_kill_at_repeated_waking_check(monkeypatch):
+    rolls = iter([16, 15])
+    monkeypatch.setattr('app.services.effects.random.randint', lambda *_: next(rolls))
+    health = {'intoxication': 170, 'effects': []}
+    sync_health_derived_statuses(health)
+    health['effects'] = advance_timed_effects(health, health['effects'], 72 * 3600)
+    assert health['intoxication'] == 100
+    assert [e['type'] for e in health['effects']] == ['death']
+
+
+def test_legacy_survived_intoxication_result_starts_coma_without_reroll(monkeypatch):
+    def forbidden(*_):
+        raise AssertionError('Сохранённый результат не перебрасывается')
+    monkeypatch.setattr('app.services.effects.random.randint', forbidden)
+    health = {'intoxication': 110, 'effects': [],
+              'combatMeta': {'intoxicationDeathChecked': True, 'intoxicationDeathRoll': 85}}
+    sync_health_derived_statuses(health)
+    assert health['effects'][0]['remaining_seconds'] == 86400
+
+
+@pytest.mark.parametrize('roll', [15, 16])
+def test_new_dose_on_unconscious_below_threshold_rechecks_without_starting_extra_coma(monkeypatch, roll):
+    draws = []
+    monkeypatch.setattr('app.services.effects.random.randint', lambda *args: draws.append(args) or roll)
+    health = {'intoxication': 10, 'effects': [{'type': 'unconsciousness', 'source': 'other_injury'}]}
+    apply_intoxication_dose(health, 20)
+    assert draws == [(1, 100)]
+    assert health['intoxication'] == 30
+    assert any(e['type'] == 'death' for e in health['effects']) == (roll == 15)
+    assert not any(e['source'] == 'deadly_intoxication' and e['type'] == 'unconsciousness' for e in health['effects'])
+
+
+def test_catalog_iodine_keeps_fractional_radiation_treatment_and_real_temporary_types():
+    from app.services.effects import normalize_effect_list
+    profile = parse_consumable_effects('Йод-плюс. Ампула. -2.5 радиации')
+    health = {'radiation': 10, 'effects': normalize_effect_list(profile['effects'])}
+    apply_periodic_effects_to_health(health, health['effects'], 'turn_end')
+    assert health['radiation'] == 7.5
+    for expected in [5, 2.5, 0]:
+        apply_periodic_effects_to_health(health, health['effects'], 'turn_end')
+        assert health['radiation'] == expected
+    effects = normalize_effect_list([{'type': 'temporary_exhaustion'}, {'type': 'temporary_hp_max'}])
+    assert [effect['type'] for effect in effects] == ['temporary_exhaustion', 'temporary_hp_max']
 
 
 def test_deadly_intoxication_roll_happens_once_until_level_drops(monkeypatch):

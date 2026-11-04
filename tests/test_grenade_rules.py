@@ -105,14 +105,65 @@ def test_prepare_water_then_pour_consumes_container_and_reduces_burning(grenade_
         return CombatService.perform_action(grenade_game['location'].id,grenade_game['actor_user']['id'],actor.id,key,**kw)
     with pytest.raises(ValidationError,match='Сначала возьмите'):
         action('pour_water')
+    initial=actor.action_points_current
     action('prepare_water',item_path=['inventory','pockets',0])
+    assert actor.action_points_current==initial-1
     before=actor.action_points_current
-    assert actor.character.data['health']['combatMeta']['heldWaterItem']['litres']==2
+    assert actor.character.data['health']['combatMeta']['heldWaterItem']['litres']==1
     action('pour_water')
     assert actor.action_points_current==before-2
     assert actor.character.data['inventory']['pockets'][0]['quantity']==1
     assert 'heldWaterItem' not in actor.character.data['health']['combatMeta']
-    assert next(e for e in actor.character.data['health']['effects'] if e['type']=='burning')['remaining']==4
+    assert next(e for e in actor.character.data['health']['effects'] if e['type']=='burning')['remaining']==6
+
+
+@pytest.mark.parametrize('storage,cost',[('pockets',1),('backpack',2),('case',4)])
+def test_water_retrieval_uses_only_inventory_access_cost(grenade_game,storage,cost):
+    from app.services.burning import extinguishing_options
+    actor=grenade_game['actor_location'];data=deepcopy(actor.character.data)
+    water={'id':'one-litre','name':'Вода','category':'consumable','volume':2,'quantity':1,'maxUses':3,'uses':3}
+    if storage=='case':
+        data['inventory']={'pockets':[{'name':'Кейс','category':'case','attributes':{'access_action_points':3},'contents':[water]}]}
+        path=['inventory','pockets',0,'contents',0]
+    else:
+        data['inventory']={storage:[water]};path=['inventory',storage,0]
+    actor.character.data=data;db.session.commit()
+    option=extinguishing_options(actor)['water'][0]
+    assert option['action_points']==cost and option['litres']==1
+    before=actor.action_points_current
+    CombatService.perform_action(actor.location_id,grenade_game['lobby'].gm_id,actor.id,'prepare_water',item_path=path)
+    assert actor.action_points_current==before-cost
+
+
+def test_water_remaining_uses_and_explicit_container_capacity(grenade_game):
+    from app.services.burning import water_item
+    data=deepcopy(grenade_game['actor_location'].character.data)
+    data['inventory']['pockets']=[{'name':'Вода','volume':2,'uses':1,'maxUses':3},
+        {'name':'Вода в канистре','volume':4,'uses':2,'maxUses':4,'attributes':{'water_litres':10,'consumable':{'direct':{'water_source':True}}}}]
+    assert water_item(data,['inventory','pockets',0])[1]==pytest.approx(1/3)
+    assert water_item(data,['inventory','pockets',1])[1]==5
+    del data['inventory']['pockets'][1]['attributes']['water_litres']
+    with pytest.raises(ValidationError,match='объём воды'):
+        water_item(data,['inventory','pockets',1])
+
+
+def test_water_options_exclude_distant_and_other_floor_targets_and_dry_food(client,grenade_game,auth_headers):
+    actor,target=grenade_game['actor_location'],grenade_game['target_location']
+    data=deepcopy(actor.character.data)
+    data['inventory']['pockets']=[{'name':'Сухой паёк','attributes':{'consumable':{'direct':{'satisfy_water':True}}}},
+        {'name':'Ампула','attributes':{'consumable':{'direct':{'satisfy_water':True,'application_form':'injectable'}}}}]
+    actor.character.data=data;db.session.commit()
+    url=f'/lobbies/{grenade_game["lobby"].id}/locations/{actor.location_id}/extinguishing-options/{actor.id}'
+    response=client.get(url,headers=auth_headers(grenade_game['actor_user']))
+    assert response.status_code==200,response.json
+    assert response.json['target_ids']==[actor.character_id]
+    assert response.json['water']==[]
+    target.pos_x,target.pos_y=actor.pos_x+1,actor.pos_y;db.session.commit()
+    assert target.character_id in client.get(url,headers=auth_headers(grenade_game['actor_user'])).json['target_ids']
+    target.floor_level=1;db.session.commit()
+    assert target.character_id not in client.get(url,headers=auth_headers(grenade_game['actor_user'])).json['target_ids']
+    actor.character.visible_to=[];actor.character.editable_to=[];db.session.commit()
+    assert client.get(url,headers=auth_headers(grenade_game['target_user'])).status_code==403
 
 
 @pytest.mark.parametrize('invalidation',['moved_target','replaced_water'])

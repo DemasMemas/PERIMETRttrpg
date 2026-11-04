@@ -2,7 +2,7 @@
 import { showNotification } from './utils.js';
 import { Server } from './api.js';
 import { loadLobbyCharacters } from './characters.js';
-import { chatMessageKind } from './chatPanel.js';
+import { chatMessageKind, chatMessageIdentity } from './chatPanel.js';
 import {
     setGmId,
     getUserColorHex,
@@ -138,9 +138,15 @@ async function banUserHandler(userId) {
     }
 }
 
-export function addMessage(username, text, timestamp) {
+const deliveredChatMessages = new WeakMap();
+export function addMessage(username, text, timestamp, id = null) {
     const chat = document.getElementById('chat');
     if (!chat) return;
+    const identity = chatMessageIdentity(username, text, timestamp, id);
+    let delivered = deliveredChatMessages.get(chat);
+    if (!delivered) { delivered = new Set(); deliveredChatMessages.set(chat, delivered); }
+    if (identity && delivered.has(identity)) return;
+    if (identity) delivered.add(identity);
     const msgDiv = document.createElement('div');
     const kind = chatMessageKind(username, text);
     msgDiv.className = `message chat-${kind}${kind === 'event' ? ' system' : ''}`;

@@ -53,10 +53,16 @@ def test_owl_variants_have_different_sleep_and_aftereffects():
     owl = parse_consumable_effects("Стимулятор Сова. Действует 4 часа. +1 истощения")
     owl_n = parse_consumable_effects("Стимулятор Сова-Н. Действует 8 часов. +1 истощения")
 
-    assert owl["direct"]["sleep_block_hours"] == 4
+    assert owl["direct"]["satisfy_sleep"] is True
+    assert 'sleep_block_hours' not in owl['direct']
+    assert {m['stat']: m['value'] for m in owl['modifiers']}['light_awareness'] == -3
+    assert all(m['remaining'] == 240 for m in owl['modifiers'])
     assert "exhaustion_delta" not in owl["direct"]
     assert any(effect["type"] == "deferred_adjustment" for effect in owl["effects"])
-    assert owl_n["direct"]["sleep_block_hours"] == 8
+    assert owl_n["direct"]["satisfy_sleep"] is True
+    assert 'sleep_block_hours' not in owl_n['direct']
+    assert all(m['remaining'] == 480 for m in owl_n['modifiers'])
+    assert not any(m['stat'] == 'light_awareness' for m in owl_n['modifiers'])
     assert owl_n["direct"]["exhaustion_delta"] == 1
     assert not any(effect["type"] == "deferred_adjustment" for effect in owl_n["effects"])
 

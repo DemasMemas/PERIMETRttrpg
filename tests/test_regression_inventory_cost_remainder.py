@@ -1,5 +1,6 @@
 """Адресный остаток инвентарной карточки; подготовка, все случаи NOT_RUN."""
 from copy import deepcopy
+from helpers.journal_assertions import assert_same_game_state
 
 import pytest
 
@@ -281,7 +282,7 @@ def test_repeated_ammo_loading_prepares_source_magazine_and_feeder_once(
     assert second['combatMagazineLoading'] == first['combatMagazineLoading']
     assert pair['actor_location'].action_points_current == 3
     assert pair['actor_location'].free_actions_current == 1
-    assert db.session.get(DeferredCombatAction, 'repeat-ammo-second') is None
+    assert db.session.get(DeferredCombatAction, 'repeat-ammo-second').status == 'completed'
     assert ConsumableUse.query.count() == 0
     finished_once(client, pair, auth_headers, identity, 'load_ammunition')
 
@@ -541,7 +542,7 @@ def test_http_armor_and_gas_mask_equip_and_remove_pay_real_costs(
     if slot == 'armor':
         finished_once(client, pair, auth_headers, remove_id, 'change_equipment')
     else:
-        assert db.session.get(DeferredCombatAction, remove_id) is None
+        assert db.session.get(DeferredCombatAction, remove_id).status == 'completed'
         reject_unchanged(pair, lambda: action(client, pair, auth_headers, remove), 400)
 
 
@@ -618,7 +619,7 @@ def test_http_explicitly_empty_filter_rejected_without_payment_or_mutation(
     assert response.status_code == 400, response.get_json()
     assert response.get_json()['error']['code'] == 400
     assert 'непустой' in response.get_json()['error']['message']
-    assert full_snapshot(pair) == before
+    assert_same_game_state(full_snapshot(pair), before)
     assert db.session.get(DeferredCombatAction, 'empty-filter') is None
     assert ConsumableUse.query.count() == 0
     assert pair['actor_location'].action_points_current == 1

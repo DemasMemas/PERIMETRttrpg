@@ -136,5 +136,5 @@ def handle_authenticate(data):
     # Загружаем историю чата
     messages = ChatMessage.query.filter_by(lobby_id=lobby_id).order_by(ChatMessage.timestamp.desc()).limit(50).all()
     messages.reverse()
-    history = [{'username': msg.username, 'message': msg.message, 'timestamp': msg.timestamp.isoformat()} for msg in messages]
+    history = [{'id': msg.id, 'username': msg.username, 'message': msg.message, 'timestamp': msg.timestamp.isoformat()} for msg in messages]
     emit('chat_history', history, room=request.sid)

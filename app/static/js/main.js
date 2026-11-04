@@ -274,7 +274,7 @@ function setLocationViewActive(active) {
     if (!active) {
         const menu = document.querySelector('.lobby-menu');
         const anchor = document.getElementById('edit-toggle');
-        for (const id of ['chat-toggle', 'common-tools-toggle']) {
+        for (const id of ['actions-toggle', 'chat-toggle', 'common-tools-toggle']) {
             const launcher = document.getElementById(id);
             if (menu && launcher) menu.insertBefore(launcher, anchor);
         }

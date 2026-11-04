@@ -4,6 +4,12 @@ class ItemTemplateSchema(Schema):
     @post_dump
     def weapon_compatibility(self, data, **kwargs):
         from app.services.weapon_catalog import normalize_template
+        if data.get('category') == 'consumable':
+            from app.services.consumable_effects import enrich_imported_consumable
+            attributes = data.get('attributes') or {}
+            profile = enrich_imported_consumable(attributes, data.get('description') or '')
+            if profile is not None:
+                data['attributes'] = {**attributes, 'consumable': profile}
         return normalize_template(data)
 
     id = fields.Int(dump_only=True)

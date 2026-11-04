@@ -202,6 +202,92 @@ def advance_global_minutes(client, case, auth_headers, minutes):
     assert response.get_json() == {"game_day": day, "game_time_minutes": minute}
 
 
+def test_global_clock_completes_medication_without_a_combat_turn(client, time_case, auth_headers):
+    character = time_case['actor_character']
+    seed_initial_health(character, [
+        {'type': 'regeneration', 'value': 10, 'remaining': 10, 'tick': 'turn_end', 'source': 'consumable-template:1'},
+        {'type': 'radiation_treatment', 'value': -2.5, 'remaining': 10, 'tick': 'turn_end', 'source': 'consumable-template:2'},
+    ])
+    character.data['health'].update(current=100, max=700, radiation=25)
+    flag_modified(character, 'data'); db.session.commit()
+    advance_global_minutes(client, time_case, auth_headers, 10)
+    health = persisted_health(character.id)
+    assert health['current'] == 200
+    assert health['radiation'] == 0
+    assert not health['effects']
+    advance_global_minutes(client, time_case, auth_headers, 10)
+    assert persisted_health(character.id)['current'] == 200
+
+
+def test_delayed_morphine_activates_in_real_turn_and_blocks_then_releases_pain(
+        client,time_case,auth_headers):
+    from app.services.consumable_effects import parse_consumable_effects
+    from app.services.general_consumable import _apply_profile
+    from app.services.effects import apply_effect_to_health
+    character=time_case['actor_character']
+    seed_initial_health(character,[])
+    health=character.data['health']
+    health.update(painLevel=5,stress=3,exhaustion=2)
+    profile=parse_consumable_effects('Морфин. Ампула.')
+    _apply_profile(health,profile,profile['direct'],{'name':'Морфин','templateId':42},in_combat=True)
+    flag_modified(character,'data');db.session.commit()
+    end_turn(client,time_case,auth_headers,'actor')
+    health=persisted_health(character.id)
+    assert health['painLevel']==2 and health['stress']==1
+    blocks=[e for e in health['effects'] if e.get('blocks_new_pain')]
+    assert blocks, health['effects']
+    block=blocks[0]
+    assert block['remaining']==3 and block['medication_clock'] is True
+    apply_effect_to_health(health,{'type':'pain','value':2})
+    assert health['painLevel']==2
+    assert not health['combatMeta'].get('blockedPain')
+    character.data={**character.data,'health':health};flag_modified(character,'data');db.session.commit()
+    for _ in range(3):
+        end_turn(client,time_case,auth_headers,'target')
+        end_turn(client,time_case,auth_headers,'actor')
+    health=persisted_health(character.id)
+    assert not any(e.get('blocks_new_pain') for e in health['effects'])
+    pain_before=health['painLevel']
+    apply_effect_to_health(health,{'type':'pain','value':2})
+    assert health['painLevel']==pain_before+2
+
+
+def test_orel_buff_and_crash_each_last_full_character_turns(client,time_case,auth_headers):
+    from app.services.consumable_effects import parse_consumable_effects
+    from app.services.general_consumable import _apply_profile
+    character=time_case['actor_character']
+    seed_initial_health(character,[])
+    profile=parse_consumable_effects('Стимулятор Орёл. Ампула. Действует 10 ходов.')
+    _apply_profile(character.data['health'],profile,profile['direct'],{'name':'Стимулятор Орёл','templateId':42},in_combat=True)
+    flag_modified(character,'data');db.session.commit()
+    for turn in range(1,14):
+        assert CombatService._consumable_stat_value_bonus(character.data,'accuracy')==(3 if turn<=10 else -5)
+        end_turn(client,time_case,auth_headers,'actor')
+        expected=3 if turn<10 else -5 if turn<13 else 0
+        assert CombatService._consumable_stat_value_bonus(character.data,'accuracy')==expected
+        end_turn(client,time_case,auth_headers,'target')
+        assert CombatService._consumable_stat_value_bonus(character.data,'accuracy')==expected
+
+
+def test_movement_modifier_counts_actual_moves_and_not_rounds(client,time_case,auth_headers):
+    from app.services.general_consumable import _apply_profile
+    character=time_case['actor_character'];actor=time_case['actor_location']
+    seed_initial_health(character,[])
+    profile={'direct':{},'modifiers':[{'stat':'awareness','value':6,'remaining':3,'tick':'movement_end'}]}
+    _apply_profile(character.data['health'],profile,profile['direct'],{'name':'Проба','templateId':42},in_combat=True)
+    flag_modified(character,'data');db.session.commit()
+    end_turn(client,time_case,auth_headers,'actor');end_turn(client,time_case,auth_headers,'target')
+    assert character.data['health']['combatMeta']['consumableModifiers'][0]['remaining']==3
+    converted=client.post(combat_url(time_case)+'/action',headers=auth_headers(time_case['actor_user']),json={
+        'location_character_id':actor.id,'action_key':'convert_free_action_to_movement'})
+    assert converted.status_code==200,converted.json
+    for move in range(1,4):
+        CombatService.move_character(time_case['location'].id,time_case['actor_user']['id'],character.id,
+            actor.pos_x,actor.pos_y+1,movement_mode='walk')
+        assert CombatService._consumable_stat_value_bonus(character.data,'awareness')==(6 if move<3 else 0)
+        if move<3:assert character.data['health']['combatMeta']['consumableModifiers'][0]['remaining']==3-move
+
+
 def apply_scripted_stress(monkeypatch, placed, draws, **arguments):
     rng = ScriptedRandint(draws)
     with monkeypatch.context() as patcher:

@@ -1,3 +1,5 @@
+import { itemTooltipModel, tooltipPosition } from './itemPresentation.js';
+import { renderPortableLights,usesNightVision } from './portableLights.js';
 import { hearingModifier } from './hearingRules.js';
 import { passiveTraits, traitCount, backgroundIs, addLearningXp, backpackItemVolume, pocketCapacity,facialProfile,carriedWeaponEntries,ruleText } from './characterTraits.js';
 // static/js/characterSheet.js
@@ -29,7 +31,7 @@ import { consumeChangedSheetInputs, rememberCharacterSnapshots } from './charact
 import { diffCharacterData, pathTouches } from './characterSheetSync.js';
 import { isWorldDarkTime } from './darknessRules.js';
 import { copyProfileComponent, profileComponentOptions, renderConsumableProfileTree } from './consumableProfileEditor.js';
-import { applyEffectToHealth, createEffectDraft, effectSummary, getEffectTypeOptions, isAlcoholConsumable, normalizeCharacterEffects, normalizeEffectList, summarizeEffectImpact, syncHealthDerivedStatuses } from './effects.js';
+import { applyEffectToHealth, createEffectDraft, effectSummary, effectDurationLabel, effectConsequences, getEffectTypeOptions, isAlcoholConsumable, normalizeCharacterEffects, normalizeEffectList, getEffectImpact, syncHealthDerivedStatuses } from './effects.js';
 import { initCharacterWidgets, getWidgetSource, resolveWidgetReference, parseWidgetAction } from './characterWidgets.js';
 import { characterWidgetBlocks, findWidgetBlock, projectWidgetBlock, widgetBlockControl } from './characterWidgetBlocks.js';
 
@@ -561,82 +563,31 @@ function compareTemplatesBySourceOrder(left, right) {
     return 0;
 }
 
-const TOOLTIP_ATTRIBUTE_LABELS = {
-    damage: 'Урон', accuracy: 'Точность', penetration: 'Пробитие', armor_piercing: 'Бронебойность',
-    range: 'Дальность', ergonomics: 'Эргономика', caliber: 'Калибр', capacity: 'Ёмкость',
-    max_durability: 'Прочность', movement_penalty: 'Штраф перемещения',
-    accuracy_penalty: 'Штраф точности', ergonomics_penalty: 'Штраф эргономики',
-    charisma_bonus: 'Бонус харизмы', uses: 'Использований', duration: 'Длительность',
-};
-const TOOLTIP_DIRECT_LABELS = {
-    action_points_cost: 'Стоимость', med_bonus: 'Бонус медикамента',
-    pain: 'Боль', stress: 'Стресс', exhaustion: 'Истощение', radiation: 'Радиация',
-    intoxication: 'Опьянение', heal: 'Лечение', regeneration: 'Регенерация',
-    nutrition: 'Питание', hydration: 'Вода', uses: 'Использований', duration: 'Длительность',
-    delayed_stress: 'Отложенный стресс', blood_severity_reduction: 'Снижение тяжести кровотечений',
-};
-
-function formatTooltipMetric(key, value) {
-    if (value === null || value === undefined || value === '' || value === false) return null;
-    if (typeof value === 'object') return null;
-    const label = TOOLTIP_ATTRIBUTE_LABELS[key] || TOOLTIP_DIRECT_LABELS[key];
-    if (!label) return null;
-    const percentKeys = new Set(['penetration', 'armor_piercing']);
-    const shown = percentKeys.has(key) ? formatAmmoPenetration(value) : String(value);
-    return `<span><strong>${escapeHtml(label)}:</strong> ${escapeHtml(shown)}</span>`;
-}
-
-function buildItemTooltipHtml(template) {
-    if (!template) return '';
-    const attrs = template.attributes || {};
-    const consumable = attrs.consumable || {};
-    const metrics = [
-        `<span><strong>Категория:</strong> ${escapeHtml(template.subcategory || getCategoryDisplay(template.category))}</span>`,
-        template.weight !== undefined ? `<span><strong>Вес:</strong> ${escapeHtml(String(template.weight || 0))} кг</span>` : null,
-        template.volume !== undefined ? `<span><strong>Объём:</strong> ${escapeHtml(String(template.volume || 0))}</span>` : null,
-        ...Object.entries(attrs).map(([key, value]) => formatTooltipMetric(key, value)),
-        ...Object.entries(consumable.direct || {}).map(([key, value]) => formatTooltipMetric(key, value)),
-    ].filter(Boolean);
-    const effects = Array.isArray(consumable.effects) ? consumable.effects : (
-        Array.isArray(attrs.effects) ? attrs.effects : []
-    );
-    const effectLines = effects.map(effect => effectSummary(effect)).filter(Boolean);
-    const protection = attrs.protection || template.protection;
-    const protectionLine = protection && typeof protection === 'object'
-        ? Object.entries(protection).map(([key, value]) => `${key}: ${formatProtectionPercent(value)}`).join(' · ')
-        : '';
-    const description = template.description || attrs.raw_description || attrs.notes || '';
-    const artifactLines = template.category === 'artifact'
-        ? [
-            attrs.positive_effect ? `Положительный: ${attrs.positive_effect}` : null,
-            attrs.negative_effect ? `Отрицательный: ${attrs.negative_effect}` : null,
-            attrs.special_property && String(attrs.special_property).toLowerCase() !== 'нет'
-                ? `Особое свойство: ${attrs.special_property}` : null,
-        ].filter(Boolean)
-        : [];
-    return `
-        <div style="font-size:14px;font-weight:700;margin-bottom:5px;color:#e4d8a6;">${escapeHtml(template.name)}</div>
-        <div style="display:flex;flex-wrap:wrap;gap:4px 10px;font-size:12px;line-height:1.35;">${metrics.join('')}</div>
-        ${protectionLine ? `<div style="margin-top:6px;font-size:12px;"><strong>Защита:</strong> ${escapeHtml(protectionLine)}</div>` : ''}
-        ${description ? `<div style="margin-top:7px;padding-top:7px;border-top:1px solid rgba(255,255,255,.12);font-size:12px;line-height:1.4;">${escapeHtml(description)}</div>` : ''}
-        ${artifactLines.length ? `<div style="margin-top:7px;font-size:12px;"><strong>Свойства:</strong><br>${artifactLines.map(line => `• ${escapeHtml(line)}`).join('<br>')}</div>` : ''}
-        ${effectLines.length ? `<div style="margin-top:7px;font-size:12px;"><strong>Эффекты:</strong><br>${effectLines.map(line => `• ${escapeHtml(line)}`).join('<br>')}</div>` : ''}`;
+function buildItemTooltipHtml(template, item = {}) {
+    const firearm = (item.category || template?.category) === 'weapon' || item.type === 'firearm';
+    const instance = firearm && Object.keys(item).length ? {...item, ammo:getWeaponAmmoCount(item)} : item;
+    const model = itemTooltipModel(template || {}, instance);
+    return `<strong class="item-tooltip-name">${escapeHtml(model.name)}</strong>
+        <div class="item-tooltip-metrics">${model.metrics.map(text => `<span>${escapeHtml(text)}</span>`).join('')}</div>
+        ${model.rules.length ? `<div class="item-tooltip-rules">${model.rules.map(text => `<p>${escapeHtml(text)}</p>`).join('')}</div>` : ''}`;
 }
 
 function initializeDelayedItemTooltips() {
     if (document._itemTooltipBound) return;
     document._itemTooltipBound = true;
     let timer = null;
+    let hideTimer = null;
     let activeAnchor = null;
     let lastPointerDown = 0;
     let pointer = { x: 0, y: 0 };
     const tooltip = document.createElement('div');
     tooltip.id = 'delayed-item-tooltip';
     tooltip.setAttribute('role', 'tooltip');
-    tooltip.style.cssText = 'display:none;position:fixed;z-index:20000;pointer-events:none;max-width:430px;max-height:55vh;overflow:hidden;padding:10px 12px;border:1px solid rgba(190,180,125,.45);border-radius:7px;background:rgba(18,20,17,.97);color:#ddd;box-shadow:0 12px 30px rgba(0,0,0,.55);';
+    tooltip.style.cssText = 'display:none;position:fixed;z-index:20000;pointer-events:auto;width:max-content;max-width:min(400px,calc(100vw - 16px));max-height:calc(100vh - 16px);overflow:auto;overscroll-behavior:contain;padding:10px 12px;border:1px solid rgba(190,180,125,.45);border-radius:7px;background:rgba(18,20,17,.97);color:#ddd;box-shadow:0 12px 30px rgba(0,0,0,.55);';
     document.body.appendChild(tooltip);
 
     const hide = () => {
+        clearTimeout(hideTimer);
         clearTimeout(timer);
         timer = null;
         activeAnchor = null;
@@ -644,14 +595,19 @@ function initializeDelayedItemTooltips() {
         tooltip.style.display = 'none';
     };
     const position = () => {
-        const margin = 14;
-        const width = tooltip.offsetWidth || 360;
-        const height = tooltip.offsetHeight || 180;
-        tooltip.style.left = `${Math.max(8, Math.min(window.innerWidth - width - 8, pointer.x + margin))}px`;
-        tooltip.style.top = `${Math.max(8, Math.min(window.innerHeight - height - 8, pointer.y + margin))}px`;
+        if (!activeAnchor?.isConnected) return hide();
+        const group = activeAnchor.closest('#pockets-container, #backpack-container, .container-contents');
+        const rect = (group || activeAnchor).getBoundingClientRect();
+        tooltip.style.maxHeight = `${window.innerHeight - 16}px`;
+        const point = tooltipPosition(rect, tooltip.offsetWidth || 360, tooltip.offsetHeight || 180,
+            {width:window.innerWidth, height:window.innerHeight});
+        tooltip.style.left = `${point.left}px`;
+        tooltip.style.top = `${point.top}px`;
+        tooltip.style.maxHeight = `${point.maxHeight}px`;
     };
-    const findAnchor = target => target?.closest?.('[data-item-template-id], select[name$=".templateId"], .loadout-slot');
+    const findAnchor = target => target?.closest?.('[data-item-template-id], [data-item-tooltip], select[name$=".templateId"], .loadout-slot');
     const schedule = anchor => {
+        if (anchor) clearTimeout(hideTimer);
         if (!anchor || anchor === activeAnchor) return;
         hide();
         activeAnchor = anchor;
@@ -667,17 +623,20 @@ function initializeDelayedItemTooltips() {
                 return;
             }
             const templateId = Number(anchor.dataset.itemTemplateId || anchor.value);
-            if (!Number.isFinite(templateId) || templateId <= 0) return;
-            const templates = await getAllItemTemplates();
+            const templates = await getAllItemTemplates().catch(() => []);
             const template = templates.find(item => Number(item.id) === templateId);
-            if (!template || activeAnchor !== anchor) return;
-            tooltip.innerHTML = buildItemTooltipHtml(template);
+            if (activeAnchor !== anchor || !anchor.isConnected) return;
+            const path = anchor.dataset.path?.split(',');
+            const item = path ? characterValueAtPath(currentCharacterData, path.join('.')) : null;
+            if (!template && !item) return;
+            tooltip.innerHTML = buildItemTooltipHtml(template, item || {});
             tooltip.classList.remove('equipment-slot-tooltip');
             tooltip.style.display = 'block';
             position();
         }, anchor.classList.contains('loadout-slot') ? 500 : 1000);
     };
     document.addEventListener('pointermove', (event) => {
+        if (tooltip.contains(event.target)) return;
         pointer = { x: event.clientX, y: event.clientY };
         schedule(findAnchor(event.target));
         if (tooltip.style.display !== 'none') position();
@@ -688,11 +647,11 @@ function initializeDelayedItemTooltips() {
     document.addEventListener('pointerout', (event) => {
         const anchor = findAnchor(event.target);
         if (!anchor || anchor !== activeAnchor) return;
-        if (anchor.contains(event.relatedTarget)) return;
-        hide();
+        if (anchor.contains(event.relatedTarget) || tooltip.contains(event.relatedTarget)) return;
+        hideTimer = setTimeout(hide, 180);
     }, true);
     document.addEventListener('focusin', event => {
-        const anchor = event.target?.closest?.('.loadout-slot');
+        const anchor = findAnchor(event.target);
         if (!anchor || performance.now() - lastPointerDown < 500) return;
         const rect = anchor.getBoundingClientRect();
         pointer = { x: rect.right, y: rect.top };
@@ -701,11 +660,15 @@ function initializeDelayedItemTooltips() {
     document.addEventListener('focusout', event => {
         if (event.target === activeAnchor) hide();
     }, true);
-    document.addEventListener('pointerdown', () => {
+    document.addEventListener('keydown', event => { if (event.key === 'Escape') hide(); });
+    document.addEventListener('pointerdown', event => {
+        if (tooltip.contains(event.target)) return;
         lastPointerDown = performance.now();
         hide();
     }, true);
-    document.addEventListener('scroll', hide, true);
+    tooltip.addEventListener('pointerenter', () => clearTimeout(hideTimer));
+    tooltip.addEventListener('pointerleave', event => { if (!activeAnchor?.contains(event.relatedTarget)) hide(); });
+    document.addEventListener('scroll', event => { if (!tooltip.contains(event.target)) hide(); }, true);
     window.addEventListener('resize', hide);
 }
 
@@ -1008,7 +971,30 @@ function updateDataFromFields() {
             pendingManualFieldPaths.add(xpPath);
             pendingManualFieldPaths.add(name);
         }
+        const effectField = name.match(/^health\.effects\.(\d+)\.(type|remaining|tick)$/);
+        if (effectField) {
+            const effect = currentCharacterData.health?.effects?.[Number(effectField[1])];
+            if (effect && effectField[2] === 'type' && effect.type !== value) {
+                effect.name = getEffectTypeOptions().find(option => option.value === value)?.label || 'Эффект';
+            }
+            if (effect && effectField[2] === 'remaining' && effect.remaining_seconds != null) {
+                const scale = ({hour:3600,minute:60,second:1,movement:600})[effect.time_unit]
+                    || (effect.tick === 'time_elapsed' ? 60 : effect.tick === 'turn_end' ? 6 : 1);
+                if (value == null) delete effect.remaining_seconds;
+                else effect.remaining_seconds = Math.max(0, Number(value) * scale);
+            }
+        }
         setValueByPath(currentCharacterData, name, value);
+        if (effectField?.[2] === 'tick') {
+            const effect = currentCharacterData.health.effects[Number(effectField[1])];
+            const unit = ({time_elapsed:'minute',hour_start:'hour',movement_end:'movement'})[value];
+            delete effect.remaining_seconds;
+            delete effect.time_unit;
+            if (unit) {
+                effect.time_unit = unit;
+                if (effect.remaining != null) effect.remaining_seconds = Number(effect.remaining) * ({minute:60,hour:3600,movement:600})[unit];
+            }
+        }
         const zoneMatch = name.match(/^health\.zones\.([^.]+)\.(current|max)$/);
         if (zoneMatch && pendingManualFieldPaths.has(name)) {
             setValueByPath(currentCharacterData, `health.zones.${zoneMatch[1]}.destructionDamage`, 0);
@@ -3259,6 +3245,8 @@ function isStressManifestationEffect(effect) {
     );
 }
 
+const INSTANT_HEALTH_EFFECTS = new Set(['heal','radiation','pain','exhaustion','stress','intoxication','infection']);
+
 function renderHealthTab(data, container = null) {
     const targetContainer = container || document.getElementById('sheet-tab-health');
     if (!targetContainer) return;
@@ -3302,50 +3290,36 @@ function renderHealthTab(data, container = null) {
     const stressEffects = storedEffects
         .map((effect, index) => ({ effect, index }))
         .filter(({ effect }) => isStressManifestationEffect(effect) && effect?.active !== false);
-    const generalStoredEffects = storedEffects.filter(effect => !isStressManifestationEffect(effect));
     const disabledZoneChips = Object.entries(zones)
         .filter(([, zone]) => Number(zone?.max || 0) > 0 && Number(zone?.current) <= 0)
         .map(([area]) => `Выбита зона: ${getEffectAreaLabel(area)}`);
     const needs = normalizeDailyNeeds(health.needs);
     health.needs = needs;
-    const storedEffectChips = generalStoredEffects.map((effect) => {
-        const parts = [effect.name || effect.type];
-        if (effect.value !== undefined && effect.value !== null && effect.value !== 0) {
-            parts.push(`+${effect.value}`);
-        }
-        if (effect.remaining !== null && effect.remaining !== undefined && effect.remaining !== '') {
-            parts.push(`ост. ${effect.remaining}`);
-        } else if (effect.duration !== null && effect.duration !== undefined && effect.duration !== '') {
-            parts.push(`длит. ${effect.duration}`);
-        }
-        return parts.join(' · ');
-    });
     const modifierLabels = {
-        strength: 'Сила', agility: 'Ловкость', accuracy: 'Точность', weight: 'Штраф к весу',
+        strength: 'Сила', agility: 'Ловкость', accuracy: 'Точность', weight: 'Штраф к весу', movement_points:'ОП', hp_max:'Максимум ОЗ',
         will: 'Воля', psy_defense: 'Пси-защита', vision_awareness: 'Внимательность (зрение)',
         darkness_awareness: 'Внимательность в темноте', light_awareness: 'Внимательность на свету',
         darkness_visual_immunity: 'Без помехи к зрению в темноте',
         darkness_shooting_immunity: 'Без помехи к стрельбе в темноте',
         action_points: 'ОД', organ_toughness_multiplier: 'Живучесть органов', rest_heal_multiplier: 'Лечение на отдыхе'
     };
-    const modifierChips = (health.combatMeta?.consumableModifiers || []).map(modifier => {
-        const label = modifierLabels[modifier.stat] || modifier.stat || 'Модификатор';
+    const modifierChips = (health.combatMeta?.consumableModifiers || []).filter(modifier => modifier.active !== false && (modifier.remaining == null || Number(modifier.remaining) > 0)).map(modifier => {
+        const label = modifierLabels[modifier.stat] || 'Модификатор';
         const value = Number(modifier.value || 0);
-        const remaining = modifier.remaining !== null && modifier.remaining !== undefined
-            ? ` · ост. ${modifier.tick === 'time_elapsed'
-                ? `${Math.ceil(Number(modifier.remaining_seconds ?? Number(modifier.remaining) * 60) / 60)} мин`
-                : modifier.remaining}` : '';
-        return `${label}: ${modifier.stat?.endsWith('_immunity') ? 'активно' : `${value >= 0 ? '+' : ''}${value}`}${remaining}`;
+        const duration = effectDurationLabel(modifier);
+        const remaining = duration ? ` · ${duration}` : '';
+        return `${label}: ${modifier.stat?.endsWith('_immunity') ? 'активно' : modifier.stat?.endsWith('_multiplier') ? `×${value}` : `${value >= 0 ? '+' : ''}${value}`}${remaining}`;
     });
-    const visibleEffectChips = [
+    const visibleEffectChips = [...new Set([
         ...directStatusChips.map((item) => {
             const value = Number(item.value);
-            return `${item.label}: ${value >= 0 ? '+' : ''}${value}`;
+            return `${item.label}: ${value}`;
         }),
-        ...storedEffectChips,
         ...disabledZoneChips,
         ...modifierChips,
-    ];
+        ...(Number(health.combatMeta?.willShockBonus) ? [`Следующая проверка Воли против шока: ${Number(health.combatMeta.willShockBonus)>0?'+':''}${health.combatMeta.willShockBonus}`] : []),
+        ...(health.combatMeta?.willShockAdvantage ? ['Следующая проверка Воли против шока: преимущество'] : []),
+    ])];
     const addictionRecords = Object.values(health.addictions?.records || {})
         .filter(record => record && record.active !== false);
     const currentGameDay = Math.max(1, Number(window.lobbyGameDay || 1));
@@ -3466,9 +3440,9 @@ function renderHealthTab(data, container = null) {
                 </div>
             </details>
             <div style="margin: 0 0 14px 0; padding: 10px 12px; border-radius: 12px; background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.06);">
-                <div data-widget-block="health-summary" style="font-size: 12px; opacity: 0.78; margin-bottom: 8px;">Активные эффекты и состояния</div>
+                <div data-widget-block="health-summary" style="font-size: 12px; opacity: 0.78; margin-bottom: 8px;">Показатели и модификаторы</div>
                 <div style="display:flex; flex-wrap:wrap; gap:8px;">
-                    ${visibleEffectChips.length ? visibleEffectChips.map((text) => `<span style="display:inline-flex; align-items:center; gap:6px; padding:5px 10px; border-radius:999px; background:rgba(255,255,255,0.07); border:1px solid rgba(255,255,255,0.08); font-size:12px;">${escapeHtml(text)}</span>`).join('') : '<span style="opacity:0.7; font-size:12px;">Сейчас нет активных эффектов</span>'}
+                    ${visibleEffectChips.length ? visibleEffectChips.map((text) => `<span style="display:inline-flex; align-items:center; gap:6px; padding:5px 10px; border-radius:999px; background:rgba(255,255,255,0.07); border:1px solid rgba(255,255,255,0.08); font-size:12px;">${escapeHtml(text)}</span>`).join('') : '<span style="opacity:0.7; font-size:12px;">Числовых изменений нет; состояния показаны ниже</span>'}
                 </div>
             </div>
             <details class="health-compact-panel" data-sheet-panel="addictions" ${addictionRecords.length ? 'open' : ''}>
@@ -3610,6 +3584,8 @@ function renderHealthTab(data, container = null) {
         radiation_filter: 'Снижает входящую радиацию на время действия.',
         temperature_control: 'Временно меняет или удерживает температуру тела.',
         limb_trauma_suppression: 'Временно подавляет штрафы травм конечностей.',
+        sleep_support: 'Поддержка от стимулятора: можно обходиться без сна в указанный срок.',
+        stress_resistance: 'Снижает воздействие стресса в соответствии с препаратом.',
         next_rest_healing: 'Усилит лечение во время следующего отдыха и затем исчезнет.',
         untreated_wound: 'Рана остановлена, но не обработана: после боя может привести к заражению.',
         tourniquet: 'Жгут останавливает кровотечения конечности, но накладывает её штрафы.',
@@ -3618,13 +3594,18 @@ function renderHealthTab(data, container = null) {
         phobia: 'Постоянная фобия даёт помеху в ситуациях, связанных с её источником.',
     };
     const describeEffect = (effect) => {
-        const source = effectSourceLabels[effect.source] || effect.source;
+        const templateId = String(effect.source || '').match(/^consumable-template:(\d+)/)?.[1];
+        const sourceItem = templateId ? (allTemplatesCache || []).find(item => Number(item.id) === Number(templateId))?.name : null;
+        const sourceName = String(effect.source || '').replace(/^consumable:/, '');
+        const source = effectSourceLabels[effect.source] || sourceItem || (/^consumable-template:/.test(sourceName) ? 'применение предмета' : /[А-Яа-яЁё]/.test(sourceName) ? sourceName : '');
         const details = [];
         if (effect.requirement) details.push(`Требование: ${effect.requirement}`);
-        if (effect.type === 'generic') {
-            details.push('Логика не определена: это старая, повреждённая или служебная запись. Она сама по себе ничего не изменяет.');
+        if (INSTANT_HEALTH_EFFECTS.has(effect.type)) {
+            details.push('Изменит показатель один раз после нажатия «Применить разово».');
+        } else if (effect.type === 'generic') {
+            details.push(effect.note || (effect.onExpire || effect.on_expire || effect.adjustments ? 'Изменения применяются в указанный срок.' : 'Дополнительное состояние; последствия указаны в описании ведущего.'));
         } else if (effect.type === 'custom') {
-            details.push('Ручной эффект ГМа. Его последствия определяются описанием и решением ведущего.');
+            details.push(effect.note || 'Последствия определяются описанием и решением ведущего.');
         } else if (effect.type === 'organ_loss') {
             details.push(
                 effect.treatment_window_expired || Number(effect.treatment_window_seconds || 0) <= 0
@@ -3636,25 +3617,30 @@ function renderHealthTab(data, container = null) {
         } else if (effectRuleDescriptions[effect.type]) {
             details.push(effectRuleDescriptions[effect.type]);
         } else if (effect.tick && effect.tick !== 'manual') {
-            details.push(`Срабатывает: ${effect.tick === 'turn_end' ? 'в конце хода' : effect.tick}.`);
+            details.push(`Срабатывает: ${({turn_end:'в конце хода',round_end:'в конце раунда',day_start:'в начале суток',time_elapsed:'по игровому времени',hour_start:'в начале часа',movement_end:'после перехода'})[effect.tick] || 'по условию эффекта'}.`);
         } else {
             details.push('Правила применяются системой автоматически, если это предусмотрено типом эффекта.');
         }
-        if (source && effect.type !== 'organ_loss') details.push(`Источник: ${source}.`);
-        if (effect.area && effect.type !== 'organ_loss') {
-            details.push(`Область: ${getEffectAreaLabel(effect.area)}.`);
+        details.push(...effectConsequences(effect).map(text => `${text}.`));
+        if (effect.type.startsWith('bleeding')) {
+            const info = getBleedingInfo(effect);
+            if (info) details.push('Учитывается при проверке кровопотери.');
         }
+        if (effect.type === 'radiation_filter' && effect.remaining_capacity != null) {
+            details.push(`Остаток фильтра: ${effect.remaining_capacity}${effect.capacity != null ? ` из ${effect.capacity}` : ''}.`);
+        }
+        if (source && effect.type !== 'organ_loss') details.push(`Источник: ${source}.`);
         return details.join(' ');
     };
     let effectsHtml = '';
     effects.forEach((effect, index) => {
         if (isStressManifestationEffect(effect)) return;
-        const value = effect.value || 0;
+        const value = String(effect.type || '').startsWith('bleeding') ? getEffectImpact(effect).severity : effect.value || 0;
         const selectedType = effect.type || 'generic';
         const isBleedingEffect = String(effect.type || '').startsWith('bleeding');
-        const hasRemaining = !isBleedingEffect && selectedType !== 'organ_loss';
+        const hasRemaining = !isBleedingEffect && selectedType !== 'organ_loss' && !INSTANT_HEALTH_EFFECTS.has(selectedType);
         const remaining = effect.remaining ?? '';
-        const isManagedEffect = ['addiction_withdrawal', 'withdrawal_support', 'withdrawal_support_pending'].includes(selectedType);
+        const isManagedEffect = ['addiction_withdrawal', 'withdrawal_support', 'withdrawal_support_pending'].includes(selectedType) || effect.source === 'deadly_intoxication';
         const managedDisabled = isManagedEffect ? 'disabled' : '';
         const fractureStatus = getFractureStatusText(effect, effects);
         const isCustomOrUnknown = ['custom', 'generic'].includes(selectedType);
@@ -3675,13 +3661,17 @@ function renderHealthTab(data, container = null) {
             return;
         }
         effectsHtml += `
-            <div data-widget-effect-index="${index}" style="display: grid; grid-template-columns: 1.1fr 0.85fr 0.7fr 0.8fr auto; gap: 6px; margin-bottom: 6px; align-items: end;">
-                <select class="form-control" name="health.effects.${index}.type" style="width:100%;" ${managedDisabled}>
-                    ${effectTypeOptions.map(opt => `<option value="${opt.value}" ${opt.value === selectedType ? 'selected' : ''}>${opt.value === selectedType ? escapeHtml(visibleName) : opt.label}</option>`).join('')}
+            <div data-widget-effect-index="${index}" class="health-effect-card${effect.active === false || effect.remaining != null && Number(effect.remaining) <= 0 ? ' is-inactive' : ''}">
+                <div class="health-effect-caption">${INSTANT_HEALTH_EFFECTS.has(selectedType) ? 'Разовое изменение: ' : ''}${escapeHtml(effectSummary({...effect, name:visibleName, ...(INSTANT_HEALTH_EFFECTS.has(selectedType) ? {remaining:null,duration:null} : {})}))}${effect.area ? ` · ${escapeHtml(getEffectAreaLabel(effect.area))}` : ''}</div>
+                <div class="text-muted health-effect-description">${escapeHtml(describeEffect(effect))}</div>
+                ${INSTANT_HEALTH_EFFECTS.has(selectedType) && currentCharacterCanEdit ? `<button type="button" data-sheet-control class="btn btn-sm" onclick="applyManualNumericEffect(${index},this)">Применить разово</button>` : ''}
+                <details class="health-effect-editor" data-sheet-panel="effect-editor-${effect.id || index}" ${isCustomOrUnknown && effect.name === 'Пользовательский эффект' ? 'open' : ''}><summary>Изменить эффект</summary><div class="health-effect-fields">
+                <label>Тип<select class="form-control" name="health.effects.${index}.type" style="width:100%;" ${managedDisabled}>
+                    ${effectTypeOptions.map(opt => `<option value="${opt.value}" ${opt.value === selectedType ? 'selected' : ''}>${escapeHtml(opt.label)}</option>`).join('')}
                 </select>
-                <select class="form-control" name="health.effects.${index}.area" style="width:100%;" ${managedDisabled}>
+                </label><label>Область<select class="form-control" name="health.effects.${index}.area" style="width:100%;" ${managedDisabled}>
                     ${[
-                        ['', 'Источник'], ['head', 'Голова'], ['chest', 'Грудь'], ['abdomen', 'Живот'],
+                        ['', 'Всё тело'], ['head', 'Голова'], ['chest', 'Грудь'], ['abdomen', 'Живот'],
                         ['leftArm', 'Левая рука'], ['rightArm', 'Правая рука'],
                         ['leftLeg', 'Левая нога'], ['rightLeg', 'Правая нога'],
                         ['nose', 'Нос'], ['jaw', 'Челюсть'],
@@ -3693,12 +3683,16 @@ function renderHealthTab(data, container = null) {
                         ['spine', 'Позвоночник'], ['internalOrgan', 'Внутренний орган']
                     ].map(([key, label]) => `<option value="${key}" ${key === (effect.area || '') ? 'selected' : ''}>${label}</option>`).join('')}
                 </select>
-                <input type="number" class="form-control number-input" name="health.effects.${index}.value" value="${value}" placeholder="Значение" style="width:80px;" ${managedDisabled}>
-                ${hasRemaining ? `<input type="text" class="form-control number-input" name="health.effects.${index}.remaining" value="${escapeHtml(remaining)}" placeholder="Остаток" data-nullable-number="true" style="width:90px;" ${managedDisabled}>` : '<div></div>'}
+                </label><label>Значение<input type="number" class="form-control number-input" name="health.effects.${index}.value" value="${value}" step="any" ${managedDisabled}></label>
+                ${hasRemaining ? `<label>Осталось${effect.time_unit ? ` (${({hour:'ч',minute:'мин',second:'с'})[effect.time_unit] || 'ед.'})` : effect.tick === 'round_end' ? ' (раундов)' : effect.tick === 'turn_end' ? ' (ходов)' : ''}<input type="text" class="form-control number-input" name="health.effects.${index}.remaining" value="${escapeHtml(remaining)}" placeholder="Бессрочно" data-nullable-number="true" ${managedDisabled}></label>` : '<div></div>'}
+                ${INSTANT_HEALTH_EFFECTS.has(selectedType) ? '' : `<label>Срок уменьшается<select class="form-control" name="health.effects.${index}.tick" ${managedDisabled}>
+                    ${[['manual','Только вручную'],['turn_end','В конце хода'],['round_end','В конце раунда'],['time_elapsed','По времени, минуты'],['hour_start','По времени, часы'],['day_start','В начале суток'],['movement_end','После перехода']].map(([key,text])=>`<option value="${key}" ${effect.tick === key ? 'selected' : ''}>${text}</option>`).join('')}
+                </select></label>`}
                 ${selectedType === 'fracture_unfixed' ? `<button type="button" class="btn btn-sm btn-warning" onclick="rebreakUnfixedFracture(${index})" title="Сломать повторно и лечить как обычный перелом">↻</button>` : ''}
                 ${isManagedEffect ? '<span title="Системный эффект">⌁</span>' : `<button type="button" class="btn btn-sm btn-danger" onclick="removeEffect(${index})">×</button>`}
                 ${isCustomOrUnknown ? `<input class="form-control" name="health.effects.${index}.name" value="${escapeHtml(visibleName)}" placeholder="Название эффекта" style="grid-column:1/-1;">` : ''}
-                <div class="text-muted" style="grid-column:1/-1;font-size:12px;line-height:1.35;">${escapeHtml(describeEffect(effect))}</div>
+                ${isCustomOrUnknown ? `<label style="grid-column:1/-1;">Описание<textarea class="form-control" name="health.effects.${index}.note" rows="2" placeholder="Что меняет этот эффект">${escapeHtml(effect.note || '')}</textarea></label>` : ''}
+                </div></details>
                 ${fractureStatus ? `<div class="text-muted" style="grid-column:1/-1;font-size:12px;">${escapeHtml(fractureStatus)}</div>` : ''}
             </div>
         `;
@@ -3829,12 +3823,13 @@ window.applyQuickEffect = function(type, value = 1, duration = 0, label = '') {
         currentCharacterData.health.effects = [];
     }
 
+    const lasting = duration > 0 && !INSTANT_HEALTH_EFFECTS.has(type);
     const effect = createEffectDraft(type, {
         name: label || type,
         value,
-        duration: duration > 0 ? duration : null,
-        remaining: duration > 0 ? duration : null,
-        tick: duration > 0 ? 'turn_end' : 'manual',
+        duration: lasting ? duration : null,
+        remaining: lasting ? duration : null,
+        tick: lasting ? 'turn_end' : 'manual',
         active: true,
     });
 
@@ -3849,7 +3844,21 @@ window.applyQuickEffect = function(type, value = 1, duration = 0, label = '') {
     normalizeCharacterEffects(currentCharacterData);
     scheduleAutoSave();
     const summary = effectSummary(effect);
-    if (summary) showNotification(`Тестовый эффект: ${summary}`, 'system');
+    if (summary) showNotification(`Применено: ${summary}`, 'system');
+};
+
+window.applyManualNumericEffect = async function(index, button) {
+    if (!currentCharacterCanEdit || sheetSaveBlocked || !button?.isConnected || button.disabled) return;
+    button.disabled = true;
+    updateDataFromFields();
+    const effect = currentCharacterData?.health?.effects?.[index];
+    if (!effect || !INSTANT_HEALTH_EFFECTS.has(effect.type)) return;
+    currentCharacterData.health.effects.splice(index, 1);
+    applyEffectToHealth(currentCharacterData.health, effect);
+    normalizeCharacterEffects(currentCharacterData);
+    refreshHealthPanel();
+    try { await forceSyncCharacter(); }
+    catch (error) { showNotification(error.message || 'Не удалось сохранить изменение', 'system'); }
 };
 
 window.removeEffect = function(index) {
@@ -4671,6 +4680,8 @@ async function renderEquipmentTab(data) {
     container.innerHTML = html;
     await renderWeapons(weapons, weaponTemplates, weaponModuleTemplates, weaponModTemplates);
     renderEquipmentLoadout(container, data, weaponTemplates, helmetTemplates, gasMaskTemplates, armorTemplates);
+    await renderPortableLights(container,currentCharacterId,data,window.operatePortableLight,
+        ()=>renderVersion===equipmentRenderVersion,currentCharacterCanEdit).catch(error=>console.warn('Не удалось загрузить фонари:',error));
     restoreSheetViewState(viewState);
 }
 
@@ -4861,11 +4872,11 @@ function renderEquipmentLoadout(container, data, weaponTemplates, helmetTemplate
     const melee = weaponEntries.filter(entry => entry.template?.category === 'melee_weapon' || entry.item.category === 'melee_weapon');
     const ranged = weaponEntries.filter(entry => !melee.includes(entry));
     const slot = (label, item, panel, code, kind = 'cosmetic', template = null, status = '') => {
-        const metrics = equipmentSlotMetrics(item, kind, template);
+        const tooltipHtml = item ? buildItemTooltipHtml(template, item) : '<span>Нажмите, чтобы открыть слот</span>';
         return `<button type="button" class="loadout-slot ${item ? 'is-equipped' : 'is-empty'}" data-sheet-control data-equipment-open="${escapeHtml(panel)}" aria-label="${escapeHtml(`${label}: ${item?.name || item?.model || 'пусто'}`)}">
             <span class="loadout-slot-mark" aria-hidden="true">${escapeHtml(code)}</span>
             <span class="loadout-slot-text"><span class="loadout-slot-label">${escapeHtml(label)}</span><strong>${escapeHtml(item?.name || item?.model || 'Пусто')}</strong>${status ? `<small>${escapeHtml(status)}</small>` : ''}</span>
-            <span class="loadout-slot-tooltip" role="tooltip"><strong>${escapeHtml(item?.name || label)}</strong>${metrics.length ? metrics.map(metric => `<span>${escapeHtml(metric)}</span>`).join('') : '<span>Нажмите, чтобы открыть слот</span>'}</span>
+            <span class="loadout-slot-tooltip" role="tooltip">${tooltipHtml}</span>
         </button>`;
     };
     const weaponSlot = (label, entry, code, panel) => slot(
@@ -5325,10 +5336,115 @@ function isSelectedWeaponIndex(value, weaponIndex) {
         && Number(value) === Number(weaponIndex);
 }
 
+function secondaryWeaponIndex() {
+    if (window.locationCombatState?.status==='active') {
+        const actor=window.locationCombatState.characters?.find(c=>c.character_id===currentCharacterId);
+        return actor?.secondary_weapon_index ?? null;
+    }
+    const identity=currentCharacterData?.health?.combatMeta?.secondaryWeaponId;
+    const index=identity?(currentCharacterData.weapons || []).findIndex(weapon=>weapon.id===identity):-1;
+    return index>=0 && !isSelectedWeaponIndex(currentCharacterData.activeWeaponIndex,index)?index:null;
+}
+
+function isHeldWeaponIndex(value,index) {
+    return isSelectedWeaponIndex(value,index) || secondaryWeaponIndex()===index;
+}
+
+window.changeWeaponPair = async function(operation,weaponIndex) {
+    if (medicalOperationInProgress || !currentCharacterCanEdit) return;
+    const characterId=currentCharacterId;let locked=false,pending=false;
+    try {
+        if (autoSaveTimer) await forceSyncCharacter();
+        await Server.waitForCharacterSave(characterId);
+        if (currentCharacterId!==characterId || medicalOperationInProgress) return;
+        if (sheetSaveBlocked) throw new Error('Переоткройте лист перед сменой оружия');
+        medicalOperationInProgress=locked=true;medicalRemoteUpdate=null;
+        const state=window.locationCombatState;
+        if (state?.status==='active') {
+            if (operation!=='take') throw new Error('Уберите второе оружие после боя');
+            const result=await Server.performLocationCombatAction(window.currentLobbyId,window.currentLocationId,{
+                location_character_id:state.current_character.location_character_id,action_key:'draw_weapon',weapon_index:weaponIndex,
+                attribute_choice:'second_hand',pending_action_id:`draw-second-${state.current_character.location_character_id}-${Date.now()}`});
+            pending=Boolean(result.pending_action);
+        } else {
+            const result=await Server.changeWeaponPair(characterId,{operation,weapon_index:weaponIndex,character_revision:currentCharacterData._revision});
+            currentCharacterData=result.data;
+        }
+        showNotification(pending?'Доставание второго оружия начато и ждёт доплаты ОД':operation==='take'?'Оружие взято во вторую руку':'Вторая рука освобождена',pending?'system':'success');
+    } catch(error) { showNotification(error.message || 'Не удалось изменить пару оружия','system'); }
+    finally {
+        if (locked) {
+            if (medicalRemoteUpdate?.character_id===Number(characterId) && Number(medicalRemoteUpdate.data?._revision)>Number(currentCharacterData?._revision)) currentCharacterData=medicalRemoteUpdate.data;
+            medicalRemoteUpdate=null;medicalOperationInProgress=false;await refreshSavedSheet(characterId);
+        }
+    }
+};
+
 function formatActionPointModifier(value) {
     const numeric = Number(value) || 0;
     if (numeric === 0) return 'без изменений';
     return `${numeric > 0 ? '+' : ''}${numeric} ОД`;
+}
+
+window.operatePortableLight = async function(payload) {
+    if (medicalOperationInProgress || !currentCharacterCanEdit) return;
+    const characterId=currentCharacterId;let locked=false;
+    try {
+        if (autoSaveTimer) await forceSyncCharacter();
+        await Server.waitForCharacterSave(characterId);
+        if (currentCharacterId!==characterId || medicalOperationInProgress) return;
+        if (sheetSaveBlocked) throw new Error('Переоткройте лист перед управлением фонарём');
+        medicalOperationInProgress=locked=true;medicalRemoteUpdate=null;
+        const result=await Server.operatePortableLight(characterId,{...payload,character_revision:currentCharacterData._revision});
+        currentCharacterData=result.data;showNotification('Состояние фонаря обновлено','success');
+    } catch (error) { showNotification(error.message || 'Не удалось изменить состояние фонаря','system'); }
+    finally {
+        if (locked) {
+            if (medicalRemoteUpdate?.character_id===Number(characterId) && Number(medicalRemoteUpdate.data?._revision)>Number(currentCharacterData?._revision)) currentCharacterData=medicalRemoteUpdate.data;
+            medicalRemoteUpdate=null;medicalOperationInProgress=false;await refreshSavedSheet(characterId);
+        }
+    }
+};
+
+window.changeWeaponGrip = async function(weaponIndex, hands) {
+    if (medicalOperationInProgress) return;
+    const characterId = currentCharacterId;
+    let locked = false;
+    try {
+        if (autoSaveTimer) await forceSyncCharacter();
+        await Server.waitForCharacterSave(characterId);
+        if (currentCharacterId !== characterId || medicalOperationInProgress) return;
+        if (sheetSaveBlocked) throw new Error('Переоткройте лист перед сменой хвата');
+        medicalOperationInProgress = locked = true;
+        medicalRemoteUpdate = null;
+        const result = await Server.changeWeaponGrip(characterId, {hands, weapon_index:weaponIndex, character_revision:currentCharacterData._revision});
+        currentCharacterData = result.data;
+        showNotification(hands === 1 ? 'Оружие удерживается одной рукой' : 'Оружие удерживается двумя руками', 'success');
+    } catch (error) { showNotification(error.message || 'Не удалось сменить хват', 'system'); }
+    finally {
+        if (locked) {
+            if (medicalRemoteUpdate?.character_id === Number(characterId) && Number(medicalRemoteUpdate.data?._revision) > Number(currentCharacterData?._revision)) currentCharacterData = medicalRemoteUpdate.data;
+            medicalRemoteUpdate = null; medicalOperationInProgress = false;
+            await refreshSavedSheet(characterId);
+        }
+    }
+};
+
+function renderWeaponGripControl(weapon, index) {
+    if (weapon.naturalWeapon || weapon.attributes?.natural_weapon) return '';
+    const state = window.locationCombatState;
+    const active = state?.status === 'active';
+    const actor = state?.characters?.find(c => c.character_id === currentCharacterId)
+        || (state?.current_character?.character_id === currentCharacterId ? state.current_character : null);
+    const selected = active ? actor?.drawn_weapon_index : currentCharacterData?.activeWeaponIndex;
+    const hands = currentCharacterData?.health?.combatMeta?.weaponGripHands === 1 ? 1 : 2;
+    const secondary=secondaryWeaponIndex();
+    const disabled = !currentCharacterCanEdit || active && state.current_character?.character_id !== currentCharacterId;
+    if (secondary===index) return `<span>Во второй руке</span>${!active?`<button type="button" class="btn btn-sm btn-secondary" ${disabled?'disabled':''} onclick="changeWeaponPair('stow',${index})">Убрать второе оружие</button>`:''}`;
+    if (!isSelectedWeaponIndex(selected, index)) return selected!=null && hands===1 && secondary==null
+        ? `<button type="button" data-weapon-pair-take="${index}" class="btn btn-sm btn-secondary" ${disabled?'disabled':''} onclick="changeWeaponPair('take',${index})">Взять во вторую руку</button>` : '';
+    if (secondary!=null) return '<span>По оружию в каждой руке</span>';
+    return `<span data-weapon-grip-label="${index}">Хват: ${hands === 1 ? 'одной рукой' : 'двумя руками'}</span><button type="button" data-weapon-grip-change="${index}" class="btn btn-sm btn-secondary" ${disabled?'disabled':''} onclick="changeWeaponGrip(${index},${hands===1?2:1})">${hands===1?'Взять двумя руками':'Взять одной рукой'} · 1 ОД</button>`;
 }
 
 window.drawWeaponFromEquipment = async function(weaponIndex) {
@@ -5407,12 +5523,13 @@ window.rebreakUnfixedFracture = function(index) {
 };
 
 window.cycleWeaponFromEquipment = async function(weaponIndex) {
+    if (secondaryWeaponIndex()!=null) {showNotification('Для затвора или помпы сначала освободите руку','system');return;}
     const weapon = currentCharacterData?.weapons?.[weaponIndex];
     if (!weapon?.requiresManualCycle) return;
     const readyIndex = window.locationCombatState?.status === 'active'
         ? window.locationCombatState?.current_character?.drawn_weapon_index
         : currentCharacterData?.activeWeaponIndex;
-    if (!isSelectedWeaponIndex(readyIndex, weaponIndex)) {
+    if (!isHeldWeaponIndex(readyIndex, weaponIndex)) {
         showNotification('Сначала возьмите это оружие в руки', 'system');
         return;
     }
@@ -5566,23 +5683,21 @@ function renderRangedAttackButtons(weapon, template, index, disabled) {
         <button type="button" class="btn btn-sm btn-warning" ${disabled || !swingPrepared ? 'disabled' : ''} title="${swingPrepared ? 'Выбрать часть тела' : 'Сначала выполните Замах'}" onclick="useMeleeAttack(${index}, 'firearm_butt', true)">Прицельный прикладом · ${buttCost} ОД</button>`;
     const requiresDraw = combatState?.status === 'active'
         && combatState.current_character?.character_id === currentCharacterId
-        && (drawnWeaponIndex === null
-            || drawnWeaponIndex === undefined
-            || Number(drawnWeaponIndex) !== Number(index));
+        && !isHeldWeaponIndex(drawnWeaponIndex,index);
     if (requiresDraw) {
         const drawCost = ergonomics?.draw_action_points ?? 4;
         return `<button type="button" class="btn btn-sm btn-primary" ${disabledAttr} onclick="drawWeaponFromEquipment(${index})">Достать оружие · ${drawCost} ОД</button>`;
     }
     const isGrenadeLauncher = weaponClass === 'grenade_launcher';
     if (isGrenadeLauncher) {
-        const inHands = isCombatActive && isSelectedWeaponIndex(drawnWeaponIndex, index)
+        const inHands = isCombatActive && isHeldWeaponIndex(drawnWeaponIndex, index)
             ? '<button type="button" class="btn btn-sm btn-secondary" disabled>В руках</button>'
             : '';
         return `${inHands}${buttButton}
             <button type="button" class="btn btn-sm btn-success" ${firingDisabledAttr} onclick="useWeaponFromEquipment(${index}, 'unaimed', 1, 2)">Навскидку · 2 ОД · точность −4</button>
             <button type="button" class="btn btn-sm btn-warning" ${firingDisabledAttr} onclick="useWeaponFromEquipment(${index}, 'aimed', 1, 4)">Прицельный · 4 ОД</button>`;
     }
-    if (!isCombatActive && weapon.requiresManualCycle && !isSelectedWeaponIndex(persistentWeaponIndex, index)) {
+    if (!isCombatActive && weapon.requiresManualCycle && !isHeldWeaponIndex(persistentWeaponIndex, index)) {
         return `<button type="button" class="btn btn-sm btn-primary" onclick="drawWeaponFromEquipment(${index})">Взять в руки</button>`;
     }
     if (weapon.requiresManualCycle) {
@@ -5593,14 +5708,14 @@ function renderRangedAttackButtons(weapon, template, index, disabled) {
         return `${buttButton}<button type="button" class="btn btn-sm btn-warning" ${disabledAttr} onclick="cycleWeaponFromEquipment(${index})">${cycleType === 'pump' ? 'Дослать патрон' : 'Передёрнуть затвор'} · ${cycleCost} ОД</button>`;
     }
     if (!isCombatActive) {
-        if (isSelectedWeaponIndex(persistentWeaponIndex, index)) {
+        if (isHeldWeaponIndex(persistentWeaponIndex, index)) {
             buttons.push('<button type="button" class="btn btn-sm btn-secondary" disabled>В руках</button>');
         } else {
             buttons.push(`<button type="button" class="btn btn-sm btn-primary" onclick="drawWeaponFromEquipment(${index})">Взять в руки</button>`);
         }
     } else if (
         combatState.current_character?.character_id === currentCharacterId
-        && isSelectedWeaponIndex(drawnWeaponIndex, index)
+        && isHeldWeaponIndex(drawnWeaponIndex, index)
     ) {
         buttons.push('<button type="button" class="btn btn-sm btn-secondary" disabled>В руках</button>');
     }
@@ -5938,7 +6053,7 @@ async function renderWeapons(weapons, weaponTemplates, moduleTemplates, weaponMo
             const naturalWeapon = Boolean(weapon.naturalWeapon || meleeAttributes.natural_weapon);
             const handsButton = naturalWeapon
                 ? '<button type="button" class="btn btn-sm btn-secondary" disabled>Врожденная атака</button>'
-                : isSelectedWeaponIndex(activeWeaponIndex, index)
+                : isHeldWeaponIndex(activeWeaponIndex, index)
                 ? '<button type="button" class="btn btn-sm btn-secondary" disabled>В руках</button>'
                 : `<button type="button" class="btn btn-sm btn-primary" ${combatActionDisabled ? 'disabled' : ''} onclick="drawWeaponFromEquipment(${index})">${isCombatActive ? 'Достать оружие' : 'Взять в руки'}</button>`;
             const swingPrepared = combatState?.current_character?.melee_swing_round === combatState?.round_number;
@@ -5996,6 +6111,7 @@ async function renderWeapons(weapons, weaponTemplates, moduleTemplates, weaponMo
                 ${modelBlock}
                 ${jamHtml}
                 <div class="loadout-weapon-actions">
+                    ${renderWeaponGripControl(weapon, index)}
                     ${attackButtonsHtml}
                     ${grenadeLauncherHtml}
                 </div>
@@ -6441,6 +6557,7 @@ async function confirmEquipMagazineDirect(weaponIndex, selected) {
 }
 
 window.reloadInstalledMagazine = async function(weaponIndex) {
+    if (secondaryWeaponIndex()!=null) {showNotification('Для перезарядки сначала освободите руку','system');return;}
     const weapon = currentCharacterData.weapons?.[weaponIndex];
     if (!weapon?.installedMagazine) return;
     showNotification('Сначала снимите отъёмный магазин с оружия');
@@ -6496,6 +6613,7 @@ window.unequipMagazineFromWeapon = function(weaponIndex) {
 };
 
 window.reloadFixedMagazine = async function(weaponIndex) {
+    if (secondaryWeaponIndex()!=null) {showNotification('Для перезарядки сначала освободите руку','system');return;}
     const weapon = currentCharacterData.weapons[weaponIndex];
     if (!weapon) return;
 
@@ -6954,6 +7072,7 @@ window.changeMagazineAmmo = async function(pathStr, delta) {
 };
 
 window.reloadMagazineFromInventory = async function(pathStr) {
+    if (secondaryWeaponIndex()!=null) {showNotification('Для зарядки магазина сначала освободите руку','system');return;}
     const path = pathStr.split(',').map(p => isNaN(p) ? p : parseInt(p));
     const mag = getItemByPath(path);
     if (!mag || mag.category !== 'magazine') return;
@@ -9553,6 +9672,7 @@ window.fireGrenadeLauncher = async function(weaponIndex) {
 };
 
 window.reloadGrenadeLauncher = async function(weaponIndex) {
+    if (secondaryWeaponIndex()!=null) {showNotification('Для перезарядки сначала освободите руку','system');return;}
     const weapon = currentCharacterData.weapons[weaponIndex];
     const launcher = weapon.installedModules?.find(m => m.attributes?.type === 'grenade_launcher');
     if (!launcher) {
@@ -9809,7 +9929,7 @@ const BLEEDING_KIND_LABEL = { external: 'внешнее', internal: 'внутр�
 
 function getEffectAreaLabel(area) {
     return ({
-        head: 'голова', chest: 'грудь', abdomen: 'живот', leftArm: 'левая рука',
+        whole_body:'всё тело',mind:'сознание',head: 'голова', chest: 'грудь', abdomen: 'живот', leftArm: 'левая рука',
         rightArm: 'правая рука', leftLeg: 'левая нога', rightLeg: 'правая нога', internal: 'внутреннее',
         nose: 'нос', jaw: 'челюсть', leftEar: 'левое ухо', rightEar: 'правое ухо',
         leftEye: 'левый глаз', rightEye: 'правый глаз', spine: 'позвоночник',
@@ -9817,11 +9937,11 @@ function getEffectAreaLabel(area) {
         rightLung: 'правое лёгкое', leftLung: 'левое лёгкое',
         rightKidney: 'правая почка', leftKidney: 'левая почка',
         stomach: 'желудок', liver: 'печень', brain: 'мозг'
-    })[area] || area || 'источник не указан';
+    })[area] || 'область не указана';
 }
 
 function getEffectDisplayName(effect) {
-    const baseName = effect?.name || 'Эффект';
+    const baseName = effect?.name && effect.name !== effect.type && (effect.type === 'custom' || !/^[a-z][a-z0-9_]*$/.test(effect.name)) ? effect.name : getEffectTypeOptions().find(option => option.value === effect?.type)?.label || 'Эффект';
     if (effect?.type === 'organ_loss' && effect.area) {
         return `Повреждённый орган: ${getEffectAreaLabel(effect.area)}`;
     }
@@ -11800,7 +11920,7 @@ async function useConsumable(item, itemPath, options = {}) {
     adjust('exhaustion', direct.exhaustion_delta, 0, 10);
     adjust('stress', direct.stress_delta, 0, 10);
     adjust('stress', isCombatActive ? direct.stress_in_combat_delta : direct.stress_safe_delta, 0, 10);
-    adjust('intoxication', direct.intoxication_delta, 0, 100);
+    adjust('intoxication', direct.intoxication_delta, 0, null);
 
     if (direct.pain_block_turns || direct.stress_block_turns || direct.addiction_block_hours || direct.medical_difficulty || direct.application_form || direct.sleep_block_hours || direct.will_shock_bonus || direct.will_shock_advantage) {
         if (!health.combatMeta) health.combatMeta = {};
@@ -15491,6 +15611,7 @@ function renderBackpackNew(items, groupedByCategory, allTemplates) {
 
 function renderBackpackItem(item, index, parentPath, parentContainer, allTemplates) {
     const itemDiv = document.createElement('div');
+    itemDiv.dataset.itemTooltip = 'true';
     if (item.templateId) itemDiv.dataset.itemTemplateId = String(item.templateId);
     itemDiv.draggable = true;
     itemDiv.style.marginBottom = '5px';
@@ -16269,6 +16390,8 @@ window.deleteCharacterFromSheet = function() {
 
 // ========== 9. ПУБЛИЧНЫЕ ФУНКЦИИ ==========
 export async function openCharacterSheet(characterId, tabId = 'basic', options = {}) {
+    const oldTooltip = document.getElementById('delayed-item-tooltip');
+    if (oldTooltip) oldTooltip.style.display = 'none';
     if (!options.background && (widgetOperation || widgetContext && widgetDialogOpen())) {
         showNotification('Сначала завершите действие виджета', 'system');
         return;
@@ -16420,6 +16543,8 @@ export function closeCharacterSheet() {
     }
     document.getElementById('character-sheet-modal').style.display = 'none';
     document.body.classList.remove('character-sheet-open');
+    const itemTooltip = document.getElementById('delayed-item-tooltip');
+    if (itemTooltip) itemTooltip.style.display = 'none';
     currentCharacterId = null;
     currentCharacterData = null;
     pendingSheetRemoteUpdate = null;
@@ -16473,10 +16598,11 @@ window.rollSkill = async function(skillPath, skillLabel) {
             onSaved:data=>queueRemoteSheetData(data,characterId)});
         return;
     }
-    let darkness = isWorldDarkTime(window.lobbyGameTimeMinutes ?? 480);
+    let darkness = isWorldDarkTime(window.lobbyGameTimeMinutes ?? 480),portableIllumination=null;
     if (window.isLocationActive && (skillPath === 'physical.awareness' || skillPath === 'physical.shooting')) {
         const scene = await import('./locationScene.js');
         darkness = scene.isLocationCharacterInDarkness(currentCharacterId) ?? darkness;
+        portableIllumination=scene.getLocationPortableIllumination(currentCharacterId);
     }
     let awarenessMode = null;
     if (skillPath === 'physical.awareness') {
@@ -16550,7 +16676,10 @@ window.rollSkill = async function(skillPath, skillLabel) {
         +(awarenessMode==='hearing'?hearingModifier(getDeafnessLevel(currentCharacterData)):0)
         +(awarenessMode==='hearing'?facialProfile(currentCharacterData).hearing:0)
         +(skillPath==='other.stealth'&&backgroundIs(currentCharacterData,'Ночной дозор')?(darkness?3:-5):0);
-    const totalBonus = selfMod + charismaMod + equipmentBonus + statusModifier;
+    const nvgActive=usesNightVision(currentCharacterData);
+    const portablePenalty=(awarenessMode==='visual' || skillPath==='physical.shooting') && portableIllumination?.lit && portableIllumination.base_dark && !nvgActive
+        ? Number(portableIllumination.penalty)||0 : 0;
+    const totalBonus = selfMod + charismaMod + equipmentBonus + statusModifier-portablePenalty;
 
     const deafness = awarenessMode === 'hearing' ? getDeafnessLevel(currentCharacterData) : 0;
     const hearingBlocked = awarenessMode === 'hearing' && (deafness >= 90 || facialProfile(currentCharacterData).ears===2);
@@ -16560,7 +16689,7 @@ window.rollSkill = async function(skillPath, skillLabel) {
         awarenessMode === 'visual' ? 'darkness_visual_immunity' : 'darkness_shooting_immunity',
     ) > 0;
     const darknessDisadvantage = darkness && (awarenessMode === 'visual' || skillPath === 'physical.shooting')
-        && !darknessImmunity && !passiveTraits(currentCharacterData).noDarknessPenalty;
+        && !darknessImmunity && !nvgActive && !passiveTraits(currentCharacterData).noDarknessPenalty;
     const disadvantaged = !hearingBlocked && (
         hasHealthRollDisadvantage(currentCharacterData, skillPath) || darknessDisadvantage
     );
@@ -16572,6 +16701,7 @@ window.rollSkill = async function(skillPath, skillLabel) {
     if (charismaMod !== 0) modStr += ` + харизма = ${charismaMod}`;
     if (equipmentBonus !== 0) modStr += ` + экипировка = ${equipmentBonus}`;
     if (statusModifier !== 0) modStr += ` + состояния = ${statusModifier}`;
+    if (portablePenalty) modStr += ` − освещение = ${portablePenalty}`;
 
     const disadvantageText = disadvantaged ? ', Помеха' : '';
     const blockedText = hearingBlocked ? ', персонаж не слышит' : '';

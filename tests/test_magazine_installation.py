@@ -190,6 +190,9 @@ def test_invalid_selection_does_not_pay_or_change_inventory(client, case, auth_h
     response = start(client, case, auth_headers, **extra)
     assert response.status_code == 400, response.json
     assert case['actor_location'].action_points_current == 2
+    history=case['actor_character'].data['health']['combatMeta']['actionJournal']
+    assert len(history)==1 and history[0]['status']=='rejected' and history[0]['action_points']==0
+    data['health'].setdefault('combatMeta',{})['actionJournal']=deepcopy(history)
     assert case['actor_character'].data == data
     assert DeferredCombatAction.query.count() == 0
 

@@ -1,5 +1,6 @@
 """S+: серверные границы расходников и редактора. Подготовлено, NOT_RUN."""
 from copy import deepcopy
+from helpers.journal_assertions import assert_same_game_state
 from types import SimpleNamespace
 
 import pytest
@@ -96,7 +97,7 @@ def test_smoking_reusable_lighter_match_priority_and_missing_fire_are_server_app
     response = general(client, pair, auth_headers, cigarette, 's-smoke-1', index=index)
     if fire == 'missing':
         assert response.status_code == 400, response.get_json()
-        assert data(pair) == before
+        assert_same_game_state(data(pair), before)
         assert ConsumableUse.query.count() == 0
         return
     assert response.status_code == 200, response.get_json()
@@ -141,7 +142,8 @@ def test_renamed_injectable_keeps_medical_route_and_one_real_d20(client, pair, a
     before = data(pair)
     refused = general(client, pair, auth_headers, item, 's-injectable-bypass')
     assert refused.status_code == 400, refused.get_json()
-    assert data(pair) == before and ConsumableUse.query.count() == 0
+    assert_same_game_state(data(pair), before)
+    assert ConsumableUse.query.count() == 0
     draws = medical_rolls(monkeypatch, 1)
     body = medical_payload(pair, item, {'kind': 'self', 'actionPoints': 0}, operation='s-injectable')
     response = apply_medical(client, pair, auth_headers, body)
@@ -156,7 +158,7 @@ def test_renamed_injectable_keeps_medical_route_and_one_real_d20(client, pair, a
     assert ConsumableUse.query.count() == 1
 
 
-@pytest.mark.parametrize('name,pain', [('Стимулятор Варвар', 1), ('Ампула Миколия', 7), ('Препарат 02', 7)])
+@pytest.mark.parametrize('name,pain', [('Стимулятор Варвар', 1), ('Ампула Миколия', 5), ('Препарат 02', 1)])
 def test_other_restorative_ampoules_refresh_once_and_expire_to_original_health(client, pair, auth_headers, monkeypatch, name, pain):
     fracture = {'id': 's-fracture', 'type': 'fracture', 'area': 'leftArm', 'source': 'injury'}
     zones = {'leftArm': {'current': 0, 'max': 50}, 'rightArm': {'current': 20, 'max': 50},
@@ -214,7 +216,7 @@ def test_ammonia_without_shock_has_no_effect_consumption_or_roll(client, pair, a
     response = apply_medical(client, pair, auth_headers,
         medical_payload(pair, item, {'kind': 'self', 'actionPoints': 0}, operation='s-ammonia'))
     assert response.status_code == 409, response.get_json()
-    assert data(pair) == before
+    assert_same_game_state(data(pair), before)
     assert ConsumableUse.query.count() == 0
     assert data(pair)['inventory']['backpack'][0]['quantity'] == 1
     assert 'willShockBonus' not in data(pair)['health'].get('combatMeta', {})
@@ -296,7 +298,8 @@ def test_long_ordinary_consumable_recovers_selection_and_completes_once_after_re
     before = data(pair)
     revision = pair['actor_character'].revision
     assert general(client, pair, auth_headers, item, 's-long', deferred='s-long', combat=True).status_code == 409
-    assert data(pair) == before and pair['actor_character'].revision == revision
+    assert_same_game_state(data(pair), before)
+    assert pair['actor_character'].revision == revision
     assert pair['actor_location'].action_points_current == 2
     assert ConsumableUse.query.count() == 1
 

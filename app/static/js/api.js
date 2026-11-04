@@ -35,6 +35,13 @@ const characterSaver = createCharacterSaver((characterId, updates) => apiFetch(`
 }), getCharacterBase);
 
 export const Server = {
+    getActionJournal: lobbyId => apiFetch(`/lobbies/${lobbyId}/action-journal`),
+    changeWeaponPair: (characterId,payload) => apiFetch(`/lobbies/characters/${characterId}/weapon-pair`,{
+        method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}),
+    getPortableLights: characterId => apiFetch(`/lobbies/characters/${characterId}/portable-lights`),
+    operatePortableLight: (characterId,payload) => apiFetch(`/lobbies/characters/${characterId}/portable-lights`,{
+        method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}),
+    getExtinguishingOptions: (lobbyId,locationId,actorId) => apiFetch(`/lobbies/${lobbyId}/locations/${locationId}/extinguishing-options/${actorId}`),
     async awardCharacterSession(lobbyId,characterId,payload) {
         return apiFetch(`/lobbies/${lobbyId}/characters/${characterId}/session-reward`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
     },
@@ -561,6 +568,13 @@ export const Server = {
         );
     },
 
+    async transportLocationBody(lobbyId, locationId, characterId, actorLocationCharacterId, mode) {
+        return apiFetch(`/lobbies/${lobbyId}/locations/${locationId}/characters/${characterId}/body-transport`, {
+            method: 'POST', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({actor_location_character_id: actorLocationCharacterId, mode}),
+        });
+    },
+
     async setLocationCharacterHidden(lobbyId, locationId, characterId, gmHidden) {
         return apiFetch(`/lobbies/${lobbyId}/locations/${locationId}/characters/${characterId}/gm-hidden`, {
             method: 'PATCH',
@@ -856,6 +870,12 @@ export const Server = {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload),
+        });
+    },
+
+    async changeWeaponGrip(characterId, payload) {
+        return apiFetch(`/lobbies/characters/${characterId}/weapon-grip`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
         });
     },
 };

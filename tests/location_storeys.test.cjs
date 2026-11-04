@@ -118,9 +118,10 @@ test('floor menu uses the actual signed levels with zero as ground',()=>{
 
 test('stair movement tolerates a RAF timestamp before the event and ends at server height',()=>{
     const vector=(x=0,y=0,z=0)=>({x,y,z,set(x,y,z){Object.assign(this,{x,y,z});},copy(v){this.set(v.x,v.y,v.z);},clone(){return vector(this.x,this.y,this.z);}});
+    let shadowInvalidations=0;
     const callbacks=[],entry={floorLevel:0,model:{position:vector(1.5,1,1.5),traverse(){}},label:{position:vector()}};
     const context=createSceneContext({getCharacterModelEntry:()=>entry,STOREY_HEIGHT:2.4,currentLocationData:{objects:[]},
-        queueTrueSightRefresh(){},
+        queueTrueSightRefresh(){},portableLightRenderer:{dirty(){shadowInvalidations++;}},
         getTileHeight:()=>1,attachStaticLightFieldToRoot(){},locationStaticLightField:null,
         tintLocationMesh(){},darknessFactorAt:()=>1,characterLabelOffset:()=>1.9,
         invalidateMovementMapCache(){},applyFogOfWar(){},performance:{now:()=>100},document:{hidden:false},
@@ -131,6 +132,7 @@ test('stair movement tolerates a RAF timestamp before the event and ends at serv
     callbacks.shift()(99);assert.equal(entry.model.position.y,1);
     callbacks.shift()(280);assert.equal(entry.model.position.y,2.4);
     callbacks.shift()(460);assert.equal(entry.model.position.y,3.435);assert.equal(entry.floorLevel,1);
+    assert.equal(shadowInvalidations,1,'движение обновляет тени переносного света');
 });
 
 test('an old manual covering panel cannot protrude through a newly added upper slab',async()=>{

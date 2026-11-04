@@ -1,5 +1,6 @@
 import { Server } from './api.js';
 import { ruleText } from './characterTraits.js';
+import { characterPlanFile, readCharacterPlanFile } from './creationTemplates.js';
 
 const escape = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const money = value => `${Number(value || 0).toLocaleString('ru-RU')} ₽`;
@@ -69,7 +70,7 @@ export async function openCharacterCreation(lobbyId, onCreated) {
     modal.innerHTML = `<div class="modal-content creation-dialog" role="dialog" aria-modal="true" aria-labelledby="creation-title"><header class="creation-header"><div><p class="creation-eyebrow">Новый персонаж</p><h2 id="creation-title">Создание персонажа</h2></div><button type="button" data-creation-close class="btn btn-secondary creation-close" aria-label="Закрыть создание персонажа"><svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></button></header>
         <nav class="creation-nav" aria-label="Шаги создания">${STEPS.map(([title], index) => `<button type="button" data-go-step="${index}"><span>${index + 1}</span>${title}</button>`).join('')}</nav>
         <div class="creation-counters" aria-live="polite"><span>Очки навыков <strong data-points-remaining>30</strong></span><span>Специализации <strong data-specs-remaining>10</strong></span><span class="creation-hint" data-calculation-state></span></div>
-        <form autocomplete="off" novalidate><main class="creation-main">${contents.map((content, index) => `<section class="creation-step" data-creation-step="${index}" ${index ? 'hidden' : ''}><div class="creation-step-heading"><div><h3>${STEPS[index][0]}</h3>${STEPS[index][1] ? `<p class="creation-hint">${STEPS[index][1]}</p>` : ''}</div><button type="button" data-reset-step="${index}" class="btn btn-sm btn-secondary">Сбросить шаг</button></div>${content}</section>`).join('')}</main>
+        <form autocomplete="off" novalidate><main class="creation-main"><details class="creation-template-tools"><summary>Шаблон персонажа</summary><p class="creation-hint">Сохраните распределение, черты и закуп в файл для нового персонажа. Имя и события жизни в Зоне в шаблон не входят.</p><div><button type="button" data-template-save class="btn btn-sm btn-secondary">Сохранить шаблон</button><button type="button" data-template-load class="btn btn-sm btn-secondary">Загрузить шаблон</button><input type="file" data-template-file accept=".json,application/json" hidden></div><p data-template-status class="creation-hint" role="status"></p></details>${contents.map((content, index) => `<section class="creation-step" data-creation-step="${index}" ${index ? 'hidden' : ''}><div class="creation-step-heading"><div><h3>${STEPS[index][0]}</h3>${STEPS[index][1] ? `<p class="creation-hint">${STEPS[index][1]}</p>` : ''}</div><button type="button" data-reset-step="${index}" class="btn btn-sm btn-secondary">Сбросить шаг</button></div>${content}</section>`).join('')}</main>
         <footer class="creation-footer"><p data-creation-error role="alert"></p><div><button type="button" data-back class="btn btn-secondary">Назад</button><span data-step-position></span><button type="button" data-next class="btn btn-primary">Далее</button><button type="submit" class="btn btn-primary" hidden>Создать персонажа</button></div></footer></form>
         <div class="creation-confirm" data-reset-confirm hidden><div role="alertdialog" aria-modal="true" aria-labelledby="creation-reset-title"><h3 id="creation-reset-title">Сбросить этот шаг?</h3><p data-reset-description></p><div><button type="button" data-reset-cancel class="btn btn-secondary">Отмена</button><button type="button" data-reset-confirm-button class="btn btn-primary">Сбросить шаг</button></div></div></div>
     </div>`;
@@ -96,6 +97,42 @@ export async function openCharacterCreation(lobbyId, onCreated) {
             plan.traits.push(choice);
         });
         return plan;
+    }
+    function applyTemplate(plan) {
+        form.elements.backgroundId.value = plan.backgroundId;
+        form.elements.backgroundWeapon.value = plan.backgroundWeapon || '';
+        form.elements.favoredMutant.value = plan.favoredMutant || '';
+        form.elements.cashPoints.value = plan.cashPoints;
+        form.elements.zoneHistory.value = plan.zoneHistory ? 'yes' : 'no';
+        modal.querySelectorAll('[data-specialization]').forEach(input => { input.checked = plan.specializations.includes(input.dataset.specialization); });
+        modal.querySelectorAll('[data-stage]').forEach(input => { input.value = plan[input.dataset.stage][input.dataset.skill] || 0; });
+        modal.querySelectorAll('[data-trait]').forEach(input => { input.value = ''; find(`[data-trait-choice="${input.dataset.trait}"]`).replaceChildren(); });
+        for (const [index, choice] of plan.traits.entries()) {
+            find(`[data-trait="${index}"]`).value = choice.id;
+            traitDetails(index);
+            find(`[data-trait-choice="${index}"]`).querySelectorAll('[data-choice]').forEach(input => { input.value = choice[input.dataset.choice] || ''; });
+        }
+        for (const index of [0, 1, 2]) if (!plan.traits[index]) traitDetails(index);
+        purchases.clear();
+        for (const item of plan.purchases) purchases.set(item.templateId, item.quantity);
+        selectedPurchase = null; find('[data-purchase-selection]').hidden = true;
+        backgroundDetails(); renderCart(); renderShop(); queuePreview();
+    }
+    async function loadTemplate(file) {
+        if (!file || busy) return;
+        if (file.size > 256 * 1024) { error('Файл шаблона слишком большой.'); return; }
+        busy = true;
+        const controller = new AbortController(), deadline = setTimeout(() => controller.abort(), 10000);
+        try {
+            const plan = readCharacterPlanFile(await file.text(), rules);
+            // Сервер проверяет действующие цены, лимиты и правила. Готовый лист
+            // из файла не принимается и не может повторно начислить эффекты.
+            await Server.previewCharacterCreation(lobbyId, form.elements.characterAlias.value.trim(), plan, { signal: controller.signal });
+            if (!modal.isConnected) return;
+            applyTemplate(plan);
+            find('[data-template-status]').textContent = 'Шаблон загружен. Проверьте шаги и укажите имя нового персонажа.';
+        } catch (failure) { error(failure.name === 'AbortError' ? 'Проверка шаблона не завершилась. Попробуйте ещё раз.' : failure.message); }
+        finally { clearTimeout(deadline); busy = false; find('[data-template-file]').value = ''; }
     }
     function backgroundDetails() {
         const background = selectedBackground();
@@ -263,6 +300,7 @@ export async function openCharacterCreation(lobbyId, onCreated) {
     });
     modal.addEventListener('change', event => {
         const input = event.target;
+        if (input.matches('[data-template-file]')) { void loadTemplate(input.files[0]); return; }
         if (input.matches('[name=backgroundId]')) backgroundDetails();
         if (input.hasAttribute('data-trait')) traitDetails(input.dataset.trait);
         if (input.matches('[data-purchase-category]')) { selectedPurchase = null; find('[data-purchase-selection]').hidden = true; renderShop(); return; }
@@ -276,6 +314,13 @@ export async function openCharacterCreation(lobbyId, onCreated) {
     modal.addEventListener('click', event => {
         const button = event.target.closest('button'); if (!button || busy) return;
         if (button.hasAttribute('data-creation-close')) close();
+        else if (button.hasAttribute('data-template-save')) {
+            if (!selectedBackground()) { error('Сначала выберите предысторию.'); return; }
+            const link = document.createElement('a'), url = URL.createObjectURL(new Blob([characterPlanFile(readPlan())], { type: 'application/json' }));
+            link.href = url; link.download = 'Шаблон персонажа.json'; link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
+            find('[data-template-status]').textContent = 'Шаблон сохранён в файл.';
+        }
+        else if (button.hasAttribute('data-template-load')) find('[data-template-file]').click();
         else if (button.hasAttribute('data-go-step')) void goTo(Number(button.dataset.goStep));
         else if (button.hasAttribute('data-next')) void goTo(step + 1);
         else if (button.hasAttribute('data-back')) void goTo(step - 1);

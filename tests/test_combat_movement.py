@@ -118,6 +118,103 @@ def vertical_game(client,create_user,auth_headers):
     return pair
 
 
+@pytest.mark.parametrize('mode,cost,penalty', [('drag',2,2), ('rope',1,1), ('shoulder',2,0)])
+def test_body_transport_follows_real_route_and_preserves_body(vertical_game, mode, cost, penalty):
+    from app.extensions import db
+    from app.services.body_transport import change, state
+    pair = vertical_game; actor = pair['actor_location']; target = pair['target_location']
+    target.pos_x, target.pos_y = 1, 3
+    target.character.data = {**target.character.data, 'health': {'current':80,'max':100,
+        'effects':[{'type':'unconsciousness','tick':'manual','source':'test'}]}}
+    actor.character.data = {**actor.character.data, 'features': {'specialTraits':[{'name':'Санитар'}]},
+        'inventory': {'pockets':[{'name':'Канат для переноски','quantity':1,'attributes':{'body_carry_rope':True}}]}}
+    db.session.commit()
+    change(pair['location'].id, pair['actor_user']['id'], actor.id, target.character_id, mode)
+    assert actor.action_points_current == 5 - cost
+    assert CombatService._movement_penalty_breakdown(actor.character.data,actor)['body_transport'] == penalty
+    # Повтор того же запроса не списывает цену ещё раз и не создаёт копии тела.
+    change(pair['location'].id, pair['actor_user']['id'], actor.id, target.character_id, mode)
+    assert actor.action_points_current == 5 - cost
+    CombatService.move_character(pair['location'].id,pair['actor_user']['id'],actor.character_id,4,3,movement_mode='walk')
+    assert target.pos_x == (4 if mode == 'shoulder' else 3)
+    assert target.pos_y == 3
+    assert target.character.data['health']['current'] == 80
+    assert target.controlled_by == pair['target_user']['id']
+    assert state(actor)['target_character_id'] == target.character_id
+    before = actor.action_points_current
+    change(pair['location'].id,pair['actor_user']['id'],actor.id,target.character_id,'stop')
+    assert actor.action_points_current == before - (1 if mode == 'rope' else 0)
+    assert not state(actor)
+    assert not target.character.data['health']['combatMeta'].get('transportedBy')
+    assert (target.pos_x,target.pos_y) != (actor.pos_x,actor.pos_y)
+
+
+def test_body_transport_rejects_conscious_target_and_forged_save(vertical_game):
+    from app.services.body_transport import change, preserve
+    pair=vertical_game;pair['target_location'].pos_x,pair['target_location'].pos_y=3,3
+    with pytest.raises(ValidationError,match='сознательного'):
+        change(pair['location'].id,pair['actor_user']['id'],pair['actor_location'].id,pair['target_character'].id,'drag')
+    forged={'health':{'combatMeta':{'bodyTransport':{'mode':'shoulder'},'transportedBy':123}}}
+    preserve({},forged)
+    assert not forged['health']['combatMeta']
+
+
+def test_transport_api_refuses_other_controller_and_sheet_cannot_forge_links(vertical_game,client,auth_headers):
+    from copy import deepcopy
+    from app.services.body_transport import state
+    pair=vertical_game;actor=pair['actor_location'];target=pair['target_location']
+    before=actor.action_points_current
+    response=client.post(f"/lobbies/{pair['lobby'].id}/locations/{pair['location'].id}/characters/{target.character_id}/body-transport",
+        headers=auth_headers(pair['target_user']),json={'actor_location_character_id':actor.id,'mode':'drag'})
+    assert response.status_code==403,response.json
+    assert actor.action_points_current==before and not state(actor)
+    forged=deepcopy(actor.character.data_snapshot())
+    forged.setdefault('health',{}).setdefault('combatMeta',{}).update(
+        bodyTransport={'mode':'shoulder','target_character_id':target.character_id},transportedBy=target.character_id)
+    response=client.put(f'/lobbies/characters/{actor.character_id}',headers=auth_headers(pair['actor_user']),json={'data':forged})
+    assert response.status_code==200,response.json
+    assert not state(actor)
+    assert not actor.character.data['health']['combatMeta'].get('transportedBy')
+
+
+def test_awakened_target_is_released_before_carriers_next_move(vertical_game,client,auth_headers):
+    from app.extensions import db
+    from app.services.body_transport import change,state
+    pair=vertical_game;actor=pair['actor_location'];target=pair['target_location']
+    target.pos_x,target.pos_y=1,3
+    target.character.data={'health':{'current':700,'max':700,'effects':[{'type':'unconsciousness','tick':'manual'}]}}
+    db.session.commit()
+    change(pair['location'].id,pair['actor_user']['id'],actor.id,target.character_id,'drag')
+    awake=target.character.data_snapshot();awake['health']['effects']=[]
+    response=client.put(f'/lobbies/characters/{target.character_id}',headers=auth_headers(pair['target_user']),json={'data':awake})
+    assert response.status_code==200,response.json
+    CombatService.move_character(pair['location'].id,pair['actor_user']['id'],actor.character_id,4,3,movement_mode='walk')
+    assert not state(actor)
+    assert not target.character.data['health']['combatMeta'].get('transportedBy')
+    assert (target.pos_x,target.pos_y)==(1,3)
+
+
+@pytest.mark.parametrize('action',['draw_weapon','aim','reload_weapon','reload_underbarrel','clear_weapon_jam','brace_weapon','place_gunpoint'])
+def test_shoulder_transport_blocks_firearm_actions_before_payment(vertical_game,client,auth_headers,action):
+    from app.extensions import db
+    from app.services.body_transport import change
+    pair=vertical_game;actor=pair['actor_location'];target=pair['target_location']
+    target.pos_x,target.pos_y=1,3
+    target.character.data={'health':{'current':80,'max':700,'effects':[{'type':'unconsciousness','tick':'manual'}]}}
+    actor.character.data={**actor.character.data,'features':{'specialTraits':[{'name':'Санитар'}]},
+        'weapons':[{'id':'carrier-rifle','category':'weapon','name':'Ружьё','ammo':10}]}
+    actor.drawn_weapon_index=0;db.session.commit()
+    change(pair['location'].id,pair['actor_user']['id'],actor.id,target.character_id,'shoulder')
+    before=actor.action_points_current
+    response=client.post(f"/lobbies/{pair['lobby'].id}/locations/{pair['location'].id}/combat/action",
+        headers=auth_headers(pair['actor_user']),json={'location_character_id':actor.id,'action_key':action,
+            'weapon_index':0,'target_character_id':target.character_id})
+    assert response.status_code==400,response.json
+    assert 'на плече' in response.json['error']['message']
+    assert actor.action_points_current==before
+    assert actor.character.data['weapons'][0]['ammo']==10
+
+
 @pytest.mark.parametrize('height,blocked,cost',[(0,False,0),(.49,False,0),(.5,False,5),(.99,False,5),(1,False,12),(1.99,False,12),(2,True,0)])
 def test_obstacle_category_follows_real_height(height,blocked,cost):
     for kind in ('chair','fence','wall'):

@@ -11,8 +11,10 @@ test('Исправленное Runtime.evaluate возвращает DOM-зна�
 });
 test('Ожидаемая цена использует серверный divisor/множитель и отдельную цену перелезания',()=>{
     const rules=movement.serverMovementRules();assert.ok(rules.walk.divisor>0&&rules.run.divisor>0);
-    assert.equal(movement.expectedMovementCost({cost:5,climb_cost:0},{divisor:2},1),3);
-    assert.equal(movement.expectedMovementCost({cost:10,climb_cost:5},{divisor:2},1),8);
+    assert.equal(movement.expectedMovementCost({cost:5,climb_cost:0},{divisor:2},1),2.5);
+    assert.equal(movement.expectedMovementCost({cost:10,climb_cost:5},{divisor:2},1),7.5);
+    assert.equal(movement.expectedMovementCost({cost:.2,climb_cost:0},{divisor:2},1),.1);
+    assert.equal(movement.expectedMovementCost({cost:1.3,climb_cost:0},{divisor:2},1),.65);
     assert.throws(()=>movement.expectedMovementCost({cost:5},{divisor:0},1));
 });
 test('Кандидаты #96 берутся из неизменённой Припяти и остаются NEEDS_REPRO',()=>{

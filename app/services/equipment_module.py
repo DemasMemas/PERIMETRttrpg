@@ -1,6 +1,7 @@
 """Server-authoritative installation of equipment modules."""
 
 from copy import deepcopy
+import re
 
 from sqlalchemy.orm.attributes import flag_modified
 
@@ -139,7 +140,17 @@ def module_action_details(
 
         access = calculate_inventory_access(data, item_path)
         details["inventory_access"] = access
-        details["action_points"] = int(access["retrieval_action_points"])
+        template = _template(source)
+        attributes = {**((template.attributes or {}) if template else {}), **(source.get('attributes') or {})}
+        direct = (attributes.get('consumable') or {}).get('direct') or {}
+        base_cost = attributes.get('install_action_points', direct.get('filter_install_action_points'))
+        if base_cost is None:
+            description = attributes.get('raw_description') or (template.description if template else '') or source.get('description') or ''
+            match = re.search(r'замена фильтра[^.]*?[-−–—]\s*(\d+)\s*од', description, re.I)
+            base_cost = int(match.group(1)) if match else 0
+        details['base_action_points'] = max(0, int(base_cost))
+        details["action_points"] = int(access["retrieval_action_points"]) + max(0,
+            details['base_action_points'] - int(access['use_action_discount']))
     return details
 
 

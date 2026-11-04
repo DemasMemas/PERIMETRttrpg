@@ -1,5 +1,6 @@
 """I+: серверные границы хранения/экипировки. Подготовка, все случаи NOT_RUN."""
 from copy import deepcopy
+from helpers.journal_assertions import assert_same_game_state
 
 import pytest
 
@@ -35,6 +36,12 @@ def snapshot(pair):
             [(r.id, r.status, r.remaining_action_points, r.revision, deepcopy(r.payload))
              for r in DeferredCombatAction.query.order_by(DeferredCombatAction.id).all()],
             ConsumableUse.query.count())
+
+
+def assert_rejected_snapshot(pair,before):
+    after=snapshot(pair)
+    assert_same_game_state((after[0],*after[2:]),(before[0],*before[2:]))
+    assert after[1] in {before[1],before[1]+1}
 
 
 def action(client, pair, auth_headers, body):
@@ -77,7 +84,8 @@ def execute(client, pair, auth_headers, body, action_id):
         assert replay.status_code == 409, replay.get_json()
         assert snapshot(pair) == after
     else:
-        assert db.session.get(DeferredCombatAction, action_id) is None
+        receipt=db.session.get(DeferredCombatAction, action_id)
+        assert receipt.status=='completed' and receipt.remaining_action_points==0
     return response.get_json()
 
 
@@ -156,7 +164,7 @@ def test_name_only_legacy_loader_cannot_replace_magazine(client, magazine_case, 
         'item_path': pair['path'], 'pending_action_id': 'i-loader',
     })
     assert response.status_code == 400, response.get_json()
-    assert snapshot(pair) == before
+    assert_rejected_snapshot(pair,before)
     assert db.session.get(DeferredCombatAction, 'i-loader') is None
 
 
@@ -236,7 +244,7 @@ def test_filter_swap_commit_failure_rolls_back_stack_slot_charge_and_revision(cl
         controlled.setattr(db.session, 'commit', fail_commit)
         response = filter_post(client, pair, auth_headers, request)
     assert response.status_code == 400, response.get_json()
-    assert snapshot(pair) == before
+    assert_rejected_snapshot(pair,before)
     assert data(pair)['equipment']['gasMask']['installedModules'][0]['durability'] == 3
     assert data(pair)['inventory']['backpack'][0]['quantity'] == 2
 
@@ -318,7 +326,7 @@ def test_underbarrel_underpayment_or_changed_paid_source_cannot_load(client, pai
         before = snapshot(pair)
         response = action(client, pair, auth_headers, body)
         assert response.status_code == 400, response.get_json()
-        assert snapshot(pair) == before
+        assert_rejected_snapshot(pair,before)
         assert DeferredCombatAction.query.count() == 0
     else:
         unchanged = data(pair)

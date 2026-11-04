@@ -1,5 +1,6 @@
 """Authoritative targeted treatment for bleeding and splints."""
 from copy import deepcopy
+from app.services.action_journal import journaled
 from dataclasses import dataclass, field
 import hashlib
 import hmac
@@ -56,6 +57,17 @@ def _profile(item, lobby_id=None):
         raise ValidationError('Для этого предмета нет серверных медицинских правил')
     attributes = template.attributes if isinstance(template.attributes, dict) else {}
     consumable = attributes.get('consumable')
+    from app.services.consumable_effects import enrich_imported_consumable
+    enriched = enrich_imported_consumable(attributes, template.description or '')
+    if enriched != consumable:
+        class TemplateView:
+            def __init__(self, original, profile):
+                self.original = original
+                self.attributes = {**attributes, 'consumable': profile}
+            def __getattr__(self, key):
+                return getattr(self.original, key)
+        template = TemplateView(template, enriched)
+        consumable = enriched
     if not isinstance(consumable, dict) or not isinstance(consumable.get('direct'), dict):
         raise ValidationError('Для этого расходника не описаны медицинские правила')
     return template, consumable['direct']
@@ -686,7 +698,8 @@ def _apply_temporary_limb_effects(health, direct, item):
         return []
     minutes = max(0, int(direct.get('temporary_limb_health_minutes') or 0))
     turns = max(0, int(direct.get('temporary_limb_health_turns') or 0))
-    if not minutes and not turns:
+    moves = max(0, int(direct.get('temporary_limb_health_moves') or 0))
+    if not minutes and not turns and not moves:
         return []
     applied = []
     source = _consumable_effect_source(item)
@@ -724,10 +737,11 @@ def _apply_temporary_limb_effects(health, direct, item):
             ),
             'minimum_limb_health': minimum_health,
             'suppress_fracture': suppress_fracture,
-            'remaining': minutes or turns,
-            'tick': 'time_elapsed' if minutes else 'turn_end',
-            'time_unit': 'minute' if minutes else None,
-            'remaining_seconds': minutes * 60 if minutes else None,
+            'remaining': moves or minutes or turns,
+            'tick': 'movement_end' if moves else 'time_elapsed' if minutes else 'turn_end',
+            'time_unit': 'movement' if moves else 'minute' if minutes else None,
+            'remaining_seconds': moves * 600 if moves else minutes * 60 if minutes else None,
+            'medication_clock': True,
         })
         applied.append(area)
     return applied
@@ -1029,6 +1043,7 @@ def _apply_success(
 
 class MedicalProcedureService:
     @staticmethod
+    @journaled(kind='medical_procedure')
     @atomic_operation
     def apply(user_id, actor_id, payload):
         if not isinstance(payload, dict):

@@ -53,7 +53,11 @@ const LABELS = {
     limb_only: 'Только конечность', limit_scope: 'Период ограничения',
     med_bonus: 'Бонус Медицины', minimum_limb_health: 'Минимум ОЗ конечности',
     not_consumed: 'Не расходуется', organ_toughness_multiplier: 'Живучесть органов, множитель',
-    post_duration_hp_delta: 'ОЗ после окончания', radiation_filter_capacity: 'Ёмкость фильтра',
+    post_duration_hp_delta: 'ОЗ после окончания', post_duration_exhaustion_delta: 'Истощение после окончания',
+    post_duration_pain_delta: 'Боль после окончания',
+    infection_multiplier: 'Множитель прогресса заражения', temporary_limb_health_moves: 'Восстановление конечности: перемещений',
+    post_duration_modifiers: 'Модификаторы после окончания', radiation_filter_capacity: 'Ёмкость фильтра',
+    filter_install_action_points: 'Установка фильтра, ОД',
     requires_infusion_tool: 'Требует капельницу', requires_injury: 'Требует травму',
     requires_shock: 'Требует болевой шок', rest_heal_multiplier: 'Лечение на отдыхе, множитель',
     restore_full_body_part: 'Восстановить часть тела полностью',
@@ -82,6 +86,8 @@ const LABELS = {
 
 const clone = value => JSON.parse(JSON.stringify(value));
 const label = key => LABELS[key] || String(key);
+// Публичные подсказки не должны выводить неизвестные служебные ключи.
+export const profileFieldLabel = key => LABELS[key] || null;
 
 export function profileComponentOptions(template) {
     const profile = template?.attributes?.consumable || {};

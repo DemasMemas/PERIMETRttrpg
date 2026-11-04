@@ -185,6 +185,7 @@ export function beginAnomalyLabelProfileForTest(enabled){anomalyLabelEnabledForT
 export function endAnomalyLabelProfileForTest(){const samples=anomalyLabelSamplesForTest;anomalyLabelSamplesForTest=null;anomalyLabelEnabledForTest=true;return samples;}
 export function facingPreviewCount(){return facingPreviewMesh?.count || 0;}
 export function navigationPreviewSettled(sx,sy,x,y,c,l){return [...navigationPreviews.entries()].some(([key,value])=>key.endsWith(\`:\${c}:\${sx}:\${sy}:\${x}:\${y}:\${l}\`)&&value!==null);}
+export function navigationPreviewDiagnostics(){return {keys:[...navigationPreviews.entries()].map(([key,value])=>({key,available:value!==null})),errors:[...navigationPreviewErrors],queued:navigationPreviewQueued?.key,pointer:navigationPointer,target:movementPreviewLastTargetKey,hint:movementPreviewHint?.textContent};}
 export function characterPose(id){const e=getCharacterModelEntry(id);return {x:e.posX,y:e.posY,fx:e.facingX,fy:e.facingY};}
 export function characterSpatialPose(id){const e=getCharacterModelEntry(id);return {level:e.floorLevel,height:e.physicalHeight,x:e.model.position.x,z:e.model.position.z,renderHeight:e.model.position.y,animating:Boolean(e.positionAnimation)};}
 export function beginObjectClimbForTest(objectId,characterId){const object=currentLocationData.objects.find(o=>o.id===objectId);return performClimbAction(object,characterId);}
@@ -271,6 +272,18 @@ if(typeof renderFacingPreview==='function'){const original=renderFacingPreview;r
         }
         if (safeSession && process.env.VTT_SAFE_SCENARIO === 'damage-revoke') {
             await require('./damage_revoke.browser.cjs')({page,request,token,lobby,base,connect,debugPort,safeSession});
+            return;
+        }
+        if (safeSession && process.env.VTT_SAFE_SCENARIO === 'health-audit') {
+            await require('./health_audit.browser.cjs')({page,request,token,lobby,login,profile,base,connect,debugPort,safeSession});
+            return;
+        }
+        if (safeSession && process.env.VTT_SAFE_SCENARIO === 'morning-answers') {
+            await require('./morning_answers.browser.cjs')({page,request,token,lobby,base,connect,debugPort,safeSession});
+            return;
+        }
+        if (safeSession && process.env.VTT_SAFE_SCENARIO === 'fire-rate') {
+            await require('./fire_rate.browser.cjs')({page,request,token,lobby,base,connect,debugPort,safeSession});
             return;
         }
         if (safeSession && process.env.VTT_SAFE_SCENARIO === 'sheet-repro') {

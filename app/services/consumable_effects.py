@@ -8,7 +8,7 @@ from app.services.consumable_catalog_rules import (
     EVERYDAY_CATALOG_RULES, LATE_CATALOG_RULES,
     MEDICAL_CATALOG_RULES, SURGERY_POST_CATALOG_RULES,
     SURGERY_PRE_CATALOG_RULES,
-    apply_catalog_rules,
+    apply_catalog_rules, correct_owl_profile,
 )
 
 
@@ -35,6 +35,7 @@ def _to_int(value: Any, default: int = 0) -> int:
 
 
 def _parse_signed(text: str, pattern: str) -> Optional[float]:
+    text = re.sub(r'([+-])\s+(?=\d)', r'\1', text)
     match = re.search(pattern, text, flags=re.IGNORECASE)
     if not match:
         return None
@@ -118,6 +119,61 @@ def with_darkness_modifiers(profile: Dict[str, Any], description: str) -> Dict[s
     return result
 
 
+def enrich_imported_consumable(attributes, description):
+    """Дополнить старый импорт без записи каталога и без замены настроенных значений."""
+    from copy import deepcopy
+    current = attributes.get('consumable')
+    if (not isinstance(current, dict) or current.get('editor_version') or not attributes.get('catalog_name')
+            or attributes.get('raw_description') != description):
+        return current
+    parsed = parse_consumable_effects(str(attributes['catalog_name']) + '. ' + str(description or ''))
+    result = deepcopy(current)
+    old_direct = result.get('direct') or {}
+    structural = {'duration','duration_phase','medical_difficulty','application_form','uses'}
+    result['direct'] = {**parsed.get('direct',{}), **old_direct}
+    if set(old_direct) <= structural and not result.get('modifiers'):
+        result['direct'].update(parsed.get('direct') or {})
+    name = str(attributes['catalog_name']).casefold()
+    if name in {'стимулятор орёл','стимулятор орел','военный стимулятор пчела'}:
+        result['direct'].pop('post_duration_exhaustion_delta', None)
+        result['direct']['exhaustion_delta'] = 1
+        result['effects'] = [e for e in result.get('effects') or [] if e.get('type') != 'exhaustion']
+    if 'жаропонижающее средство' in name and 'мороз' in name:
+        result['direct'].pop('temperature_delta', None)
+        result['effects'] = [e for e in result.get('effects') or [] if e.get('type') != 'temperature_control']
+    if parsed['direct'].get('filter_install_action_points') is not None:
+        result['direct'].pop('action_points_delta', None)
+        result['modifiers'] = [m for m in result.get('modifiers') or [] if m.get('stat') != 'action_points']
+        result['effects'] = [e for e in result.get('effects') or [] if not str(e.get('name') or '').startswith('ОД ')]
+    if name == 'стимулятор воля':
+        result['direct'].pop('exhaustion_delta', None)
+        result['effects'] = [e for e in result.get('effects') or [] if e.get('type') != 'exhaustion']
+    if 'полукровка' in name and old_direct.get('infection_delta') == -50:
+        result['direct'].pop('infection_delta', None)
+    if ('питательный стимулятор' in name and old_direct.get('pain_delta') == 3
+            or name == 'стимулятор гора' and old_direct.get('pain_delta') == 1):
+        result['direct']['pain_delta'] = -1
+    if parsed['direct'].get('temporary_limb_health_moves'):
+        result['direct'].pop('temporary_limb_health_minutes', None)
+    if re.search(r'(?:\d+|одно)\s+(?:перемещени|передвижени)', description, re.I):
+        result['direct']['duration_phase'] = 'movement_end'
+    for field in ('effects','modifiers','status_additions','status_removals','requirements','notes'):
+        result.setdefault(field, [])
+        for entry in parsed.get(field) or []:
+            if field == 'modifiers':
+                duplicate = any(m.get('stat') == entry.get('stat') for m in result[field])
+            elif field == 'effects':
+                duplicate = any(e.get('type') == entry.get('type') and e.get('name') == entry.get('name')
+                                for e in result[field])
+            else:
+                duplicate = entry in result[field]
+            if not duplicate:
+                result[field].append(deepcopy(entry))
+    result, _ = correct_owl_profile(result, result['direct'], attributes['catalog_name'])
+    result['catalog_rules_version'] = '2026-11-04'
+    return result
+
+
 def _effect(effect_type: str, value: Any = 0, *, remaining: Optional[int] = None, tick: str = "manual", **extra: Any) -> Dict[str, Any]:
     payload = {
         "type": effect_type,
@@ -168,7 +224,7 @@ def parse_consumable_effects(description: str) -> Dict[str, Any]:
         add_summary_effect("generic", value, name=label, remaining=remaining, note=note)
 
     duration = _parse_duration(lower)
-    if duration is not None and "перемещен" in lower:
+    if duration is not None and re.search(r'\d+\s+перемещени[еяй]', lower):
         profile["direct"]["duration_phase"] = "movement_end"
 
     water_fraction_match = re.search(
@@ -205,9 +261,9 @@ def parse_consumable_effects(description: str) -> Dict[str, Any]:
     mapping = [
         ("radiation", r"(?P<sign>[+-])(?P<value>\d+(?:[.,]\d+)?(?:/\d+)?)\s*радиац"),
         ("intoxication", r"(?P<sign>[+-])(?P<value>\d+(?:[.,]\d+)?)\s*опьянен"),
-        ("stress", r"(?P<sign>[+-])(?P<value>\d+(?:[.,]\d+)?(?:/\d+)?)\s*(?:уровн[ьяей]\s*)?стресса"),
-        ("exhaustion", r"(?P<sign>[+-])(?P<value>\d+(?:[.,]\d+)?(?:/\d+)?)\s*(?:уровн[ьяей]\s*)?истощени"),
-        ("pain", r"(?P<sign>[+-])(?P<value>\d+(?:[.,]\d+)?)\s*(?:уровн[ьяей]\s*)?боли"),
+        ("stress", r"(?P<sign>[+-])(?P<value>\d+(?:[.,]\d+)?(?:/\d+)?)\s*(?:уров(?:ень|ня|ней|ни)\s*)?стресса"),
+        ("exhaustion", r"(?P<sign>[+-])(?P<value>\d+(?:[.,]\d+)?(?:/\d+)?)\s*(?:уров(?:ень|ня|ней|ни)\s*)?истощени"),
+        ("pain", r"(?P<sign>[+-])(?P<value>\d+(?:[.,]\d+)?)\s*(?:уров(?:ень|ня|ней|ни)\s*)?боли"),
         ("action_points", r"(?P<sign>[+-])(?P<value>\d+(?:[.,]\d+)?)\s*од\b"),
         ("movement_points", r"(?P<sign>[+-])(?P<value>\d+(?:[.,]\d+)?)\s*(?:к\s*)?(?:перемещени|движени)"),
         ("strength", r"(?P<sign>[+-])(?P<value>\d+(?:[.,]\d+)?)\s*(?:к\s*)?сил[ые]"),
@@ -331,6 +387,13 @@ def parse_consumable_effects(description: str) -> Dict[str, Any]:
     if direct.get("nutrition") is not None:
         add_summary_label(f"Питание +{direct['nutrition']:g}")
     if direct.get("filter_charges") is not None:
+        # Цена замены фильтра — операция с модулем, а не штраф к ОД персонажа.
+        replacement = re.search(r'замена фильтра[^.]*?[-−–—]\s*(\d+)\s*од', lower)
+        if replacement:
+            direct['filter_install_action_points'] = int(replacement.group(1))
+            direct.pop('action_points_delta', None)
+            profile['modifiers'] = [m for m in profile['modifiers'] if m.get('stat') != 'action_points']
+            profile['effects'] = [e for e in profile['effects'] if not str(e.get('name') or '').startswith('ОД ')]
         add_summary_label(f"Фильтр {direct['filter_charges']:g}")
     if direct.get("duration") is not None:
         add_summary_label(f"Длительность {direct['duration']:g}")
@@ -478,13 +541,17 @@ def parse_consumable_effects(description: str) -> Dict[str, Any]:
         profile["requirements"].append("requires_gas_mask")
 
     _apply_canonical_consumable_rules(profile, lower)
+    if (profile['direct'].get('affects_all_limbs')
+            and re.search(r'(?:\d+|одно)\s+(?:перемещени|передвижени)', lower)):
+        profile['direct'].pop('temporary_limb_health_minutes', None)
+        profile['direct']['temporary_limb_health_moves'] = _parse_duration(lower) or 1
     return with_darkness_modifiers(profile, text)
 
 
 def _apply_canonical_consumable_rules(profile: Dict[str, Any], lower: str) -> None:
     """Apply rules whose wording is too contextual for the generic parser."""
     direct = profile["direct"]
-    if "перемещен" in lower:
+    if re.search(r'(?:\d+|одно)\s+(?:перемещени|передвижени)', lower):
         direct["duration_phase"] = "movement_end"
 
     def effect(effect_type: str, value: Any = 0, **extra: Any) -> Dict[str, Any]:
@@ -519,6 +586,12 @@ def _apply_canonical_consumable_rules(profile: Dict[str, Any], lower: str) -> No
 
     # Legacy catalogue overrides are data; new profiles can express these effects directly.
     apply_catalog_rules(profile, lower, LATE_CATALOG_RULES)
+    from app.services.consumable_catalog_rules import correct_owl_profile
+    corrected, _ = correct_owl_profile(profile, direct, lower)
+    if corrected is not profile:
+        profile.clear()
+        profile.update(corrected)
+        direct = profile['direct']
     apply_catalog_rules(profile, lower, SURGERY_PRE_CATALOG_RULES)
     surgery_match = re.search(r"восстанавливает (?:часть тела|утерянный орган или искореженную конечность).*?она имеет\s+(\d+)\s+здоров", lower)
     if surgery_match:

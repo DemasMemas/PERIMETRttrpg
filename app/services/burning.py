@@ -48,12 +48,57 @@ def water_item(data,path):
     item=CombatService._inventory_item_at_path(data,path)
     if not _is_water_supply(item):raise ValidationError('Выберите воду')
     attrs=CombatService._template_attributes(item)
-    capacity=CombatService._coerce_float(attrs.get('water_litres',item.get('volume')),0)
+    # Объём инвентаря не измеряется в литрах. Обычная бутылка — 1 л.
+    declared=attrs.get('water_litres',item.get('water_litres'))
+    name=str(item.get('name') or '').casefold()
+    capacity=CombatService._coerce_float(declared,0) if declared is not None else (
+        0 if any(word in name for word in ('канистр','кастрюл','ведро','бочк')) else 1)
     if capacity<=0:raise ValidationError('Для этой ёмкости не указан объём воды в литрах')
     maximum=max(1,CombatService._coerce_int(item.get('maxUses',attrs.get('uses')),1))
     uses=max(0,CombatService._coerce_int(item.get('uses',attrs.get('uses_remaining')),maximum))
     if uses<=0:raise ValidationError('В ёмкости не осталось воды')
     return item,capacity*uses/maximum
+
+
+def water_target_available(actor,target):
+    from app.models import LocationObject
+    from app.services.combat import CombatService
+    from app.services.explosion_geometry import distance
+    if actor.location_id!=target.location_id:return False
+    if actor.id==target.id:return True
+    objects=LocationObject.query.filter_by(location_id=actor.location_id).all()
+    return (distance(actor.location,objects,actor.pos_x,actor.pos_y,actor.floor_level or 0,target)<=1.5
+        and CombatService._explosion_cover(actor.location_id,actor.pos_x,actor.pos_y,target,actor.floor_level or 0).get('grade')!='full')
+
+
+def extinguishing_options(actor):
+    from app.models import LocationCharacter
+    from app.services.exceptions import ValidationError
+    from app.services.inventory_access import calculate_inventory_access
+    from app.services.general_consumable import _is_water_supply
+    from app.services.character_traits import trait_count
+    data=actor.character.data or {};water=[]
+    def visit(items,path):
+        for index,item in enumerate(items if isinstance(items,list) else []):
+            if not isinstance(item,dict):continue
+            current=path+[index]
+            if _is_water_supply(item):
+                try:
+                    _,litres=water_item(data,current)
+                    access=calculate_inventory_access(data,current,item)
+                    water.append({'path':current,'name':item.get('name','Вода'),'litres':litres,
+                        'action_points':max(1,int(access['retrieval_action_points'])),
+                        'source':access['source'],'limb_penalty':access['limb_penalty'],
+                        'deep_pockets':access['source']=='pockets' and bool(trait_count(data,'Глубокие карманы'))})
+                except ValidationError:pass
+            visit(item.get('contents'),current+['contents'])
+    for slot in ('pockets','backpack'):
+        visit((data.get('inventory') or {}).get(slot),['inventory',slot])
+    for slot in ('belt','vest'):
+        for index,pouch in enumerate(((data.get('equipment') or {}).get(slot) or {}).get('pouches') or []):
+            visit(pouch.get('contents'),['equipment',slot,'pouches',index,'contents'])
+    return {'water':water,'target_ids':[target.character_id for target in LocationCharacter.query.filter_by(location_id=actor.location_id).all()
+        if water_target_available(actor,target)]}
 
 
 def pour(actor,target):

@@ -13,7 +13,7 @@ function serverMovementRules(source=fs.readFileSync(path.resolve(__dirname,'../a
 function expectedMovementCost(route,rule,multiplier){
     assert.ok(Number.isFinite(multiplier)&&multiplier>0);assert.ok(rule.divisor>0);
     const climb=Number(route.climb_cost||0),travel=Math.max(0,route.cost-climb);
-    return Math.ceil(travel*multiplier/rule.divisor)+climb;
+    return Math.round((travel*multiplier/rule.divisor+climb)*1e9)/1e9;
 }
 function navigationCandidates(fixture){
     const stairs=fixture.objects.flatMap((object,index)=>object.type==='stairs'?[{sourceIndex:index,x:object.tile_x,y:object.tile_y,level:object.properties.level||0,building:object.properties.building_id,rotation:object.properties.rotation||0,dimensions:object.properties.dimensions}]:[]);
@@ -101,7 +101,7 @@ module.exports=async({page,request,token,base,connect,debugPort,safeSession,fixt
             if(await client.evaluate(`getComputedStyle(document.querySelector('#combat-status-panel .combat-hud-body')).display==='none'`))await click(client,'#combat-status-panel .combat-hud-collapse-btn');
         }
         const ui=client=>client.evaluate(movementUISnapshotExpression(actor.id));
-        const numericHud=snapshot=>{assert.ok(snapshot.visible,'остаток ОП виден');const match=snapshot.line?.match(/^ОП: ([0-9]+)\/([0-9]+)$/);assert.ok(match,'видимая надпись ОП');return{current:Number(match[1]),max:Number(match[2])};};
+        const numericHud=snapshot=>{assert.ok(snapshot.visible,'остаток ОП виден');const match=snapshot.line?.match(/^ОП: ([0-9.]+)\/([0-9.]+)$/);assert.ok(match,'видимая надпись ОП');return{current:Number(match[1]),max:Number(match[2])};};
         const readReadiness=()=>peer.evaluate('L.movementReadinessSnapshot()');
         const choose=async(mode,state)=>{
             await peer.evaluate(`L.showMovementTypeMenu(${actor.id})`);
@@ -138,7 +138,9 @@ module.exports=async({page,request,token,base,connect,debugPort,safeSession,fixt
         };
         const pointAt=async(x,y,height)=>{
             await peer.call('Page.bringToFront');
-            await peer.evaluate(`(()=>{const delta=new T.Vector3(${x+.5}-locationControls.target.x,${height}-locationControls.target.y,${y+.5}-locationControls.target.z);locationControls.object.position.add(delta);locationControls.target.add(delta);locationControls.update();locationControls.object.updateMatrixWorld(true)})()`);
+            // CDP передаёт указатель целыми пикселями. В общем плане полпикселя
+            // попадало в соседнюю десятую метра; приближаем обычную камеру.
+            await peer.evaluate(`(()=>{const delta=new T.Vector3(${x+.5}-locationControls.target.x,${height}-locationControls.target.y,${y+.5}-locationControls.target.z);locationControls.object.position.add(delta);locationControls.target.add(delta);locationControls.object.zoom=4;locationControls.object.updateProjectionMatrix();locationControls.update();locationControls.object.updateMatrixWorld(true)})()`);
             return peer.evaluate(`(()=>{const p=new T.Vector3(${x+.5},${height},${y+.5}).project(locationControls.object),r=document.querySelector('#location-canvas canvas').getBoundingClientRect();return{x:r.left+(p.x+1)*r.width/2,y:r.top+(1-p.y)*r.height/2}})()`);
         };
         const armPreview=async(mode,x,y)=>{
@@ -153,12 +155,19 @@ module.exports=async({page,request,token,base,connect,debugPort,safeSession,fixt
                 movePointer:point=>peer.call('Input.dispatchMouseEvent',{type:'mouseMoved',...point,buttons:0})});
             const {state,route,price,point}=prepared;
             const start=await peer.evaluate(`L.characterPose(${actor.id})`);
-            await peer.until(`L.navigationPreviewSettled(${start.x},${start.y},${x},${y},${actor.id},0)`,'серверный preview шага');
+            try{
+                await peer.until(`L.navigationPreviewSettled(${start.x},${start.y},${x},${y},${actor.id},0)`,'серверный preview шага');
+                await peer.until(`L.movementHintSnapshot().visible&&/ОП [0-9.]+\\/[0-9.]+/.test(L.movementHintSnapshot().text)`,'надпись после отрисовки готового маршрута');
+            }catch(error){
+                result.previewFailure={mode,target:[x,y],start,point,ui:await ui(peer),diagnostics:await peer.evaluate('L.navigationPreviewDiagnostics()')};save();
+                fs.writeFileSync(path.join(safeSession.artifacts,'movement-preview-failure.png'),Buffer.from((await peer.call('Page.captureScreenshot',{format:'png'})).data,'base64'));
+                throw error;
+            }
             const snapshot=await ui(peer);result.phases.push({stage:'preview-'+mode,target:[x,y],server:resourceSnapshot(state.current_character),price,ui:snapshot});save();
             assert.equal(numericHud(snapshot).current,state.current_character.movement_points_current);
             assert.equal(numericHud(snapshot).max,state.current_character.movement_points_max);
-            assert.ok(snapshot.hint.visible,'надпись стоимости видна');const ratio=snapshot.hint.text.match(/ОП ([0-9]+)\/([0-9]+)/);assert.ok(ratio);
-            assert.equal(Number(ratio[1]),price);assert.equal(Number(ratio[2]),state.current_character.movement_points_current);
+            assert.ok(snapshot.hint.visible,'надпись стоимости видна');const ratio=snapshot.hint.text.match(/ОП ([0-9.]+)\/([0-9.]+)/);assert.ok(ratio);
+            assert.equal(Number(ratio[1]),Number(price.toFixed(1)));assert.equal(Number(ratio[2]),Number(state.current_character.movement_points_current.toFixed(1)));
             return{point,state,route,price};
         };
         await ensureMovementBudget('initial-turn');

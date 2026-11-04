@@ -17,6 +17,37 @@ from app.services.character_roles import follows_world_time
 logger = logging.getLogger(__name__)
 
 
+def _preserve_intoxication_status(current_data, incoming_data):
+    from app.services.portable_lights import preserve as preserve_lights
+    preserve_lights(current_data, incoming_data)
+    from app.services.action_journal import preserve as preserve_journal
+    preserve_journal(current_data, incoming_data)
+    from app.services.body_transport import preserve
+    preserve(current_data, incoming_data)
+    from app.services.weapon_grip import preserve as preserve_grip
+    preserve_grip(current_data, incoming_data)
+    from app.services.effects import is_intoxication_coma
+    current = (current_data or {}).get('health') or {}
+    health = incoming_data.setdefault('health', {})
+    current_effects = current.get('effects') or []
+    incoming_effects = health.get('effects') or []
+    if any(is_intoxication_coma(effect) for effect in [*current_effects, *incoming_effects]):
+        health['effects'] = [effect for effect in incoming_effects if not is_intoxication_coma(effect)] + [
+            deepcopy(effect) for effect in current_effects if is_intoxication_coma(effect)
+        ]
+    meta = health.get('combatMeta')
+    current_meta = current.get('combatMeta') or {}
+    if not isinstance(meta, dict):
+        if not any(key in current_meta for key in ('intoxicationDeathChecked', 'intoxicationDeathRoll')):
+            return
+        meta = health['combatMeta'] = {}
+    for key in ('intoxicationDeathChecked', 'intoxicationDeathRoll'):
+        if key in current_meta:
+            meta[key] = deepcopy(current['combatMeta'][key])
+        else:
+            meta.pop(key, None)
+
+
 def _preserve_server_zombification(current_data,incoming_data):
     snapshot=(current_data or {}).get('psiZombification')
     if isinstance(snapshot,dict):
@@ -154,7 +185,10 @@ class CharacterService:
             or total_zero or vital_zone_zero
         )
         posture_updates = []
+        clear_breathless = bool((health.get('combatMeta') or {}).pop('clearBreathlessOnce', False))
         for model in LocationCharacter.query.filter_by(character_id=character.id).all():
+            if clear_breathless:
+                model.strenuous_movement_blocked_until_round = 0
             model.effects = deepcopy(health['effects'])
             model.hp_zones = health_zones_to_location(health)
             if incapacitated:
@@ -392,7 +426,10 @@ class CharacterService:
         validate_trait_selection({},character_data)
         from app.services.character_traits import sync_pocket_capacity
         sync_pocket_capacity({},character_data)
-        apply_health_maximums(character_data)
+        _preserve_intoxication_status({}, character_data)
+        health = apply_health_maximums(character_data)
+        from app.services.effects import apply_intoxication_dose
+        apply_intoxication_dose(health, 0)
         character = LobbyCharacter(
             lobby_id=lobby_id,
             owner_id=owner_id,
@@ -513,6 +550,8 @@ class CharacterService:
             normalize_inventory_ammo_stacks(character_data)
             from app.services.weapon_catalog import normalize_character_weapons
             normalize_character_weapons(character_data)
+            from app.services.weapon_grip import validate_saved_pair
+            validate_saved_pair(character.data,character_data)
             if not is_gm:
                 CharacterService.mark_added_items_as_player_created(
                     character.data,
@@ -521,6 +560,19 @@ class CharacterService:
             # Нормализация предметов не должна менять внутренний снимок процедуры.
             _preserve_server_medical_retry(character.data, character_data)
             _preserve_server_zombification(character.data,character_data)
+            _preserve_intoxication_status(character.data, character_data)
+            incoming_health = character_data.get('health') or {}
+            try:
+                old_intoxication = float((character.data.get('health') or {}).get('intoxication') or 0)
+                new_intoxication = float(incoming_health.get('intoxication') or 0)
+            except (TypeError, ValueError) as error:
+                raise ValidationError('Опьянение должно быть числом') from error
+            if not math.isfinite(old_intoxication) or not math.isfinite(new_intoxication):
+                raise ValidationError('Опьянение должно быть конечным числом')
+            if new_intoxication > old_intoxication:
+                from app.services.effects import apply_intoxication_dose
+                incoming_health['intoxication'] = old_intoxication
+                apply_intoxication_dose(incoming_health, new_intoxication - old_intoxication)
             health = apply_health_maximums(character_data)
             posture_updates = CharacterService.sync_location_health(character, health,character_data=character_data)
             character.data = character_data

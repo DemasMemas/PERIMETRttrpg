@@ -334,6 +334,8 @@ def load_outside_combat(character_id, user_id, payload):
     if type(payload.get('character_revision')) is not int or payload['character_revision'] != character.revision:
         raise ConflictError()
     data = deepcopy(character.data or {})
+    from app.services.weapon_grip import ensure_reload_allowed
+    ensure_reload_allowed(data)
     result = load_ammunition(data, payload.get('loading'))
     character.data = data
     return character, result

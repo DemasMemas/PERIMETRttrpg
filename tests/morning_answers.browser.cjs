@@ -1,0 +1,280 @@
+// Уточнения автора и найденные в таблице ошибки: настоящие API и два клиента.
+const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path');
+const {loadFixture,waitForDocument}=require('./durable_reload.browser.cjs');
+const copy=x=>JSON.parse(JSON.stringify(x));
+module.exports=async({page,request,token,lobby,base,connect,debugPort,safeSession})=>{
+    assert.equal(process.env.VTT_SAFE_SCENARIO,'morning-answers');assert.ok(safeSession.verified);
+    const api=`/lobbies/${lobby.id}`,{fixture}=loadFixture();
+    const location=await request(api+'/locations',{...fixture,objects:undefined,world_tile_x:7,world_tile_z:8},token),loc=api+'/locations/'+location.id;
+    await request(loc+'/objects/batch',{objects:fixture.objects},token);
+    await request('/auth/register',{username:'morning-observer',email:'morning-observer@example.test',password:'synthetic-morning-password'});
+    const observer=await request('/auth/login',{username:'morning-observer',password:'synthetic-morning-password'});await request(api+'/join',{},observer.access_token);
+    const allow=character=>request('/lobbies/characters/'+character.id+'/visibility',{visible_to:[observer.user_id],editable_to:[]},token,'PUT');
+    const health=()=>({current:300,max:700,painLevel:0,stress:0,exhaustion:0,infection:1,temperature:38,effects:[]});
+    const read=id=>request('/lobbies/characters/'+id,null,token,'GET');
+    const rows=[];
+    for(const [name,description] of [
+        ['Стимулятор Скала-Н','Ампула. Действует 3 хода.'],
+        ['Стимулятор Орёл','Ампула. Действует 10 ходов.'],
+        ['Военный стимулятор ПЧеЛа','Ампула. Действует 10 ходов.'],
+        ['Жаропонижающее средство Мороз','Ампула. Понижает температуру тела на 1 градус. Работает 4 хода.'],
+    ]){
+        const t=await request(api+'/templates',{name,category:'consumable',description,weight:.1,volume:.1,
+            attributes:{catalog_name:name,raw_description:description,consumable:{direct:{application_form:'injectable'},effects:[]}}},token);
+        const item={id:'morning-'+t.id,templateId:t.id+1000000,name,category:'consumable',quantity:1,attributes:t.attributes};
+        const character=await request(api+'/characters',{name:'Проверка '+name,data:{health:health(),skills:{other:{medicine:{base:20}}},inventory:{pockets:[item],backpack:[]}}},token);
+        await allow(character);rows.push({name,character,item});
+    }
+    const source=JSON.parse(fs.readFileSync(path.join(__dirname,'../.private-testing/reports/catalog-sweep-2026-11-04/source.json'),'utf8'));
+    const ammo=source.equipment.find(i=>i.category==='ammo'&&/9[хx×]18/.test(i.name));assert.ok(ammo);
+    const rifle={id:'morning-gun',name:'Ствол проверки',category:'weapon',subcategory:'Пистолет',ammo:20,durability:100,maxDurability:100,
+        attributes:{damage:50,range:30,accuracy:100,ergonomics:100,fire_rate:20,noise:0,min_strength:0,fixedMagazine:true,magazine_size:20},
+        fixedAmmo:[{...copy(ammo),id:'morning-ammo',quantity:20}]};
+    const actor=await request(api+'/characters',{name:'Стрелок утренних проверок',data:{health:health(),combat:{action_points:100},
+        skills:{physical:{strength:{base:20},shooting:{base:20},accuracy:{base:20},will:{base:20}}},weapons:[rifle]}},token);
+    await request(loc+'/spawn_character',{character_id:actor.id,tile_x:41,tile_y:48},token);
+    const armorRows=[];
+    for(const raw of source.equipment.filter(i=>i.name==='Костюм Химзащиты'||i.category==='helmet'&&i.attributes.requires_filter)){
+        const item={...copy(raw),id:'morning-armor-'+armorRows.length,durability:raw.attributes.max_durability,maxDurability:raw.attributes.max_durability};
+        const character=await request(api+'/characters',{name:'Мишень '+raw.name,data:{health:health(),equipment:{[raw.category]:item}}},token);
+        await allow(character);armorRows.push({name:raw.name,character,item});
+    }
+    let protocol,context,peer;
+    try{
+        const version=await(await fetch(`http://127.0.0.1:${debugPort}/json/version`)).json();protocol=await connect(version.webSocketDebuggerUrl);
+        context=await protocol.call('Target.createBrowserContext');const t=await protocol.call('Target.createTarget',{url:base,browserContextId:context.browserContextId});
+        const tabs=await(await fetch(`http://127.0.0.1:${debugPort}/json`)).json();peer=await connect(tabs.find(i=>i.id===t.targetId).webSocketDebuggerUrl);
+        await peer.call('Page.enable');await peer.call('Runtime.enable');await waitForDocument(peer,{href:base,label:'Наблюдатель'});
+        await peer.evaluate(`localStorage.setItem('access_token',${JSON.stringify(observer.access_token)});localStorage.setItem('user_id',${JSON.stringify(String(observer.user_id))});true`);
+        for(const client of [page,peer]){
+            const href=base+api+'/page?location='+location.id,epoch=await client.evaluate('performance.timeOrigin');
+            await client.call('Page.navigate',{url:href});await waitForDocument(client,{href,afterEpoch:epoch,label:'Припять: утренние ответы'});
+            await client.until(`window.socket?.connected&&window.currentLocationId===${location.id}&&document.getElementById('scene-loading-screen').classList.contains('is-hidden')`,'Сцена готова');
+            await client.evaluate(`window.__morningUpdates=[];socket.on('character_data_updated',e=>window.__morningUpdates.push(e));true`);
+        }
+        for(const row of rows){
+            for(const client of [page,peer]){
+                const ack=await client.evaluate(`new Promise(resolve=>socket.emit('join_character',{token:localStorage.getItem('access_token'),character_id:${row.character.id}},resolve))`);assert.ok(ack.ok);
+            }
+            const current=await read(row.character.id),item=current.data.inventory.pockets[0];
+            await request('/lobbies/characters/'+row.character.id+'/medical-procedure',{operation_id:'morning-dose-'+row.character.id,target_character_id:row.character.id,
+                source:{path:['inventory','pockets',0],snapshot:item},application:{kind:'self',actionPoints:0}},token);
+            row.beforeClock=(await read(row.character.id)).data.health;
+        }
+        assert.equal(rows[0].beforeClock.current,500);assert.equal(rows[0].beforeClock.max,900);
+        assert.equal(rows[1].beforeClock.exhaustion,1);assert.equal(rows[2].beforeClock.exhaustion,1);assert.equal(rows[3].beforeClock.temperature,38);
+        await request(api+'/characters/time-active',{character_ids:rows.map(r=>r.character.id)},token,'PATCH');
+        const clock=await request(api,null,token,'GET');
+        await request(api+'/time',{game_day:clock.game_day,game_time_minutes:clock.game_time_minutes+2},token,'PATCH');
+        for(const row of rows)row.afterClock=(await read(row.character.id)).data.health;
+        assert.equal(rows[0].afterClock.current,200);assert.equal(rows[0].afterClock.max,700);
+        assert.equal(rows[1].afterClock.exhaustion,1);assert.equal(rows[2].afterClock.exhaustion,1);assert.equal(rows[3].afterClock.temperature,34);
+        for(const client of [page,peer])await client.until(`window.__morningUpdates.some(e=>e.character_id===${rows[0].character.id}&&e.updates?.data?.health?.current===200)&&window.__morningUpdates.some(e=>e.character_id===${rows[3].character.id}&&e.updates?.data?.health?.temperature===34)`,'Эффекты времени доставлены обоим клиентам');
+        await request(api+'/characters/time-active',{character_ids:[]},token,'PATCH');
+        const combat=loc+'/combat';let state=await request(combat,null,token,'GET');const actorId=state.characters.find(c=>c.character_id===actor.id).location_character_id;
+        await request(combat+'/start',{location_character_ids:[actorId],initiator_location_character_id:actorId,initiator_first:true},token);
+        const action=body=>request(combat+'/action',{location_character_id:actorId,...body},token);
+        await action({action_key:'draw_weapon',weapon_index:0});
+        for(const row of armorRows){
+            for(const client of [page,peer]){
+                const ack=await client.evaluate(`new Promise(resolve=>socket.emit('join_character',{token:localStorage.getItem('access_token'),character_id:${row.character.id}},resolve))`);assert.ok(ack.ok);
+            }
+            await request(loc+'/spawn_character',{character_id:row.character.id,tile_x:41,tile_y:50},token);
+            await action({action_key:'aim',weapon_index:0,target_character_id:row.character.id});
+            const result=await action({action_key:'attack',weapon_index:0,fire_mode:'aimed',shot_count:1,action_points:2,
+                target_character_id:row.character.id,target_zone:row.item.category==='helmet'?'head':'chest'});
+            row.damage=result.attack.results[0].armor_damage;assert.equal(row.damage.reduce((s,i)=>s+i.damage,0),50,row.name);
+            const data=(await read(row.character.id)).data;row.after=data.equipment[row.item.category];
+            assert.equal(row.after.durability,row.item.durability);assert.ok(row.after.currentStageDurability<row.after.stageDurability);
+            for(const client of [page,peer])await client.until(`window.__morningUpdates.some(e=>e.character_id===${row.character.id}&&e.updates?.data?.equipment?.${row.item.category}?.currentStageDurability===${row.after.currentStageDurability})`,'Износ пришёл обоим клиентам');
+            await request(loc+'/characters/'+row.character.id,null,token,'DELETE');
+        }
+        await request(combat+'/end',{},token);
+        const armed=await read(actor.id);
+        armed.data.weapons[0].attributes.noise=40;
+        armed.data.weapons[0].fixedAmmo=[{id:'morning-flash',name:'12x70 Светошумовой',category:'ammo',quantity:2,
+            attributes:{caliber:'12x70',ammo_variant:'flashbang',damage:0,armor_piercing:0}}];
+        armed.data.weapons[0].ammo=2;
+        await request('/lobbies/characters/'+actor.id,{data:armed.data},token,'PUT');
+        await request(loc+'/characters/'+actor.id+'/facing',{facing_x:0,facing_y:1},token,'PATCH');
+        const flashPeople=[];
+        for(const [name,x,y,fx,fy] of [['Прямая вспышка',41,50,0,-1],['Край конуса',42,49,-1,-1],['Сбоку от стрелка',42,48,-1,0]]){
+            const character=await request(api+'/characters',{name,data:{health:health()}},token);await allow(character);
+            await request(loc+'/spawn_character',{character_id:character.id,tile_x:x,tile_y:y},token);
+            await request(loc+'/characters/'+character.id+'/facing',{facing_x:fx,facing_y:fy},token,'PATCH');flashPeople.push(character);
+            for(const client of [page,peer]){
+                const ack=await client.evaluate(`new Promise(resolve=>socket.emit('join_character',{token:localStorage.getItem('access_token'),character_id:${character.id}},resolve))`);assert.ok(ack.ok);
+            }
+        }
+        await request(combat+'/start',{location_character_ids:[actorId],initiator_location_character_id:actorId,initiator_first:true},token);
+        state=await request(combat,null,token,'GET');if(state.current_character.drawn_weapon_index!==0)await action({action_key:'draw_weapon',weapon_index:0});
+        const flashShot=await action({action_key:'attack',weapon_index:0,fire_mode:'unaimed',shot_count:1,action_points:1,target_character_id:flashPeople[0].id});
+        assert.equal(flashShot.attack.noise,15);assert.equal(flashShot.attack.results[0].roll,null);
+        for(const [index,character] of flashPeople.entries()){
+            const h=(await read(character.id)).data.health;const blind=h.effects.find(e=>e.type==='blindness');
+            assert.equal(Boolean(blind&&blind.value>0),index!==2,character.name);assert.equal(h.current,300);
+        }
+        const noise=flashShot.attack.noise_targets.find(r=>r.character_id===actor.id);assert.equal(noise.noise_received,7.5);
+        for(const client of [page,peer])await client.until(`window.__morningUpdates.some(e=>e.character_id===${flashPeople[1].id}&&e.updates?.data?.health?.effects?.some(v=>v.type==='blindness'&&v.value>0))`,'Соседняя цель получила вспышку на обоих клиентах');
+        await request(combat+'/end',{},token);
+        await allow(actor);
+        for(const client of [page,peer]){
+            await client.until(`window.locationCombatState?.status!=='active'`,'Бой завершён');
+            await client.evaluate(`window.openCharacterSheet(${actor.id},'equipment')`);
+            await client.until(`document.querySelector('[data-weapon-grip-label="0"]')?.textContent.includes('двумя руками')`,'Базовый двуручный хват виден');
+        }
+        const clickGrip=async()=>{
+            await page.call('Page.bringToFront');
+            const point=await page.evaluate(`(async()=>{const e=document.querySelector('[data-weapon-grip-change="0"]');e.scrollIntoView({block:'center',behavior:'instant'});await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));const b=e.getBoundingClientRect();return{x:b.x+b.width/2,y:b.y+b.height/2}})()`);
+            for(const type of ['mousePressed','mouseReleased'])await page.call('Input.dispatchMouseEvent',{type,...point,button:'left',buttons:type==='mousePressed'?1:0,clickCount:1});
+        };
+        await clickGrip();
+        for(const client of [page,peer])await client.until(`document.querySelector('[data-weapon-grip-label="0"]')?.textContent.includes('одной рукой')`,'Одноручный хват доставлен двум листам');
+        await request(combat+'/start',{location_character_ids:[actorId],initiator_location_character_id:actorId,initiator_first:true},token);
+        state=await request(combat,null,token,'GET');if(state.current_character.drawn_weapon_index!==0)await action({action_key:'draw_weapon',weapon_index:0});
+        for(const client of [page,peer])await client.until(`window.locationCombatState?.status==='active'&&window.locationCombatState.current_character?.drawn_weapon_index===0`,'Оружие взято в начале боя');
+        const beforeGrip=await request(combat,null,token,'GET');await clickGrip();
+        for(const client of [page,peer])await client.until(`window.locationCombatState.current_character?.weapon_grip_hands===2&&document.querySelector('[data-weapon-grip-label="0"]')?.textContent.includes('двумя руками')`,'Двуручный хват и боевое состояние синхронизированы');
+        const afterGrip=await request(combat,null,token,'GET');
+        assert.equal(afterGrip.current_character.action_points_current,beforeGrip.current_character.action_points_current-1);
+        const persisted=await read(actor.id);
+        const denied=await fetch(base+'/lobbies/characters/'+actor.id+'/weapon-grip',{method:'POST',headers:{Authorization:'Bearer '+observer.access_token,'Content-Type':'application/json'},body:JSON.stringify({hands:1,weapon_index:0,character_revision:persisted.data._revision})});
+        assert.equal(denied.status,403);
+        await clickGrip();
+        for(const client of [page,peer])await client.until(`window.locationCombatState.current_character?.weapon_grip_hands===1&&document.querySelector('[data-weapon-grip-label="0"]')?.textContent.includes('одной рукой')`,'Возврат к одной руке за ещё 1 ОД');
+        const afterOne=await request(combat,null,token,'GET');assert.equal(afterOne.current_character.action_points_current,beforeGrip.current_character.action_points_current-2);
+        fs.writeFileSync(path.join(safeSession.artifacts,'weapon-grip-one-hand.png'),Buffer.from((await page.call('Page.captureScreenshot',{format:'png'})).data,'base64'));
+        const epoch=await page.evaluate('performance.timeOrigin');await page.call('Page.reload');
+        await waitForDocument(page,{href:base+api+'/page?location='+location.id,afterEpoch:epoch,label:'Перезагрузка хвата'});
+        await page.until('typeof window.openCharacterSheet===\'function\'','Лист после перезагрузки');
+        await page.evaluate(`window.openCharacterSheet(${actor.id},'equipment')`);
+        await page.until(`document.querySelector('[data-weapon-grip-label="0"]')?.textContent.includes('одной рукой')`,'Одноручный хват сохранён после перезагрузки');
+        // Тушение: обычная бутылка, реальное доставание, доступные цели и оформление.
+        const watered=await read(actor.id);
+        watered.data.inventory={pockets:[{id:'water-native',name:'Вода',category:'consumable',volume:2,
+            weight:1,uses:3,maxUses:3,quantity:1,description:'-1 радиации -1/2 Уровня истощения -10 Опьянения 3 Использования.',
+            attributes:{uses:3,consumable:{direct:{radiation_delta:-1,intoxication_delta:-10,exhaustion_delta:-.5,
+                uses:3,satisfy_water:true,water_source:true},effects:[{type:'radiation',value:-1,tick:'manual'},
+                {type:'intoxication',value:-10,tick:'manual'},{type:'exhaustion',value:-.5,tick:'manual'}]}}}],backpack:[]};
+        watered.data.health.effects.push({id:'burn-native',type:'burning',name:'Горение',remaining:8,tick:'round_end',active:true});
+        await request('/lobbies/characters/'+actor.id,{data:watered.data},token,'PUT');
+        await page.evaluate('window.closeCharacterSheet()');
+        const clickElement=async selector=>{
+            const point=await page.evaluate(`(()=>{const e=document.querySelector(${JSON.stringify(selector)});e.scrollIntoView({block:'center',behavior:'instant'});const r=e.getBoundingClientRect();return{x:r.x+r.width/2,y:r.y+r.height/2}})()`);
+            for(const type of ['mousePressed','mouseReleased'])await page.call('Input.dispatchMouseEvent',{type,...point,button:'left',buttons:type==='mousePressed'?1:0,clickCount:1});
+        };
+        const openWheel=async()=>{
+            const point=await page.evaluate(`(async()=>{const T=await import('three'),c=window.locationControls,a=window.locationCombatState.current_character;
+                const target=new T.Vector3(a.x+.5,(a.height||1)+.8,a.y+.5),delta=target.clone().sub(c.target);
+                c.object.position.add(delta);c.target.copy(target);c.object.zoom=3;c.object.updateProjectionMatrix();c.update();c.object.updateMatrixWorld(true);
+                const p=target.project(c.object),r=document.querySelector('#location-canvas canvas').getBoundingClientRect();return{x:r.x+(p.x+1)*r.width/2,y:r.y+(1-p.y)*r.height/2}})()`);
+            await page.call('Input.dispatchMouseEvent',{type:'mouseMoved',...point});
+            for(const type of ['mousePressed','mouseReleased'])await page.call('Input.dispatchMouseEvent',{type,...point,button:'right',buttons:type==='mousePressed'?2:0,clickCount:1});
+            await page.until(`Array.from(document.querySelectorAll('.combat-radial-action')).some(e=>e.textContent.includes('Тушение огня'))`,'Колесо персонажа');
+        };
+        const selectWheel=async text=>{
+            await page.evaluate(`Array.from(document.querySelectorAll('.combat-radial-action')).find(e=>e.textContent.includes(${JSON.stringify(text)})).dataset.nativeSelected='true'`);
+            await clickElement('[data-native-selected="true"]');
+        };
+        await openWheel();await selectWheel('Тушение огня');
+        await page.until(`document.querySelector('#combat-fire-water-menu .fire-water-items button')?.textContent.includes('1 л')`,'Литраж и цена бутылки');
+        let waterMenu=await page.evaluate(`(()=>{const s=document.querySelector('.fire-water-target');return{text:document.querySelector('#combat-fire-water-menu').innerText,
+            targets:Array.from(s.options,e=>Number(e.value)),background:getComputedStyle(s).backgroundColor,radius:getComputedStyle(s).borderRadius}})()`);
+        assert.ok(waterMenu.text.includes('Карманы · 1 ОД'));assert.ok(!waterMenu.targets.includes(armorRows[0].character.id));
+        assert.notEqual(waterMenu.background,'rgb(255, 255, 255)');assert.ok(parseFloat(waterMenu.radius)>=8);
+        fs.writeFileSync(path.join(safeSession.artifacts,'extinguishing-menu.png'),Buffer.from((await page.call('Page.captureScreenshot',{format:'png'})).data,'base64'));
+        const waterBefore=(await request(combat,null,token,'GET')).current_character.action_points_current;
+        await clickElement('.fire-water-items button');
+        await page.until('!document.getElementById("combat-fire-water-menu")','Бутылка взята');
+        assert.equal((await request(combat,null,token,'GET')).current_character.action_points_current,waterBefore-1);
+        assert.equal((await read(actor.id)).data.health.combatMeta.heldWaterItem.litres,1);
+        await openWheel();await selectWheel('Тушение огня');await page.until('document.querySelector(".fire-pour")&&!document.querySelector(".fire-pour").disabled','Обливание доступно');
+        await clickElement('.fire-pour');await page.until('!document.getElementById("combat-fire-water-menu")','Обливание завершено');
+        assert.equal((await read(actor.id)).data.health.effects.find(e=>e.type==='burning').remaining,6);
+        assert.equal((await request(combat,null,token,'GET')).current_character.action_points_current,waterBefore-3);
+        await openWheel();await selectWheel('Ближний бой');await page.until('document.querySelector(".melee-block-arm")','Ближний бой открыт');
+        assert.ok(parseFloat(await page.evaluate('getComputedStyle(document.querySelector(".melee-block-arm")).borderRadius'))>=8);
+        fs.writeFileSync(path.join(safeSession.artifacts,'melee-select.png'),Buffer.from((await page.call('Page.captureScreenshot',{format:'png'})).data,'base64'));
+        await clickElement('.melee-menu-close');
+        const torchData=await read(actor.id);
+        torchData.data.inventory.pockets=[{id:'native-torch',name:'Фонарик',category:'misc',weight:.5,volume:1,
+            attributes:{portable_light:'hand'}}];
+        await request('/lobbies/characters/'+actor.id,{data:torchData.data},token,'PUT');
+        const nightClock=await request(api,null,token,'GET');
+        await request(api+'/time',{game_day:nightClock.game_day,game_time_minutes:23*60},token,'PATCH');
+        for(const client of [page,peer]) {
+            await client.evaluate(`window.openCharacterSheet(${actor.id},'equipment')`);
+            await client.until(`document.querySelector('.portable-light-row[data-light-id="native-torch"]')`,'Фонарь появился в листах');
+        }
+        const lightBefore=(await request(combat,null,token,'GET')).current_character.action_points_current;
+        await clickElement('[data-light-id="native-torch"] [data-light-operation="prepare"]');
+        await page.until(`document.querySelector('[data-light-id="native-torch"] [data-light-operation="toggle"]')`,'Фонарь в руке');
+        assert.equal((await request(combat,null,token,'GET')).current_character.action_points_current,lightBefore-1);
+        await clickElement('[data-light-id="native-torch"] [data-light-operation="toggle"]');
+        for(const client of [page,peer])await client.until(`document.querySelector('[data-light-id="native-torch"] strong')?.textContent.includes('включён')`,'Состояние фонаря синхронизировано');
+        assert.equal((await request(combat,null,token,'GET')).current_character.action_points_current,lightBefore-2);
+        for(const client of [page,peer])await client.evaluate('window.closeCharacterSheet()');
+        await page.until(`window.locationCombatState.characters.find(c=>c.character_id===${flashPeople[0].id})?.portable_illumination?.lit`,'Персонаж перед фонарём освещён');
+        assert.equal(await page.evaluate(`window.locationCombatState.characters.find(c=>c.character_id===${flashPeople[2].id}).portable_illumination.lit`),false);
+        await page.until(`(async()=>{const scene=await import('/static/js/locationScene.js');return scene.getLocationPortableLightDiagnostics().lights===1})()`,'Настоящий источник света в сцене');
+        fs.writeFileSync(path.join(safeSession.artifacts,'portable-light-night.png'),Buffer.from((await page.call('Page.captureScreenshot',{format:'png'})).data,'base64'));
+        await request(loc+'/characters/'+flashPeople[0].id,null,token,'DELETE');
+        await page.evaluate(`(async()=>{const T=await import('three'),c=window.locationControls,
+            target=new T.Vector3(41.5,1,61),delta=target.clone().sub(c.target);c.object.position.add(delta);c.target.copy(target);
+            c.object.zoom=1.3;c.object.updateProjectionMatrix();c.update();c.object.updateMatrixWorld(true)})()`);
+        const toggleTorch=async()=>request('/lobbies/characters/'+actor.id+'/portable-lights',{
+            operation:'toggle',path:['inventory','pockets',0],source_id:'native-torch',character_revision:(await read(actor.id)).data._revision},token);
+        await toggleTorch();
+        await page.until(`(async()=>{const s=await import('/static/js/locationScene.js');return s.getLocationPortableLightDiagnostics().lights===0})()`,'Фонарь выключен');
+        await page.evaluate('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
+        fs.writeFileSync(path.join(safeSession.artifacts,'portable-light-open-off.png'),Buffer.from((await page.call('Page.captureScreenshot',{format:'png'})).data,'base64'));
+        await toggleTorch();
+        await page.until(`(async()=>{const s=await import('/static/js/locationScene.js');return s.getLocationPortableLightDiagnostics().lights===1})()`,'Фонарь включён на открытой дороге');
+        await page.evaluate('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
+        fs.writeFileSync(path.join(safeSession.artifacts,'portable-light-open-on.png'),Buffer.from((await page.call('Page.captureScreenshot',{format:'png'})).data,'base64'));
+        await clickElement('#actions-toggle');
+        await page.until(`document.querySelector('.action-journal')?.innerText.includes('Взять воду в руку')`,'Серверный журнал в интерфейсе');
+        const journalText=await page.evaluate('document.querySelector(".action-journal").innerText');
+        assert.ok(journalText.includes('Исполнено'));assert.ok(journalText.includes('1 ОД'));assert.ok(journalText.includes('2 ОД'));
+        fs.writeFileSync(path.join(safeSession.artifacts,'action-journal.png'),Buffer.from((await page.call('Page.captureScreenshot',{format:'png'})).data,'base64'));
+        await request(combat+'/end',{},token);
+        assert.equal((await read(actor.id)).data.inventory.pockets[0].lightPower.uses_left,9);
+        await request(api+'/time',{game_day:nightClock.game_day,game_time_minutes:23*60+10},token,'PATCH');
+        assert.equal((await read(actor.id)).data.inventory.pockets[0].lightPower.uses_left,8);
+        // Два оружия: настоящая кнопка второго хвата, серверные выстрелы и повторный вход.
+        await request('/lobbies/characters/'+actor.id+'/portable-lights',{operation:'stow',source_id:'native-torch',
+            path:['inventory','pockets',0],character_revision:(await read(actor.id)).data._revision},token);
+        const pairData=await read(actor.id);
+        pairData.data.weapons=[copy(rifle),{...copy(rifle),id:'native-second-gun',name:'Второй проверочный пистолет'}];
+        await request('/lobbies/characters/'+actor.id,{data:pairData.data},token,'PUT');
+        for(const client of [page,peer])await client.evaluate(`window.openCharacterSheet(${actor.id},'equipment')`);
+        await page.until(`document.querySelector('[data-weapon-pair-take="1"]')`,'Кнопка второй руки');
+        await clickElement('[data-weapon-pair-take="1"]');
+        for(const client of [page,peer])await client.until(`window.locationCombatState.characters.find(c=>c.character_id===${actor.id})?.secondary_weapon_index===1`,'Парный хват синхронизирован');
+        await request(combat+'/start',{location_character_ids:[actorId],initiator_location_character_id:actorId,initiator_first:true},token);
+        state=await request(combat,null,token,'GET');assert.equal(state.current_character.secondary_weapon_index,1);
+        const pairTarget=await request(api+'/characters',{name:'Мишень двух оружий',data:{health:{...health(),current:700,max:700}}},token);
+        await request(loc+'/spawn_character',{character_id:pairTarget.id,tile_x:41,tile_y:50},token);
+        const pairBefore=state.current_character.action_points_current;
+        for(const weapon_index of [0,1]) {
+            const result=await action({action_key:'attack',weapon_index,fire_mode:'unaimed',shot_count:1,action_points:1,
+                target_character_id:pairTarget.id,pending_action_id:'native-pair-shot-'+weapon_index});
+            assert.equal(result.attack.paired_weapon_accuracy_penalty,2);
+        }
+        assert.deepEqual((await read(actor.id)).data.weapons.map(w=>w.ammo),[19,19]);
+        const pairAfter=(await request(combat,null,token,'GET')).current_character.action_points_current;
+        assert.equal(pairAfter,pairBefore-2);
+        const deniedReload=await fetch(base+combat+'/action',{method:'POST',headers:{Authorization:'Bearer '+token,'Content-Type':'application/json'},
+            body:JSON.stringify({location_character_id:actorId,action_key:'reload_weapon',weapon_index:0})});
+        assert.equal(deniedReload.status,400);assert.equal((await request(combat,null,token,'GET')).current_character.action_points_current,pairAfter);
+        const pairEpoch=await page.evaluate('performance.timeOrigin');await page.call('Page.reload');
+        await waitForDocument(page,{href:base+api+'/page?location='+location.id,afterEpoch:pairEpoch,label:'Перезагрузка парного хвата'});
+        await page.until(`window.locationCombatState?.current_character?.secondary_weapon_index===1`,'Две руки сохранены после перезагрузки');
+        assert.deepEqual((await read(actor.id)).data.weapons.map(w=>w.ammo),[19,19]);
+        await page.evaluate(`window.openCharacterSheet(${actor.id},'equipment')`);
+        await page.until(`document.querySelector('#character-sheet-modal')?.textContent.includes('Во второй руке')`,'Второе оружие видно после перезагрузки');
+        fs.writeFileSync(path.join(safeSession.artifacts,'paired-weapons.png'),Buffer.from((await page.call('Page.captureScreenshot',{format:'png'})).data,'base64'));
+        await request(combat+'/end',{},token);
+        fs.writeFileSync(path.join(safeSession.artifacts,'morning-answers.json'),JSON.stringify({status:'PASS',twoClients:true,scene:'Копия Припяти',medicines:rows.map(r=>({name:r.name,before:r.beforeClock,after:r.afterClock})),armor:armorRows.map(r=>({name:r.name,damage:r.damage,after:r.after})),flash:{noise:flashShot.attack.noise,received:noise.noise_received,targets:flashShot.attack.results[0].flash_targets},grip:{paidTwice:2,reloadStable:true,twoClients:true,observerDenied:true},water:{litres:1,retrieveAP:1,pourAP:2,burningBefore:8,burningAfter:6,reachableTargets:true,styledSelects:true},lights:{gpuBeam:true,twoClients:true,battleBattery:9,afterTenMinutes:8},journal:{persistentServerEntries:true,realCosts:true},pair:{twoClients:true,eachWeaponFired:true,ammunition:[19,19],reloadRejectedWithoutPayment:true,reloadStable:true}},null,2));
+    }finally{await peer?.close();if(context)await protocol?.call('Target.disposeBrowserContext',{browserContextId:context.browserContextId});await protocol?.close();}
+};

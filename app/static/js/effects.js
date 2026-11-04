@@ -6,6 +6,18 @@ const EFFECT_TYPE_META = {
     custom: { label: 'Пользовательский эффект', group: 'status' },
     heal: { label: 'Лечение', group: 'medical' },
     regeneration: { label: 'Регенерация', group: 'medical' },
+    temporary_exhaustion: {label:'Временное истощение',group:'medical'},
+    temporary_hp_max: {label:'Временный максимум ОЗ',group:'medical'},
+    sleep_support: {label:'Поддержка без сна',group:'medical'},
+    amputation: {label:'Ампутация',group:'injury'},
+    anomaly_compulsion: {label:'Зов аномалии',group:'mental'},
+    anomaly_electric_penalty: {label:'Электрошок',group:'status'},
+    anomaly_will_penalty: {label:'Подавление Воли',group:'mental'},
+    circular_attack_recovery: {label:'Восстановление после кругового удара',group:'status'},
+    death_order: {label:'Приказ смерти',group:'mental'},
+    mutant_poison: {label:'Яд мутанта',group:'injury'},
+    psy_roar_disadvantage: {label:'Последствия пси-рёва',group:'mental'},
+    zombification: {label:'Зомбирование',group:'mental'},
     radiation: { label: 'Радиация', group: 'medical' },
     bleeding: { label: 'Кровотечение', group: 'injury' },
     bleeding_external_light: { label: 'Кровотечение внешнее лёгкое', group: 'injury' },
@@ -273,6 +285,7 @@ function canonicalType(type, name = '') {
     const raw = String(type || name || '').trim().toLowerCase();
     if (!raw) return 'generic';
     if (TYPE_ALIASES[raw]) return TYPE_ALIASES[raw];
+    if (EFFECT_TYPE_META[raw]) return raw;
 
     const compact = raw.replace(/[\s_-]+/g, '');
     if (TYPE_ALIASES[compact]) return TYPE_ALIASES[compact];
@@ -385,21 +398,7 @@ export function syncHealthDerivedStatuses(health = {}) {
     if (!health || typeof health !== 'object') return health;
     const effects = normalizeEffectList(health.effects || []);
     health.combatMeta = health.combatMeta || {};
-    const intoxication = Number(health.intoxication) || 0;
-    if (intoxication < 100) {
-        delete health.combatMeta.intoxicationDeathChecked;
-        delete health.combatMeta.intoxicationDeathRoll;
-    } else if (!health.combatMeta.intoxicationDeathChecked) {
-        const deathRoll = 1 + Math.floor(Math.random() * 100);
-        health.combatMeta.intoxicationDeathChecked = true;
-        health.combatMeta.intoxicationDeathRoll = deathRoll;
-        if (deathRoll <= 15 && !effects.some(effect => effect.type === 'death')) {
-            effects.push(normalizeEffect({
-                type: 'death', name: 'Смерть от опьянения',
-                source: 'deadly_intoxication', tick: 'manual',
-            }));
-        }
-    }
+    // Проверка смерти и срок отключки принадлежат серверу; просмотр листа не бросает кости.
     const fatalTotalHealth = Number(health.max) > 0 && Number(health.current) <= 0;
     const fatalBrainHealth = health.organs?.brain && Number(health.organs.brain.current) <= 0;
     const fatalSkullHealth = health.organs?.skull && Number(health.organs.skull.current) <= 0;
@@ -687,7 +686,7 @@ export function applyEffectToHealth(healthInput = {}, rawEffect = {}) {
     }
 
     if (effect.type === 'intoxication') {
-        adjustHealthField(health, 'intoxication', Number.isFinite(signedValue) ? signedValue : magnitude, 0, 100);
+        adjustHealthField(health, 'intoxication', Number.isFinite(signedValue) ? signedValue : magnitude, 0, null);
         return { health, effect, applied: true, summary: `intoxication:+${magnitude}` };
     }
 
@@ -893,7 +892,7 @@ export function advanceTimedEffects(health = {}, effectsInput = [], elapsedSecon
     return normalizeEffectList(health.effects || []);
 }
 
-function getEffectImpact(effect) {
+export function getEffectImpact(effect) {
     const normalized = normalizeEffect(effect);
     const rule = EFFECT_IMPACT_RULES[normalized.type] || EFFECT_IMPACT_RULES.generic;
     const areas = new Set(rule.areas || []);
@@ -905,7 +904,7 @@ function getEffectImpact(effect) {
         areas: Array.from(areas),
         requiresMedicineCheck: !!rule.requiresMedicineCheck,
         treatment: rule.treatment || 'manual',
-        severity: bleedingRule ? Math.max(1, toInt(normalized.value, bleedingRule.severity || 1)) : null,
+        severity: bleedingRule ? Math.max(bleedingRule.severity || 1, toInt(normalized.value, 0)) : null,
         bleedingKind: bleedingRule ? bleedingRule.kind : null,
     };
 }
@@ -939,8 +938,56 @@ export function applyPeriodicEffectsToHealth(healthInput = {}, effectsInput = []
 
 export function effectSummary(effect) {
     const normalized = normalizeEffect(effect);
-    const parts = [normalized.name || getEffectMeta(normalized.type).label];
-    if (normalized.value) parts.push(`+${normalized.value}`);
-    if (normalized.remaining !== null && normalized.remaining !== undefined) parts.push(`${normalized.remaining}t`);
-    return parts.join(' ');
+    const name = !normalized.name || normalized.name === normalized.type
+        ? getEffectMeta(normalized.type).label : normalized.name;
+    const parts = [name];
+    const bleedingRule = getBleedingRule(normalized.type);
+    if (bleedingRule) parts.push(`тяжесть ${Math.max(bleedingRule.severity, Number(normalized.value) || 0) * Math.max(1, Number(normalized.stacks) || 1)}`);
+    const valueInName = new RegExp(`(^|[^\\d])${String(Math.abs(normalized.value)).replace('.', '\\.')}([^\\d]|$)`).test(name);
+    if (normalized.value && !valueInName && !bleedingRule) {
+        if (['blindness','deafness'].includes(normalized.type)) parts.push(`${normalized.value} очков`);
+        else parts.push(`${normalized.value > 0 ? '+' : ''}${normalized.value}`);
+    }
+    const duration = effectDurationLabel(normalized);
+    if (duration) parts.push(duration);
+    if (normalized.active === false) parts.push('не действует');
+    else if (normalized.remaining != null && normalized.remaining !== '' && Number(normalized.remaining) <= 0) parts.push('завершён');
+    return parts.join(' · ');
+}
+
+export function effectDurationLabel(effect) {
+    if (effect.remaining == null || effect.remaining === '') return '';
+    const seconds = Number(effect.remaining_seconds);
+    const unit = effect.time_unit || ({time_elapsed:'minute', hour_start:'hour', movement_end:'movement'})[effect.tick];
+    if (effect.remaining_seconds != null && Number.isFinite(seconds)) {
+        if (seconds < 60) return `осталось ${Math.max(0, Math.ceil(seconds))} с`;
+        if (seconds < 3600) return `осталось ${Math.ceil(seconds / 60)} мин`;
+        const totalMinutes = Math.ceil(seconds / 60);
+        const hours = Math.floor(totalMinutes / 60), minutes = totalMinutes % 60;
+        return `осталось ${hours} ч${minutes ? ` ${minutes} мин` : ''}`;
+    }
+    const labels = {second:'с', minute:'мин', hour:'ч', movement:'переходов'};
+    const suffix = labels[unit] || ({turn_end:'ходов',round_end:'раундов',day_start:'дней'})[effect.tick];
+    return suffix ? `осталось ${effect.remaining} ${suffix}` : `срок: ${effect.remaining}`;
+}
+
+export function effectConsequences(effect, depth = 0) {
+    const labels = {exhaustion:'Истощение',painLevel:'Боль',stress:'Стресс',radiation:'Радиация',
+        intoxication:'Опьянение',current:'ОЗ',max:'Максимум ОЗ',infection:'Заражение',temperature:'Температура'};
+    const lines = [];
+    for (const [changes, caption] of [[effect.onExpire || effect.on_expire,'После окончания'],
+        [effect.adjustments,effect.type === 'periodic_adjustment' ? 'При срабатывании' : 'После задержки']]) {
+        for (const change of changes || []) {
+            if (labels[change.field]) lines.push(`${caption}: ${labels[change.field]} ${Number(change.delta)>0?'+':''}${change.delta}`);
+        }
+    }
+    if (effect.death_on_expire) lines.push('После окончания срока: смерть');
+    const stats = {accuracy:'Точность',agility:'Ловкость',strength:'Сила',will:'Воля',awareness:'Внимательность',melee:'Ближний бой'};
+    for (const next of effect.activate_modifiers || []) if (stats[next.stat]) {
+        lines.push(`После окончания: ${stats[next.stat]} ${Number(next.value)>0?'+':''}${next.value} · ${effectDurationLabel(next)}`);
+    }
+    if (depth < 2) for (const next of effect.activate_effects || effect.activateEffects || []) {
+        if (next && typeof next === 'object') lines.push(`После задержки: ${effectSummary(next)}`, ...effectConsequences(next, depth + 1));
+    }
+    return [...new Set(lines)];
 }

@@ -1,6 +1,7 @@
 """Остаточные применения каталога: только подготовка, все случаи NOT_RUN."""
 from contextlib import contextmanager
 from copy import deepcopy
+from helpers.journal_assertions import assert_same_game_state
 import sys
 from types import SimpleNamespace
 
@@ -195,7 +196,7 @@ def test_saline_and_blood_infusion_require_real_tools_and_known_types(
         response = medical(client, pair, auth_headers, body)
         assert response.status_code == 400, response.get_json()
         assert error in response.get_json()['error']['message']
-        assert full_snapshot(pair) == before
+        assert_same_game_state(full_snapshot(pair), before)
         assert ConsumableUse.query.count() == 0
         return
     with scripted(monkeypatch, medical_module, [('apply', 1, 20, 4)]):

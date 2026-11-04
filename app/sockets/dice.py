@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from flask import request
 from flask_socketio import emit
 from app.extensions import socketio, db
-from app.models import Lobby, LobbyParticipant, LobbyCharacter
+from app.models import Lobby, LobbyParticipant, LobbyCharacter, ChatMessage
 from app.utils.dice import roll_dice as roll_dice_util
 from .utils import get_user_from_token
 
@@ -34,7 +34,7 @@ def handle_roll_skill(data):
         return
 
     character = LobbyCharacter.query.get(character_id)
-    if not character:
+    if not character or character.lobby_id != lobby_id:
         emit('error', {'message': 'Character not found'}, room=request.sid)
         return
 
@@ -77,8 +77,11 @@ def handle_roll_skill(data):
 
     logger.info(f"Skill roll: {user.username} rolled {skill_name} for {character.name}, result {total}")
 
+    stored=ChatMessage(lobby_id=lobby_id,user_id=user.id,username='System (Roll)',message=message)
+    db.session.add(stored);db.session.commit()
     emit('new_message', {
+        'id':stored.id,
         'username': 'System (Roll)',
         'message': message,
-        'timestamp': datetime.now(timezone.utc).isoformat()
+        'timestamp': stored.timestamp.isoformat()
     }, room=f"lobby_{lobby_id}")

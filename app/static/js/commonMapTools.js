@@ -121,7 +121,7 @@ export function initCommonMapTools(socket) {
         count.value = diceCount(count.value);
         const expression = `${count.value}d${button.dataset.diceSides}`;
         const chat = document.getElementById('panel-chat');
-        if (chat.hidden) document.getElementById('chat-toggle').click();
+        if (chat.hidden || chat.dataset?.chatView === 'actions') document.getElementById('chat-toggle').click();
         if (chat.classList.contains('collapsed')) chat.querySelector('.toggle-btn').click();
         socket.emit('send_message', { token: localStorage.getItem('access_token'), lobby_id: window.currentLobbyId, message: `/roll ${expression}` });
     });

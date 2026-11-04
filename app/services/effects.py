@@ -3,6 +3,7 @@ from __future__ import annotations
 from copy import deepcopy
 import math
 import random
+from uuid import uuid4
 from typing import Any, Dict, Iterable, List, Optional
 
 EFFECT_TYPE_META = {
@@ -14,6 +15,18 @@ EFFECT_TYPE_META = {
     "custom": {"label": "Пользовательский эффект", "group": "status"},
     "heal": {"label": "Лечение", "group": "medical"},
     "regeneration": {"label": "Регенерация", "group": "medical"},
+    "temporary_exhaustion": {"label": "Временное истощение", "group": "medical"},
+    "temporary_hp_max": {"label": "Временный максимум ОЗ", "group": "medical"},
+    "sleep_support": {"label": "Поддержка без сна", "group": "medical"},
+    "amputation": {"label": "Ампутация", "group": "injury"},
+    "anomaly_compulsion": {"label": "Зов аномалии", "group": "mental"},
+    "anomaly_electric_penalty": {"label": "Электрошок", "group": "status"},
+    "anomaly_will_penalty": {"label": "Подавление Воли", "group": "mental"},
+    "circular_attack_recovery": {"label": "Восстановление после кругового удара", "group": "status"},
+    "death_order": {"label": "Приказ смерти", "group": "mental"},
+    "mutant_poison": {"label": "Яд мутанта", "group": "injury"},
+    "psy_roar_disadvantage": {"label": "Последствия пси-рёва", "group": "mental"},
+    "zombification": {"label": "Зомбирование", "group": "mental"},
     "radiation": {"label": "Радиация", "group": "medical"},
     "bleeding": {"label": "Кровотечение", "group": "injury"},
     "bleeding_external_light": {"label": "Кровотечение внешнее лёгкое", "group": "injury"},
@@ -257,6 +270,8 @@ def canonical_type(effect_type: Any = None, name: str = "") -> str:
         return "generic"
     if raw in TYPE_ALIASES:
         return TYPE_ALIASES[raw]
+    if raw in EFFECT_TYPE_META:
+        return raw
     compact = raw.replace(" ", "").replace("-", "").replace("_", "")
     if compact in TYPE_ALIASES:
         return TYPE_ALIASES[compact]
@@ -401,7 +416,10 @@ def normalize_effect(raw: Any) -> Dict[str, Any]:
     data = create_effect_draft(effect_type, {
         "id": raw.get("id"),
         "name": raw.get("name") or raw.get("label") or get_effect_meta(effect_type)["label"],
-        "value": _to_int(value, 0),
+        "value": (_to_float(value, 0) if effect_type in {
+            'custom', 'exhaustion', 'pain', 'stress', 'intoxication', 'radiation',
+            'radiation_treatment', 'deferred_adjustment', 'delayed_adjustment', 'periodic_adjustment'
+        } else _to_int(value, 0)),
         "duration": None if duration in (None, "") else _to_int(duration, None),
         "remaining": None if remaining in (None, "") else _to_int(remaining, None),
         "stacks": raw.get("stacks", 1),
@@ -472,6 +490,17 @@ def normalize_effect_list(effects: Any) -> List[Dict[str, Any]]:
     ]
 
 
+def identify_effects(effects):
+    """Назначать идентификаторы при изменении состояния, а не при чтении листа."""
+    normalized = normalize_effect_list(effects)
+    seen = set()
+    for effect in normalized:
+        if not effect.get('id') or effect['id'] in seen:
+            effect['id'] = uuid4().hex
+        seen.add(effect['id'])
+    return normalized
+
+
 def _bleeding_rule(effect_type: str) -> Optional[Dict[str, Any]]:
     return BLEEDING_EFFECT_RULES.get(effect_type) if effect_type in BLEEDING_EFFECT_RULES else None
 
@@ -537,6 +566,78 @@ def get_bleeding_state(health: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def is_intoxication_coma(effect):
+    return (isinstance(effect, dict) and effect.get('type') == 'unconsciousness'
+            and effect.get('source') == 'deadly_intoxication' and effect.get('active', True))
+
+
+def _intoxication_check(health, effects, *, repeat=False):
+    """Один серверный бросок на пороге, новой дозе или пробуждении."""
+    meta = health.setdefault('combatMeta', {})
+    coma = next((effect for effect in effects if is_intoxication_coma(effect)), None)
+    if any(effect.get('type') == 'death' and effect.get('active', True) for effect in effects):
+        return
+    if coma is not None and not repeat:
+        return
+    if coma is None and _to_float(health.get('intoxication'), 0) < 100 and not repeat:
+        meta.pop('intoxicationDeathChecked', None)
+        meta.pop('intoxicationDeathRoll', None)
+        return
+    # Старый сохранённый результат принимается без повторного броска при миграции.
+    roll = (meta.get('intoxicationDeathRoll') if meta.get('intoxicationDeathChecked') and not repeat
+            else None)
+    if type(roll) is not int or not 1 <= roll <= 100:
+        roll = random.randint(1, 100)
+    meta['intoxicationDeathChecked'] = True
+    meta['intoxicationDeathRoll'] = roll
+    if roll <= 15:
+        effects[:] = [effect for effect in effects if not is_intoxication_coma(effect)]
+        effects.append(normalize_effect({
+            'type': 'death', 'name': 'Смерть от опьянения',
+            'source': 'deadly_intoxication', 'tick': 'manual',
+        }))
+    elif coma is None and _to_float(health.get('intoxication'), 0) >= 100:
+        effects.append(normalize_effect({
+            'type': 'unconsciousness', 'name': 'Отключка от опьянения',
+            'source': 'deadly_intoxication', 'tick': 'manual', 'time_unit': 'hour',
+            'remaining': 24, 'remaining_seconds': 86400,
+        }))
+
+
+def apply_intoxication_dose(health, delta):
+    """Новая доза повторяет проверку в отключке, но не перезапускает её срок."""
+    if not delta and _to_float(health.get('intoxication'), 0) < 100:
+        return
+    effects = normalize_effect_list(health.get('effects') or [])
+    repeat = health_blocks_new_stress(health, include_medicine=False)
+    _adjust_field(health, 'intoxication', delta, 0, None)
+    _intoxication_check(health, effects, repeat=repeat and delta > 0)
+    health['effects'] = effects
+
+
+def _advance_intoxication_coma(health, effect, elapsed):
+    if any(item.get('type') == 'death' and item.get('active', True)
+           for item in health.get('effects') or [] if isinstance(item, dict)):
+        return effect
+    remaining = max(0, _to_float(effect.get('remaining_seconds'), 86400))
+    while elapsed >= remaining:
+        elapsed -= remaining
+        health['intoxication'] = max(0, _to_float(health.get('intoxication'), 0) - 70)
+        meta = health.setdefault('combatMeta', {})
+        meta.pop('intoxicationDeathChecked', None)
+        meta.pop('intoxicationDeathRoll', None)
+        if _to_float(health.get('intoxication'), 0) < 100:
+            return None
+        outcome = []
+        _intoxication_check(health, outcome)
+        if outcome[0]['type'] == 'death':
+            return outcome[0]
+        remaining = 86400
+    effect['remaining_seconds'] = remaining - elapsed
+    effect['remaining'] = math.ceil(effect['remaining_seconds'] / 3600)
+    return effect
+
+
 def sync_health_derived_statuses(health: Dict[str, Any]) -> Dict[str, Any]:
     if not isinstance(health, dict):
         return health
@@ -545,19 +646,19 @@ def sync_health_derived_statuses(health: Dict[str, Any]) -> Dict[str, Any]:
     health["stress"]=max(_to_float(health.get("stress"),0),min(10,max(0,_to_float(combat_meta.get("hunterStressDebt"),0))))
     tough_nut=combat_meta.get('toughNut') or {}
     health['painLevel']=max(_to_float(health.get('painLevel'),0),min(5,max(0,_to_float(tough_nut.get('minimumPain'),0))))
-    intoxication = _to_float(health.get("intoxication"), 0)
-    if intoxication < 100:
-        combat_meta.pop("intoxicationDeathChecked", None)
-        combat_meta.pop("intoxicationDeathRoll", None)
-    elif not combat_meta.get("intoxicationDeathChecked"):
-        death_roll = random.randint(1, 100)
-        combat_meta["intoxicationDeathChecked"] = True
-        combat_meta["intoxicationDeathRoll"] = death_roll
-        if death_roll <= 15 and not any(effect.get("type") == "death" for effect in effects):
-            effects.append(normalize_effect({
-                "type": "death", "name": "Смерть от опьянения",
-                "source": "deadly_intoxication", "tick": "manual",
-            }))
+    _intoxication_check(health, effects)
+    # Старые записи с отдельным счётчиком переводятся в обычный эффект со сроком.
+    stress_blocks = [effect for effect in effects if effect.get('blocks_new_stress') and effect.get('active', True)
+                     and (effect.get('remaining') is None or _to_float(effect.get('remaining'), 0) > 0)]
+    if not combat_meta.get('stressBlockTracked') and _to_float(combat_meta.get('stressBlockTurns'), 0) > 0 and not stress_blocks:
+        block = normalize_effect({'type': 'stress_resistance', 'name': 'Блок нового стресса',
+                                  'remaining': combat_meta['stressBlockTurns'], 'tick': 'turn_end',
+                                  'blocks_new_stress': True, 'source': 'legacy_medicine'})
+        effects.append(block)
+        stress_blocks.append(block)
+    if stress_blocks or combat_meta.get('stressBlockTracked'):
+        combat_meta['stressBlockTracked'] = True
+        combat_meta['stressBlockTurns'] = max([_to_float(effect.get('remaining'), 0) for effect in stress_blocks] or [0])
     organs = health.get("organs") or {}
     brain = organs.get("brain")
     skull = organs.get("skull")
@@ -630,7 +731,7 @@ def get_effect_impact(effect: Any) -> Dict[str, Any]:
         "areas": areas,
         "requires_medicine_check": bool(rule.get("requiresMedicineCheck", False)),
         "treatment": rule.get("treatment", "manual"),
-        "severity": max(1, _to_int(normalized.get("value", 0), bleeding_rule.get("severity", 1))) if bleeding_rule else None,
+        "severity": max(bleeding_rule.get("severity", 1), _to_int(normalized.get("value", 0), 0)) if bleeding_rule else None,
         "bleeding_kind": bleeding_rule.get("kind") if bleeding_rule else None,
     }
 
@@ -652,8 +753,9 @@ def pain_gain_allowed(health,character_data):
 
 def _adjust_field(health: Dict[str, Any], field: str, delta: int, minimum: Optional[int] = 0, maximum: Optional[int] = None, *, character_data=None) -> None:
     if field=='painLevel' and delta>0 and not pain_gain_allowed(health,character_data):return
+    if field == 'stress' and delta > 0 and health_blocks_new_stress(health):return
     if field=="stress":minimum=max(minimum or 0,min(10,_to_float((health.get("combatMeta") or {}).get("hunterStressDebt"),0)))
-    current = _to_int(health.get(field, 0), 0)
+    current = _to_float(health.get(field, 0), 0)
     health[field] = _clamp(current + delta, minimum, maximum)
 
 
@@ -732,8 +834,12 @@ def _restore_limb_health_and_pool(health: Dict[str, Any], area: str, restored_he
     health["current"] = _clamp(_to_float(health.get("current"), 0) + recovered, 0, maximum_pool)
 
 
-def health_blocks_new_stress(health: Dict[str, Any]) -> bool:
-    """Смерть/потеря сознания по физическим условиям _character_condition, без RNG."""
+def health_blocks_new_stress(health: Dict[str, Any], *, include_medicine=True) -> bool:
+    """Физическая невозможность получить стресс и действующая медикаментозная защита, без RNG."""
+    if include_medicine and any(effect.get('blocks_new_stress') and effect.get('active', True)
+                               and (effect.get('remaining') is None or _to_float(effect.get('remaining'), 0) > 0)
+                               for effect in normalize_effect_list(health.get('effects') or [])):
+        return True
     active_types = {
         effect.get("type") for effect in normalize_effect_list(health.get("effects") or [])
         if effect.get("active", True)
@@ -822,8 +928,10 @@ def apply_effect_to_health(health: Dict[str, Any], raw_effect: Any, *, character
         if pain_delta>0 and not pain_gain_allowed(health,character_data):return health
         blockers = [item for item in active_effects if item.get("blocks_new_pain") and item.get("active", True)]
         if pain_delta > 0 and blockers:
-            meta = health.setdefault("combatMeta", {})
-            meta["blockedPain"] = _to_float(meta.get("blockedPain", 0), 0) + pain_delta
+            # Возвращается только боль препаратов с явно заданным последействием.
+            if any(item.get('type') == 'pain_block' or 'return_fraction' in item for item in blockers):
+                meta = health.setdefault("combatMeta", {})
+                meta["blockedPain"] = _to_float(meta.get("blockedPain", 0), 0) + pain_delta
             return health
         _adjust_field(health, "painLevel", pain_delta, 0, 10)
         meta = health.setdefault("combatMeta", {})
@@ -839,7 +947,7 @@ def apply_effect_to_health(health: Dict[str, Any], raw_effect: Any, *, character
         return health
 
     if effect_type == "intoxication":
-        _adjust_field(health, "intoxication", int(signed_value) if float(signed_value).is_integer() else signed_value, 0, 100)
+        apply_intoxication_dose(health, signed_value)
         return health
 
     if effect_type == "infection":
@@ -940,6 +1048,10 @@ def tick_effect(effect: Dict[str, Any], phase: str = "turn_end", *, character_da
         return normalized
     if normalized.get("remaining") is not None:
         normalized["remaining"] = max(0, _to_int(normalized.get("remaining"), 0) - 1)
+        if normalized.get('world_tick_elapsed') is not None:
+            interval = {'second': 1, 'minute': 60, 'hour': 3600}.get(normalized.get('time_unit'), 6)
+            normalized['world_tick_elapsed'] = 0
+            normalized['remaining_seconds'] = normalized['remaining'] * interval
     return normalized
 
 
@@ -975,6 +1087,34 @@ def apply_periodic_effects_to_health(health: Dict[str, Any], effects: Iterable[A
     return health
 
 
+def _activate_timed_modifiers(health, effect):
+    for raw in effect.get('activate_modifiers') or []:
+        if not isinstance(raw, dict) or not raw.get('stat') or _to_float(raw.get('remaining'), 0) <= 0:
+            continue
+        item = deepcopy(raw)
+        item.setdefault('source', str(effect.get('source') or '') + ':after')
+        item.setdefault('tick', 'turn_end')
+        interval = {'time_elapsed':60,'movement_end':600,'hour_start':3600}.get(item['tick'],6)
+        item['remaining_seconds'] = _to_float(item['remaining'],0) * interval
+        modifiers = health.setdefault('combatMeta',{}).setdefault('consumableModifiers',[])
+        modifiers[:] = [m for m in modifiers if not (m.get('source') == item['source'] and m.get('stat') == item['stat'])]
+        modifiers.append(item)
+
+
+def _child_effects(effect):
+    children = []
+    for raw in effect.get('activate_effects') or effect.get('activateEffects') or []:
+        if not isinstance(raw, dict):
+            continue
+        child = deepcopy(raw)
+        child['id'] = uuid4().hex
+        child.setdefault('source', effect.get('source'))
+        if effect.get('medication_clock') or str(effect.get('source') or '').startswith('consumable-template:'):
+            child['medication_clock'] = True
+        children.append(child)
+    return children
+
+
 def apply_expired_effects_to_health(health: Dict[str, Any], effects: Iterable[Any], phase: str = "turn_end", *, character_data=None) -> Dict[str, Any]:
     activated: List[Dict[str, Any]] = []
     cured_fracture_areas = set()
@@ -984,6 +1124,7 @@ def apply_expired_effects_to_health(health: Dict[str, Any], effects: Iterable[An
             continue
         if effect.get("remaining") is None or _to_int(effect.get("remaining"), 0) > 1:
             continue
+        _activate_timed_modifiers(health, effect)
         for adjustment in effect.get("onExpire") or effect.get("on_expire") or []:
             if not isinstance(adjustment, dict):
                 continue
@@ -997,9 +1138,7 @@ def apply_expired_effects_to_health(health: Dict[str, Any], effects: Iterable[An
                 field = str(adjustment.get("field") or "").strip()
                 if field:
                     _adjust_field(health, field, _to_float(adjustment.get("delta", 0), 0), adjustment.get("min", 0), adjustment.get("max"),character_data=character_data)
-        for activated_effect in effect.get("activate_effects") or effect.get("activateEffects") or []:
-            if isinstance(activated_effect, dict):
-                activated.append(activated_effect)
+        activated.extend(_child_effects(effect))
         if effect.get("death_on_expire"):
             activated.append({
                 "type": "death", "name": "Смерть",
@@ -1052,23 +1191,55 @@ def tick_effects(effects: Iterable[Any], phase: str = "turn_end") -> List[Dict[s
     return updated
 
 
+def _advance_temperature_recovery(health, elapsed):
+    """Без заражения крови и истощения — полградуса к 36 за игровой час."""
+    meta = health.get('combatMeta') or {}
+    temperature = _to_float(health.get('temperature'), 36)
+    infected = _to_float(health.get('infection'), 0) > 0 or any(
+        e.get('active', True) and e.get('type') == 'infection' for e in health.get('effects') or [] if isinstance(e, dict))
+    if infected or _to_float(health.get('exhaustion'), 0) > 0 or abs(temperature-36) < 1e-9:
+        meta.pop('temperatureRecoverySeconds', None)
+        return
+    seconds = max(0, _to_float(meta.get('temperatureRecoverySeconds'), 0)) + elapsed
+    hours = math.floor(seconds / 3600)
+    meta = health.setdefault('combatMeta', {})
+    meta['temperatureRecoverySeconds'] = seconds % 3600
+    if hours:
+        delta = min(abs(temperature-36), .5 * hours)
+        health['temperature'] = temperature + (delta if temperature < 36 else -delta)
+
+
 def advance_timed_effects(
     health: Dict[str, Any],
     effects: Iterable[Any],
     elapsed_seconds: float,
     *,
     include_turn_effects: bool = False,
+    advance_medication_turns: bool = False,
+    advance_event_modifiers: bool = True,
     character_data=None,
 ) -> List[Dict[str, Any]]:
-    """Advance real-time effects without simulating thousands of combat ticks."""
+    """Продвинуть игровые сроки; ходовые препараты — только при явном переводе времени."""
+    if advance_medication_turns:
+        return _advance_medication_time(health, effects, elapsed_seconds,
+                                        include_turn_effects=include_turn_effects,
+                                        character_data=character_data)
     unit_seconds = {"second": 1, "minute": 60, "movement": 600, "hour": 3600}
     survivors = []
     activated = []
     cured_fracture_areas = set()
     elapsed = max(0.0, _to_float(elapsed_seconds, 0))
-
-    for raw_effect in effects or []:
+    _advance_temperature_recovery(health, elapsed)
+    modifiers_before = {id(m) for m in ((health.get('combatMeta') or {}).get('consumableModifiers') or [])}
+    initial_effects = normalize_effect_list(effects or [])
+    _intoxication_check(health, initial_effects)
+    for raw_effect in initial_effects:
         effect = normalize_effect(raw_effect)
+        if is_intoxication_coma(effect):
+            outcome = _advance_intoxication_coma(health, effect, elapsed)
+            if outcome is not None:
+                survivors.append(outcome)
+            continue
         if effect.get("type") == "fracture":
             regular = max(0, _to_float(effect.get("regular_fixation_seconds"), 1800) - elapsed)
             hinged = max(0, _to_float(effect.get("hinged_fixation_seconds"), 1800) - elapsed)
@@ -1134,6 +1305,7 @@ def advance_timed_effects(
             survivors.append(effect)
             continue
 
+        _activate_timed_modifiers(health, effect)
         for adjustment in effect.get("onExpire") or effect.get("on_expire") or []:
             if isinstance(adjustment, dict) and adjustment.get("field"):
                 _adjust_field(
@@ -1149,10 +1321,7 @@ def advance_timed_effects(
                         _to_float(adjustment.get("delta", 0), 0),
                         adjustment.get("min", 0), adjustment.get("max"),character_data=character_data,
                     )
-        activated.extend(
-            item for item in (effect.get("activate_effects") or effect.get("activateEffects") or [])
-            if isinstance(item, dict)
-        )
+        activated.extend(_child_effects(effect))
         if effect.get("death_on_expire"):
             activated.append({
                 "type": "death", "name": "Смерть",
@@ -1178,6 +1347,9 @@ def advance_timed_effects(
         if isinstance(modifiers, list):
             active_modifiers = []
             for raw_modifier in modifiers:
+                if id(raw_modifier) not in modifiers_before:
+                    active_modifiers.append(raw_modifier)
+                    continue
                 if not isinstance(raw_modifier, dict):
                     active_modifiers.append(raw_modifier)
                     continue
@@ -1188,6 +1360,9 @@ def advance_timed_effects(
                     continue
                 unit = str(modifier.get("time_unit") or "").lower()
                 tick = str(modifier.get("tick") or "turn_end")
+                if not advance_event_modifiers and tick in {'turn_start','turn_end','round_end','movement_end'}:
+                    active_modifiers.append(modifier)
+                    continue
                 if not unit:
                     unit = {
                         "turn_end": "second",
@@ -1230,6 +1405,63 @@ def advance_timed_effects(
     for effect in activated:
         apply_effect_to_health(health, effect,character_data=character_data)
     sync_health_derived_statuses(health)
+    return normalize_effect_list(health.get("effects") or [])
+
+
+def _advance_medication_time(health, effects, elapsed_seconds, *, include_turn_effects=False, character_data=None):
+    """Использует те же срабатывания и последствия, что боевые ходы, сохраняя дробный остаток."""
+    units = {"second": 1, "minute": 60, "movement": 600, "hour": 3600}
+    periods = {"turn_start": 6, "turn_end": 6, "round_end": 6,
+               "time_elapsed": 60, "movement_end": 600, "hour_start": 3600}
+    periodic = {"regeneration", "radiation_treatment", "blood_recovery", "periodic_adjustment"}
+    remaining = max(0, _to_float(elapsed_seconds, 0))
+    health["effects"] = identify_effects(effects or [])
+    while remaining > 0:
+        current = normalize_effect_list(health.get("effects") or [])
+        simulated = []
+        deadlines = [remaining]
+        for effect in current:
+            if not effect.get("active", True) or effect.get("remaining") is None:
+                continue
+            tick = effect.get("tick")
+            medication = str(effect.get("source") or "").startswith("consumable-template:") or effect.get("medication_clock")
+            if medication and tick in periods and (tick in {"turn_start", "turn_end", "round_end"} or effect["type"] in periodic):
+                interval = units.get(effect.get("time_unit"), periods[tick])
+                progress = max(0, _to_float(effect.get("world_tick_elapsed"), 0)) % interval
+                simulated.append((effect, interval, progress))
+                deadlines.append(interval - progress)
+            else:
+                interval = units.get(effect.get("time_unit"), periods.get(tick) if tick not in {"turn_start", "turn_end", "round_end"} else None)
+                if interval:
+                    deadline = _to_float(effect.get("remaining_seconds"), _to_float(effect["remaining"], 0) * interval)
+                    if deadline > 0:
+                        deadlines.append(deadline)
+        step = min(deadlines)
+        simulated_ids = {effect["id"] for effect, _, _ in simulated}
+        ordinary = [effect for effect in current if effect["id"] not in simulated_ids]
+        # До срабатываний сохраняем активные блоки боли/стресса в health.
+        # Отфильтрованный список нужен только для продвижения их отдельных таймеров.
+        ordinary = advance_timed_effects(health, ordinary, step, include_turn_effects=include_turn_effects,
+                                        character_data=character_data)
+        health["effects"] = ordinary + [effect for effect, _, _ in simulated]
+        due = {}
+        for effect, interval, progress in simulated:
+            effect["world_tick_elapsed"] = progress + step
+            if effect["world_tick_elapsed"] + 1e-8 >= interval:
+                effect["world_tick_elapsed"] = 0
+                due.setdefault(effect["tick"], []).append(effect)
+            effect["remaining_seconds"] = max(0, _to_float(effect["remaining"], 0) * interval - effect["world_tick_elapsed"])
+        for phase, phase_effects in due.items():
+            apply_periodic_effects_to_health(health, phase_effects, phase, character_data=character_data)
+            apply_expired_effects_to_health(health, phase_effects, phase, character_data=character_data)
+            due_ids = {effect["id"] for effect in phase_effects}
+            ticked = tick_effects(phase_effects, phase)
+            for effect in ticked:
+                interval = units.get(effect.get("time_unit"), periods[phase])
+                effect["remaining_seconds"] = _to_float(effect["remaining"], 0) * interval
+            health["effects"] = [effect for effect in health["effects"] if effect["id"] not in due_ids] + ticked
+        remaining = max(0, remaining - step)
+        sync_health_derived_statuses(health)
     return normalize_effect_list(health.get("effects") or [])
 
 

@@ -47,6 +47,156 @@ def application():
     return {"kind": "self", "actionPoints": 0}
 
 
+@pytest.mark.parametrize('explicit_effect', [False, True])
+def test_hp_per_turn_creates_one_regeneration_and_heals_on_the_declared_turn(explicit_effect):
+    from app.services.effects import apply_periodic_effects_to_health
+    profile = {'direct': {'hp_per_turn': 10, 'duration': 3, 'duration_phase': 'turn_end'},
+               'effects': [{'type': 'regeneration', 'value': 10, 'remaining': 3,
+                            'tick': 'turn_end', 'source': None if explicit_effect else 'direct'}]}
+    health = {'current': 100, 'max': 700, 'effects': []}
+    assert _apply_profile(health, profile, profile['direct'], {'name': 'Препарат'}, in_combat=False)
+    effects = [effect for effect in health['effects'] if effect['type'] == 'regeneration']
+    assert len(effects) == 1
+    assert effects[0]['remaining'] == 3
+    assert health['current'] == 100
+    apply_periodic_effects_to_health(health, effects, 'turn_end')
+    assert health['current'] == 110
+
+
+def test_stress_block_expires_after_three_turns_and_does_not_make_alcohol_deadly(monkeypatch):
+    from app.services.effects import apply_effect_to_health, apply_intoxication_dose, sync_health_derived_statuses, tick_effects, health_blocks_new_stress
+    def no_roll(*_):
+        raise AssertionError('Защита от стресса не означает потерю сознания')
+    monkeypatch.setattr('app.services.effects.random.randint', no_roll)
+    health = {'stress': 0, 'intoxication': 0, 'effects': []}
+    profile = {'direct': {'stress_block_turns': 3}, 'effects': []}
+    _apply_profile(health, profile, profile['direct'], {'name':'Препарат'}, in_combat=True)
+    apply_intoxication_dose(health, 20)
+    apply_effect_to_health(health, {'type':'stress','value':2})
+    assert health['stress'] == 0
+    assert health_blocks_new_stress(health, include_medicine=False) is False
+    side_effect = {'direct': {'stress_delta':2}, 'effects':[]}
+    assert _apply_profile(health, side_effect, side_effect['direct'], {'name':'Другое средство'}, in_combat=True)
+    assert health['stress'] == 0
+    for _ in range(3):
+        health['effects'] = tick_effects(health['effects'])
+        sync_health_derived_statuses(health)
+    assert health['combatMeta']['stressBlockTurns'] == 0
+    apply_effect_to_health(health, {'type':'stress','value':2})
+    assert health['stress'] == 2
+
+
+def test_owl_legacy_sleep_timer_is_replaced_by_vision_and_sleep_is_immediate():
+    health = {'effects': [], 'needs': {'sleptToday': False}}
+    profile = {'direct': {'sleep_block_hours':8, 'satisfy_sleep':True}, 'effects':[]}
+    _apply_profile(health, profile, profile['direct'], {'name':'Стимулятор Сова-Н'}, in_combat=False)
+    assert not any(e['type'] == 'sleep_support' for e in health['effects'])
+    modifiers = health['combatMeta']['consumableModifiers']
+    assert all(m['remaining_seconds'] == 8 * 3600 for m in modifiers)
+    assert {m['stat']:m['value'] for m in modifiers}['darkness_awareness'] == 5
+    health['effects'] = advance_timed_effects(health, health['effects'], 8 * 3600)
+    assert not any(e['type'] == 'sleep_support' for e in health['effects'])
+    assert health['needs']['sleptToday'] is True
+    assert not health['combatMeta']['consumableModifiers']
+
+
+def test_orel_crash_starts_after_buff_and_lasts_three_full_ticks():
+    from app.services.combat import CombatService
+    profile=parse_consumable_effects('Стимулятор Орёл. Ампула. Действует 10 ходов.')
+    data={'health':{'current':300,'max':700,'exhaustion':0,'effects':[]}}
+    health=data['health']
+    _apply_profile(health,profile,profile['direct'],{'name':'Стимулятор Орёл','templateId':42},in_combat=False)
+    assert health['exhaustion']==1
+    assert CombatService._consumable_stat_value_bonus(data,'accuracy')==3
+    health['effects']=advance_timed_effects(health,health['effects'],60,advance_medication_turns=True)
+    assert CombatService._consumable_stat_value_bonus(data,'accuracy')==-5
+    assert health['exhaustion']==1
+    health['effects']=advance_timed_effects(health,health['effects'],12,advance_medication_turns=True)
+    assert CombatService._consumable_stat_value_bonus(data,'accuracy')==-5
+    health['effects']=advance_timed_effects(health,health['effects'],6,advance_medication_turns=True)
+    assert CombatService._consumable_stat_value_bonus(data,'accuracy')==0
+
+
+def test_bolt_applies_crash_after_five_turns_not_after_five_world_moves():
+    profile=parse_consumable_effects('Стимулятор Б.О.Л.Т. Ампула. Штраф перемещения -3. Действует 5 ходов.')
+    health={'current':300,'max':700,'exhaustion':0,'effects':[]}
+    _apply_profile(health,profile,profile['direct'],{'name':'Б.О.Л.Т.','templateId':42},in_combat=False)
+    health['effects']=advance_timed_effects(health,health['effects'],29,advance_medication_turns=True)
+    assert health['current']==300 and health['exhaustion']==0
+    health['effects']=advance_timed_effects(health,health['effects'],1,advance_medication_turns=True)
+    assert health['current']==250 and health['exhaustion']==1
+
+
+def test_moroz_lowers_temperature_on_four_ticks_not_immediately():
+    profile=parse_consumable_effects('Жаропонижающее средство Мороз. Ампула. Понижает температуру тела на 1 градус. Работает 4 хода')
+    health={'current':700,'max':700,'temperature':38,'exhaustion':1,'effects':[]}
+    _apply_profile(health,profile,profile['direct'],{'name':'Жаропонижающее средство Мороз','templateId':52},in_combat=False)
+    assert health['temperature']==38
+    for expected in [37,36,35,34]:
+        health['effects']=advance_timed_effects(health,health['effects'],6,advance_medication_turns=True)
+        assert health['temperature']==expected
+    health['effects']=advance_timed_effects(health,health['effects'],60,advance_medication_turns=True)
+    assert health['temperature']==34
+
+
+@pytest.mark.parametrize('temperature,expected',[(38,37.5),(34,34.5),(36.2,36),(35.8,36)])
+def test_temperature_recovers_toward_36_only_each_complete_hour(temperature,expected):
+    health={'temperature':temperature,'exhaustion':0,'infection':0,'effects':[]}
+    advance_timed_effects(health,[],3599)
+    assert health['temperature']==temperature
+    advance_timed_effects(health,[],1)
+    assert health['temperature']==expected
+
+
+@pytest.mark.parametrize('blocker',[{'infection':1},{'exhaustion':.5},{'effects':[{'type':'infection','active':True}]}])
+def test_infection_or_exhaustion_prevents_natural_temperature_recovery(blocker):
+    health={'temperature':38,'effects':[],**blocker}
+    advance_timed_effects(health,health['effects'],7200)
+    assert health['temperature']==38
+
+
+def test_skala_n_temporary_maximum_survives_recalculation_and_protects_organs():
+    from app.services.combat import CombatService
+    from app.services.health import apply_health_maximums, heal_character_fully
+    data={'health':{'current':300,'max':700,'effects':[]}}
+    profile=parse_consumable_effects('Стимулятор Скала-Н. Ампула. Действует 3 хода.')
+    health=data['health']
+    _apply_profile(health,profile,profile['direct'],{'name':'Стимулятор Скала-Н','templateId':42},in_combat=False)
+    assert (health['current'],health['max'])==(500,900)
+    apply_health_maximums(data)
+    assert (health['current'],health['max'])==(500,900)
+    organ=CombatService._apply_organ_damage(health,'heart',10,'chest')
+    assert organ['current']==15  # Обычный орган теряет 10 из 20; со Скала-Н — 5.
+    health['effects']=advance_timed_effects(health,health['effects'],18,advance_medication_turns=True)
+    apply_health_maximums(data)
+    assert (health['current'],health['max'])==(200,700)
+    assert CombatService._apply_organ_damage(health,'heart',10,'chest')['current']==5
+    _apply_profile(health,profile,profile['direct'],{'name':'Стимулятор Скала-Н','templateId':42},in_combat=False)
+    heal_character_fully(data)
+    assert (health['current'],health['max'])==(700,700)
+    assert not health['combatMeta'].get('consumableModifiers')
+
+
+@pytest.mark.parametrize('word',['Уровень','Уровня','Уровней'])
+def test_signed_singular_and_spaced_exhaustion_are_parsed(word):
+    profile=parse_consumable_effects(f'Препарат для проверки. + 1 {word} Истощения.')
+    assert profile['direct']['exhaustion_delta']==1
+
+
+def test_legacy_imported_stimulant_is_enriched_without_writing_catalog(client,pair,auth_headers):
+    from app.services.medical_procedure import _profile
+    description='Ампула. +6 Внимательности на 6 перемещений'
+    template=ItemTemplate(name='Стимулятор Морковчатник',category='consumable',description=description,
+        attributes={'catalog_name':'Стимулятор Морковчатник','raw_description':description,
+            'consumable':{'direct':{'duration':6,'duration_phase':'movement_end','application_form':'injectable'},'effects':[]}})
+    db.session.add(template);db.session.commit()
+    original=deepcopy(template.attributes)
+    view,direct=_profile({'templateId':template.id},pair['lobby'].id)
+    assert view.attributes['consumable']['modifiers'][0]['value']==6
+    assert template.attributes==original
+    assert view.id==template.id
+
+
 @pytest.mark.parametrize('name',['Сигареты Тест','Самокрутка','Сигары'])
 @pytest.mark.parametrize('exhaustion',[0,.1,2])
 def test_tobacco_counts_nominal_relief_even_at_zero_exhaustion(client,pair,auth_headers,monkeypatch,name,exhaustion):
@@ -452,6 +602,9 @@ def test_missing_requirement_rolls_back_selected_item(client, pair, auth_headers
     response = apply_general(client, pair, auth_headers, cigarette, operation="smoke-no-fire")
 
     assert response.status_code == 400
+    history=pair['actor_character'].data['health']['combatMeta']['actionJournal']
+    assert len(history)==1 and history[0]['status']=='rejected' and history[0]['action_points']==0
+    before['health'].setdefault('combatMeta',{})['actionJournal']=deepcopy(history)
     assert pair["actor_character"].data == before
     assert ConsumableUse.query.count() == 0
 
@@ -464,6 +617,9 @@ def test_injectable_cannot_bypass_medicine_route(client, pair, auth_headers):
     response = apply_general(client, pair, auth_headers, item)
 
     assert response.status_code == 400
+    history=pair['actor_character'].data['health']['combatMeta']['actionJournal']
+    assert len(history)==1 and history[0]['status']=='rejected' and history[0]['action_points']==0
+    before['health'].setdefault('combatMeta',{})['actionJournal']=deepcopy(history)
     assert pair["actor_character"].data == before
     assert ConsumableUse.query.count() == 0
 

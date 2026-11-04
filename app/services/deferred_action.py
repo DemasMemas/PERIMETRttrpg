@@ -3,6 +3,7 @@ from functools import wraps
 from inspect import signature
 
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy import event
 from sqlalchemy.orm.attributes import flag_modified
 
 from app.extensions import db
@@ -13,6 +14,10 @@ from app.services.exceptions import ConflictError, PermissionDenied, ValidationE
 def _bound_items(actor, payload):
     data = actor.character.data or {}
     result = {}
+    if payload.get('action_key')=='draw_weapon' and payload.get('attribute_choice')=='second_hand':
+        index=getattr(actor,'drawn_weapon_index',None)
+        weapons=data.get('weapons') or []
+        result['primaryWeapon']=deepcopy(weapons[index]) if type(index) is int and 0<=index<len(weapons) else None
     if payload.get('action_key')=='pour_water':
         held=((data.get('health') or {}).get('combatMeta') or {}).get('heldWaterItem') or {}
         result['heldWaterItem']=deepcopy(held)
@@ -92,7 +97,22 @@ def durable_combat_action(operation):
                     raise ValidationError('Некорректный идентификатор длительного действия')
                 if db.session.get(DeferredCombatAction, pending_id):
                     raise ConflictError('Действие с этим идентификатором уже принято')
-            return operation(*args, **kwargs)
+            if pending_id is None:
+                return operation(*args, **kwargs)
+            # Быстрое действие тоже получает квитанцию в той же транзакции,
+            # что урон/расход ресурсов. Повтор запроса не может исполнить его заново.
+            session=db.session()
+            def receipt_before_commit(session):
+                if db.session.get(DeferredCombatAction,pending_id) is None:
+                    db.session.add(DeferredCombatAction(id=pending_id,
+                        location_character_id=values['location_character_id'],
+                        payload={'action_key':values['action_key']},label=str(values['action_key'])[:200],
+                        status='completed',remaining_action_points=0))
+            event.listen(session,'before_commit',receipt_before_commit)
+            try:
+                return operation(*args, **kwargs)
+            finally:
+                event.remove(session,'before_commit',receipt_before_commit)
         except IntegrityError as error:
             db.session.rollback()
             raise ConflictError() from error
@@ -161,6 +181,9 @@ def validate_deferred_conditions(actor, row):
     payload = row.payload or {}
     kind = payload.get('action_key')
     CombatService.ensure_character_can_act(actor, kind)
+    if kind=='draw_weapon' and payload.get('attribute_choice')=='second_hand':
+        from app.services.weapon_grip import validate_secondary
+        validate_secondary(actor,payload.get('weapon_index'))
     if kind=='brigadier_order':
         from app.services.brigadier_order import prepare
         prepare(actor,payload.get('target_character_id'),payload.get('attribute_choice'))
@@ -199,9 +222,8 @@ def validate_deferred_conditions(actor, row):
         if not target:
             raise ValidationError('Цель продолжительного действия покинула локацию')
         if kind=='pour_water' and target.id!=actor.id:
-            from app.services.explosion_geometry import distance
-            objects=LocationObject.query.filter_by(location_id=actor.location_id).all()
-            if distance(actor.location,objects,actor.pos_x,actor.pos_y,actor.floor_level or 0,target)>1.5 or CombatService._explosion_cover(actor.location_id,actor.pos_x,actor.pos_y,target,actor.floor_level or 0).get('grade')=='full':
+            from app.services.burning import water_target_available
+            if not water_target_available(actor,target):
                 raise ValidationError('Цель обливания больше недоступна')
         contact = kind in {'melee_disarm','melee_shove','grapple','console_ally'} or (kind == 'attack' and not payload.get('fire_mode'))
         if contact and not CombatService._is_adjacent(actor, target):
@@ -210,7 +232,8 @@ def validate_deferred_conditions(actor, row):
             if not CombatService._can_see_location_character(actor, target, max_distance=float('inf')):
                 raise ValidationError('Цель продолжительного действия больше не видна')
             index = payload.get('weapon_index')
-            if index is not None and int(index) >= 0 and actor.drawn_weapon_index != int(index):
+            from app.services.weapon_grip import held
+            if index is not None and int(index) >= 0 and not held(actor,int(index)):
                 weapons = (actor.character.data or {}).get('weapons') or []
                 weapon = weapons[int(index)] if int(index)<len(weapons) else {}
                 if not CombatService._template_attributes(weapon).get('natural_weapon'):

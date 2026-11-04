@@ -1,5 +1,6 @@
 """Действующие черты: стоимость, маршруты, медицинские процедуры и сохранение."""
 from copy import deepcopy
+from helpers.journal_assertions import assert_same_game_state
 from types import SimpleNamespace
 
 import pytest
@@ -277,7 +278,8 @@ def test_sniper_blocks_fire_without_charging_and_accepts_new_cover(grenade_game)
     before=deepcopy(actor.character.data);ap=actor.action_points_current
     with pytest.raises(ValidationError,match='перед выстрелом'):
         CombatService.perform_action(actor.location_id,grenade_game['lobby'].gm_id,actor.id,'attack',fire_mode='unaimed',action_points=2)
-    assert actor.action_points_current==ap and actor.character.data==before
+    assert actor.action_points_current==ap
+    assert_same_game_state(actor.character.data,before)
     actor.cover_object_id=cover.id
     require_reposition(actor,state)
     assert 'sniperOldCover' not in actor.character.data['health']['combatMeta']

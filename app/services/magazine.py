@@ -48,6 +48,8 @@ def _caliber(item):
 
 
 def validate_magazine_selection(data, weapon_index, item_path, template_id=None, selection=None):
+    from app.services.weapon_grip import ensure_reload_allowed
+    ensure_reload_allowed(data)
     weapons = data.get('weapons') or []
     if type(weapon_index) is not int or not 0 <= weapon_index < len(weapons) or not isinstance(weapons[weapon_index], dict):
         raise ValidationError('Оружие не найдено')

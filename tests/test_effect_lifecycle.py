@@ -22,6 +22,89 @@ def test_effect_aliases_are_canonicalized():
     assert canonical_type("") == "generic"
 
 
+def test_world_time_completes_all_medication_ticks_and_crash_once():
+    health = {'current': 100, 'max': 300, 'radiation': 25, 'effects': [
+        {'type': 'regeneration', 'value': 10, 'remaining': 10, 'tick': 'turn_end', 'source': 'consumable-template:1'},
+        {'type': 'radiation_treatment', 'value': -2.5, 'remaining': 10, 'tick': 'turn_end', 'source': 'consumable-template:2'},
+        {'type': 'stimulant_crash', 'remaining': 10, 'tick': 'turn_end', 'source': 'consumable-template:1:crash',
+         'onExpire': [{'field': 'current', 'delta': -20, 'min': 0}]},
+    ]}
+    health['effects'] = advance_timed_effects(health, health['effects'], 600, advance_medication_turns=True)
+    assert health['current'] == 180
+    assert health['radiation'] == 0
+    assert not health['effects']
+    advance_timed_effects(health, health['effects'], 600, advance_medication_turns=True)
+    assert health['current'] == 180
+
+
+def test_world_time_preserves_partial_medication_tick_and_stress_pain_expiry():
+    health = {'current': 100, 'max': 300, 'painLevel': 0, 'exhaustion': 0,
+              'combatMeta': {'blockedPain': 4}, 'effects': [
+        {'type': 'regeneration', 'value': 10, 'remaining': 2, 'tick': 'turn_end', 'source': 'consumable-template:1'},
+        {'type': 'pain_block', 'remaining': 2, 'tick': 'turn_end', 'source': 'consumable-template:2',
+         'blocks_new_pain': True, 'return_fraction': 0.5, 'exhaustion_on_expire': 1},
+    ]}
+    for seconds, current, count in [(3,100,2), (3,110,2), (5,110,2), (1,120,0)]:
+        health['effects'] = advance_timed_effects(health, health['effects'], seconds, advance_medication_turns=True)
+        assert health['current'] == current
+        assert len(health['effects']) == count
+    assert health['painLevel'] == 2
+    assert health['exhaustion'] == 1
+
+
+def test_world_time_processes_activated_medication_during_remaining_interval():
+    health = {'current': 100, 'max': 300, 'effects': [{
+        'type': 'delayed_adjustment', 'remaining': 1, 'tick': 'time_elapsed',
+        'source': 'consumable-template:1', 'activate_effects': [{
+            'type': 'regeneration', 'value': 10, 'remaining': 2, 'tick': 'turn_end',
+            'source': 'consumable-template:1',
+        }],
+    }]}
+    health['effects'] = advance_timed_effects(health, health['effects'], 600, advance_medication_turns=True)
+    assert health['current'] == 120
+    assert not health['effects']
+
+
+def test_world_time_keeps_stress_block_while_other_deadline_fires():
+    health={'stress':0,'effects':[
+        {'type':'stress_resistance','blocks_new_stress':True,'remaining':3,'tick':'turn_end','source':'consumable-template:1'},
+        {'type':'delayed_adjustment','remaining':12,'time_unit':'second','tick':'time_elapsed',
+         'adjustments':[{'field':'stress','delta':2,'min':0}]},
+    ]}
+    health['effects']=advance_timed_effects(health,health['effects'],60,advance_medication_turns=True)
+    assert health['stress']==0
+
+
+@pytest.mark.parametrize('kind', [
+    'temporary_exhaustion', 'temporary_hp_max', 'amputation', 'anomaly_compulsion',
+    'anomaly_electric_penalty', 'anomaly_will_penalty', 'circular_attack_recovery',
+    'death_order', 'mutant_poison', 'psy_roar_disadvantage', 'zombification',
+])
+def test_production_effect_types_keep_identity_and_executable_metadata(kind):
+    effect = normalize_effect({'id': 'known-effect', 'type': kind, 'remaining': 3,
+                              'tick': 'turn_end', 'damage_per_turn': 5})
+    assert effect['type'] == kind
+    assert effect['id'] == 'known-effect'
+    assert effect['damage_per_turn'] == 5
+
+
+def test_bleeding_impact_matches_calculation_for_legacy_value_one():
+    from app.services.effects import get_effect_impact
+    effect = {'type': 'bleeding_external_medium', 'value': 1}
+    assert get_effect_impact(effect)['severity'] == get_bleeding_state({'effects': [effect]})['totalSeverity']
+
+
+@pytest.mark.parametrize('status', [
+    {'type':'death'}, {'type':'unconsciousness'},
+    {'type':'stress_resistance','blocks_new_stress':True,'remaining':3},
+])
+def test_periodic_stress_respects_unconsciousness_death_and_medicine(status):
+    health = {'stress':1,'effects':[status]}
+    apply_periodic_effects_to_health(health,[{'type':'periodic_adjustment','tick':'turn_end',
+                                            'adjustments':[{'field':'stress','delta':2}]}])
+    assert health['stress'] == 1
+
+
 def test_custom_effect_is_distinct_from_legacy_generic_effect():
     manual = create_effect_draft("custom", {"name": "Осмотр аномалии"})
     legacy = normalize_effect({"type": "unknown_legacy_effect", "name": "Старый статус"})
@@ -200,7 +283,8 @@ def test_blood_recovery_improves_stage_without_passing_normal():
     assert health["blood"] == "normal"
 
 
-def test_numeric_status_effects_are_clamped():
+def test_numeric_status_effects_are_clamped_except_unbounded_intoxication(monkeypatch):
+    monkeypatch.setattr('app.services.effects.random.randint', lambda *_: 100)
     health = {
         "radiation": 2,
         "painLevel": 9,
@@ -216,7 +300,7 @@ def test_numeric_status_effects_are_clamped():
     assert health["radiation"] == 0
     assert health["painLevel"] == 10
     assert health["stress"] == 0
-    assert health["intoxication"] == 100
+    assert health["intoxication"] == 115
 
 
 def test_new_fracture_adds_three_pain_only_once():

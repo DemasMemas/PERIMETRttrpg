@@ -2,6 +2,7 @@
 from collections import deque
 from contextlib import contextmanager
 from copy import deepcopy
+from helpers.journal_assertions import assert_same_game_state
 import sys
 from types import SimpleNamespace
 
@@ -153,7 +154,9 @@ def first_failure(client, pair, auth_headers, monkeypatch, kind, identity):
     expected_health = deepcopy(after_payment['health'])
     expected_health['combatMeta'].pop('completedPendingActionId')
     expected_health['combatMeta']['mustDoRetry'] = deepcopy(retry)
-    assert stored['health'] == expected_health
+    assert_same_game_state({'health':stored['health']}, {'health':expected_health}, journal_status='completed')
+    journal=stored['health']['combatMeta']['actionJournal']
+    assert journal[-1]['action']=='medical_procedure' and journal[-1]['action_points']==spec['cost']
     assert pair['actor_location'].action_points_current == 2
     row = db.session.get(DeferredCombatAction, identity)
     assert row.status == 'completed'

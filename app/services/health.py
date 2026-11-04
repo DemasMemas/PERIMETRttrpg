@@ -61,13 +61,21 @@ def get_health_maximums(character_data: Dict[str, Any]) -> Dict[str, Any]:
             },
         }
     mountain = has_mountain_background(character_data)
+    temporary_maximum = 0
+    for effect in health.get('effects') or []:
+        if (not isinstance(effect, dict) or effect.get('type') not in {'stimulant_crash','temporary_hp_max'}
+                or effect.get('active', True) is False or effect.get('remaining') == 0):
+            continue
+        for adjustment in effect.get('onExpire') or []:
+            if adjustment.get('field') == 'max':
+                temporary_maximum += max(0, -(_number(adjustment.get('delta')) or 0))
     zones = dict(BASE_HEALTH_MAXIMUMS["zones"])
     if mountain:
         for key in ("leftArm", "rightArm", "leftLeg", "rightLeg"):
             zones[key] += 35
     return {
         "profile": "mountain" if mountain else "base",
-        "current": 840 if mountain else BASE_HEALTH_MAXIMUMS["current"],
+        "current": (840 if mountain else BASE_HEALTH_MAXIMUMS["current"]) + temporary_maximum,
         "zones": zones,
     }
 
@@ -109,6 +117,11 @@ def apply_health_maximums(character_data: Dict[str, Any], force: bool = False) -
 
 def heal_character_fully(character_data: Dict[str, Any]) -> Dict[str, Any]:
     """Reset physical injuries without erasing unrelated character progression."""
+    # Полное лечение снимает временные препараты до расчёта базового максимума.
+    character_data.setdefault('health', {})['effects'] = []
+    combat_meta = character_data['health'].get('combatMeta')
+    if isinstance(combat_meta, dict):
+        combat_meta.pop('consumableModifiers', None)
     health = apply_health_maximums(character_data)
     profile = get_health_maximums(character_data)
     health["max"] = profile["current"]

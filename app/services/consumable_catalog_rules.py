@@ -20,14 +20,14 @@ INHIBITOR_REMOVALS = (
 
 EARLY_CATALOG_RULES = (
     {"contains_all": ("жаропонижающее средство", "мороз"),
-     "direct": {"temperature_delta": -1},
+     "direct": {},
      "notes": ("temperature_drop_1",)},
     {"contains": ("ингибитор",), "direct": {"delay": 1, "sleep_duration": 60},
      "status_removals": INHIBITOR_REMOVALS, "notes": ("inhibitor_cleanup",)},
     {"contains": ("подавитель эмоций",), "direct": {
         "stress_advantage": True, "stress_attack_block_chance": 50, "psy_delta": -25,
     }},
-    {"contains": ("стимулятор котик",), "direct": {"addiction_block_hours": 24}},
+    {"contains_all": ("стимулятор", "котик"), "direct": {"addiction_block_hours": 24}},
     {"contains_all": ("психостимулирующее", "прорыв"), "direct": {
         "withdrawal_check_difficulty_reduction": 5,
         "withdrawal_support_delay_minutes": 1,
@@ -58,7 +58,7 @@ EARLY_CATALOG_RULES = (
     }},
     {"contains": ("стимулятор скала-н",), "direct": {
         "organ_toughness_multiplier": 2, "hp_max_delta": 200,
-        "hp": 200, "post_duration_hp_delta": -100,
+        "hp": 200, "temporary_hp_return": 200, "post_duration_hp_delta": -100,
     }},
     {"contains": ("стимулятор скала",), "exclude_any": ("стимулятор скала-н",),
      "direct": {"organ_toughness_multiplier": 2, "post_duration_hp_delta": -100}},
@@ -328,7 +328,8 @@ MEDICAL_CATALOG_RULES = (
                   "name": "Блок новых кровотечений", "remaining": 10,
                   "tick": "turn_end"},)},
     {"contains": ('стимулятор "полукровка"',),
-     "direct": {"infection_delta": -50, "infection_block_days": 3},
+     "direct_remove": ("infection_delta",),
+     "direct": {"infection_multiplier": .5, "infection_block_days": 3},
      "effects": ({"type": "infection_growth_block", "value": 1,
                   "name": "Блок нарастания заражения", "remaining": 3,
                   "tick": "day_start", "time_unit": "day"},)},
@@ -430,11 +431,43 @@ SURGERY_POST_CATALOG_RULES = (
 
 
 LATE_CATALOG_RULES = (
+    {"contains": ("стимулятор морковчатник",),
+     "direct": {"duration":6,"duration_phase":"movement_end"},
+     "modifiers": ({"stat":"awareness","value":6,"remaining":6,"tick":"movement_end","note":"Внимательность"},)},
+    {"contains": ("стимулятор грация",),
+     "direct": {"duration":5,"duration_phase":"movement_end","movement_points_delta":-1,"exhaustion_delta":1},
+     "modifiers": ({"stat":"anomaly_escape_roll","value":2,"remaining":5,"tick":"movement_end","note":"Выход из аномалии"},)},
+    {"contains": ("стимулятор б.о.л.т.",),
+     "direct_remove": ("hp","exhaustion_delta"), "effects_remove_types": ("exhaustion","damage"),
+     "direct": {"duration":5,"duration_phase":"turn_end","movement_points_delta":-3,"weight_delta":-3,
+                "post_duration_hp_delta":-50,"post_duration_exhaustion_delta":1}},
+    {"contains": ("стимулятор болид",),
+     "direct_remove": ("hp","exhaustion_delta"), "effects_remove_types": ("exhaustion","damage"),
+     "direct": {"duration":5,"duration_phase":"turn_end","movement_points_delta":-1,"clear_breathless":True,
+                "post_duration_hp_delta":-100,"post_duration_exhaustion_delta":1},
+     "modifiers": ({"stat":"breathless_immunity","value":1,"remaining":5,"tick":"turn_end","note":"Блок одышки"},)},
+    {"contains_any": ("стимулятор орёл", "стимулятор орел"),
+     "direct_remove": ("post_duration_exhaustion_delta",), "effects_remove_types": ("exhaustion",),
+     "direct": {"duration":10,"duration_phase":"turn_end","accuracy_delta":3,"strength_delta":2,"agility_delta":2,
+                "exhaustion_delta":1,
+                "post_duration_modifiers":[{"stat":"accuracy","value":-5,"remaining":3,"tick":"turn_end","note":"Орёл: последствия"}]}},
+    {"contains": ("военный стимулятор пчела",),
+     "direct_remove": ("post_duration_exhaustion_delta",), "effects_remove_types": ("exhaustion",),
+     "direct": {"duration":10,"duration_phase":"turn_end","agility_delta":4,"accuracy_delta":1,"post_duration_hp_delta":-100,"exhaustion_delta":1},
+     "modifiers": ({"stat":"melee","value":4,"remaining":10,"tick":"turn_end","note":"Ближний бой"},)},
+    {"contains": ("стимулятор психолог-м",),
+     "direct": {"duration":5,"duration_phase":"movement_end","psy_defense_delta":50,"will_delta":5,"psy_delta":-10}},
+    {"contains": ("настойка подорожника",),
+     "direct": {"hp":25,"satisfy_water":True,"duration":1,"duration_phase":"movement_end"}},
+    {"contains": ("стимулятор гора.",),
+     "direct": {"strength_delta":6,"pain_delta":-1,"duration":5,"duration_phase":"turn_end",
+                "post_duration_hp_delta":-50,"post_duration_pain_delta":1}},
     {"contains_all": ("жаропонижающее средство", "мороз"),
-     "direct": {"temperature_delta": -1},
-     "effects": ({"type": "temperature_control", "value": -1,
+     "direct_remove": ("temperature_delta",), "effects_remove_types": ("temperature_control",),
+     "effects": ({"type": "periodic_adjustment", "value": -1,
                   "name": "Жаропонижающее", "remaining": 4,
-                  "tick": "turn_end"},)},
+                  "adjustments": [{"field":"temperature","delta":-1,"min":0}],
+                  "tick": "round_end"},)},
     {"contains": ("научный стимулятор волкодав",),
      "status_additions_remove": ("sleep",),
      "direct": {"strength_delta": 5, "accuracy_delta": 5, "duration": 15},
@@ -452,10 +485,21 @@ LATE_CATALOG_RULES = (
         "suppress_limb_trauma": True, "minimum_limb_health": 1,
         "affects_all_limbs": True,
     }},
-    {"contains_any": ("ампула миколия", "препарат 02"), "direct": {
+    {"contains_any": ("ампула миколия", "миколий", "препарат 02"), "direct": {
         "temporary_limb_health_minutes": 10, "suppress_limb_trauma": True,
         "affects_all_limbs": True,
     }},
+    {"contains_any": ("миколий", "ампула миколия"), "direct": {"pain_delta":-1}},
+    {"contains": ("препарат 02",), "direct": {"pain_delta":-3,"stress_delta":-2}},
+    {"contains": ("питательный стимулятор",), "direct": {"pain_delta":-1,"duration":3,"duration_phase":"turn_end",
+        "post_duration_pain_delta":3}},
+    {"contains": ("регенеративный стимулятор альфа",), "direct": {"exhaustion_delta":1},
+     "effects": ({"type":"temporary_exhaustion","name":"Альфа: временное истощение","remaining":3,"tick":"turn_end",
+        "onExpire":[{"field":"exhaustion","delta":-1,"min":0,"max":10}]},)},
+    {"contains": ("регенеративный стимулятор бета",), "direct": {"exhaustion_delta":1},
+     "effects": ({"type":"temporary_exhaustion","name":"Бета: временное истощение","remaining":2,"tick":"turn_end",
+        "onExpire":[{"field":"exhaustion","delta":-1,"min":0,"max":10}]},)},
+    {"contains": ("регенеративный стимулятор звезда",), "direct": {"exhaustion_delta":1}},
     {"contains": ("научный стимпак",), "direct": {"radiation_delta": -5}},
     {"contains": ("военный стимпак",), "direct": {"bleeding_modifier_delta": -2}},
     {"contains": ("стимулятор шумодав",), "direct": {"duration": 3},
@@ -467,16 +511,17 @@ LATE_CATALOG_RULES = (
         "pain_block_turns": 5, "stress_block_turns": 5,
         "blocked_pain_return_fraction": 0.5, "exhaustion_on_expire": 0,
     }},
-    {"starts_with": ("стимулятор воля.",), "direct": {
+    {"starts_with": ("стимулятор воля.",),
+     "direct_remove": ("exhaustion_delta",), "effects_remove_types": ("exhaustion",), "direct": {
         "pain_block_turns": 3, "stress_block_turns": 3,
         "blocked_pain_return_fraction": 1, "exhaustion_on_expire": 1,
     }},
     {"contains": ("стимулятор сова-н",), "status_additions_remove": ("sleep",),
-     "direct": {"satisfy_sleep": True, "sleep_block_hours": 8}},
+     "direct_remove": ("sleep_block_hours",), "direct": {"satisfy_sleep": True}},
     {"contains": ("стимулятор сова",), "exclude_any": ("стимулятор сова-н",),
-     "status_additions_remove": ("sleep",), "direct_remove": ("exhaustion_delta",),
+     "status_additions_remove": ("sleep",), "direct_remove": ("exhaustion_delta", "sleep_block_hours"),
      "effects_remove_types": ("exhaustion",),
-     "direct": {"satisfy_sleep": True, "sleep_block_hours": 4},
+     "direct": {"satisfy_sleep": True},
      "effects": ({"type": "deferred_adjustment", "value": 2,
                   "name": "Истощение на следующие сутки", "tick": "day_start",
                   "remaining": 1, "trigger": "next_day",
@@ -530,6 +575,29 @@ LATE_CATALOG_RULES = (
                   "remaining": 24, "time_unit": "hour", "remaining_seconds": 86400,
                   "capacity": 100, "remaining_capacity": 100, "max_hours": 24},)},
 )
+
+
+def correct_owl_profile(profile, direct, name):
+    """Уточнение автора: сон закрывается сразу, часы относятся к зрению; также для старого каталога."""
+    name = str(name or '').casefold()
+    if 'стимулятор сова' not in name:
+        return profile, direct
+    profile, direct = deepcopy(profile), deepcopy(direct)
+    improved = 'стимулятор сова-н' in name
+    direct.pop('sleep_block_hours', None)
+    direct['satisfy_sleep'] = True
+    profile['direct'] = direct
+    stats = {'darkness_awareness', 'light_awareness', 'darkness_visual_immunity', 'darkness_shooting_immunity'}
+    profile['modifiers'] = [m for m in profile.get('modifiers') or [] if m.get('stat') not in stats]
+    for stat, value, note in (
+        ('darkness_awareness', 5 if improved else 3, 'Внимательность в темноте'),
+        ('darkness_visual_immunity', 1, 'Зрение в темноте'),
+        ('darkness_shooting_immunity', 1, 'Стрельба в темноте'),
+        *([] if improved else [('light_awareness', -3, 'Внимательность на свету')]),
+    ):
+        profile['modifiers'].append({'stat': stat, 'value': value, 'remaining': (8 if improved else 4) * 60,
+                                     'tick': 'time_elapsed', 'note': note})
+    return profile, direct
 
 
 def apply_catalog_rules(profile, text, rules):

@@ -23,18 +23,18 @@ function harness(saved) {
     const collapse = element(), messages = {scrollTop:0,scrollHeight:1200};
     panel.querySelector = selector => selector === '.chat-messages' ? messages : collapse;
     panel.getBoundingClientRect = () => ({ left: parseFloat(panel.style.left) || 0, top: parseFloat(panel.style.top) || 0 });
-    const toggle = element(), pin = element(), close = element();
+    const toggle = element(), pin = element(), close = element(), actions = element();
     const documentHandlers = {}, windowHandlers = {};
     let observer;
     const frames=[];
     const context = vm.createContext({ localStorage,requestAnimationFrame:callback=>frames.push(callback),
-        document: { getElementById: id => ({ 'panel-chat': panel, 'chat-toggle': toggle, 'chat-pin': pin, 'chat-close': close })[id],
+        document: { getElementById: id => ({ 'panel-chat': panel, 'chat-toggle': toggle, 'actions-toggle': actions, 'chat-pin': pin, 'chat-close': close })[id],
             addEventListener: (event, handler) => { documentHandlers[event] = handler; } },
         window: { currentLobbyId: 19, innerWidth: 1440, innerHeight: 900, addEventListener: (event, handler) => { windowHandlers[event] = handler; } },
         MutationObserver: class { constructor(callback) { observer = callback; } observe() {} },
     });
     vm.runInContext(source.replaceAll('export ', ''), context);
-    return { context, panel, toggle, pin, close, collapse, messages,flushFrames:()=>{while(frames.length)frames.shift()();},documentHandlers, windowHandlers,
+    return { context, panel, toggle, pin, close, actions, collapse, messages,flushFrames:()=>{while(frames.length)frames.shift()();},documentHandlers, windowHandlers,
         observe: () => observer(), state: () => JSON.parse(values.get(key)) };
 }
 
@@ -46,6 +46,25 @@ test('chat separates human messages, dice commands, skill rolls and system/game 
         ['Бой', 'Начался раунд', 'event'], ['Событие', 'Событие путешествия', 'event'],
         ['Система', 'Ремонт завершён', 'event'], ['Аномалия', 'Получен урон', 'event'], ['Systematic', 'A player name', 'human'],
     ]) assert.equal(context.chatMessageKind(username, text), expected);
+});
+
+test('История действий и чат открываются отдельно, режим сохраняется после перезагрузки',()=>{
+    const h=harness();h.context.initChatPanel();h.actions.handlers.click();
+    assert.equal(h.panel.hidden,false);assert.equal(h.panel.dataset.chatView,'actions');
+    assert.equal(h.actions.attrs['aria-expanded'],'true');
+    h.toggle.handlers.click();assert.equal(h.panel.hidden,false);assert.equal(h.panel.dataset.chatView,'all');
+    h.actions.handlers.click();h.context.initChatPanel();h.windowHandlers.pagehide();
+    const restored=harness(h.state());restored.context.initChatPanel();
+    assert.equal(restored.panel.dataset.chatView,'actions');assert.equal(restored.panel.hidden,false);
+    restored.actions.handlers.click();assert.equal(restored.panel.hidden,true);
+});
+
+test('Повторная доставка использует идентификатор события, разные реальные сообщения не склеиваются',()=>{
+    const {context}=harness();
+    assert.equal(context.chatMessageIdentity('Бой','Выстрел','t',12),'id:12');
+    assert.notEqual(context.chatMessageIdentity('Бой','Выстрел','t',12),context.chatMessageIdentity('Бой','Выстрел','t',13));
+    assert.equal(context.chatMessageIdentity('Бой','Выстрел','t'),context.chatMessageIdentity('Бой','Выстрел','t'));
+    assert.equal(context.chatMessageIdentity('Бой','Выстрел',null),null);
 });
 
 test('открытие и разворачивание чата прокручивает к последним сообщениям после раскладки',()=>{

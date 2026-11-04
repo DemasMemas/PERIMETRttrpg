@@ -54,6 +54,35 @@ def headers(case, user):
     return {'Authorization': f"Bearer {case['tokens'][user.id]}"}
 
 
+def test_sheet_cannot_forge_intoxication_check_or_cancel_saved_coma(client, access_case, monkeypatch):
+    case = access_case
+    character = case['character']
+    draws = []
+    monkeypatch.setattr('app.services.effects.random.randint', lambda *args: draws.append(args) or 100)
+    url = f'/lobbies/characters/{character.id}'
+    data = client.get(url, headers=headers(case, case['owner'])).json['data']
+    data['health'].update(intoxication=100, combatMeta={'intoxicationDeathChecked': True, 'intoxicationDeathRoll': 100})
+    data['health']['effects'] = [{'type': 'unconsciousness', 'source': 'deadly_intoxication', 'remaining_seconds': 1}]
+    response = client.put(url, headers=headers(case, case['owner']), json={'data': data})
+    assert response.status_code == 200, response.json
+    assert draws == [(1, 100)]
+    health = response.json['data']['health']
+    coma = next(effect for effect in health['effects'] if effect['source'] == 'deadly_intoxication')
+    assert coma['remaining_seconds'] == 86400
+    data = response.json['data']
+    data['health']['effects'] = []
+    data['notes'] = 'Обычное изменение листа'
+    response = client.put(url, headers=headers(case, case['owner']), json={'data': data})
+    assert response.status_code == 200, response.json
+    assert next(e for e in response.json['data']['health']['effects'] if e['source'] == 'deadly_intoxication')['remaining_seconds'] == 86400
+    assert len(draws) == 1
+    data = response.json['data']
+    data['health']['intoxication'] += 20
+    response = client.put(url, headers=headers(case, case['owner']), json={'data': data})
+    assert response.status_code == 200, response.json
+    assert len(draws) == 2
+
+
 def test_socket_authentication_reports_gm_role(access_case, app):
     case = access_case
     for user, expected in ((case['gm'], True), (case['owner'], False)):

@@ -120,6 +120,30 @@ module.exports=async({page,request,token,lobby,base,connect,debugPort,safeSessio
     await page.until(`document.querySelector('${root} [data-points-remaining]').textContent==='14'`,'живой счётчик оставшихся очков');
     assert.equal(await value(`${root} [name=characterAlias]`),'Созданный по книге');
     assert.equal(await page.evaluate(`document.querySelector('${root} [data-result-stage=finalRaises][data-result="physical.agility"]').textContent`),'10');
+    // Настоящее сохранение в файл и загрузка в заново открытый мастер.
+    await page.call('Browser.setDownloadBehavior',{behavior:'allow',downloadPath:safeSession.artifacts});
+    await click(`${root} .creation-template-tools summary`);
+    await click(`${root} [data-template-save]`);
+    const templatePath=path.join(safeSession.artifacts,'Шаблон персонажа.json');
+    for(let attempt=0;attempt<100&&!fs.existsSync(templatePath);attempt++)await pause(50);
+    assert.ok(fs.existsSync(templatePath),'файл шаблона скачан браузером');
+    const savedPlan=JSON.parse(fs.readFileSync(templatePath,'utf8'));
+    assert.equal(savedPlan.plan.traits.length,3);assert.equal(savedPlan.plan.purchases.length,4);
+    assert.equal(savedPlan.plan.name,undefined);assert.equal(savedPlan.plan.health,undefined);
+    await click(`${root} [data-creation-close]`);
+    await page.evaluate(`(async()=>{const m=await import('/static/js/characters.js');await m.showCreateCharacterForm()})()`);
+    await page.until(`document.querySelector('${root} [name=characterAlias]')`,'новый мастер для шаблона');
+    const doc=await page.call('DOM.getDocument');
+    const upload=await page.call('DOM.querySelector',{nodeId:doc.root.nodeId,selector:`${root} [data-template-file]`});
+    await page.call('DOM.setFileInputFiles',{nodeId:upload.nodeId,files:[templatePath]});
+    await page.until(`document.querySelector('${root} [data-template-status]').textContent.startsWith('Шаблон загружен')`,'шаблон проверен сервером и загружен');
+    assert.equal(await value(`${root} [name=characterAlias]`),'','имя не переносится');
+    await click(`${root} [name=characterAlias]`);await page.call('Input.insertText',{text:'Созданный по книге'});
+    assert.equal(await value(`${root} [data-stage=raises][data-skill="physical.agility"]`),'2');
+    assert.equal(await value(`${root} [data-stage=finalRaises][data-skill="physical.agility"]`),'2');
+    assert.equal(await page.evaluate(`document.querySelectorAll('${root} [data-cart-quantity]').length`),4);
+    await step(8);
+    await screenshot('creation-template-loaded');
     await click(`${root} [type=submit]`);
     await page.until('!document.getElementById("character-creation-modal")','персонаж создан');
     const list=await request(`/lobbies/${lobby.id}/characters`,null,token,'GET');
@@ -252,5 +276,5 @@ module.exports=async({page,request,token,lobby,base,connect,debugPort,safeSessio
     assert.equal(saved.data.skills.physical.agility.base,11,'сохранение не повторяет бонусы');
     assert.equal(saved.data.skills.physical.agility.learningRemainder,.5);
     assert.equal(saved.data.skills.skillPoints,16);
-    fs.writeFileSync(path.join(safeSession.artifacts,'character-creation.json'),JSON.stringify({catalogBackgrounds:56,catalogTraits:90,serverPoints:14,initialAgility:10,health:840,capital:3960,threeTraits:true,unplacedInventoryVisible:true,backpackEquipPreservesItems:true,rewardBothClients:true,rewardAgility:11,rewardHalfXp:.5,reloadStable:true},null,2));
+    fs.writeFileSync(path.join(safeSession.artifacts,'character-creation.json'),JSON.stringify({catalogBackgrounds:56,catalogTraits:90,serverPoints:14,initialAgility:10,health:840,capital:3960,threeTraits:true,templateFileRoundtrip:true,unplacedInventoryVisible:true,backpackEquipPreservesItems:true,rewardBothClients:true,rewardAgility:11,rewardHalfXp:.5,reloadStable:true},null,2));
 };

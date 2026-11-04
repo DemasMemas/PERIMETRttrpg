@@ -2,6 +2,7 @@
 // Объединённый модуль: глобальное состояние, горячие клавиши и перетаскивание панелей
 import { isTypingTarget } from './cameraPan.js';
 import { initChatPanel } from './chatPanel.js';
+import { initActionJournal } from './actionJournal.js';
 
 // ---------- Часть 1: Глобальное состояние (бывший state.js) ----------
 const AppState = {
@@ -279,6 +280,7 @@ export function initDraggablePanels() {
         modalContent.dataset.draggableInitialized = 'true';
     });
     initChatPanel();
+    initActionJournal();
 }
 
 // ---------- Часть 3: Горячие клавиши ----------

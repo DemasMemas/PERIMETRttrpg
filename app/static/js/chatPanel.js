@@ -1,7 +1,12 @@
-const GAME_EVENT_SENDERS = new Set(['Бой', 'Система', 'Событие', 'Зависимость', 'Разделка', 'Взрыв', 'Аномалия', 'ГМ', 'Мутант', 'Действие', 'Стресс']);
+const GAME_EVENT_SENDERS = new Set(['Бой', 'Система', 'Событие', 'Зависимость', 'Разделка', 'Взрыв', 'Аномалия', 'ГМ', 'Мутант', 'Действие', 'Стресс', 'Проверка']);
+
+export function chatMessageIdentity(username, text, timestamp, id) {
+    if (id != null) return `id:${id}`;
+    return timestamp ? JSON.stringify([username, text, timestamp]) : null;
+}
 
 export function chatMessageKind(username, text) {
-    if (/^System\s*\(Roll\)/i.test(String(username)) || /^\/roll(?:\s|$)/i.test(String(text))) return 'roll';
+    if (/^System\s*\(Roll\)/i.test(String(username)) || /^(?:\/roll(?:\s|$)|🎲)/i.test(String(text))) return 'roll';
     return /^System(?:\s|$|\()/i.test(String(username)) || GAME_EVENT_SENDERS.has(username) ? 'event' : 'human';
 }
 
@@ -13,6 +18,7 @@ export function readChatPanelState(storage, key) {
         open: saved?.open === true,
         docked: saved?.docked !== false,
         collapsed: saved?.collapsed === true,
+        view: saved?.view === 'actions' ? 'actions' : 'all',
         floatingPosition: position && Number.isFinite(position.left) && Number.isFinite(position.top)
             ? { left: position.left, top: position.top } : null,
     };
@@ -23,6 +29,7 @@ export function initChatPanel() {
     const toggle = document.getElementById('chat-toggle');
     const pin = document.getElementById('chat-pin');
     const close = document.getElementById('chat-close');
+    const actions = document.getElementById('actions-toggle');
     if (!panel || !toggle || !pin || !close || panel.dataset.chatInitialized === 'true') return;
     panel.dataset.chatInitialized = 'true';
     const key = `chat-panel:${window.currentLobbyId}:${localStorage.getItem('user_id')}`;
@@ -45,11 +52,18 @@ export function initChatPanel() {
     const apply = () => {
         panel.hidden = !state.open;
         panel.dataset.chatDocked = String(state.docked);
+        panel.dataset.chatView = state.view;
+        const title = panel.querySelector('.chat-panel-title');
+        if (title) title.textContent = state.view === 'actions' ? 'Последние действия' : 'Чат';
+        const input = panel.querySelector('.chat-input-area');
+        if (input) input.hidden = state.view === 'actions';
         panel.classList.toggle('collapsed', state.collapsed);
         const collapse = panel.querySelector('.toggle-btn');
         if (collapse) collapse.textContent = state.collapsed ? '▶' : '▼';
-        toggle.setAttribute('aria-expanded', String(state.open));
-        toggle.classList.toggle('is-active', state.open);
+        toggle.setAttribute('aria-expanded', String(state.open && state.view === 'all'));
+        toggle.classList.toggle('is-active', state.open && state.view === 'all');
+        actions?.classList.toggle('is-active', state.open && state.view === 'actions');
+        actions?.setAttribute('aria-expanded', String(state.open && state.view === 'actions'));
         pin.setAttribute('aria-pressed', String(state.docked));
         pin.title = state.docked ? 'Открепить чат' : 'Закрепить чат справа';
         pin.setAttribute('aria-label', pin.title);
@@ -62,9 +76,15 @@ export function initChatPanel() {
         if (state.floatingPosition?.left === rect.left && state.floatingPosition?.top === rect.top) return;
         state.floatingPosition = { left: rect.left, top: rect.top }; save();
     };
-    toggle.addEventListener('click', () => { state.open = !state.open; apply(); save(); });
+    const selectView = view => {
+        state.open = state.open && state.view === view ? false : true;
+        state.view = view; apply(); save();
+    };
+    toggle.addEventListener('click', () => selectView('all'));
+    actions?.addEventListener('click', () => selectView('actions'));
     close.addEventListener('click', () => {
-        rememberFloatingPosition(); state.open = false; apply(); save(); toggle.focus();
+        rememberFloatingPosition(); state.open = false; apply(); save();
+        (state.view === 'actions' && actions ? actions : toggle).focus();
     });
     pin.addEventListener('click', () => {
         rememberFloatingPosition(); state.docked = !state.docked; apply(); save();

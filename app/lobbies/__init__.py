@@ -88,6 +88,7 @@ def _emit_lobby_chat_message(lobby_id, user_id, message, username='Бой'):
     db.session.add(chat_message)
     db.session.commit()
     payload = {
+        'id': chat_message.id,
         'username': username,
         'message': message,
         'timestamp': chat_message.timestamp.isoformat(),
@@ -500,6 +501,8 @@ def _world_route_tiles(from_x, from_y, to_x, to_y):
 
 
 def _advance_world_time(lobby, minutes):
+    from app.services.portable_lights import advance_lobby
+    portable_updated=advance_lobby(lobby,minutes*60)
     previous_day = lobby.game_day or 1
     absolute_minutes = (
         (lobby.game_day or 1) * 1440
@@ -532,6 +535,7 @@ def _advance_world_time(lobby, minutes):
             health,
             health.get('effects') or [],
             minutes * 60,
+            advance_medication_turns=True,
             character_data=character_data,
         )
         advance_addictions(health, previous_day, lobby.game_day)
@@ -540,7 +544,7 @@ def _advance_world_time(lobby, minutes):
         character.data = character_data
         flag_modified(character, 'data')
         updated_characters.append(character)
-    return updated_characters
+    return list({character.id:character for character in [*portable_updated,*updated_characters]}.values())
 
 
 def _world_group_submitted_for_current_turn(group, lobby):
@@ -1278,9 +1282,11 @@ def update_lobby_time(lobby_id, lobby):
     previous_absolute_minutes = (lobby.game_day or 1) * 1440 + (lobby.game_time_minutes or 0)
     next_absolute_minutes = game_day * 1440 + game_time_minutes
     elapsed_seconds = max(0, next_absolute_minutes - previous_absolute_minutes) * 60
+    from app.services.portable_lights import advance_lobby
+    portable_updated=advance_lobby(lobby,elapsed_seconds)
     lobby.game_day = game_day
     lobby.game_time_minutes = game_time_minutes
-    updated_characters = []
+    updated_characters = list(portable_updated)
     if elapsed_seconds > 0:
         for character in LobbyCharacter.query.filter_by(
             lobby_id=lobby_id,
@@ -1296,6 +1302,7 @@ def update_lobby_time(lobby_id, lobby):
                 health,
                 health.get('effects') or [],
                 elapsed_seconds,
+                advance_medication_turns=True,
                 character_data=character_data,
             )
             advance_addictions(health, previous_absolute_minutes // 1440, game_day)
@@ -1481,17 +1488,22 @@ def start_lobby_rest(lobby_id, lobby):
     )
     lobby.game_day, lobby.game_time_minutes = divmod(absolute_minutes, 1440)
     summaries = []
+    from app.services.portable_lights import advance_lobby
+    portable_updated=advance_lobby(lobby,elapsed_seconds)
     for character in characters:
         character_data = dict(character.data or {})
         health = character_data.get('health')
         if not isinstance(health, dict):
             continue
         selected = character.id in selected_ids
+        from app.services.effects import is_intoxication_coma
+        was_intoxication_coma = any(is_intoxication_coma(effect) for effect in health.get('effects') or [])
         effects = advance_timed_effects(
             health,
             health.get('effects') or [],
             elapsed_seconds,
             include_turn_effects=selected,
+            advance_medication_turns=True,
             character_data=character_data,
         )
         healed = 0
@@ -1520,7 +1532,8 @@ def start_lobby_rest(lobby_id, lobby):
                     if not isinstance(modifier, dict) or modifier.get('stat') != 'rest_heal_multiplier'
                 ]
             if rest_type == 'sleep':
-                health['intoxication'] = max(0, float(health.get('intoxication') or 0) - (25 if background_is(character_data,'Дядя Толик') else 75))
+                if not was_intoxication_coma:
+                    health['intoxication'] = max(0, float(health.get('intoxication') or 0) - (25 if background_is(character_data,'Дядя Толик') else 75))
                 if background_is(character_data,'Дядя Толик'):health['painLevel']=min(10,max(0,float(health.get('painLevel') or 0))+1)
                 health.setdefault('combatMeta',{}).pop('surgeonReductions',None)
                 effects = _resolve_character_day(health, effects, slept=True,character_data=character_data)
@@ -1541,7 +1554,7 @@ def start_lobby_rest(lobby_id, lobby):
         'game_time_minutes': lobby.game_time_minutes,
     }
     socketio.emit('lobby_time_updated', time_payload, room=f"lobby_{lobby_id}")
-    for character in characters:
+    for character in {item.id:item for item in [*characters,*portable_updated]}.values():
         emit_character_update(
             {
                 'character_id': character.id,
@@ -1799,6 +1812,18 @@ def change_character_equipment_outside_combat(character_id):
                 room=f"location_{location_id}",
             )
     return jsonify({'equipment_change': result, 'data': character.data_snapshot()}), 200
+
+
+@lobbies_bp.route('/characters/<int:character_id>/weapon-grip', methods=['POST'])
+@jwt_required()
+def change_character_weapon_grip(character_id):
+    from app.services.weapon_grip import change
+    character, actor, result = change(character_id, int(get_jwt_identity()), request.get_json(silent=True) or {})
+    emit_character_update({'character_id':character.id,'updates':{'data':character.data_snapshot()},'source':'weapon_grip'})
+    if actor:
+        state = LocationCombatState.query.filter_by(location_id=actor.location_id).first()
+        socketio.emit('combat_state_updated', CombatService._serialize_state(actor.location,state), room=f'location_{actor.location_id}')
+    return jsonify({'grip_change':result,'data':character.data_snapshot()}), 200
 
 
 @lobbies_bp.route('/characters/<int:character_id>/equipment-module', methods=['POST'])
@@ -2308,6 +2333,11 @@ def get_lobby_templates(lobby_id, lobby, participant):
     if category in (None,'weapon_module'):
         from app.services.weapon_modules import missing_templates
         serialized_global.extend(missing_templates(serialized_global,subcategory))
+    if category in (None, 'misc'):
+        from app.services.body_transport import missing_templates
+        serialized_global.extend(missing_templates(serialized_global, subcategory))
+        from app.services.portable_lights import missing_templates as missing_lights
+        serialized_global.extend(missing_lights(serialized_global, subcategory))
     return jsonify({
         'global': serialized_global,
         'local': local_schema.dump(local_templates)
@@ -3710,6 +3740,25 @@ def inspect_incapacitated_location_character(
     return jsonify(result), 200
 
 
+@lobbies_bp.route('/<int:lobby_id>/locations/<int:location_id>/characters/<int:character_id>/body-transport', methods=['POST'])
+@jwt_required()
+@requires_participant
+def change_body_transport(lobby_id, location_id, character_id, lobby, participant):
+    from app.services.body_transport import change
+    payload = request.get_json(silent=True) or {}
+    actor, target, cost = change(location_id, participant.user_id, payload.get('actor_location_character_id'),
+                                  character_id, payload.get('mode'))
+    for placed in (actor, target):
+        emit_character_update({'character_id': placed.character_id,
+                               'updates': {'data': placed.character.data_snapshot()}, 'source': 'body_transport'})
+        socketio.emit('character_moved', {'character_id': placed.character_id, 'x': placed.pos_x, 'y': placed.pos_y,
+                                         **CombatService.physical_position(placed), 'movement_cost': 0},
+                      room=f'location_{location_id}')
+    state = CombatService.get_state(location_id, participant.user_id)
+    socketio.emit('combat_state_updated', state, room=f'location_{location_id}')
+    return jsonify({'state': state, 'action_points': cost}), 200
+
+
 @lobbies_bp.route(
     '/<int:lobby_id>/locations/<int:location_id>/characters/<int:character_id>/butchering',
     methods=['POST'],
@@ -4730,6 +4779,62 @@ def cancel_location_deferred_action(lobby_id, location_id, lobby, participant):
     return jsonify(state), 200
 
 
+@lobbies_bp.route('/<int:lobby_id>/action-journal', methods=['GET'])
+@jwt_required()
+@requires_participant
+def read_action_journal(lobby_id, lobby, participant):
+    from app.services.action_journal import read
+    return jsonify({'entries':read(lobby_id, participant.user_id)}), 200
+
+
+@lobbies_bp.route('/<int:lobby_id>/locations/<int:location_id>/extinguishing-options/<int:actor_id>', methods=['GET'])
+@jwt_required()
+@requires_participant
+def get_extinguishing_options(lobby_id, location_id, actor_id, lobby, participant):
+    actor=LocationCharacter.query.join(Location).filter(Location.lobby_id==lobby_id,
+        LocationCharacter.location_id==location_id,LocationCharacter.id==actor_id).first()
+    if not actor:raise NotFoundError('Персонаж не найден')
+    CharacterService.check_access(actor.character,participant.user_id,edit=True)
+    from app.services.burning import extinguishing_options
+    return jsonify(extinguishing_options(actor)), 200
+
+
+@lobbies_bp.route('/characters/<int:character_id>/portable-lights', methods=['GET','POST'])
+@jwt_required()
+def portable_lights(character_id):
+    from app.services.portable_lights import operate,walk,bindings,definition
+    user_id=int(get_jwt_identity())
+    character=db.session.get(LobbyCharacter,character_id)
+    if not character:raise NotFoundError('Персонаж не найден')
+    CharacterService.check_access(character,user_id,edit=request.method=='POST')
+    if request.method=='GET':
+        items=[]
+        for path,item in walk(character.data or {}):
+            binding=next((binding for binding in bindings(character.data) if binding.get('id')==item.get('id')),None)
+            items.append({'path':path,'id':item.get('id'),'name':item.get('name'),'kind':definition(item),'binding':binding,
+                'uses_left':(item.get('lightPower') or {}).get('uses_left',10)})
+        batteries=[{'path':path,'name':item.get('name')} for path,item in walk(character.data or {},True)
+            if 'батаре' in str(item.get('name') or '').casefold() and 'installedModules' not in path]
+        return jsonify({'lights':items,'batteries':batteries}),200
+    character,actor,result=operate(character_id,user_id,request.get_json() or {})
+    emit_character_update({'character_id':character.id,'updates':{'data':character.data_snapshot()},'source':'portable_light'})
+    for model in LocationCharacter.query.filter_by(character_id=character.id).all():
+        socketio.emit('combat_state_updated',CombatService.get_state(model.location_id,user_id),room=f'location_{model.location_id}')
+    return jsonify({'light_operation':result,'data':character.data_snapshot()}),200
+
+
+@lobbies_bp.route('/characters/<int:character_id>/weapon-pair', methods=['POST'])
+@jwt_required()
+def weapon_pair(character_id):
+    from app.services.weapon_grip import prepare_pair
+    user_id=int(get_jwt_identity())
+    character=prepare_pair(character_id,user_id,request.get_json() or {})
+    emit_character_update({'character_id':character.id,'updates':{'data':character.data_snapshot()},'source':'weapon_pair'})
+    for model in LocationCharacter.query.filter_by(character_id=character.id).all():
+        socketio.emit('combat_state_updated',CombatService.get_state(model.location_id,user_id),room=f'location_{model.location_id}')
+    return jsonify({'data':character.data_snapshot()}),200
+
+
 @lobbies_bp.route('/<int:lobby_id>/locations/<int:location_id>/combat/action', methods=['POST'])
 @jwt_required()
 @requires_participant
@@ -5091,6 +5196,9 @@ def perform_location_combat_action(lobby_id, location_id, lobby, participant):
     explosion = (result.get('explosive') or {}).get('explosion') or {}
     affected_character_ids.update(entry['character_id'] for entry in explosion.get('noise_targets',[]))
     affected_character_ids.update(entry['character_id'] for entry in (result.get('attack') or {}).get('noise_targets',[]))
+    affected_character_ids.update(person['character_id']
+        for hit in (result.get('attack') or {}).get('results', [])
+        for person in hit.get('flash_targets', []) if person.get('character_id'))
     affected_character_ids.update(entry['character_id'] for entry in (result.get('explosive') or {}).get('noise_targets',[]))
     affected_character_ids.update(
         entry.get('character_id')

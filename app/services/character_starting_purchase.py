@@ -32,7 +32,10 @@ def eligible(template):
 
 def available_templates():
     from app.models.templates import ItemTemplate
-    return [t for t in ItemTemplate.query.order_by(ItemTemplate.category,ItemTemplate.name).all() if eligible(t)]
+    templates=[t for t in ItemTemplate.query.order_by(ItemTemplate.category,ItemTemplate.name).all() if eligible(t)]
+    from app.services.portable_lights import missing_templates
+    templates.extend(ItemTemplate(**template) for template in missing_templates([{'name':t.name} for t in templates]))
+    return templates
 
 
 def catalog():

@@ -7,6 +7,8 @@ from app.extensions import socketio, db
 from app.models import ChatMessage
 from .utils import get_user_from_token
 from app.utils.dice import roll_dice as roll_dice_util
+from app.services.character import CharacterService
+from app.services.exceptions import ServiceError
 
 logger = logging.getLogger(__name__)
 
@@ -15,13 +17,19 @@ def handle_message(data):
     token = data.get('token')
     lobby_id = data.get('lobby_id')
     raw_message = data.get('message')
-    if not token or not lobby_id or not raw_message:
+    if not token or not lobby_id or not raw_message or not isinstance(raw_message,str):
         return
 
     user = get_user_from_token(token)
     if not user:
         logger.warning("Message send attempt with invalid token")
         emit('error', {'message': 'Invalid token'})
+        return
+
+    try:
+        CharacterService.require_membership(lobby_id,user.id)
+    except ServiceError:
+        emit('error',{'message':'Нет доступа к чату комнаты'},room=request.sid)
         return
 
     # Проверяем, является ли сообщение командой
@@ -63,6 +71,7 @@ def handle_message(data):
 
     # Рассылаем всем в комнате
     emit('new_message', {
+        'id': msg.id,
         'username': user.username,
         'message': final_text,
         'timestamp': msg.timestamp.isoformat()

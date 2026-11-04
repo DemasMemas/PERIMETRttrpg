@@ -139,7 +139,8 @@ export function initSocket(lobbyId, token) {
     });
 
     socket.on('new_message', (data) => {
-        addMessage(data.username, data.message, data.timestamp);
+        addMessage(data.username, data.message, data.timestamp, data.id);
+        if (/^(?:\/roll(?:\s|$)|🎲)/i.test(data.message) || data.username==='System (Roll)') window.dispatchEvent(new CustomEvent('action-journal-updated'));
         if (data.username.startsWith('System')) {
             showNotification(data.message, 'system', 'bottom-left');
         }
@@ -154,9 +155,13 @@ export function initSocket(lobbyId, token) {
         }
     });
 
+    socket.on('action_journal_updated', data => {
+        if (Number(data.lobby_id) === Number(window.currentLobbyId)) window.dispatchEvent(new CustomEvent('action-journal-updated'));
+    });
+    socket.on('combat_state_updated', () => window.dispatchEvent(new CustomEvent('action-journal-updated')));
     socket.on('chat_history', (messages) => {
         messages.forEach(msg => {
-            addMessage(msg.username, msg.message, msg.timestamp);
+            addMessage(msg.username, msg.message, msg.timestamp, msg.id);
         });
         requestAnimationFrame(() => {
             const chat = document.getElementById('chat');

@@ -265,6 +265,11 @@ def handle_move_in_location(data):
                 room=f"location_{location_id}",
             )
 
+    body = getattr(moved_character, '_transported_body', None)
+    if body:
+        emit('character_moved', {'character_id': body.character_id, 'x': body.pos_x, 'y': body.pos_y,
+             **CombatService.physical_position(body), 'movement_cost': 0, 'moved_with_transport': True},
+             room=f'location_{location_id}')
     if combat_state:
         socketio.emit('combat_state_updated', combat_state, room=f"location_{location_id}")
 

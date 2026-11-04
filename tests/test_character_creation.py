@@ -114,6 +114,31 @@ def test_starting_purchase_uses_catalog_prices_and_rejects_restricted_templates(
         with pytest.raises(ValidationError):build_character('Имя',plan('Бедный',purchases=selection))
 
 
+def test_reused_creation_plan_creates_independent_items_and_rewards(creation_case):
+    from app.extensions import db
+    from app.models.templates import ItemTemplate
+    from app.services.character import CharacterService
+    from app.services.character_starting_purchase import grant_creation_money
+    gun=ItemTemplate(name='Пистолет для шаблона',category='weapon',item_class='1',price=1000,attributes={'damage':30})
+    db.session.add(gun);db.session.flush()
+    selected=plan('Богат деньгами',traits=[trait('Быстрые руки'),trait('Быстрые руки')],
+                  purchases=[{'templateId':gun.id,'quantity':1}])
+    original=deepcopy(selected);c=creation_case
+    first=CharacterService.create_character(c['lobby'].id,c['gm'].id,'Первый по шаблону',{'creationRequest':selected})
+    second=CharacterService.create_character(c['lobby'].id,c['gm'].id,'Второй по шаблону',{'creationRequest':selected})
+    assert selected==original
+    assert first.data['skills']==second.data['skills']
+    assert first.data['inventory']['money']==second.data['inventory']['money']==59000
+    assert len(first.data['features']['specialTraits'])==len(second.data['features']['specialTraits'])==2
+    assert first.data['weapons'][0]['id']!=second.data['weapons'][0]['id']
+    assert not grant_creation_money(first.data) and not grant_creation_money(second.data)
+    first_copy=deepcopy(first.data);second_before=deepcopy(second.data)
+    first_copy['weapons'][0]['ammo']=0
+    first.data=first_copy
+    db.session.commit();db.session.refresh(second)
+    assert second.data==second_before
+
+
 def test_third_interested_multiplier_and_history_teacher_do_not_multiply():
     from app.services.character_development import add_skill_experience
     data=build_character('Имя',plan(traits=[trait('Заинтересованный',skill='physical.agility')]*3))

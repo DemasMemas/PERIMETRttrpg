@@ -1,4 +1,5 @@
 import { terrainLineHit, terrainOpeningAt } from './terrainLineOfSight.js';
+import { createPortableLightRenderer } from './portableLights.js';
 import { hearingModifier } from './hearingRules.js';
 import { buildMovementSurfaceCosts, ordinaryHeightTransitionAllowed } from './movementSurfaceCosts.js';
 import { syncWorldNumber } from './worldNumericInputs.js';
@@ -256,6 +257,15 @@ let locationLightGroup = null;
 let lampPreviewGroup = null;
 let lampPreviewLights = null;
 let lampRenderSources = [];
+let portableLightRenderer = null;
+
+function syncPortableLights() {
+    if (!scene) return;
+    if (!portableLightRenderer) portableLightRenderer=createPortableLightRenderer(THREE,scene);
+    portableLightRenderer.update(combatState?.characters || [],characterModels);
+}
+
+export function getLocationPortableLightDiagnostics() { return {lights:portableLightRenderer?.count || 0}; }
 let locationStaticLightField = null;
 let locationStaticLightFieldRefreshTimer = null;
 let anomalyRenderSources = [];
@@ -2597,7 +2607,7 @@ function showNarrativeActionModal(characterId) {
 }
 
 async function showFireAndWaterMenu(character) {
-    const sheet = await Server.getCharacter(character.character_id);
+    const options = await Server.getExtinguishingOptions(window.currentLobbyId,getCurrentLocationId(),character.location_character_id);
     let modal = document.getElementById('combat-fire-water-menu');
     if (!modal) {
         modal = document.createElement('div');
@@ -2606,12 +2616,12 @@ async function showFireAndWaterMenu(character) {
         document.body.appendChild(modal);
     }
     modal.innerHTML = `<div style="width:min(440px,100%);max-height:85vh;overflow:auto;padding:18px;border-radius:14px;background:#171e1c;color:#f4f1e8;">
-        <div style="display:flex;justify-content:space-between;"><strong>Огонь и вода</strong><button type="button" class="fire-close btn btn-secondary">×</button></div>
+        <div style="display:flex;justify-content:space-between;"><strong>Тушение огня</strong><button type="button" class="fire-close btn btn-secondary">×</button></div>
         <p>Тушить себя: 3 ОД, d20 против СЛ 12 + стресс + модификатор смеси, без бонуса навыка.</p>
         <button type="button" class="fire-extinguish btn btn-secondary">Тушить себя · 3 ОД</button>
         <p>Сначала возьмите воду в свободную руку. Обливание всей ёмкостью стоит ещё 2 ОД и сокращает горение на 2 раунда за литр.</p>
         <div class="fire-water-items" style="display:grid;gap:6px;"></div>
-        <label style="display:block;margin-top:12px;">Кого облить <select class="fire-water-target" style="width:100%;"></select></label>
+        <label style="display:block;margin-top:12px;">Кого облить <select class="combat-dialog-select fire-water-target" style="width:100%;"></select></label>
         <button type="button" class="fire-pour btn btn-primary" style="margin-top:10px;">Облить водой · 2 ОД</button>
     </div>`;
     const close = () => modal.remove();
@@ -2636,21 +2646,22 @@ async function showFireAndWaterMenu(character) {
     modal.querySelector('.fire-extinguish').disabled = !(character.effects || []).some(e => e.type === 'burning' && e.active !== false);
     modal.querySelector('.fire-extinguish').onclick = () => perform('extinguish_fire');
     const list = modal.querySelector('.fire-water-items');
-    const water = getCharacterTransferEntries(sheet.data || {}).filter(entry => {
-        const item = entry.item || {};
-        return item.attributes?.consumable?.direct?.satisfy_water === true || /^(вода|water)(\s|$)/i.test(String(item.name || '').trim());
-    });
+    const water = options.water || [];
     water.forEach(entry => {
         const button = document.createElement('button');
         button.type = 'button'; button.className = 'btn btn-secondary';
-        button.textContent = `Взять: ${entry.item.name} · ${entry.rootLabel}`;
+        const source = {pockets:'Карманы',backpack:'Рюкзак',compatible_pouch:'Разгрузка',incompatible_pouch:'Подсумок'}[entry.source] || 'Инвентарь';
+        const extra = [entry.deep_pockets?'Глубокие карманы':'',entry.limb_penalty?'повреждена рука':''].filter(Boolean).join(', ');
+        button.textContent = `Взять: ${entry.name} · ${Number(entry.litres.toFixed(2)).toLocaleString('ru')} л · ${source} · ${entry.action_points} ОД${extra?` (${extra})`:''}`;
         button.disabled = Boolean(character.water_in_hand);
         button.onclick = () => perform('prepare_water', { item_path: entry.path });
         list.appendChild(button);
     });
-    if (!water.length) list.textContent = 'В инвентаре нет воды.';
+    if (!water.length) list.textContent = 'В инвентаре нет доступной воды.';
     const targets = modal.querySelector('.fire-water-target');
-    const available = [character, ...(combatState?.characters || []).filter(target => target.character_id !== character.character_id)];
+    const availableIds = new Set(options.target_ids.map(Number));
+    const available = [character, ...(combatState?.characters || []).filter(target => target.character_id !== character.character_id)]
+        .filter(target => availableIds.has(Number(target.character_id)));
     available.forEach(target => {
         const option = document.createElement('option'); option.value = target.character_id;
         option.textContent = target.character_id === character.character_id ? 'Себя' : target.name || `Персонаж ${target.character_id}`;
@@ -3122,6 +3133,18 @@ function showCombatActionMenu(clientX, clientY, characterId) {
         },
     ];
 
+    if (hasFullAccess && combatCharacter?.body_transport?.target_character_id) {
+        const transport = combatCharacter.body_transport;
+        menuItems.push({label:'Опустить тело',icon:'↓',angle:326,ringRadius:165,
+            title:transport.mode === 'rope' ? 'Отсоединить канат · 1 ОД' : 'Завершить переноску · 0 ОД',
+            action:async()=>{
+                try {
+                    const result=await Server.transportLocationBody(window.currentLobbyId,getCurrentLocationId(),
+                        transport.target_character_id,combatCharacter.location_character_id,'stop');
+                    if(result.state)setCombatState(result.state);
+                } catch(error) {showNotification(error.message,'system');}
+            }});
+    }
     if (condition.state === 'active') {
         if(combatState?.status==='active'&&combatCharacter&&!combatCharacter.is_mutant){
             menuItems.push({label:'Уклонение',key:'evade',actionKey:'evade',icon:'↶',angle:14,ringRadius:165,requiresCombat:true,
@@ -3277,7 +3300,7 @@ function showCombatActionMenu(clientX, clientY, characterId) {
         }
         const hasReserve = Boolean(combatCharacter.reaction_reserve);
         if (isCurrentTurn) {
-            menuItems.push({label:'Огонь и вода', key:'fire_and_water', icon:'♨', angle:230, ringRadius:205,
+            menuItems.push({label:'Тушение огня', key:'fire_and_water', icon:'♨', angle:230, ringRadius:205,
                 requiresCombat:true, action:() => showFireAndWaterMenu(combatCharacter).catch(error => showNotification(error.message,'system'))});
         }
         if(isCurrentTurn&&(combatCharacter.effects||[]).some(e=>e.type==='concussion'&&e.active!==false)){
@@ -4061,7 +4084,7 @@ function showMeleeCombatMenu(characterId) {
             </div>
             <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:9px;">
                 <label style="display:flex;align-items:center;gap:6px;">Рука блока
-                    <select class="form-control melee-block-arm" style="width:auto;">
+                    <select class="combat-dialog-select melee-block-arm" style="width:auto;">
                         <option value="left_arm">Левая</option>
                         <option value="right_arm">Правая</option>
                     </select>
@@ -6901,6 +6924,7 @@ export function applyCharacterFacingVisual(characterId, facingX = 0, facingY = 1
     entry.model.rotation.y = Math.atan2(x, y);
     entry.facingX = x;
     entry.facingY = y;
+    syncPortableLights();
     if (!deferRefresh) applyFogOfWar();
 }
 
@@ -6993,6 +7017,7 @@ export function applyCharacterVisibilityUpdate(characterId, gmHidden) {
 }
 
 export function updateCharacterPosition(characterId, posX, posY, options = {}) {
+    portableLightRenderer?.dirty();
     queueTrueSightRefresh();
     const entry = getCharacterModelEntry(characterId);
     if (!entry) return;
@@ -7939,6 +7964,7 @@ export function setCombatState(state) {
     combatState = state || null;
     refreshSniperCoverMarks();
     window.locationCombatState = combatState;
+    syncPortableLights();
     window.updateCharacterTraitContext?.(combatState?.characters||[]);
     if (combatState?.current_character?.slippery_movement?.forced_from && armedMovementType && armedMovementType !== 'correction') {
         armedMovementType = 'walk';
@@ -7983,6 +8009,7 @@ export function setCombatState(state) {
     });
     invalidateMovementMapCache();
     applyFogOfWar();
+    syncPortableLights();
     showAvailableOpportunityAttack();
     window.dispatchEvent(new CustomEvent('combat-state-updated', { detail: combatState }));
     if (combatActionMenuCharacterId != null && combatActionMenu?.style.display === 'block') {
@@ -10174,6 +10201,21 @@ function showCharacterInteractionMenu(clientX, clientY, targetCharacterId) {
                 run: () => showMedicalConsumableMenu(actorCharacterId, targetCharacterId, actorLocationCharacterId),
             },
         ];
+    const actorCombat = findCombatCharacterByCharacterId(actorCharacterId);
+    const transport = actorCombat?.body_transport;
+    const transportAction = mode => async () => {
+        const result = await Server.transportLocationBody(window.currentLobbyId, getCurrentLocationId(),
+            targetCharacterId, actorLocationCharacterId, mode);
+        if (result.state) setCombatState(result.state);
+        showNotification(mode === 'stop' ? 'Переноска завершена' : 'Переноска начата', 'system');
+    };
+    if (Number(transport?.target_character_id) === Number(targetCharacterId)) {
+        actions.push({icon: '↓', label: transport.mode === 'rope' ? 'Отсоединить канат · 1 ОД' : 'Опустить тело · 0 ОД', run: transportAction('stop')});
+    } else if (['dead', 'critical', 'pain_shock'].includes(condition.state) && !transport?.target_character_id && !targetCombat?.transported_by) {
+        actions.push({icon: '↝', label: 'Начать волочение · 2 ОД', run: transportAction('drag')});
+        actions.push({icon: '⌁', label: 'Присоединить канат · 1 ОД', run: transportAction('rope')});
+        if (actorCombat?.body_transport_methods?.shoulder) actions.push({icon: '↑', label: 'Взвалить на плечо · 2 ОД', run: transportAction('shoulder')});
+    }
     if (condition.state === 'dead' && (targetCombat?.is_mutant || target?.isMutant)) {
         actions.push({
             icon: '◆',
@@ -10907,7 +10949,9 @@ function showObjectContextMenu(clientX, clientY, object) {
     const coverClass = object.properties?.cover_class || 'medium';
     const coverDefaults = COVER_CLASS_DEFAULTS[coverClass] || COVER_CLASS_DEFAULTS.medium;
     const coverHp = object.properties?.cover_hp ?? object.properties?.cover_max_hp ?? coverDefaults.maxHp;
-    const coverProtection = object.properties?.cover_physical_protection ?? coverDefaults.protection;
+    const tree = object.type === 'tree' || /^nature_(?:oak|birch|pine|spruce|poplar|willow)/.test(object.type || '');
+    const coverProtection = object.properties?.cover_physical_protection
+        ?? object.properties?.cover_base_physical_protection ?? (tree ? 20 : coverDefaults.protection);
     const actions = [{
         label: 'Осмотреть',
         action: () => showNotification(
@@ -11842,6 +11886,7 @@ function refreshStaticLightField() {
 }
 
 function queueStaticLightFieldRefresh() {
+    portableLightRenderer?.dirty();
     if (!locationStaticLightField || locationStaticLightFieldRefreshTimer != null) return;
     locationStaticLightFieldRefreshTimer = setTimeout(() => {
         locationStaticLightFieldRefreshTimer = null;
@@ -11972,8 +12017,13 @@ function updateAnomalyRenderLights(now = performance.now(), force = false) {
     });
 }
 
+export function getLocationPortableIllumination(characterId) {
+    return combatState?.characters?.find(character=>Number(character.character_id)===Number(characterId))?.portable_illumination || null;
+}
+
 export function isLocationCharacterInDarkness(characterId) {
     if (!currentLocationData) return null;
+    if (getLocationPortableIllumination(characterId)?.lit) return false;
     const entry = getCharacterModelEntry(characterId);
     if (!entry) return null;
     const x = Math.floor(Number(entry.posX)+.5);
@@ -19323,7 +19373,7 @@ export function addLocationGridButton() {
     sync();
     const group = getLocationViewToggleGroup();
     group.appendChild(btn);
-    for (const id of ['chat-toggle', 'common-tools-toggle']) {
+    for (const id of ['actions-toggle', 'chat-toggle', 'common-tools-toggle']) {
         const launcher = document.getElementById(id);
         if (launcher) group.appendChild(launcher);
     }
@@ -19427,6 +19477,7 @@ export function addLocationFloorMenu() {
 }
 
 export function destroyLocationScene() {
+    portableLightRenderer?.dispose();portableLightRenderer=null;
     visionObjectIndex = null;
     anomalyLabelOcclusionCache = null;
     anomalyLabelVisibilityKey = null;

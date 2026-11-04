@@ -115,6 +115,9 @@ def test_payment_and_loading_roll_back_together(client, loading_case, auth_heade
     assert response.status_code == 400
     assert case['actor_location'].action_points_current == 2
     assert case['actor_location'].free_actions_current == 1
+    history=case['actor_character'].data['health']['combatMeta']['actionJournal']
+    assert len(history)==1 and history[0]['status']=='rejected' and history[0]['action_points']==0
+    before['health'].setdefault('combatMeta',{})['actionJournal']=deepcopy(history)
     assert case['actor_character'].data == before
 
 

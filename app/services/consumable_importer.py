@@ -317,6 +317,7 @@ def parse_consumable_templates_v2(workbook_path: Path) -> List[Dict[str, Any]]:
                 "filter_charges": filter_charges,
                 "durability": filter_charges,
                 "max_durability": filter_charges,
+                "install_action_points": profile['direct'].get('filter_install_action_points', 0),
             })
         templates.append(
             {

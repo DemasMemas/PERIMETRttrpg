@@ -1,5 +1,6 @@
 """M+: адресные медицинские границы. Подготовлено, все случаи NOT_RUN."""
 from copy import deepcopy
+from helpers.journal_assertions import assert_same_game_state
 import sys
 from types import SimpleNamespace
 
@@ -75,7 +76,7 @@ def assert_rejected_unchanged(client, pair, auth_headers, body, monkeypatch, sta
     no_roll(monkeypatch)
     response = apply(client, pair, auth_headers, body)
     assert response.status_code == status, response.get_json()
-    assert saved(pair) == before
+    assert_same_game_state(saved(pair), before)
     assert pair['actor_location'].action_points_current == ap
     assert ConsumableUse.query.count() == 0
 
@@ -159,7 +160,7 @@ def test_medium_bleeding_with_one_bandage_rejects_before_rng_without_receipt(cli
     body = payload(pair, item, selected_bleeding(profile, effect, 1), operation='m-insufficient')
     response = apply(client, pair, auth_headers, body)
     assert response.status_code == 400, response.get_json()
-    assert saved(pair) == before
+    assert_same_game_state(saved(pair), before)
     assert pair['actor_location'].action_points_current == 5
     assert ConsumableUse.query.count() == 0
     assert draws == []
@@ -167,7 +168,7 @@ def test_medium_bleeding_with_one_bandage_rejects_before_rng_without_receipt(cli
     paid = pay_procedure(client, pair, auth_headers, item, selected_bleeding(profile, effect, 1),
                          'm-insufficient-paid', cost=6)
     assert paid.status_code == 400, paid.get_json()
-    assert saved(pair) == before
+    assert_same_game_state(saved(pair), before)
     assert pair['actor_location'].action_points_current == 5
     assert db.session.get(DeferredCombatAction, 'm-insufficient-paid') is None
     assert ConsumableUse.query.count() == 0
@@ -261,7 +262,7 @@ def test_same_medicine_has_exact_dc_and_paid_completion_never_rerolls(client, pa
         assert db.session.get(DeferredCombatAction, operation).status == 'completed'
         before = saved(pair)
         assert apply(client, pair, auth_headers, body).status_code == 409
-        assert saved(pair) == before
+        assert_same_game_state(saved(pair), before)
         assert pair['actor_location'].action_points_current == 1
         assert_receipt(pair, operation)
 
