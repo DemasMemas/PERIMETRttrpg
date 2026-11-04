@@ -68,6 +68,93 @@ def test_anomaly_catalog_has_all_rulebook_entries():
     assert anomaly_profile("mozgotrobilka")["category"] == "psi"
 
 
+@pytest.mark.parametrize('intensity,expected',[(.5,{'electric','gravity'}),(.6,{'electric'})])
+def test_weather_reveals_gm_hidden_outdoor_anomalies_through_api(app,client,intensity,expected):
+    from sqlalchemy.orm.attributes import flag_modified
+    user,location,actor,placed,_=_combat_with_anomaly('batut')
+    db.session.add(LobbyParticipant(lobby_id=location.lobby_id,user_id=user.id))
+    location.tiles_data[2][2]['objects'][0]['gm_hidden']=True
+    flag_modified(location,'tiles_data')
+    rows=[]
+    for key,x,y in [('vspishka',1,1),('batut',4,4),('banya',3,3),('vspishka',0,0)]:
+        obj=LocationObject(location_id=location.id,type='anomaly',tile_x=x,tile_y=y,
+            properties={'anomaly_key':key,'gm_hidden':True})
+        db.session.add(obj);rows.append(obj)
+    db.session.add(LocationObject(location_id=location.id,type='floor',tile_x=0,tile_y=0,
+        properties={'building_id':'weather-room','dimensions':{'width':1,'depth':1},'level':0}))
+    db.session.commit()
+    token=create_access_token(identity=str(user.id))
+    response=client.patch(f'/lobbies/{location.lobby_id}/weather',headers={'Authorization':f'Bearer {token}'},
+        json={'rain':{'enabled':True,'intensity':intensity}})
+    assert response.status_code==200,response.json
+    for obj in rows[:3]:
+        family=anomaly_profile(obj.properties['anomaly_key'])['category']
+        assert obj.properties['gm_hidden']==(family not in expected)
+    assert rows[3].properties['gm_hidden'] is True  # Электрическая в помещении.
+    assert location.tiles_data[2][2]['objects'][0]['gm_hidden']==('gravity' not in expected)
+
+
+@pytest.mark.parametrize('intensity,accuracy,visual,storm,radiation',[
+    (.5,-4,-3,False,1.5),(.6,-4,-4,True,2),
+])
+def test_weather_thresholds_and_indoor_exemption(app,intensity,accuracy,visual,storm,radiation):
+    from app.services.weather_rules import at_character
+    _,location,_,placed,_=_combat_with_anomaly()
+    location.lobby.weather_settings={
+        'sun':{'enabled':True,'intensity':intensity},
+        'rain':{'enabled':True,'intensity':intensity},
+        'fog':{'enabled':True,'intensity':intensity},
+    }
+    weather=at_character(location,placed)
+    assert weather['accuracy']==accuracy
+    assert weather['visual_awareness']==visual
+    assert weather['accuracy_disadvantage']==storm
+    assert weather['radiation_multiplier']==radiation
+    data=deepcopy(placed.character.data)
+    check=CombatService._narrative_skill_check(deepcopy(data),'skills.physical.awareness.visual',weather=weather)
+    assert check['weather_modifier']==visual
+    assert check['weather_disadvantage']==storm
+    db.session.add(LocationObject(location_id=location.id,type='floor',tile_x=placed.pos_x,tile_y=placed.pos_y,
+        properties={'building_id':'weather-room','dimensions':{'width':2,'depth':2}}))
+    db.session.flush()
+    sheltered=at_character(location,placed)
+    assert sheltered['accuracy']==0 and sheltered['visual_awareness']==0
+    assert sheltered['radiation_multiplier']==1 and not sheltered['accuracy_disadvantage']
+
+
+def test_rain_only_amplifies_external_radiation(app):
+    from app.services.weather_rules import profile
+    _,location,_,placed,_=_combat_with_anomaly()
+    location.lobby.weather_settings={'rain':{'enabled':True,'intensity':.5}}
+    data={'health':{'radiation':0},'equipment':{}}
+    result=CombatService._apply_incoming_radiation(data,10,target=placed)
+    assert result['received']==15 and result['weather_multiplier']==1.5
+    # Внутреннее облучение артефактами проходит по прежнему отдельному пути.
+    data={'health':{'radiation':0},'equipment':{}}
+    assert CombatService._apply_incoming_radiation(data,10)['received']==10
+    assert profile({'sun':{'enabled':False,'intensity':0}})['visual_awareness']==0
+
+
+@pytest.mark.parametrize('indoors',[False,True])
+def test_character_sheet_skill_check_applies_weather_and_explains_it(app,client,indoors):
+    user,location,actor,placed,_=_combat_with_anomaly()
+    db.session.add(LobbyParticipant(lobby_id=location.lobby_id,user_id=user.id))
+    location.lobby.weather_settings={'sun':{'enabled':True,'intensity':.5},
+        'rain':{'enabled':True,'intensity':.6},'fog':{'enabled':True,'intensity':.6}}
+    if indoors:
+        db.session.add(LocationObject(location_id=location.id,type='floor',tile_x=placed.pos_x,tile_y=placed.pos_y,
+            properties={'building_id':'sheet-weather-room','dimensions':{'width':2,'depth':2}}))
+    db.session.commit()
+    token=create_access_token(identity=str(user.id))
+    response=client.post(f'/lobbies/characters/{actor.id}/skill-check',headers={'Authorization':f'Bearer {token}'},
+        json={'skill_path':'skills.physical.awareness.visual','difficulty':12,'operation_id':'sheet-weather'})
+    assert response.status_code==200,response.json
+    check=response.json['check']
+    assert check['weather_modifier']==(0 if indoors else -5)
+    assert check['weather_disadvantage']==(not indoors)
+    assert ('Ливень: Помеха' in check['rules'])==(not indoors)
+
+
 def test_anomaly_is_passable_and_stops_route_on_first_anomaly(app):
     user, location, actor, placed, _ = _combat_with_anomaly()
     assert CombatService._object_movement_profile({"type": "anomaly"})["blocked"] is False

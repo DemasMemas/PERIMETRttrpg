@@ -104,9 +104,13 @@ def run(character_id,user_id,payload):
             'skill_path':path,'skill_label':CombatService.NARRATIVE_SKILLS[path],'difficulty':difficulty,'rules':modifiers['rules']}
     else:
         from app.services.lighting_rules import world_is_dark
+        from app.services.weather_rules import at_character,profile as weather_profile
+        weather=at_character(active.location,active) if active else weather_profile(actor.lobby.weather_settings)
         darkness=CombatService._is_dark_at_character(active.location,active) if active and path in {'skills.physical.awareness.visual','skills.physical.shooting','skills.other.stealth'} else world_is_dark(actor.lobby.game_time_minutes)
         check=CombatService._narrative_skill_check(data,path,advantage=modifiers['advantage'],forced_disadvantage=modifiers['disadvantage'],
-            charisma_level_delta=modifiers['charisma_level'],roll_bonus=roll_bonus,darkness=darkness)
+            charisma_level_delta=modifiers['charisma_level'],roll_bonus=roll_bonus,darkness=darkness,weather=weather)
+        if check.get('weather_modifier'):modifiers['rules'].append(f"Погода на улице: {check['weather_modifier']:+d}")
+        if check.get('weather_disadvantage'):modifiers['rules'].append('Ливень: Помеха')
         check.update(difficulty=difficulty,success=not check.get('automatic_failure') and check['total']>=difficulty,rules=modifiers['rules'])
         if lie_check:check['will_check']=lie_check
         if path=='skills.social.deception':memory['firstLieUsed']=True

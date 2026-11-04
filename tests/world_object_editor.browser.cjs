@@ -278,6 +278,10 @@ if(typeof renderFacingPreview==='function'){const original=renderFacingPreview;r
             await require('./health_audit.browser.cjs')({page,request,token,lobby,login,profile,base,connect,debugPort,safeSession});
             return;
         }
+        if (safeSession && process.env.VTT_SAFE_SCENARIO === 'weather') {
+            await require('./weather.browser.cjs')({page,request,token,lobby,base,connect,debugPort,safeSession});
+            return;
+        }
         if (safeSession && process.env.VTT_SAFE_SCENARIO === 'morning-answers') {
             await require('./morning_answers.browser.cjs')({page,request,token,lobby,base,connect,debugPort,safeSession});
             return;

@@ -512,6 +512,8 @@ def _advance_world_time(lobby, minutes):
         + minutes
     )
     lobby.game_day, lobby.game_time_minutes = divmod(absolute_minutes, 1440)
+    from app.services.weather_rules import advance as advance_weather
+    advance_weather(lobby,absolute_minutes-minutes,absolute_minutes)
     group_member_ids = {
         int(character_id)
         for group in WorldGroup.query.filter_by(lobby_id=lobby.id).all()
@@ -594,6 +596,8 @@ def _serialize_world_turn(lobby):
 
 
 def _emit_world_time_updates(lobby, characters):
+    from app.services.weather_rules import emit as emit_weather
+    emit_weather(lobby)
     payload = {
         'game_day': lobby.game_day,
         'game_time_minutes': lobby.game_time_minutes,
@@ -1065,6 +1069,7 @@ def move_world_group(lobby_id, group_id, lobby, participant):
             character_data,
             destination_radiation,
             binary=True,
+            lobby=lobby,
         )
         pain_recovery = CombatService._recover_world_travel_pain(character_data)
         artifact_result = apply_artifact_world_movement(character_data)
@@ -1116,10 +1121,17 @@ def move_world_group(lobby_id, group_id, lobby, participant):
     else:
         outcome = roll_travel_event(travel_scenario(lobby_id, actual_tile_x, actual_tile_y))
         if outcome:
+            weather_change=None
+            outcome_key=getattr(outcome,'key',None)
+            if outcome_key in {'weather','weather_decrease'}:
+                from app.services.weather_rules import change as change_weather
+                weather_change=change_weather(lobby,.5)
+                weather_label={'sun':'Ясность неба','rain':'Дождь','fog':'Туман'}[weather_change['parameter']]
             event = WorldTravelEvent(
                 lobby_id=lobby_id,
                 group_id=group.id,
-                description=f'{outcome.name}: {outcome.prompt}',
+                description=(f'{outcome.name}: {outcome.prompt}' +
+                    (f" {weather_label}: {weather_change['before']:.1f} → {weather_change['after']:.1f}." if weather_change else '')),
                 from_tile_x=from_x,
                 from_tile_y=from_y,
                 to_tile_x=actual_tile_x,
@@ -1139,6 +1151,9 @@ def move_world_group(lobby_id, group_id, lobby, participant):
         if time_advanced else None
     )
     if not time_advanced:
+        if event and not placed_event and outcome and outcome_key in {'weather','weather_decrease'}:
+            from app.services.weather_rules import emit as emit_weather
+            emit_weather(lobby)
         for character in travel_updated_characters:
             emit_character_update(
                 {
@@ -1291,6 +1306,8 @@ def update_lobby_time(lobby_id, lobby):
     portable_updated.extend(advance_prostheses(lobby,elapsed_seconds))
     lobby.game_day = game_day
     lobby.game_time_minutes = game_time_minutes
+    from app.services.weather_rules import advance as advance_weather
+    advance_weather(lobby,previous_absolute_minutes,next_absolute_minutes)
     updated_characters = list(portable_updated)
     if elapsed_seconds > 0:
         for character in LobbyCharacter.query.filter_by(
@@ -1319,6 +1336,8 @@ def update_lobby_time(lobby_id, lobby):
             updated_characters.append(character)
     db.session.commit()
     payload = {'game_day': game_day, 'game_time_minutes': game_time_minutes}
+    from app.services.weather_rules import emit as emit_weather
+    emit_weather(lobby)
     socketio.emit('lobby_time_updated', payload, room=f"lobby_{lobby_id}")
     for character in updated_characters:
         emit_character_update(
@@ -1493,6 +1512,8 @@ def start_lobby_rest(lobby_id, lobby):
         + hours * 60
     )
     lobby.game_day, lobby.game_time_minutes = divmod(absolute_minutes, 1440)
+    from app.services.weather_rules import advance as advance_weather
+    advance_weather(lobby,absolute_minutes-hours*60,absolute_minutes)
     summaries = []
     from app.services.portable_lights import advance_lobby
     portable_updated=advance_lobby(lobby,elapsed_seconds)
@@ -1563,6 +1584,8 @@ def start_lobby_rest(lobby_id, lobby):
         'game_time_minutes': lobby.game_time_minutes,
     }
     socketio.emit('lobby_time_updated', time_payload, room=f"lobby_{lobby_id}")
+    from app.services.weather_rules import emit as emit_weather
+    emit_weather(lobby)
     for character in {item.id:item for item in [*characters,*portable_updated]}.values():
         emit_character_update(
             {
@@ -2288,9 +2311,12 @@ def update_weather(lobby_id, lobby):
         generation += 1
     data['emission_generation'] = generation
     lobby.weather_settings = data
+    from app.services.weather_rules import reveal as reveal_weather
+    reveal_weather(lobby)
     db.session.commit()
 
-    socketio.emit('weather_updated', data, room=f"lobby_{lobby_id}")
+    from app.services.weather_rules import emit as emit_weather
+    emit_weather(lobby,force=True)
     return jsonify({'message': 'Weather updated'}), 200
 
 @lobbies_bp.route('/joined', methods=['GET'])
@@ -2748,6 +2774,8 @@ def add_location_object(lobby_id, location_id, lobby):
         properties=data.get('properties', {})
     )
     db.session.add(obj)
+    from app.services.weather_rules import unhide
+    unhide(location,obj)
     db.session.commit()
     payload = schema.dump(obj)
     socketio.emit('location_object_created', {
@@ -2908,6 +2936,8 @@ def change_location_objects_batch(lobby_id, location_id, lobby):
         for obj in deleted:
             db.session.delete(obj)
     phase = perf_counter()
+    from app.services.weather_rules import unhide
+    for obj in created:unhide(location,obj)
     db.session.commit()
     timings['persist_ms'] = (perf_counter() - phase) * 1000
     phase = perf_counter()
@@ -3035,6 +3065,9 @@ def update_location_object(lobby_id, object_id, lobby, participant):
         obj.tile_y = data['tile_y']
     if 'properties' in data and isinstance(data['properties'], dict):
         obj.properties = {**(obj.properties or {}), **data['properties']}
+    if obj.type=='anomaly' and (obj.properties or {}).get('gm_hidden'):
+        from app.services.weather_rules import should_reveal
+        if should_reveal(location,obj):obj.properties={**obj.properties,'gm_hidden':False}
     db.session.commit()
 
     payload = LocationObjectSchema().dump(obj)

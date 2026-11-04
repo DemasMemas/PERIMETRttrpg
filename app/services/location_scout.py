@@ -81,7 +81,8 @@ def inspect(actor,choice,*,remote=False):
         item_bonus=C._coerce_int(item.get('scouting_bonus',attrs.get('scouting_bonus')),15 if 'бинок' in str(item.get('name','')).casefold() else 0)
         if item_bonus not in {15,25}:raise ValidationError('Выберите бинокль с бонусом осмотра 15 или 25')
     awareness=C._base_skill_modifier(data,'skills.physical.awareness');tactics=C._base_skill_modifier(data,'skills.other.tactics')
-    check=C._narrative_skill_check(data,'skills.physical.awareness.visual',darkness=C._is_dark_at_character(actor.location,actor))
+    from app.services.weather_rules import at_character
+    check=C._narrative_skill_check(data,'skills.physical.awareness.visual',darkness=C._is_dark_at_character(actor.location,actor),weather=at_character(actor.location,actor))
     difficulty=20-awareness-tactics-item_bonus
     total=check['total']-awareness
     success=not check.get('automatic_failure') and total>=difficulty

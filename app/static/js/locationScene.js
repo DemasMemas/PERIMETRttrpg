@@ -1,5 +1,6 @@
 import { terrainLineHit, terrainOpeningAt } from './terrainLineOfSight.js';
 import { createPortableLightRenderer } from './portableLights.js';
+import { createLocationWeather } from './locationWeather.js';
 import { hearingModifier } from './hearingRules.js';
 import { buildMovementSurfaceCosts, ordinaryHeightTransitionAllowed } from './movementSurfaceCosts.js';
 import { syncWorldNumber } from './worldNumericInputs.js';
@@ -258,6 +259,8 @@ let lampPreviewGroup = null;
 let lampPreviewLights = null;
 let lampRenderSources = [];
 let portableLightRenderer = null;
+let locationWeather = null;
+export function applyLocationWeather() { locationWeather?.apply(window.weatherSettings); }
 
 function syncPortableLights() {
     if (!scene) return;
@@ -8504,6 +8507,15 @@ export function initLocationScene(containerId) {
     // Сцена
     scene = new THREE.Scene();
     scene.background = new THREE.Color(0x111122);
+    locationWeather = createLocationWeather(THREE, scene, {
+        bounds: () => ({width: currentLocationData?.grid_width || 1, height: currentLocationData?.grid_height || 1,
+            centerX: controls?.target.x, centerZ: controls?.target.z}),
+        terrain: getTileHeight,
+        blockers: () => [...roofMeshes, ...locationObjectMeshes.filter(root =>
+            ['floor', 'roof', 'ceiling'].includes(root.userData.locationObject?.type))],
+    });
+    applyLocationWeather();
+    window.getLocationWeatherDiagnostics = point => locationWeather?.diagnostics(point) || null;
     window.getLocationGrassDiagnostics = getLocationGrassDiagnostics;
     window.setLocationLightingPreset = setLocationLightingPreset;
     window.getLocationLightingPreset = getLocationLightingPreset;
@@ -8596,6 +8608,7 @@ export function initLocationScene(containerId) {
         flushPendingTerrainRefresh();
         updateLocationCameraMovement(deltaSeconds);
         if (controls) controls.update();
+        locationWeather?.update(deltaSeconds, movementMapVersion);
         updateAnomalyRenderLights(frameTime);
         updateLampPreviewLights();
         const roofStartedAt = profiling ? performance.now() : 0;
@@ -16369,7 +16382,7 @@ function* buildLocationStages(data) {
     const toRemove = [];
     scene.children.forEach(child => {
         if (!child.isLight && child !== highlightBox && child !== locationLightGroup
-            && child !== locationDirectionalLight?.target) toRemove.push(child);
+            && !child.userData.locationWeather && child !== locationDirectionalLight?.target) toRemove.push(child);
     });
     toRemove.forEach(child => {
         disposeObject(child);
@@ -19500,6 +19513,7 @@ export function addLocationFloorMenu() {
 }
 
 export function destroyLocationScene() {
+    locationWeather?.dispose(); locationWeather = null;
     portableLightRenderer?.dispose();portableLightRenderer=null;
     visionObjectIndex = null;
     anomalyLabelOcclusionCache = null;

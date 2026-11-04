@@ -176,6 +176,72 @@ def time_case(client, create_user, auth_headers):
     return _setup_pair(client, create_user, auth_headers)
 
 
+def test_weather_changes_once_per_game_hour_and_preserves_emission(client,time_case,auth_headers,monkeypatch):
+    import app.services.weather_rules as weather
+    end_combat(client,time_case,auth_headers)
+    lobby=time_case['lobby']
+    lobby.game_time_minutes=59
+    lobby.weather_settings={'rain':{'enabled':False,'intensity':.2},'emission':{'enabled':True,'intensity':.8}}
+    db.session.commit()
+    choices=iter(['rain',1,'rain',1])
+    monkeypatch.setattr(weather.random,'choice',lambda _:next(choices))
+    advance_global_minutes(client,time_case,auth_headers,1)
+    assert lobby.weather_settings['rain']=={'enabled':True,'intensity':.3}
+    advance_global_minutes(client,time_case,auth_headers,59)
+    assert lobby.weather_settings['rain']['intensity']==.3
+    advance_global_minutes(client,time_case,auth_headers,1)
+    assert lobby.weather_settings['rain']['intensity']==.4
+    assert lobby.weather_settings['emission']=={'enabled':True,'intensity':.8}
+
+
+def test_travel_weather_step_enables_one_parameter_and_clamps(time_case):
+    from app.services.weather_rules import change
+    class Choices:
+        def __init__(self,*values):self.values=iter(values)
+        def choice(self,_):return next(self.values)
+    lobby=time_case['lobby']
+    lobby.weather_settings={'sun':{'enabled':False,'intensity':.7},'rain':{'enabled':False,'intensity':.1}}
+    changed=change(lobby,.5,rng=Choices('sun',1))
+    assert changed=={'parameter':'sun','before':.7,'after':1,'delta':.3}
+    assert lobby.weather_settings['sun']['enabled']
+    assert lobby.weather_settings['rain']=={'enabled':False,'intensity':.1}
+
+
+@pytest.mark.parametrize('key',['weather','weather_decrease'])
+def test_actual_world_travel_event_changes_weather_instead_of_only_text(client,time_case,auth_headers,monkeypatch,key):
+    from app.services.world_travel_events import OUTCOMES
+    from app.models import WorldTravelEvent
+    import app.services.weather_rules as weather
+    end_combat(client,time_case,auth_headers)
+    lobby=time_case['lobby'];headers=auth_headers(time_case['actor_user'])
+    lobby.game_time_minutes=480
+    lobby.weather_settings={'rain':{'enabled':False,'intensity':.1}}
+    db.session.commit()
+    group=client.post(f'/lobbies/{lobby.id}/world-groups',headers=headers,
+        json={'name':'Погодный переход','tile_x':5,'tile_y':5}).get_json()
+    monkeypatch.setattr('app.lobbies.roll_travel_event',lambda _:next(o for o in OUTCOMES if o.key==key))
+    choices=iter(['rain',1]);monkeypatch.setattr(weather.random,'choice',lambda _:next(choices))
+    response=client.post(f'/lobbies/{lobby.id}/world-groups/{group["id"]}/move',headers=headers,json={'tile_x':6,'tile_y':5})
+    assert response.status_code==200,response.json
+    db.session.refresh(lobby)
+    assert lobby.weather_settings['rain']=={'enabled':True,'intensity':.6}
+    event=WorldTravelEvent.query.filter_by(group_id=group['id']).one()
+    assert 'Дождь: 0.1 → 0.6' in event.description
+
+
+def test_rest_crosses_every_hour_for_weather(client,time_case,auth_headers,monkeypatch):
+    import app.services.weather_rules as weather
+    end_combat(client,time_case,auth_headers)
+    lobby=time_case['lobby'];lobby.game_time_minutes=59
+    lobby.weather_settings={'fog':{'enabled':False,'intensity':.5}};db.session.commit()
+    choices=iter(['fog',1,'fog',-1]*4);monkeypatch.setattr(weather.random,'choice',lambda _:next(choices))
+    response=client.post(f'/lobbies/{lobby.id}/rest',headers=auth_headers(time_case['actor_user']),
+        json={'type':'sleep','character_ids':[time_case['actor_character'].id]})
+    assert response.status_code==200,response.json
+    assert lobby.weather_settings['fog']=={'enabled':True,'intensity':.5}
+    assert list(choices)==[]  # Все восемь часовых границ обработаны, не только последняя.
+
+
 def seed_initial_health(character, effects, *, stress=0, time_active=True):
     # Вызывается только для исходного состояния до тестируемых игровых действий.
     data = deepcopy(character.data)

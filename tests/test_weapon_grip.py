@@ -261,6 +261,41 @@ def test_simultaneous_fire_pays_once_and_fires_both_with_disadvantage(client,gre
     assert [weapon['ammo'] for weapon in actor.character.data['weapons']]==[4,4]
 
 
+@pytest.mark.parametrize('feature,category,penalty,rolls',[
+    ('Амбидекстр','Пистолеты',0,1),('Гангстер','Пистолеты-пулеметы',0,1),
+    ('Гангстер','Пистолеты',2,2),
+])
+def test_trait_pair_removes_only_its_accuracy_and_disadvantage(client,grenade_game,auth_headers,monkeypatch,feature,category,penalty,rolls):
+    actor=make_pair(client,grenade_game,auth_headers);target=grenade_game['target_location']
+    data=deepcopy(actor.character.data)
+    if feature=='Амбидекстр':data['features']={'specialTraits':[{'name':feature}]}
+    else:data.setdefault('basic',{})['background']={'name':feature}
+    for weapon in data['weapons']:weapon['subcategory']=category
+    actor.character.data=data;flag_modified(actor.character,'data')
+    target.pos_x,target.pos_y=actor.pos_x+1,actor.pos_y;db.session.commit()
+    assert CombatService._weapon_strength_profile(actor,actor.character.data['weapons'][0])['effective_required']==18
+    monkeypatch.setattr('app.services.combat.random.randint',lambda a,b:min(b,max(a,10)))
+    result=CombatService.perform_action(actor.location_id,grenade_game['lobby'].gm_id,actor.id,'attack',
+        weapon_index=0,fire_mode='unaimed',shot_count=1,action_points=2 if category=='Пистолеты-пулеметы' else 1,target_character_id=target.character_id,
+        attribute_choice='paired_fire')
+    assert all(item['paired_weapon_accuracy_penalty']==penalty for item in result['attack']['paired_attacks'])
+    assert all(len(hit['rolls'])==rolls for hit in result['attack']['results'])
+
+
+def test_ambidextrous_pair_does_not_cancel_downpour_disadvantage(client,grenade_game,auth_headers,monkeypatch):
+    actor=make_pair(client,grenade_game,auth_headers);target=grenade_game['target_location']
+    data=deepcopy(actor.character.data);data['features']={'specialTraits':[{'name':'Амбидекстр'}]}
+    actor.character.data=data;flag_modified(actor.character,'data')
+    grenade_game['lobby'].weather_settings={'rain':{'enabled':True,'intensity':.6}}
+    target.pos_x,target.pos_y=actor.pos_x+1,actor.pos_y;db.session.commit()
+    monkeypatch.setattr('app.services.combat.random.randint',lambda a,b:min(b,max(a,10)))
+    result=CombatService.perform_action(actor.location_id,grenade_game['lobby'].gm_id,actor.id,'attack',
+        weapon_index=0,fire_mode='unaimed',shot_count=1,action_points=1,target_character_id=target.character_id,
+        attribute_choice='paired_fire')
+    assert all(len(hit['rolls'])==2 for hit in result['attack']['results'])
+    assert all(item['weather']['accuracy_disadvantage'] for item in result['attack']['paired_attacks'])
+
+
 @pytest.mark.parametrize('invalid',['aimed','empty_second','wrong_cost'])
 def test_simultaneous_fire_validates_both_before_payment(client,grenade_game,auth_headers,invalid):
     from app.services.exceptions import ValidationError
@@ -349,15 +384,19 @@ def test_pair_rejects_reload_cycle_and_free_grip_change_without_payment(client,g
     assert actor.character.data['weapons'][0]['ammo']==5
 
 
-def test_two_knives_use_five_percent_strength_and_sum_block_sizes(client,grenade_game,auth_headers,monkeypatch):
+@pytest.mark.parametrize('ambidextrous,damage',[(False,156),(True,188)])
+def test_two_knives_use_five_percent_strength_and_sum_block_sizes(client,grenade_game,auth_headers,monkeypatch,ambidextrous,damage):
     actor=make_pair(client,grenade_game,auth_headers,melee=True);target=grenade_game['target_location']
+    if ambidextrous:
+        data=deepcopy(actor.character.data);data['features']={'specialTraits':[{'name':'Амбидекстр'}]}
+        actor.character.data=data;flag_modified(actor.character,'data')
     target_data=deepcopy(target.character.data);target_data['health'].update(current=700,max=700)
     target.character.data=target_data;flag_modified(target.character,'data')
     target.pos_x,target.pos_y=actor.pos_x+1,actor.pos_y;db.session.commit()
     monkeypatch.setattr('app.services.combat.random.randint',lambda a,b:min(b,max(a,10)))
     result=CombatService.perform_action(actor.location_id,grenade_game['lobby'].gm_id,actor.id,'attack',
         weapon_index=1,attack_type='Колющий',target_character_id=target.character_id)
-    assert result['attack']['results'][0]['damage']==156  # Колющий 125, затем +25% за Силу при парном хвате.
+    assert result['attack']['results'][0]['damage']==damage  # Колющий 125, +25% за Силу; Амбидекстр +50%.
     block=CombatService.perform_action(actor.location_id,grenade_game['lobby'].gm_id,actor.id,'melee_block',action_points=1)
     assert block['character']['melee_block_effectiveness']==10  # 2 за ОД, 5 за Силу, 1+2 за размеры.
 

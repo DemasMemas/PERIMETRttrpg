@@ -136,6 +136,7 @@ def firearm_penalty(actor,weapon):
     from app.services.combat import CombatService
     weapons=pair(actor)
     if not weapons or any(melee(item) for item in weapons):return 0
+    if ignores_pair_penalties(actor,weapon):return 0
     if revolver(weapon):return 3
     return {'pistol':2,'submachine_gun':4}.get(CombatService._weapon_class(weapon),5)
 
@@ -143,6 +144,14 @@ def firearm_penalty(actor,weapon):
 def revolver(weapon):
     from app.services.combat import CombatService
     return 'револьвер' in (CombatService._weapon_subcategory(weapon)+' '+str(weapon.get('name') or '')).casefold()
+
+
+def ignores_pair_penalties(actor,weapon):
+    from app.services.character_traits import trait_count,background_is
+    from app.services.combat import CombatService
+    data=actor.character.data or {}
+    return bool(trait_count(data,'Амбидекстр') or background_is(data,'Гангстер')
+                and CombatService._weapon_class(weapon)=='submachine_gun')
 
 
 def minimum_strength(weapon):

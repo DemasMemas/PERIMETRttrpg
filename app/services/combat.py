@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from app.extensions import db
 from app.models import Location, LocationCharacter, LocationCombatState, LobbyParticipant, LobbyCharacter, LocationObject
 from app.services.lighting_rules import location_is_dark
+from app.services.weather_rules import at_character as weather_at,profile as weather_profile
 from app.services.action_journal import journaled
 from app.models.templates import ItemTemplate
 from app.services.exceptions import NotFoundError, PermissionDenied, ValidationError
@@ -2346,7 +2347,7 @@ class CombatService:
         )
 
     @staticmethod
-    def _narrative_skill_check(character_data, skill_path, advantage=False, darkness=False,roll_bonus=0,forced_disadvantage=False,charisma_level_delta=0):
+    def _narrative_skill_check(character_data, skill_path, advantage=False, darkness=False,roll_bonus=0,forced_disadvantage=False,charisma_level_delta=0,weather=None):
         if skill_path not in CombatService.NARRATIVE_SKILLS:
             raise ValidationError("Unknown skill")
         from app.services.brigadier_order import consume
@@ -2401,7 +2402,11 @@ class CombatService:
                 equipment_modifier += CombatService._consumable_stat_value_bonus(
                     character_data, 'darkness_awareness' if darkness else 'light_awareness',
                 )
-        disadvantage = forced_disadvantage or CombatService._has_roll_disadvantage(
+        weather=weather or {}
+        weather_modifier=weather.get('visual_awareness' if awareness_mode=='visual' else 'awareness',0) if skill_path=='skills.physical.awareness' else weather.get('accuracy',0) if skill_path=='skills.physical.shooting' else 0
+        weather_disadvantage=weather.get('awareness_disadvantage',False) if skill_path=='skills.physical.awareness' else weather.get('accuracy_disadvantage',False) if skill_path=='skills.physical.shooting' else False
+        status_modifier+=weather_modifier
+        disadvantage = forced_disadvantage or weather_disadvantage or CombatService._has_roll_disadvantage(
             character_data, skill_path, darkness=darkness and (awareness_mode == 'visual' or skill_path=='skills.physical.shooting'),
         )
         advantage = bool(
@@ -2443,6 +2448,7 @@ class CombatService:
             'darkness': bool(darkness) if awareness_mode == 'visual' else None,
             'deafness': deafness,
             'hearing_modifier': hearing_penalty,
+            'weather_modifier':weather_modifier,'weather_disadvantage':bool(weather_disadvantage),
             'automatic_failure': hearing_blocked,
             'failure_reason': 'Персонаж не слышит' if hearing_blocked else None,
             'effective_value': effective_value,
@@ -5305,8 +5311,12 @@ class CombatService:
         return total
 
     @staticmethod
-    def _apply_incoming_radiation(character_data, incoming, *, binary=False,target=None):
+    def _apply_incoming_radiation(character_data, incoming, *, binary=False,target=None,lobby=None):
         incoming = max(0.0, CombatService._coerce_float(incoming, 0))
+        original_incoming=incoming
+        weather=weather_at(getattr(target,'location',None),target) if target is not None else weather_profile(lobby.weather_settings) if lobby is not None else {}
+        weather_multiplier=weather.get('radiation_multiplier',1)
+        incoming*=weather_multiplier
         protection = CombatService._equipped_radiation_protection(character_data,target) if background_is(character_data,'Стойкий') else CombatService._equipped_radiation_protection(character_data)
         required_protection = incoming * 10
         equipment_received = (
@@ -5330,6 +5340,7 @@ class CombatService:
         threshold_result = CombatService._apply_radiation_threshold_states(health)
         return {
             'incoming': incoming,
+            'original_incoming':original_incoming,'weather_multiplier':weather_multiplier,
             'protection': protection,
             'required_protection': required_protection,
             'equipment_received': equipment_received,
@@ -7924,6 +7935,8 @@ class CombatService:
             from app.services.character_traits import target_attack_accuracy
             difficulty-=target_attack_accuracy(attacker_data,target_data,ranged=False)
             difficulty+=evasion_penalty(target_data)
+            weather=weather_at(getattr(attacker,'location',None),attacker)
+            difficulty-=weather['accuracy']
             automatic_hit = bool(attack_details.get('automatic_hit'))
             rolls = (
                 []
@@ -7932,6 +7945,7 @@ class CombatService:
             )
             has_disadvantage = bool(
                 attack_details.get('melee_disadvantage')
+                or weather['accuracy_disadvantage']
                 or CombatService._has_roll_disadvantage(
                     attacker_data, 'skills.physical.melee'
                 )
@@ -7966,6 +7980,7 @@ class CombatService:
                 'difficulty': difficulty,
                 'hit': hit,
                 'mode': 'melee',
+                'weather': weather,
                 'target_character_id': target_character_id,
                 'target_name': target_name,
                 'stress_check_modifier': stress_check_modifier,
@@ -8024,7 +8039,7 @@ class CombatService:
             if not profile.get('skip_strength_scaling'):
                 from app.services.weapon_grip import pair,melee as melee_weapon
                 paired=pair(attacker)
-                coefficient=.05 if paired and all(melee_weapon(item) for item in paired) else .1
+                coefficient=.05 if paired and all(melee_weapon(item) for item in paired) and not trait_count(attacker_data,'Амбидекстр') else .1
                 profile['damage'] *= max(0, 1 + coefficient * strength_bonus)
             if attack_details.get('swing_bonus'):
                 profile['damage'] *= 1.25
@@ -10260,7 +10275,7 @@ class CombatService:
         radiation = CombatService._coerce_float(profile.get('radiation'), 0) * fraction
         if radiation:
             radiation_result = CombatService._apply_incoming_radiation(
-                data, radiation, binary=False,
+                data, radiation, binary=False,target=loc_char,
             )
             health = data.setdefault('health', {})
             result['radiation'] = radiation_result
@@ -14173,7 +14188,11 @@ class CombatService:
                         disadvantage = True
                 difficulty = max(1, round(difficulty))
                 roll_kind = 'shooting'
+            weather=weather_at(location,character)
+            difficulty-=weather['accuracy']
+            disadvantage=disadvantage or weather['accuracy_disadvantage']
             explosive_details = {
+                'weather':weather,
                 'source': source,
                 'fire_mode': mode if source != 'hand' else None,
                 'fuse_mode': fuse_mode if source == 'hand' else None,
@@ -15671,6 +15690,11 @@ class CombatService:
             attack_details['weapon_accuracy']=weapon_accuracy
             attack_details['module_conditional_accuracy']=module_accuracy
             hit_difficulty = 12 - shooting_bonus - weapon_accuracy
+            weather=weather_at(location,character)
+            hit_difficulty-=weather['accuracy']
+            attack_details['weather']=weather
+            if weather['accuracy_disadvantage']:
+                attack_details['shooting_disadvantage']=attack_details['base_shooting_disadvantage']=True
             hit_difficulty-=portable_profile['accuracy']
             if portable_profile['lit'] and CombatService._is_dark_at_position(location,facing_target_x,facing_target_y) and not uses_nvg(data):
                 hit_difficulty+=0 if portable_profile.get('improved') else 3
@@ -15785,7 +15809,9 @@ class CombatService:
                     if fire_mode in {'area','suppression'} and not fire_profile.get('supports_area_fire' if fire_mode=='area' else 'supports_suppression'):
                         raise ValidationError('Общий режим недоступен одному из оружий')
                     details=prepare_firearm(index,paired_shots,action_points,volley_count,target_character_ids,area_center_x,area_center_y,paired_fire=True)
-                    details['shooting_disadvantage']=details['base_shooting_disadvantage']=True
+                    from app.services.weapon_grip import ignores_pair_penalties
+                    if not ignores_pair_penalties(character,data['weapons'][index]):
+                        details['shooting_disadvantage']=details['base_shooting_disadvantage']=True
                     details['paired_fire']=True
                     prepared_attacks.append(details)
                 priced=min(prepared_attacks,key=lambda details:(details['ergonomics']['value'],-details['action_points']))
@@ -16443,6 +16469,7 @@ class CombatService:
                         advantage=bool(help_bonus),
                         darkness=CombatService._is_dark_at_character(location, character),
                         roll_bonus=CombatService._coerce_int((help_bonus or {}).get('roll_bonus'),0),
+                        weather=weather_at(location,character),
                     )
                     if help_bonus:
                         narrative_action_details['help'] = help_bonus
@@ -16484,6 +16511,7 @@ class CombatService:
                     check = CombatService._narrative_skill_check(
                         data, must_do_details['skill_path'],
                         darkness=CombatService._is_dark_at_character(location, character),
+                        weather=weather_at(location,character),
                     )
                     check['difficulty'] = CombatService._coerce_int(
                         must_do_details['difficulty'], 1,

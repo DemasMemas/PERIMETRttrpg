@@ -200,6 +200,17 @@ def apply_object_edit(location_id, lobby_id, data):
                 if type(revision) is not int or revision < 1:
                     raise ValidationError('Restoration requires the original revision')
                 restored_revisions.append((obj, revision + 1))
+    from app.services.weather_rules import unhide,unhide_tile
+    peers=[o for o in existing.values() if o.id not in removed]+[o for o in saved if o.id not in existing]
+    for obj in saved:unhide(location,obj,objects=peers)
+    for item in tiles:
+        x,z=item['x'],item['z']
+        unhide_tile(location,next_tiles[z][x],x,z,peers)
+        item['after']=deepcopy(next_tiles[z][x]['objects'])
+    for item in terrain_cells:
+        x,z=item['x'],item['z']
+        unhide_tile(location,next_tiles[z][x],x,z,peers)
+        item['after']=deepcopy(next_tiles[z][x])
     try:
         # JSON columns have no ORM revision. Compare-and-swap protects against
         # concurrent tile/light writes without changing the save format.

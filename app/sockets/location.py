@@ -369,11 +369,16 @@ def handle_update_location_tiles(data):
 
     if changed:
         location.tiles_data = tiles
+        from app.services.weather_rules import unhide_tile
+        weather_revealed=False
+        for cell in changed:
+            weather_revealed=unhide_tile(location,tiles[cell['z']][cell['x']],cell['x'],cell['z']) or weather_revealed
+            cell['objects']=tiles[cell['z']][cell['x']].get('objects')
         flag_modified(location, "tiles_data")
         db.session.commit()
         socketio.emit('location_tiles_updated', {
             'location_id': location_id,
             'updates': changed,
         }, room=f"location_{location_id}",
-            skip_sid=getattr(request, 'sid', None) if has_request_context() else None)
+            skip_sid=getattr(request, 'sid', None) if has_request_context() and not weather_revealed else None)
         logger.info(f"Location {location_id} tiles updated by GM {user.id}")
