@@ -155,12 +155,8 @@ export function applyWeather(settings) {
     currentEmission = emission;
 
     // Туман
-    if (fog.enabled) {
-        const density = 0.02 * fog.intensity;
-        scene.fog = new THREE.FogExp2(emission.enabled ? 0xaa3333 : 0xcccccc, density);
-    } else {
-        scene.fog = null;
-    }
+    scene.fog.density = fog.enabled ? 0.02 * fog.intensity : 0;
+    scene.fog.color.setHex(0xcccccc);
 
     // Вода всегда непрозрачная
     if (waterMat) {

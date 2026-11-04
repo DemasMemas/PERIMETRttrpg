@@ -1,5 +1,6 @@
 // Локальный дождь: один вызов отрисовки, реальные метры и физические крыши.
-export function createLocationWeather(THREE, scene, { bounds, terrain, blockers }) {
+import { createRainPuddles } from './locationRainPuddles.js';
+export function createLocationWeather(THREE, scene, { bounds, terrain, blockers, surface = terrain, terrainType = () => 'grass' }) {
     const capacity = 2400;
     const positions = new Float32Array(capacity * 6);
     const speeds = new Float32Array(capacity);
@@ -12,10 +13,14 @@ export function createLocationWeather(THREE, scene, { bounds, terrain, blockers 
     rain.frustumCulled = false;
     rain.visible = false;
     scene.add(rain);
+    const fogState = new THREE.FogExp2(0xaeb8bc, 0);
+    scene.fog = fogState;
+    let fogStrength = null;
     const ray = new THREE.Raycaster();
     const down = new THREE.Vector3(0, -1, 0);
     const origin = new THREE.Vector3();
     let count = 0, strength = .5, version = null, columns = new Map(), heights = new Map();
+    const puddles = createRainPuddles(THREE, scene, {bounds, surface, roof: landing, terrainType});
 
     function index(nextVersion) {
         version = nextVersion;
@@ -60,19 +65,23 @@ export function createLocationWeather(THREE, scene, { bounds, terrain, blockers 
             const rainSetting = settings?.rain || {}, fog = settings?.fog || {};
             strength = Math.max(0, Math.min(1, Number(rainSetting.intensity) || 0));
             count = rainSetting.enabled ? Math.round(600 + 1800 * strength) : 0;
+            if (!count) puddles.hide();
             rain.visible = count > 0;
             geometry.setDrawRange(0, count * 2);
             material.opacity = .22 + strength * .2;
-            scene.fog = fog.enabled ? new THREE.FogExp2(0xaeb8bc,
-                Number(fog.intensity) > .5 ? .008 + Number(fog.intensity) * .008 : .003 + Number(fog.intensity) * .009) : null;
+            fogStrength = fog.enabled ? Math.max(0, Math.min(1, Number(fog.intensity ?? .5))) : null;
             version = null;
         },
         update(dt, nextVersion) {
+            // Масштаб камеры не должен вымывать туман: сохраняем оптическую плотность у точки обзора.
+            const distance = Math.max(4, Number(bounds().viewDistance) || 40);
+            fogState.density = fogStrength === null ? 0 : (.15 + 1.45 * fogStrength) / distance;
             if (!count) return;
             if (version !== nextVersion) {
                 index(nextVersion);
                 for (let i = 0; i < count; i++) reset(i, true);
             }
+            puddles.update(strength, nextVersion);
             const length = .18 + strength * .22;
             const area = bounds();
             for (let i = 0; i < count; i++) {
@@ -88,7 +97,8 @@ export function createLocationWeather(THREE, scene, { bounds, terrain, blockers 
             geometry.attributes.position.needsUpdate = true;
         },
         diagnostics(point) { return {attached: rain.parent === scene, drops: count, fogDensity: scene.fog?.density || 0, cachedColumns: heights.size, rainDrawCalls: count && rain.parent === scene ? 1 : 0,
+            fogStrength, ...puddles.diagnostics(),
             ...(point ? {surfaceHeight: landing(point.x, point.z), groundHeight: terrain(Math.floor(point.x), Math.floor(point.z))} : {})}; },
-        dispose() { scene.remove(rain); geometry.dispose(); material.dispose(); scene.fog = null; columns.clear(); heights.clear(); },
+        dispose() { scene.remove(rain); geometry.dispose(); material.dispose(); puddles.dispose(); scene.fog = null; columns.clear(); heights.clear(); },
     };
 }

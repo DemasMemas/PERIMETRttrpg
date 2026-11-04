@@ -46,6 +46,7 @@ module.exports=async({page,request,token,base,safeSession})=>{
         samples.push(metrics);
         fs.writeFileSync(path.join(safeSession.artifacts,'world-loading.json'),JSON.stringify({samples},null,2));
         console.log(`Загрузка ${run+1}: ${Math.round(metrics.fullLoadMs)} мс; рельеф ${Math.round(metrics.terrainRefreshMs)} мс; добавление ${Math.round(metrics.addChunkMs)} мс.`);
+        if(run===0)await require('./world_weather.browser.cjs')({page,request,token,lobby,base,safeSession});
         if(run===0){
             const {profile}=await page.call('Profiler.stop');
             const counts=new Map();

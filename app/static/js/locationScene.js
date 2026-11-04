@@ -8507,10 +8507,20 @@ export function initLocationScene(containerId) {
     // Сцена
     scene = new THREE.Scene();
     scene.background = new THREE.Color(0x111122);
+    let weatherSurfaceSampler = null, weatherSurfaceVersion = -1;
     locationWeather = createLocationWeather(THREE, scene, {
         bounds: () => ({width: currentLocationData?.grid_width || 1, height: currentLocationData?.grid_height || 1,
-            centerX: controls?.target.x, centerZ: controls?.target.z}),
+            centerX: controls?.target.x, centerZ: controls?.target.z,
+            viewDistance: controls && camera ? camera.position.distanceTo(controls.target) : 40}),
         terrain: getTileHeight,
+        terrainType: (x, z) => currentLocationData?.tiles_data[z]?.[x]?.terrain,
+        surface: (x, z) => {
+            if (!weatherSurfaceSampler || weatherSurfaceVersion !== movementMapVersion) {
+                weatherSurfaceSampler = createTerrainSurfaceHeightSampler(currentLocationData?.tiles_data || []);
+                weatherSurfaceVersion = movementMapVersion;
+            }
+            return weatherSurfaceSampler(x, z);
+        },
         blockers: () => [...roofMeshes, ...locationObjectMeshes.filter(root =>
             ['floor', 'roof', 'ceiling'].includes(root.userData.locationObject?.type))],
     });

@@ -409,7 +409,6 @@ body.character-sheet-open #location-canvas > :not(canvas) {
 .widget-block-view .health-readonly-value { background: var(--input-bg); }
 
 /* Global-map controls must not show through the local scene's canvas. */
-body.location-view-active #settings-panel,
 body.location-view-active #tile-info,
 body.location-view-active .world-group-context-menu {
   display: none !important;
@@ -681,6 +680,11 @@ body.location-view-active .lobby-menu { display: none; }
 }
 #location-view-toggle-group > .menu-item.is-active { background: #3d7959; }
 #location-view-toggle-group > .menu-item:focus-visible { outline: 2px solid var(--username-color); outline-offset: 2px; }
+#location-view-toggle-group > .location-room-control { width: auto; }
+body.location-view-active #settings-panel,
+body.location-view-active #location-time-panel { position: fixed; z-index: 120; top: 64px; right: 15px; max-width: calc(100vw - 30px); box-sizing: border-box; }
+#location-time-panel[hidden] { display: none; }
+.location-room-close { width: 28px; height: 28px; border: 1px solid var(--panel-border); border-radius: 50%; background: var(--input-bg); color: var(--text-color); cursor: pointer; font: inherit; }
 body.location-view-active #panel-common-tools { bottom: 128px; left: clamp(15px, calc(100vw - 380px), 392px); }
 body:has(#panel-chat[data-chat-docked="true"]:not([hidden])) #panel-characters {
   max-height: calc(100vh - 96px);
@@ -1092,7 +1096,7 @@ body.light-theme .chat-roll .message-kind { color: #3d5796; }
   box-shadow: var(--panel-shadow);
   border: 1px solid rgba(184, 164, 110, 0.12);
 }
-.lobby-menu .lobby-time {
+.lobby-menu .lobby-time, #location-time-panel .lobby-time {
   display: flex;
   align-items: center;
   gap: 5px;

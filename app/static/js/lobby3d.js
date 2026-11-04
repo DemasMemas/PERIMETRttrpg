@@ -239,13 +239,14 @@ const houseMat = new THREE.MeshStandardMaterial();
 const fenceMat = po2Fence.material;
 
 const scene = new THREE.Scene();
+// Одна программа материалов и для ясной погоды, и для тумана: меняется только uniform.
+scene.fog = new THREE.FogExp2(0xcccccc, 0);
 // Keep chunk meshes/instance indices for picking and editing, but submit identical
 // visible object instances together. Terrain, water and road meshes are untouched.
 const worldInstanceBatches = createWorldInstanceBatches(THREE, scene, chunksMap);
 scene.onBeforeRender = () => worldInstanceBatches.prepare();
 scene.onAfterRender = () => worldInstanceBatches.restore();
 scene.background = new THREE.Color(0x050510);
-scene.fog = new THREE.FogExp2(0x050510, 0.0015);
 
 window.isLocationActive = false;
 

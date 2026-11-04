@@ -22,6 +22,39 @@ module.exports=async({page,request,token,lobby,base,connect,debugPort,safeSessio
             await client.until(`window.socket?.connected&&window.currentLocationId===${location.id}&&document.getElementById('scene-loading-screen').classList.contains('is-hidden')`,'Сцена готова');
         }
         const weatherChecks=[];
+        const click=async selector=>{
+            const p=await page.evaluate(`(()=>{const e=document.querySelector(${JSON.stringify(selector)});if(!e)return null;const r=e.getBoundingClientRect();return r.width&&r.height?{x:r.x+r.width/2,y:r.y+r.height/2}:null})()`);
+            assert.ok(p,'Видимая кнопка '+selector);
+            await page.call('Input.dispatchMouseEvent',{type:'mousePressed',...p,button:'left',clickCount:1});
+            await page.call('Input.dispatchMouseEvent',{type:'mouseReleased',...p,button:'left',clickCount:1});
+        };
+        assert.equal(await peer.evaluate(`Boolean(document.querySelector('#location-time-btn,#location-weather-btn'))`),false,'Игрок не получает управление погодой/временем');
+        await click('#location-time-btn');
+        await page.until(`!document.getElementById('location-time-panel').hidden&&document.querySelector('#location-time-panel #lobby-game-day')`,'Исходные поля мирового времени доступны с подлокации');
+        assert.equal(await page.evaluate(`document.querySelectorAll('#lobby-game-day').length`),1);
+        await click('#lobby-game-day');
+        for(const e of [{type:'keyDown',key:'Control',code:'ControlLeft',modifiers:2,windowsVirtualKeyCode:17},
+            {type:'keyDown',key:'a',code:'KeyA',modifiers:2,windowsVirtualKeyCode:65},
+            {type:'keyUp',key:'a',code:'KeyA',modifiers:2,windowsVirtualKeyCode:65},
+            {type:'keyUp',key:'Control',code:'ControlLeft',modifiers:0,windowsVirtualKeyCode:17}])await page.call('Input.dispatchKeyEvent',e);
+        await page.call('Input.insertText',{text:'2'});
+        await page.call('Input.dispatchKeyEvent',{type:'keyDown',key:'Tab',code:'Tab',windowsVirtualKeyCode:9});
+        await page.call('Input.dispatchKeyEvent',{type:'keyUp',key:'Tab',code:'Tab',windowsVirtualKeyCode:9});
+        for(const client of [page,peer])await client.until(`window.lobbyGameDay===2`,'Изменение суток из подлокации синхронизировано');
+        const timeShot=await page.call('Page.captureScreenshot',{format:'png'});
+        fs.writeFileSync(path.join(safeSession.artifacts,'location-global-time.png'),Buffer.from(timeShot.data,'base64'));
+        await request(api+'/time',{game_day:1,game_time_minutes:480},token,'PATCH');
+        await request(api+'/weather',{sun:{enabled:false,intensity:.5},rain:{enabled:false,intensity:.5},fog:{enabled:false,intensity:.5},emission:{enabled:false,intensity:.5}},token,'PATCH');
+        await click('#location-weather-btn');
+        await page.until(`getComputedStyle(document.querySelector('#settings-panel')).display!=='none'&&getComputedStyle(document.querySelector('#weather-settings')).display!=='none'`,'Открыта исходная вкладка погоды над подлокацией');
+        await click('#weather-rain');
+        await click('#weather-settings .btn');
+        for(const client of [page,peer])await client.until(`window.weatherSettings?.rain?.enabled&&window.getLocationWeatherDiagnostics?.()?.drops===1500`,'Дождь изменён кнопками ГМа в подлокации');
+        const weatherShot=await page.call('Page.captureScreenshot',{format:'png'});
+        fs.writeFileSync(path.join(safeSession.artifacts,'location-weather-settings.png'),Buffer.from(weatherShot.data,'base64'));
+        await page.evaluate(`window.closeSettings();true`);
+        const denied=await peer.evaluate(`Promise.all(['/weather','/time'].map(p=>fetch(${JSON.stringify(api)}+p,{method:'PATCH',headers:{'Content-Type':'application/json',Authorization:'Bearer '+localStorage.getItem('access_token')},body:'{}'}).then(r=>r.status)))`);
+        assert.deepEqual(denied,[403,403]);
         for(const client of [page,peer])await client.evaluate(`window.__weatherEvents=[];socket.on('weather_updated',s=>window.__weatherEvents.push(s));true`);
         for(const [name,settings,drops,fog] of [
             ['clear',{sun:{enabled:true,intensity:1},rain:{enabled:false,intensity:.5},fog:{enabled:false,intensity:.5}},0,false],
@@ -46,6 +79,9 @@ module.exports=async({page,request,token,lobby,base,connect,debugPort,safeSessio
                 await page.until(`document.querySelector('.weather-audio-unlock')?.hidden`,'Существующий звук дождя воспроизводится в подлокации');
             }
             if(drops){
+                const wet=await page.evaluate(`window.getLocationWeatherDiagnostics()`);
+                assert.ok(wet.puddles>0&&wet.puddles<=192,'Лужицы добавлены ограниченным общим мешем');
+                assert.ok(wet.puddleSamples.every(p=>p.flatness<=.025&&p.height-p.ground<=.04),'Лужицы прилегают к ровной поверхности');
                 const floors=fixture.objects.filter(o=>o.type==='floor'&&o.properties?.building_id&&Number(o.properties?.level||0)>0);
                 assert.ok(floors.length>0);
                 const probes=await page.evaluate(`(${JSON.stringify(floors.slice(0,12).map(o=>({x:o.tile_x+.5,z:o.tile_y+.5})))}).map(p=>window.getLocationWeatherDiagnostics(p))`);
@@ -53,7 +89,34 @@ module.exports=async({page,request,token,lobby,base,connect,debugPort,safeSessio
             }
             const shot=await page.call('Page.captureScreenshot',{format:'png'});
             fs.writeFileSync(path.join(safeSession.artifacts,'weather-'+name+'.png'),Buffer.from(shot.data,'base64'));
+            if(name==='rain'){
+                const p=await page.evaluate(`window.getLocationWeatherDiagnostics().puddleSamples[0]`);
+                await page.evaluate(`locationControls.target.set(${p.x},${p.ground},${p.z});locationControls.object.position.set(${p.x+.3},${p.ground+5},${p.z+.3});locationControls.update();true`);
+                await page.evaluate(`new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(()=>resolve(true))))`);
+                const close=await page.call('Page.captureScreenshot',{format:'png'});
+                fs.writeFileSync(path.join(safeSession.artifacts,'rain-puddles-close.png'),Buffer.from(close.data,'base64'));
+                await page.evaluate(`locationControls.object.position.set(${p.x-3},${p.ground+4},${p.z-3});locationControls.update();true`);
+                await page.evaluate(`new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(()=>resolve(true))))`);
+                const angle=await page.call('Page.captureScreenshot',{format:'png'});
+                fs.writeFileSync(path.join(safeSession.artifacts,'rain-puddles-angle.png'),Buffer.from(angle.data,'base64'));
+            }
         }
+        const fogZoom=[];
+        for(const intensity of [.5,1]){
+            await request(api+'/weather',{fog:{enabled:true,intensity},rain:{enabled:false,intensity:.5},sun:{enabled:false,intensity:.5}},token,'PATCH');
+            await page.until(`window.getLocationWeatherDiagnostics?.()?.fogStrength===${intensity}`,'Задана интенсивность тумана');
+            for(const [zoom,offset] of [['far',[20,39,30]],['near',[6,10,8]]]){
+                await page.evaluate(`locationControls.target.set(24,1,25);locationControls.object.position.set(${24+offset[0]},${1+offset[1]},${25+offset[2]});locationControls.update();true`);
+                await page.evaluate(`new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(()=>resolve(true))))`);
+                fogZoom.push(await page.evaluate(`({intensity:${intensity},zoom:${JSON.stringify(zoom)},density:getLocationWeatherDiagnostics().fogDensity,optical:getLocationWeatherDiagnostics().fogDensity*locationControls.object.position.distanceTo(locationControls.target),puddles:getLocationWeatherDiagnostics().puddles})`));
+                const fogShot=await page.call('Page.captureScreenshot',{format:'png'});
+                fs.writeFileSync(path.join(safeSession.artifacts,`fog-${intensity}-${zoom}.png`),Buffer.from(fogShot.data,'base64'));
+            }
+        }
+        assert.ok(fogZoom.every(row=>row.puddles===0),'Лужицы исчезают после выключения дождя');
+        assert.ok(Math.abs(fogZoom[0].optical-fogZoom[1].optical)<.03&&Math.abs(fogZoom[2].optical-fogZoom[3].optical)<.03,'При приближении туман не исчезает');
+        assert.ok(fogZoom[2].optical>fogZoom[0].optical*1.5,'1,0 заметно плотнее 0,5');
+        fs.writeFileSync(path.join(safeSession.artifacts,'fog-zoom.json'),JSON.stringify(fogZoom,null,2));
         await page.evaluate(`locationControls.object.position.set(8,22,45);locationControls.update();true`);
         await page.evaluate(`new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(()=>resolve(true))))`);
         const weatherAngle=await page.call('Page.captureScreenshot',{format:'png'});
@@ -94,5 +157,9 @@ module.exports=async({page,request,token,lobby,base,connect,debugPort,safeSessio
         await request(api+'/time',{game_day:1,game_time_minutes:540},token,'PATCH');
         for(const client of [page,peer])await client.until(`['sun','rain','fog'].filter(k=>window.weatherSettings?.[k]?.enabled).length===1&&['sun','rain','fog'].some(k=>window.weatherSettings?.[k]?.enabled&&[.4,.6].includes(window.weatherSettings[k].intensity))`,'Часовая смена погоды синхронизирована на обоих клиентах');
         fs.writeFileSync(path.join(safeSession.artifacts,'weather-gameplay.json'),JSON.stringify({twoClients:true,indoorHidden:true,rainGravityAndElectric:true,stormOnlyElectric:true,legacyTiles:true},null,2));
+        await click('#exit-location-btn');
+        await page.until(`!window.isLocationActive&&document.querySelector('.lobby-menu #lobby-game-day')&&getComputedStyle(document.querySelector('.lobby-menu')).display!=='none'`,'Поля времени возвращены на глобальную карту');
+        assert.equal(await page.evaluate(`document.querySelectorAll('#lobby-game-day').length`),1);
+        assert.equal(await page.evaluate(`Boolean(document.querySelector('#location-time-btn,#location-weather-btn'))`),false);
     }finally{await peer?.close();if(context)await protocol?.call('Target.disposeBrowserContext',{browserContextId:context.browserContextId});await protocol?.close();}
 };

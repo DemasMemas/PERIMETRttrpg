@@ -270,10 +270,17 @@ function resumeWorldMapLoad() {
 }
 
 function setLocationViewActive(active) {
+    closeSettings();
+    const timePanel = document.getElementById('location-time-panel');
+    if (timePanel) timePanel.hidden = true;
     document.body.classList.toggle('location-view-active', active);
     if (!active) {
         const menu = document.querySelector('.lobby-menu');
         const anchor = document.getElementById('edit-toggle');
+        const clock = document.querySelector('.lobby-time');
+        if (clock && menu) menu.querySelector('.lobby-name')?.after(clock);
+        document.getElementById('location-time-btn')?.remove();
+        document.getElementById('location-weather-btn')?.remove();
         for (const id of ['actions-toggle', 'chat-toggle', 'common-tools-toggle']) {
             const launcher = document.getElementById(id);
             if (menu && launcher) menu.insertBefore(launcher, anchor);
@@ -281,6 +288,39 @@ function setLocationViewActive(active) {
     }
     document.getElementById('canvas-container').style.display = active ? 'none' : 'block';
     document.getElementById('location-container').style.display = active ? 'block' : 'none';
+}
+
+function addLocationRoomControls() {
+    if (!window.isGM || window.locationScoutView) return;
+    const group = document.getElementById('location-view-toggle-group');
+    const clock = document.querySelector('.lobby-time');
+    if (!group || !clock) return;
+    let panel = document.getElementById('location-time-panel');
+    if (!panel) {
+        panel = document.createElement('div');
+        panel.id = 'location-time-panel';
+        panel.className = 'settings-panel';
+        panel.hidden = true;
+        panel.setAttribute('role', 'region');
+        panel.setAttribute('aria-label', 'Глобальное время комнаты');
+        panel.innerHTML = '<div class="settings-header"><span>Глобальное время</span><button type="button" class="location-room-close" aria-label="Закрыть">×</button></div>';
+        panel.querySelector('button').onclick = () => { panel.hidden = true; document.getElementById('location-time-btn')?.focus(); };
+        panel.addEventListener('keydown', event => {
+            if (event.key === 'Escape') { event.stopPropagation(); panel.querySelector('button').click(); }
+        });
+        document.body.appendChild(panel);
+    }
+    // Переносим исходные поля вместе с обработчиками сохранения мирового времени.
+    panel.appendChild(clock);
+    const add = (id, label, callback) => {
+        document.getElementById(id)?.remove();
+        const button = document.createElement('button');
+        button.id = id; button.type = 'button'; button.className = 'menu-item location-room-control';
+        button.textContent = label; button.title = label === 'Время' ? 'Глобальное время комнаты' : 'Погода комнаты';
+        button.onclick = callback; group.appendChild(button);
+    };
+    add('location-time-btn', 'Время', () => { closeSettings(); panel.hidden = !panel.hidden; });
+    add('location-weather-btn', 'Погода', () => { panel.hidden = true; openSettings('weather'); });
 }
 
 function clearLocationEditorSubscriptions() {
@@ -345,6 +385,7 @@ window.enterLocation = async function(locationId, { scoutView = null } = {}) {
         addLocationRoofButton();
         addLocationGridButton();
         addLocationFloorMenu();
+        addLocationRoomControls();
 
         setLocationBrushRadius(window.brushRadius);
         setLocationBrushHeight(window.tileHeight);

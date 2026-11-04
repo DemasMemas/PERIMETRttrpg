@@ -184,11 +184,13 @@ export function toggleSettings() {
     settingsVisible ? closeSettings() : openSettings();
 }
 
-export function openSettings() {
+export function openSettings(preferredTab = null) {
     const panel = document.getElementById('settings-panel');
     panel.style.display = 'block';
     settingsVisible = true;
-    const selected = panel.querySelector('.settings-tabs .tab-btn.active')
+    const selected = (preferredTab && [...panel.querySelectorAll('.settings-tabs .tab-btn')]
+        .find(button => button.dataset.settingsTab === preferredTab))
+        || panel.querySelector('.settings-tabs .tab-btn.active')
         || panel.querySelector('.settings-tabs .tab-btn');
     if (selected) showSettingsTab(selected.dataset.settingsTab || 'banned', selected);
 }
