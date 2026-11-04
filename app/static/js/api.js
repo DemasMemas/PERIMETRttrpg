@@ -39,6 +39,8 @@ export const Server = {
     changeWeaponPair: (characterId,payload) => apiFetch(`/lobbies/characters/${characterId}/weapon-pair`,{
         method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}),
     getPortableLights: characterId => apiFetch(`/lobbies/characters/${characterId}/portable-lights`),
+    operateProsthesis: (characterId,payload) => apiFetch(`/lobbies/characters/${characterId}/prostheses`,{
+        method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}),
     operatePortableLight: (characterId,payload) => apiFetch(`/lobbies/characters/${characterId}/portable-lights`,{
         method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}),
     getExtinguishingOptions: (lobbyId,locationId,actorId) => apiFetch(`/lobbies/${lobbyId}/locations/${locationId}/extinguishing-options/${actorId}`),

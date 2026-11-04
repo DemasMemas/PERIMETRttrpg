@@ -118,9 +118,32 @@ def test_battery_replacement_is_checked_and_preserved(client,grenade_game,auth_h
     data=deepcopy(actor.character.data);data['inventory']['pockets'].append({'name':'Батарейка','quantity':2})
     data['inventory']['pockets'][0]['lightPower']={'uses_left':0,'elapsed_seconds':0}
     actor.character.data=data;flag_modified(actor.character,'data');db.session.commit()
-    assert operate(client,grenade_game,auth_headers,'battery',battery_path=['inventory','pockets',1]).status_code==400
+    before=actor.action_points_current
+    response=operate(client,grenade_game,auth_headers,'battery',battery_path=['inventory','pockets',1])
+    assert response.status_code==200,response.json
+    assert actor.action_points_current==before-2  # 1 ОД достать из кармана + 1 ОД заменить.
     state=LocationCombatState.query.filter_by(location_id=actor.location_id).one();state.status='idle';db.session.commit()
     response=operate(client,grenade_game,auth_headers,'battery',battery_path=['inventory','pockets',1])
     assert response.status_code==200,response.json
     assert actor.character.data['inventory']['pockets'][0]['lightPower']['uses_left']==10
-    assert actor.character.data['inventory']['pockets'][1]['quantity']==1
+    assert len(actor.character.data['inventory']['pockets'])==1
+
+
+def test_head_mount_and_removal_in_combat_are_paid(client,grenade_game,auth_headers):
+    actor=install(grenade_game['actor_location'],kind='head');before=actor.action_points_current
+    response=operate(client,grenade_game,auth_headers,'prepare')
+    assert response.status_code==200,response.json
+    assert actor.action_points_current==before-2
+    assert operate(client,grenade_game,auth_headers,'stow').status_code==200
+    assert actor.action_points_current==before-3 and not bindings(actor.character.data)
+
+
+def test_battery_underpayment_rolls_back_item_and_charge(client,grenade_game,auth_headers):
+    actor=install(grenade_game['actor_location']);data=deepcopy(actor.character.data)
+    data['inventory']['backpack']=[{'name':'Батарейка','quantity':1}]
+    data['inventory']['pockets'][0]['lightPower']={'uses_left':0,'elapsed_seconds':0}
+    actor.character.data=data;actor.action_points_current=2;flag_modified(actor.character,'data');db.session.commit()
+    response=operate(client,grenade_game,auth_headers,'battery',battery_path=['inventory','backpack',0])
+    assert response.status_code==400
+    assert actor.action_points_current==2 and len(actor.character.data['inventory']['backpack'])==1
+    assert actor.character.data['inventory']['pockets'][0]['lightPower']['uses_left']==0

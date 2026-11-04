@@ -18,6 +18,8 @@ logger = logging.getLogger(__name__)
 
 
 def _preserve_intoxication_status(current_data, incoming_data):
+    from app.services.prostheses import preserve as preserve_prostheses
+    preserve_prostheses(current_data,incoming_data)
     from app.services.portable_lights import preserve as preserve_lights
     preserve_lights(current_data, incoming_data)
     from app.services.action_journal import preserve as preserve_journal

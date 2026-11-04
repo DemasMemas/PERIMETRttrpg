@@ -134,7 +134,7 @@ def test_real_shot_uses_suppressor_range_and_accuracy(grenade_game,monkeypatch):
 
 def test_night_scope_only_removes_darkness_for_aimed_shot(grenade_game,monkeypatch):
     actor,target=prepare_gun(grenade_game,['night_scope'])
-    monkeypatch.setattr(CombatService,'_is_dark_at_position',staticmethod(lambda *args:True))
+    monkeypatch.setattr(CombatService,'_is_dark_at_position',staticmethod(lambda *args,**kwargs:True))
     monkeypatch.setattr('app.services.combat.random.randint',lambda a,b:a)
     result=shoot(grenade_game,actor,target,'aimed')
     assert not result['base_shooting_disadvantage']

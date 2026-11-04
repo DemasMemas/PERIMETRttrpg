@@ -106,7 +106,7 @@ def advance_lobby(lobby,seconds):
     return updated
 
 
-def ready_sources(actor):
+def ready_sources(actor,*,objects=None):
     from app.services.combat import CombatService
     data=(actor.character.data if actor.character else {}) or {};items={item.get('id'):item for _,item in walk(data)}
     result=[];weapons=data.get('weapons') or [];primary=actor.drawn_weapon_index
@@ -119,37 +119,38 @@ def ready_sources(actor):
         facing=math.hypot(actor.facing_x or 0,actor.facing_y or 0) or 1
         result.append({'id':binding['id'],'mount':mount,'improved':definition(item)=='improved',
             'range':35,'end_width':5,'x':actor.pos_x+.5+.35*(actor.facing_x or 0)/facing,'z':actor.pos_y+.5+.35*(actor.facing_y or 0)/facing,
-            'y':CombatService.physical_position(actor)['height']+1.4,
+            'y':CombatService.physical_position(actor,objects=objects)['height']+1.4,
             'facing_x':actor.facing_x,'facing_y':actor.facing_y,'floor_level':actor.floor_level or 0})
     return result
 
 
-def covers(actor,target,*,wide=False):
+def covers(actor,target,*,wide=False,objects=None):
     from app.services.combat import CombatService
-    sources=ready_sources(actor)
+    sources=ready_sources(actor,objects=objects)
     if not sources or actor.id==target.id:return []
     # Проверка тела и перекрытий использует действующую геометрию света/взрывов.
     dx=target.pos_x-actor.pos_x;dz=target.pos_y-actor.pos_y
-    dy=CombatService.physical_position(target)['height']-CombatService.physical_position(actor)['height']
+    dy=CombatService.physical_position(target,objects=objects)['height']-CombatService.physical_position(actor,objects=objects)['height']
     length=math.sqrt(dx*dx+dz*dz+dy*dy)
     facing=math.hypot(actor.facing_x or 0,actor.facing_y or 0)
     if not facing:return []
     angle=math.cos(math.pi/4 if wide else math.atan(2.5/35))
     dot=(dx*(actor.facing_x or 0)+dz*(actor.facing_y or 0))/(length*facing) if length>1e-9 else 1
     if length>35 or dot<angle-1e-9:return []
-    if CombatService._cover_analysis(actor.location_id,actor,target).get('zones',{}).get('head'):
+    if CombatService._cover_analysis(actor.location_id,actor,target,objects=objects).get('zones',{}).get('head'):
         return []
     return sources
 
 
-def illumination(target):
+def illumination(target,*,actors=None,objects=None):
     from app.services.combat import CombatService
     if not getattr(target,'location_id',None) or not getattr(target,'location',None):
         return {'lit':False,'penalty':None,'base_dark':False}
     lights=[]
-    for actor in LocationCharacter.query.filter_by(location_id=target.location_id).all():lights.extend(covers(actor,target))
+    actors=actors if actors is not None else LocationCharacter.query.filter_by(location_id=target.location_id).all()
+    for actor in actors:lights.extend(covers(actor,target,objects=objects))
     return {'lit':bool(lights),'penalty':0 if any(light['improved'] for light in lights) else 3 if lights else None,
-        'base_dark':CombatService._is_dark_at_character(target.location,target)}
+        'base_dark':CombatService._is_dark_at_character(target.location,target,objects=objects)}
 
 
 def shooting(actor,target,fire_mode):
@@ -221,7 +222,9 @@ def operate(character_id,user_id,payload):
         mount=payload.get('mount') or ('head' if definition(selected)=='head' else 'weapon' if definition(selected)=='module' else 'hand')
         if binding:raise ValidationError('Фонарь уже подготовлен')
         if mount not in {'hand','head','weapon','taped'}:raise ValidationError('Выберите крепление фонаря')
-        if actor and mount in {'head','taped'}:raise ValidationError('Пока подготовьте это крепление до боя')
+        if actor and mount in {'head','taped'}:
+            if not CombatService._has_usable_free_hand(actor):raise ValidationError('Для крепления нужна свободная действующая рука')
+            cost=1+int(calculate_inventory_access(data,path,selected)['retrieval_action_points'])
         if mount=='head' and definition(selected)!='head':raise ValidationError('Для головы нужен налобный фонарь')
         if definition(selected)=='module' and mount!='weapon':raise ValidationError('Оружейный модуль крепится к оружию')
         binding={'id':selected['id'],'mount':mount,'on':False}
@@ -250,11 +253,20 @@ def operate(character_id,user_id,payload):
         if binding['on']:binding['period_used']=True
         if actor:binding['battle_used']=True
     elif operation in {'stow','battery'}:
-        if actor:raise ValidationError('Пока выполняйте смену батарейки и крепления вне боя')
-        if operation=='stow':states[:]=[item for item in states if item['id']!=selected['id']]
+        if actor:
+            from app.services.weapon_grip import functional_arms
+            if functional_arms(data)<1:raise ValidationError('Для смены батарейки или крепления нужна действующая рука')
+            cost=1
+        if operation=='stow':
+            if not binding:raise ValidationError('Фонарь не подготовлен')
+            if binding.get('mount')=='weapon':raise ValidationError('Оружейный модуль снимается через слот оружия')
+            states[:]=[item for item in states if item['id']!=selected['id']]
         else:
             battery=CombatService._inventory_item_at_path(data,payload.get('battery_path'))
             if 'батаре' not in str(battery.get('name') or '').casefold():raise ValidationError('Выберите батарейку')
+            if actor:
+                if not CombatService._has_usable_free_hand(actor):raise ValidationError('Для замены батарейки нужна свободная действующая рука')
+                cost+=int(calculate_inventory_access(data,payload['battery_path'],battery)['retrieval_action_points'])
             CombatService._take_inventory_item(data,payload['battery_path'],1)
             selected['lightPower']={'uses_left':10,'elapsed_seconds':0}
     else:raise ValidationError('Неизвестное действие фонаря')

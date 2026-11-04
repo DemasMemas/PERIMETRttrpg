@@ -503,6 +503,8 @@ def _world_route_tiles(from_x, from_y, to_x, to_y):
 def _advance_world_time(lobby, minutes):
     from app.services.portable_lights import advance_lobby
     portable_updated=advance_lobby(lobby,minutes*60)
+    from app.services.prostheses import advance_lobby as advance_prostheses
+    portable_updated.extend(advance_prostheses(lobby,minutes*60))
     previous_day = lobby.game_day or 1
     absolute_minutes = (
         (lobby.game_day or 1) * 1440
@@ -1284,6 +1286,8 @@ def update_lobby_time(lobby_id, lobby):
     elapsed_seconds = max(0, next_absolute_minutes - previous_absolute_minutes) * 60
     from app.services.portable_lights import advance_lobby
     portable_updated=advance_lobby(lobby,elapsed_seconds)
+    from app.services.prostheses import advance_lobby as advance_prostheses
+    portable_updated.extend(advance_prostheses(lobby,elapsed_seconds))
     lobby.game_day = game_day
     lobby.game_time_minutes = game_time_minutes
     updated_characters = list(portable_updated)
@@ -1490,6 +1494,8 @@ def start_lobby_rest(lobby_id, lobby):
     summaries = []
     from app.services.portable_lights import advance_lobby
     portable_updated=advance_lobby(lobby,elapsed_seconds)
+    from app.services.prostheses import advance_lobby as advance_prostheses
+    portable_updated.extend(advance_prostheses(lobby,elapsed_seconds))
     for character in characters:
         character_data = dict(character.data or {})
         health = character_data.get('health')
@@ -2338,6 +2344,8 @@ def get_lobby_templates(lobby_id, lobby, participant):
         serialized_global.extend(missing_templates(serialized_global, subcategory))
         from app.services.portable_lights import missing_templates as missing_lights
         serialized_global.extend(missing_lights(serialized_global, subcategory))
+        from app.services.prostheses import missing_templates as missing_prostheses
+        serialized_global.extend(missing_prostheses(serialized_global,subcategory))
     return jsonify({
         'global': serialized_global,
         'local': local_schema.dump(local_templates)
@@ -4821,6 +4829,18 @@ def portable_lights(character_id):
     for model in LocationCharacter.query.filter_by(character_id=character.id).all():
         socketio.emit('combat_state_updated',CombatService.get_state(model.location_id,user_id),room=f'location_{model.location_id}')
     return jsonify({'light_operation':result,'data':character.data_snapshot()}),200
+
+
+@lobbies_bp.route('/characters/<int:character_id>/prostheses', methods=['POST'])
+@jwt_required()
+def prosthesis_action(character_id):
+    from app.services.prostheses import operate
+    user_id=int(get_jwt_identity())
+    character=operate(character_id,user_id,request.get_json() or {})
+    emit_character_update({'character_id':character.id,'updates':{'data':character.data_snapshot()},'source':'prosthesis'})
+    for model in LocationCharacter.query.filter_by(character_id=character.id).all():
+        socketio.emit('combat_state_updated',CombatService.get_state(model.location_id,user_id),room=f'location_{model.location_id}')
+    return jsonify({'data':character.data_snapshot()}),200
 
 
 @lobbies_bp.route('/characters/<int:character_id>/weapon-pair', methods=['POST'])

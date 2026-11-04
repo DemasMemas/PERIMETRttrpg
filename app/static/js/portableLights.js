@@ -1,4 +1,5 @@
 import { Server } from './api.js';
+import { rememberEquipmentChoice } from './equipmentChoices.js';
 
 export function usesNightVision(data) {
     return (data?.equipment?.helmet?.installedModules || []).some(module=>(module.slotType==='nvg' || module.attributes?.night_vision)
@@ -27,27 +28,29 @@ export async function renderPortableLights(container,characterId,data,operate,is
         };
         if (light.binding) {
             button(`${light.binding.on?'Выключить':'Включить'}${active?' · 1 ОД':''}`,'toggle',{},!light.binding.on && light.uses_left<=0);
-            button('Убрать','stow',{},active);
+            if (light.binding.mount!=='weapon') button(`Убрать${active?' · 1 ОД':''}`,'stow');
         } else {
             const mount=light.kind==='head'?'head':light.kind==='module'?'weapon':'hand';
             button(mount==='head'?'Надеть':mount==='weapon'?'Подготовить модуль':'Взять в руку','prepare',
-                {mount,...(mount==='weapon'?{weapon_index:light.path[1]}:{})},active && mount==='head');
-            if (!active && !['head','module'].includes(light.kind) && (data.weapons || []).length) {
+                {mount,...(mount==='weapon'?{weapon_index:light.path[1]}:{})});
+            if (!['head','module'].includes(light.kind) && (data.weapons || []).length) {
                 const weapons=document.createElement('select');weapons.className='form-control';weapons.setAttribute('aria-label','Оружие для фонаря');
                 (data.weapons || []).forEach((weapon,index)=>{
                     const option=document.createElement('option');option.value=index;option.textContent=weapon.name || weapon.model || `Оружие ${index+1}`;weapons.append(option);
                 });
+                rememberEquipmentChoice(weapons,`${characterId}:light-weapon:${row.dataset.lightId}`);
                 row.append(weapons);
                 const taped=document.createElement('button');taped.type='button';taped.className='btn btn-sm btn-secondary';
-                taped.textContent='Закрепить на оружии';taped.onclick=()=>operate({operation:'prepare',path:light.path,source_id:light.id??null,mount:'taped',weapon_index:Number(weapons.value)});row.append(taped);
+                taped.textContent=`Закрепить на оружии${active?' · 1 ОД + достать':''}`;taped.disabled=!ownTurn;taped.onclick=()=>operate({operation:'prepare',path:light.path,source_id:light.id??null,mount:'taped',weapon_index:Number(weapons.value)});row.append(taped);
             }
         }
-        if (!active && result.batteries.length) {
+        if (result.batteries.length) {
             const choices=document.createElement('select');choices.className='form-control';choices.setAttribute('aria-label','Батарейка для фонаря');
-            result.batteries.forEach((battery,index)=>{const option=document.createElement('option');option.value=index;option.textContent=battery.name;choices.append(option)});
+            result.batteries.forEach((battery,index)=>{const option=document.createElement('option');option.value=JSON.stringify(battery.path);option.textContent=battery.name;choices.append(option)});
+            rememberEquipmentChoice(choices,`${characterId}:light-battery:${row.dataset.lightId}`);
             row.append(choices);
-            const replace=document.createElement('button');replace.type='button';replace.className='btn btn-sm btn-secondary';replace.textContent='Заменить батарейку';
-            replace.onclick=()=>operate({operation:'battery',path:light.path,source_id:light.id??null,battery_path:result.batteries[Number(choices.value)].path});row.append(replace);
+            const replace=document.createElement('button');replace.type='button';replace.className='btn btn-sm btn-secondary';replace.textContent=`Заменить батарейку${active?' · 1 ОД + достать':''}`;replace.disabled=!ownTurn;
+            replace.onclick=()=>operate({operation:'battery',path:light.path,source_id:light.id??null,battery_path:JSON.parse(choices.value)});row.append(replace);
         }
         if (!canEdit) row.querySelectorAll('button,select').forEach(control=>{control.disabled=true});
         root.append(row);

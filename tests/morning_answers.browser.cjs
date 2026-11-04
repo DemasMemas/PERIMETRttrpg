@@ -158,6 +158,7 @@ module.exports=async({page,request,token,lobby,base,connect,debugPort,safeSessio
                 {type:'intoxication',value:-10,tick:'manual'},{type:'exhaustion',value:-.5,tick:'manual'}]}}}],backpack:[]};
         watered.data.health.effects.push({id:'burn-native',type:'burning',name:'Горение',remaining:8,tick:'round_end',active:true});
         await request('/lobbies/characters/'+actor.id,{data:watered.data},token,'PUT');
+        await page.until(`window.locationCombatState?.characters?.find(c=>c.character_id===${actor.id})?.effects?.some(e=>e.type==='burning'&&e.remaining===8)`,'Боевой снимок после подготовки воды и горения');
         await page.evaluate('window.closeCharacterSheet()');
         const clickElement=async selector=>{
             const point=await page.evaluate(`(()=>{const e=document.querySelector(${JSON.stringify(selector)});e.scrollIntoView({block:'center',behavior:'instant'});const r=e.getBoundingClientRect();return{x:r.x+r.width/2,y:r.y+r.height/2}})()`);
@@ -185,10 +186,10 @@ module.exports=async({page,request,token,lobby,base,connect,debugPort,safeSessio
         fs.writeFileSync(path.join(safeSession.artifacts,'extinguishing-menu.png'),Buffer.from((await page.call('Page.captureScreenshot',{format:'png'})).data,'base64'));
         const waterBefore=(await request(combat,null,token,'GET')).current_character.action_points_current;
         await clickElement('.fire-water-items button');
-        await page.until('!document.getElementById("combat-fire-water-menu")','Бутылка взята');
+        await page.until('document.querySelector(".fire-pour")&&!document.querySelector(".fire-pour").disabled','Бутылка взята, меню осталось открытым');
         assert.equal((await request(combat,null,token,'GET')).current_character.action_points_current,waterBefore-1);
         assert.equal((await read(actor.id)).data.health.combatMeta.heldWaterItem.litres,1);
-        await openWheel();await selectWheel('Тушение огня');await page.until('document.querySelector(".fire-pour")&&!document.querySelector(".fire-pour").disabled','Обливание доступно');
+        assert.ok(await page.evaluate('document.getElementById("combat-fire-water-menu")?.isConnected'));
         await clickElement('.fire-pour');await page.until('!document.getElementById("combat-fire-water-menu")','Обливание завершено');
         assert.equal((await read(actor.id)).data.health.effects.find(e=>e.type==='burning').remaining,6);
         assert.equal((await request(combat,null,token,'GET')).current_character.action_points_current,waterBefore-3);
@@ -275,6 +276,68 @@ module.exports=async({page,request,token,lobby,base,connect,debugPort,safeSessio
         await page.until(`document.querySelector('#character-sheet-modal')?.textContent.includes('Во второй руке')`,'Второе оружие видно после перезагрузки');
         fs.writeFileSync(path.join(safeSession.artifacts,'paired-weapons.png'),Buffer.from((await page.call('Page.captureScreenshot',{format:'png'})).data,'base64'));
         await request(combat+'/end',{},token);
-        fs.writeFileSync(path.join(safeSession.artifacts,'morning-answers.json'),JSON.stringify({status:'PASS',twoClients:true,scene:'Копия Припяти',medicines:rows.map(r=>({name:r.name,before:r.beforeClock,after:r.afterClock})),armor:armorRows.map(r=>({name:r.name,damage:r.damage,after:r.after})),flash:{noise:flashShot.attack.noise,received:noise.noise_received,targets:flashShot.attack.results[0].flash_targets},grip:{paidTwice:2,reloadStable:true,twoClients:true,observerDenied:true},water:{litres:1,retrieveAP:1,pourAP:2,burningBefore:8,burningAfter:6,reachableTargets:true,styledSelects:true},lights:{gpuBeam:true,twoClients:true,battleBattery:9,afterTenMinutes:8},journal:{persistentServerEntries:true,realCosts:true},pair:{twoClients:true,eachWeaponFired:true,ammunition:[19,19],reloadRejectedWithoutPayment:true,reloadStable:true}},null,2));
+        await request('/lobbies/characters/'+actor.id+'/weapon-pair',{operation:'stow',character_revision:(await read(actor.id)).data._revision},token);
+        const prosthesisCatalog=await request(api+'/templates?category=misc',null,token,'GET');
+        const legProfile=[...prosthesisCatalog.global,...prosthesisCatalog.local].find(t=>t.name==='Навесная голень со стопой');
+        assert.ok(legProfile);
+        const prosthesisData=await read(actor.id);
+        prosthesisData.data.inventory={pockets:[{id:'native-head',name:'Налобный фонарик',attributes:{portable_light:'head'}},
+            {id:'native-leg',name:legProfile.name,quantity:1,attributes:legProfile.attributes},
+            {id:'native-lube',name:'Набор смазочных приспособлений',quantity:1}],backpack:[{id:'native-battery',name:'Батарейка',quantity:3}]};
+        prosthesisData.data.health.zones.leftLeg.current=0;
+        prosthesisData.data.health.effects.push({id:'native-loss',type:'amputation',area:'leftLeg',loss_extent:'elbow_or_knee',active:true});
+        await request('/lobbies/characters/'+actor.id,{data:prosthesisData.data},token,'PUT');
+        for(const client of [page,peer])await client.evaluate(`window.openCharacterSheet(${actor.id},'equipment')`);
+        await request(combat+'/start',{location_character_ids:[actorId],initiator_location_character_id:actorId,initiator_first:true},token);
+        await page.until(`document.querySelector('[data-light-id="native-head"] [data-light-operation="prepare"]')&&!document.querySelector('[data-light-id="native-head"] [data-light-operation="prepare"]').disabled`,'Налобный фонарь доступен в бою');
+        await page.evaluate("window.__morningUpdates=[];socket.on('character_data_updated',e=>window.__morningUpdates.push(e));true");
+        const mountingBefore=(await request(combat,null,token,'GET')).current_character.action_points_current;
+        await clickElement('[data-light-id="native-head"] [data-light-operation="prepare"]');
+        await page.until(`document.querySelector('[data-light-id="native-head"] strong')?.textContent.includes('на голове')`,'Фонарь надет в бою');
+        assert.equal((await request(combat,null,token,'GET')).current_character.action_points_current,mountingBefore-2);
+        await page.evaluate(`Array.from(document.querySelectorAll('[data-light-id="native-head"] button')).find(e=>e.textContent.includes('Заменить')).dataset.nativeBattery='true'`);
+        await clickElement('[data-native-battery="true"]');
+        await page.until(`window.__morningUpdates.some(e=>e.character_id===${actor.id}&&e.updates?.data?.inventory?.backpack?.[0]?.quantity===2)`,'Батарейка из рюкзака использована');
+        assert.equal((await request(combat,null,token,'GET')).current_character.action_points_current,mountingBefore-5);
+        await clickElement('[data-light-id="native-head"] [data-light-operation="stow"]');
+        await page.until(`document.querySelector('[data-light-id="native-head"] [data-light-operation="prepare"]')`,'Налобный фонарь снят');
+        assert.equal((await request(combat,null,token,'GET')).current_character.action_points_current,mountingBefore-6);
+        await page.until(`document.querySelector('.prostheses select')`,'Раздел протезов');
+        await page.until(`Array.from(document.querySelectorAll('.prostheses button')).some(e=>e.textContent.startsWith('Установить')&&!e.disabled)`,'Предыдущее действие завершено, установка доступна');
+        await page.evaluate(`(()=>{const s=document.querySelector('.prostheses select');s.value='leftLeg';s.dispatchEvent(new Event('change',{bubbles:true}));
+            Array.from(document.querySelectorAll('.prostheses button')).find(e=>e.textContent.startsWith('Установить')).dataset.nativeInstall='true'})()`);
+        const installingBefore=(await request(combat,null,token,'GET')).current_character.action_points_current;
+        await clickElement('[data-native-install="true"]');
+        for(const client of [page,peer])await client.until(`document.querySelector('.prostheses')?.textContent.includes('прочность 75/75')`,'Протез установлен у двух клиентов');
+        assert.equal((await request(combat,null,token,'GET')).current_character.action_points_current,installingBefore-10);
+        await request(combat+'/end',{},token);
+        await page.until(`window.locationCombatState?.status!=='active'&&Array.from(document.querySelectorAll('.prostheses button')).some(e=>e.textContent.includes('Использовать')&&!e.disabled)`,'Обслуживание доступно после боя');
+        await page.evaluate(`(()=>{const s=document.querySelector('.prostheses select');s.value=0;
+            Array.from(document.querySelectorAll('.prostheses button')).find(e=>e.textContent.includes('Использовать')).dataset.nativeSupply='true'})()`);
+        // В карманах сначала набор смазки; батарейка — второй источник в списке.
+        await page.evaluate(`(()=>{const s=document.querySelector('.prostheses select');s.value='native-battery';s.dispatchEvent(new Event('change',{bubbles:true}));window.dispatchEvent(new CustomEvent('combat-state-updated'))})()`);
+        await page.until(`document.querySelector('.prostheses select')?.value==='native-battery'&&Array.from(document.querySelectorAll('.prostheses button')).some(e=>e.textContent.includes('Использовать')&&!e.disabled)`,'Выбор батарейки пережил обновление листа');
+        await page.evaluate(`Array.from(document.querySelectorAll('.prostheses button')).find(e=>e.textContent.includes('Использовать')).dataset.nativeSupply='true'`);
+        await clickElement('[data-native-supply="true"]');
+        for(const client of [page,peer])await client.until(`document.querySelector('.prostheses')?.textContent.includes('питание 1440 мин')`,'Питание протеза синхронизировано');
+        const prosthesisReload=await page.evaluate('performance.timeOrigin');await page.call('Page.reload');
+        await waitForDocument(page,{href:base+api+'/page?location='+location.id,afterEpoch:prosthesisReload,label:'Перезагрузка протеза'});
+        await page.until(`typeof window.openCharacterSheet==='function'`,'Лист готов');await page.evaluate(`window.openCharacterSheet(${actor.id},'equipment')`);
+        await page.until(`document.querySelector('.prostheses')?.textContent.includes('питание 1440 мин')`,'Питание сохранено после перезагрузки');
+        await page.evaluate("document.querySelector('.prostheses')?.scrollIntoView({block:'center'})");
+        fs.writeFileSync(path.join(safeSession.artifacts,'prostheses-and-light-controls.png'),Buffer.from((await page.call('Page.captureScreenshot',{format:'png'})).data,'base64'));
+        fs.writeFileSync(path.join(safeSession.artifacts,'morning-answers.json'),JSON.stringify({status:'PASS',twoClients:true,scene:'Копия Припяти',medicines:rows.map(r=>({name:r.name,before:r.beforeClock,after:r.afterClock})),armor:armorRows.map(r=>({name:r.name,damage:r.damage,after:r.after})),flash:{noise:flashShot.attack.noise,received:noise.noise_received,targets:flashShot.attack.results[0].flash_targets},grip:{paidTwice:2,reloadStable:true,twoClients:true,observerDenied:true},water:{litres:1,retrieveAP:1,pourAP:2,burningBefore:8,burningAfter:6,reachableTargets:true,styledSelects:true},lights:{gpuBeam:true,twoClients:true,battleBattery:9,afterTenMinutes:8},journal:{persistentServerEntries:true,realCosts:true},prostheses:{installedWithRealButton:true,installAP:10,powerAfterReload:86400,twoClients:true,batteryChoiceSurvivesRefresh:true},combatLightMount:{prepareAP:2,batteryFromBackpackAP:3,stowAP:1},pair:{twoClients:true,eachWeaponFired:true,ammunition:[19,19],reloadRejectedWithoutPayment:true,reloadStable:true}},null,2));
+    }catch(error){
+        for(const [index,client] of [page,peer].entries())if(client){
+            const diagnostic=await client.evaluate(`({heading:document.querySelector('#character-sheet-name')?.textContent,
+                prostheses:document.querySelector('.prostheses')?.textContent,
+                selections:Array.from(document.querySelectorAll('.prostheses select'),s=>({value:s.value,disabled:s.disabled})),
+                updates:(window.__morningUpdates||[]).slice(-8).map(e=>({id:e.character_id,prostheses:Boolean(e.updates?.data?.health?.prostheses)}))})`).catch(()=>null);
+            fs.writeFileSync(path.join(safeSession.artifacts,'prosthesis-failure-'+index+'.json'),JSON.stringify(diagnostic,null,2));
+            await client.evaluate(`document.querySelector('.prostheses')?.scrollIntoView({block:'center'})`).catch(()=>null);
+            const shot=await client.call('Page.captureScreenshot',{format:'png'}).catch(()=>null);
+            if(shot)fs.writeFileSync(path.join(safeSession.artifacts,'prosthesis-failure-'+index+'.png'),Buffer.from(shot.data,'base64'));
+        }
+        throw error;
     }finally{await peer?.close();if(context)await protocol?.call('Target.disposeBrowserContext',{browserContextId:context.browserContextId});await protocol?.close();}
 };

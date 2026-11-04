@@ -189,6 +189,7 @@ ACTION_CATALOG = [
     {'key': 'reload_underbarrel', 'label': 'Зарядить подствольник', 'action_points': 5, 'free_actions': 0, 'movement_points': 0},
     {'key':'surgeon_reduction','label':'Вправить конечность без набора','action_points':2,'free_actions':0,'movement_points':0},
     {'key': 'change_equipment', 'label': 'Сменить экипировку', 'action_points': 0, 'free_actions': 0, 'movement_points': 0},
+    {'key':'prosthesis','label':'Надеть или снять протез','action_points':0,'free_actions':0,'movement_points':0},
     {'key': 'change_equipment_module', 'label': 'Сменить модуль экипировки', 'action_points': 0, 'free_actions': 0, 'movement_points': 0},
     {'key': 'place_gunpoint', 'label': 'Приставить ствол', 'action_points': 2, 'free_actions': 0, 'movement_points': 0},
     {'key': 'gunpoint_shot', 'label': 'Выстрелить в упор', 'action_points': 1, 'free_actions': 0, 'movement_points': 0},
@@ -659,11 +660,11 @@ class CombatService:
         return lower
 
     @staticmethod
-    def _cover_analysis(location_id, shooter, target):
+    def _cover_analysis(location_id, shooter, target, *, objects=None):
         from app.services.location_navigation import level_of, contains, surface, ground, opening_at
         from app.services.terrain_los import TerrainMesh
         location = db.session.get(Location, location_id)
-        objects = LocationObject.query.filter_by(location_id=location_id).all()
+        objects = list(objects) if objects is not None else LocationObject.query.filter_by(location_id=location_id).all()
         # Декоративные деревья тайлов используют тот же ствол, что размещённые объекты.
         for y, row in enumerate(location.tiles_data or []):
             for x, tile in enumerate(row if isinstance(row, list) else []):
@@ -701,7 +702,9 @@ class CombatService:
             },
         }[CombatService._posture_key(target)]
         shooter_eye += base_height(shooter)
-        zone_heights = {zone: height + base_height(target) for zone, height in zone_heights.items()}
+        target_base=base_height(target)
+        zone_heights = {zone: height + target_base for zone, height in zone_heights.items()}
+        passages=[obj for obj in objects if obj.type in {'hatch','floor_opening','stairs','ladder'}]
         blocked = {}
         smoke = None if getattr(shooter,'ignore_smoke',False) else CombatService._smoke_blocks_line(location_id, shooter, target)
         if smoke:
@@ -720,7 +723,7 @@ class CombatService:
         for zone, target_height in zone_heights.items():
             hit = terrain.first_hit((shooter.pos_x+.5, shooter_eye, shooter.pos_y+.5),
                                     (target.pos_x+.5, target_height, target.pos_y+.5),
-                                    lambda hit: not opening_at(objects, 0, hit['x'], hit['z']))
+                                    lambda hit: not opening_at(passages, 0, hit['x'], hit['z']))
             if hit and (zone not in blocked or hit['t'] < blocked[zone]['distance_factor']):
                 blocked[zone] = {'terrain': True, 'object_id': None, 'object_name': 'Рельеф',
                     'object_height': hit['height'], 'distance_factor': hit['t'],
@@ -737,8 +740,10 @@ class CombatService:
                     x = shooter.pos_x + .5 + (target.pos_x - shooter.pos_x) * t
                     y = shooter.pos_y + .5 + (target.pos_y - shooter.pos_y) * t
                     from app.services.location_navigation import opening_at
-                    stairwell = opening_at(objects, level_of(obj), x, y, (obj.properties or {}).get('building_id'))
-                    if 0 < t < 1 and contains(obj, x, y) and not stairwell:
+                    if not 0 < t < 1 or not contains(obj,x,y):
+                        continue
+                    stairwell = opening_at(passages, level_of(obj), x, y, (obj.properties or {}).get('building_id'))
+                    if not stairwell:
                         blocked[zone] = {'object_id': obj.id, 'object_name': obj.name or obj.type,
                                          'object_height': plane, 'distance_factor': t,
                                          **CombatService._cover_profile(obj)}
@@ -1730,6 +1735,9 @@ class CombatService:
             modifier -= limb_penalties['melee']
         elif skill_path == 'skills.physical.agility':
             modifier -= limb_penalties['agility']
+        elif skill_path.rsplit('.',1)[-1] in {'medicine','engineering','strength','lockpicking','climbing','search'}:
+            from app.services.prostheses import limb
+            modifier+=sum((limb(character_data,zone) or {}).get('efficiency',0) for zone in ('leftArm','rightArm'))
 
         temperature = CombatService._coerce_float(health.get('temperature'), 36.0)
         if 30 <= temperature <= 33:
@@ -1830,6 +1838,7 @@ class CombatService:
 
     @staticmethod
     def _disabled_limb_penalties(character_data):
+        from app.services.prostheses import limb
         left_arm = CombatService._zone_current_health(character_data, 'leftArm')
         right_arm = CombatService._zone_current_health(character_data, 'rightArm')
         left_leg = CombatService._zone_current_health(character_data, 'leftLeg')
@@ -1845,13 +1854,16 @@ class CombatService:
         arm_values = {'leftArm': left_arm, 'rightArm': right_arm}
         leg_values = {'leftLeg': left_leg, 'rightLeg': right_leg}
         disabled_arms = sum(
-            value is not None and value <= 0 or area in catastrophic_by_area
+            (value is not None and value <= 0 or area in catastrophic_by_area) and not limb(character_data,area)
             for area, value in arm_values.items()
         )
         leg_penalties = []
         for area, value in leg_values.items():
+            prosthesis=limb(character_data,area)
             injury_type = catastrophic_by_area.get(area)
-            if injury_type == 'amputation':
+            if prosthesis:
+                leg_penalties.append(-prosthesis['efficiency'])
+            elif injury_type == 'amputation':
                 leg_penalties.append(6)
             elif injury_type == 'mangled_limb':
                 leg_penalties.append(5)
@@ -1859,13 +1871,14 @@ class CombatService:
                 leg_penalties.append(3)
             else:
                 leg_penalties.append(0)
-        disabled_legs = sum(penalty > 0 for penalty in leg_penalties)
+        disabled_legs = sum((area in catastrophic_by_area or value is not None and value<=0) and not limb(character_data,area) for area,value in leg_values.items())
         reduction=character_passives(character_data)['injury_penalty_reduction']
-        leg_penalties=[max(0,value-reduction) for value in leg_penalties]
+        leg_penalties=[value if limb(character_data,area) else max(0,value-reduction) for area,value in zip(leg_values,leg_penalties)]
+        arm_prosthesis_penalty=-sum((limb(character_data,zone) or {}).get('efficiency',0) for zone in arm_values)
         return {
             'all': max(0,3-reduction) if abdomen is not None and abdomen <= 0 else 0,
-            'shooting': max(0,3-reduction) * disabled_arms,
-            'melee': max(0,3-reduction) * disabled_arms,
+            'shooting': max(0,3-reduction) * disabled_arms+arm_prosthesis_penalty,
+            'melee': max(0,3-reduction) * disabled_arms+arm_prosthesis_penalty,
             'agility': sum(leg_penalties),
             'movement': sum(leg_penalties),
             'sprint_blocked': disabled_legs > 0,
@@ -2310,15 +2323,15 @@ class CombatService:
     trigger_stress = apply_stress_trigger
 
     @staticmethod
-    def _is_dark_at_character(location, character):
-        return CombatService._is_dark_at_position(location, character.pos_x, character.pos_y)
+    def _is_dark_at_character(location, character, *, objects=None):
+        return CombatService._is_dark_at_position(location, character.pos_x, character.pos_y,objects=objects)
 
     @staticmethod
-    def _is_dark_at_position(location, x, y):
+    def _is_dark_at_position(location, x, y, *, objects=None):
         return location_is_dark(
             location.lighting, x, y,
             location.lobby.game_time_minutes,
-            LocationObject.query.filter_by(location_id=location.id).all(),
+            objects if objects is not None else LocationObject.query.filter_by(location_id=location.id).all(),
         )
 
     @staticmethod
@@ -9879,11 +9892,12 @@ class CombatService:
         )
 
     @staticmethod
-    def physical_position(character):
+    def physical_position(character, *, objects=None):
         from app.services.location_navigation import surface, ground
         level = getattr(character, 'floor_level', 0) or 0
         location = character.location
-        node = surface(location, LocationObject.query.filter_by(location_id=location.id).all(), character.pos_x, character.pos_y, level)
+        objects=objects if objects is not None else LocationObject.query.filter_by(location_id=location.id).all()
+        node = surface(location, objects, character.pos_x, character.pos_y, level)
         height = node['height'] if node else ground(location, character.pos_x, character.pos_y) + level * 2.4
         from app.services.character_jump import object_support_height
         height = object_support_height(character, height)
@@ -10290,6 +10304,9 @@ class CombatService:
 
     @staticmethod
     def _apply_anomaly_equipment_damage(character_data, damage, profile):
+        if profile.get('category',profile.get('damage_type'))=='electric':
+            from app.services.prostheses import discharge
+            discharge(character_data)
         equipment = character_data.get('equipment') if isinstance(character_data, dict) else {}
         equipment = equipment if isinstance(equipment, dict) else {}
         results = []
@@ -10985,7 +11002,7 @@ class CombatService:
         return loc_char
 
     @staticmethod
-    def _serialize_character(loc_char, current_turn_id=None, combat_state=None):
+    def _serialize_character(loc_char, current_turn_id=None, combat_state=None, *, scene_objects=None, light_actors=None):
         from app.services.character_rules import allied_ids
         from app.services.character_jump import balance_state
         from app.services.weapon_grip import hands as grip_hands,secondary_index
@@ -11092,7 +11109,7 @@ class CombatService:
             'team_color': loc_char.team_color,
             'x': loc_char.pos_x,
             'y': loc_char.pos_y,
-            **CombatService.physical_position(loc_char),
+            **CombatService.physical_position(loc_char,objects=scene_objects),
             'status': loc_char.status,
             'initiative_bonus': loc_char.initiative_bonus or 0,
             'initiative_roll': loc_char.initiative_roll,
@@ -11171,8 +11188,8 @@ class CombatService:
             'drawn_weapon_index': loc_char.drawn_weapon_index,
             'weapon_grip_hands': grip_hands(data),
             'secondary_weapon_index': secondary_index(loc_char),
-            'portable_lights': ready_sources(loc_char),
-            'portable_illumination': illumination(loc_char),
+            'portable_lights': ready_sources(loc_char,objects=scene_objects),
+            'portable_illumination': illumination(loc_char,actors=light_actors,objects=scene_objects),
             'aimed_target_character_id': loc_char.aimed_target_character_id,
             'aimed_weapon_index': loc_char.aimed_weapon_index,
             'aim_accuracy_bonus': max(0, CombatService._coerce_int(loc_char.aim_accuracy_bonus, 0)),
@@ -12048,6 +12065,10 @@ class CombatService:
             (item for item in ordered_characters if item.id == state.current_location_character_id),
             None,
         )
+        # Один снимок геометрии на сборку ответа, без кеша между действиями.
+        scene_objects=LocationObject.query.filter_by(location_id=location.id).all()
+        from app.services.portable_lights import bindings
+        light_actors=[item for item in characters if item.character and bindings(item.character.data)]
 
         return {
             'location_id': location.id,
@@ -12066,12 +12087,14 @@ class CombatService:
                 current_character,
                 current_turn_id=state.current_location_character_id,
                 combat_state=state,
+                scene_objects=scene_objects,light_actors=light_actors,
             ) if current_character else None,
             'characters': [
                 CombatService._serialize_character(
                     item,
                     current_turn_id=state.current_location_character_id,
                     combat_state=state,
+                    scene_objects=scene_objects,light_actors=light_actors,
                 )
                 for item in ordered_characters
             ],
@@ -14122,6 +14145,10 @@ class CombatService:
                     obstacle_difficulty if source == 'hand' else 0
                 ),
             }
+        elif action_key=='prosthesis':
+            from app.services.prostheses import plan
+            equipment_action_details=plan(data,equipment_operation,equipment_slot,item_path)
+            special_action_cost=equipment_action_details['action_points']
         elif action_key == 'change_equipment':
             equipment_action_details = CombatService.equipment_action_details(
                 data,
@@ -15113,6 +15140,9 @@ class CombatService:
             melee_bonus = CombatService._skill_modifier(
                 character.character.data or {}, 'skills.physical.melee'
             )
+            prosthesis_accuracy=CombatService._template_attributes(weapon)
+            if prosthesis_accuracy.get('prosthesis_zone'):
+                melee_bonus-=prosthesis_accuracy.get('prosthesis_efficiency',0)
             melee_bonus += max(
                 0,
                 CombatService._coerce_int(
@@ -16235,6 +16265,10 @@ class CombatService:
                 launcher['loadedGrenade'] = grenade
                 character.character.data = data
                 flag_modified(character.character, 'data')
+            if action_key=='prosthesis' and equipment_action_details:
+                from app.services.prostheses import apply
+                equipment_action_details=apply(data,equipment_action_details)
+                character.character.data=data;flag_modified(character.character,'data')
             if action_key == 'change_equipment' and equipment_action_details:
                 equipment_action_details = CombatService.apply_equipment_action(
                     data,

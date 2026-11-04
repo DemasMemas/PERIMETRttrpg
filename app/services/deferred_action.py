@@ -181,6 +181,9 @@ def validate_deferred_conditions(actor, row):
     payload = row.payload or {}
     kind = payload.get('action_key')
     CombatService.ensure_character_can_act(actor, kind)
+    if kind=='prosthesis':
+        from app.services.prostheses import plan
+        plan(actor.character.data,payload.get('equipment_operation'),payload.get('equipment_slot'),payload.get('item_path'))
     if kind=='draw_weapon' and payload.get('attribute_choice')=='second_hand':
         from app.services.weapon_grip import validate_secondary
         validate_secondary(actor,payload.get('weapon_index'))

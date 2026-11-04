@@ -158,9 +158,10 @@ def calculate_inventory_access(character_data, item_path, item=None):
         base_action_points += access_cost
 
     zones = (((character_data or {}).get("health") or {}).get("zones") or {})
+    from app.services.prostheses import limb
     limb_penalty = int(any(
         isinstance(zones.get(area), dict) and _non_negative_number(zones[area].get("current")) == 0
-        for area in ("leftArm", "rightArm")
+        for area in ("leftArm", "rightArm") if not limb(character_data,area)
     ))
     retrieval = max(0, base_action_points - quick_access_discount + limb_penalty)
     return {

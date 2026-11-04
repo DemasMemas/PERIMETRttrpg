@@ -12,6 +12,8 @@ ALLOWED_MODULES = (
     'test_weapon_grip.py',
     'test_action_journal.py',
     'test_portable_lights.py',
+    'test_prostheses.py',
+    'test_attack_latency.py',
     'test_noise.py',
     'test_combat_explosions.py', 'test_grenade_rules.py',
     'test_combat_movement.py', 'test_combat_attacks.py',

@@ -2615,6 +2615,7 @@ async function showFireAndWaterMenu(character) {
         modal.style.cssText = 'position:fixed;inset:0;z-index:10060;display:flex;align-items:center;justify-content:center;padding:16px;background:rgba(0,0,0,.48);';
         document.body.appendChild(modal);
     }
+    const selectedTarget=modal.querySelector('.fire-water-target')?.value;
     modal.innerHTML = `<div style="width:min(440px,100%);max-height:85vh;overflow:auto;padding:18px;border-radius:14px;background:#171e1c;color:#f4f1e8;">
         <div style="display:flex;justify-content:space-between;"><strong>Тушение огня</strong><button type="button" class="fire-close btn btn-secondary">×</button></div>
         <p>Тушить себя: 3 ОД, d20 против СЛ 12 + стресс + модификатор смеси, без бонуса навыка.</p>
@@ -2629,6 +2630,7 @@ async function showFireAndWaterMenu(character) {
     modal.onpointerdown = event => { if (event.target === modal) close(); };
     const perform = async (key, extra = {}) => {
         const buttons = modal.querySelectorAll('button');
+        const disabledBefore=Array.from(buttons,button=>button.disabled);
         buttons.forEach(button => { button.disabled = true; });
         try {
             const result = await Server.performLocationCombatAction(window.currentLobbyId, getCurrentLocationId(), {
@@ -2637,9 +2639,13 @@ async function showFireAndWaterMenu(character) {
             const check = result.narrative_action?.check;
             showNotification(check ? `${check.success ? 'Потушено' : 'Горение сохраняется'}: d20 ${check.roll}, СЛ ${check.difficulty}`
                 : result.narrative_action?.name || 'Действие оплачивается', check && !check.success ? 'system' : 'success');
-            close();
+            if (key==='prepare_water' && !result.pending_action && modal.isConnected) {
+                const updated=result.character || result.state?.characters?.find(item=>item.character_id===character.character_id);
+                if (updated) await showFireAndWaterMenu(updated);
+                else close();
+            } else close();
         } catch (error) {
-            buttons.forEach(button => { button.disabled = false; });
+            buttons.forEach((button,index) => { button.disabled = disabledBefore[index]; });
             showNotification(error.message, 'system');
         }
     };
@@ -2667,6 +2673,7 @@ async function showFireAndWaterMenu(character) {
         option.textContent = target.character_id === character.character_id ? 'Себя' : target.name || `Персонаж ${target.character_id}`;
         targets.appendChild(option);
     });
+    if(selectedTarget && Array.from(targets.options).some(option=>option.value===selectedTarget))targets.value=selectedTarget;
     modal.querySelector('.fire-pour').disabled = !character.water_in_hand;
     modal.querySelector('.fire-pour').onclick = () => perform('pour_water', { target_character_id: Number(targets.value) });
 }

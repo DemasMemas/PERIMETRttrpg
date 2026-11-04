@@ -18,6 +18,7 @@ def hands(data):
 
 def functional_arms(data):
     from app.services.combat import CombatService
+    from app.services.prostheses import limb
     zones = ((data or {}).get('health') or {}).get('zones') or {}
     from app.services.effects import normalize_effect_list
     missing={effect.get('area') for effect in normalize_effect_list(((data or {}).get('health') or {}).get('effects') or [])
@@ -25,7 +26,7 @@ def functional_arms(data):
     values = []
     for aliases in (('leftArm', 'left_arm'), ('rightArm', 'right_arm')):
         zone = next((zones.get(key) for key in aliases if isinstance(zones.get(key), dict)), None)
-        values.append(not any(key in missing for key in aliases) and (zone is None or CombatService._coerce_float(zone.get('current'),0) > 0))
+        values.append(bool(limb(data,aliases[0])) or not any(key in missing for key in aliases) and (zone is None or CombatService._coerce_float(zone.get('current'),0) > 0))
     return sum(values)
 
 
@@ -183,6 +184,11 @@ def ensure_usable(actor, weapon):
     from app.services.combat import CombatService
     data = actor.character.data or {}
     attrs = CombatService._template_attributes(weapon)
+    if attrs.get('prosthesis_zone'):
+        from app.services.prostheses import limb
+        current=limb(data,attrs['prosthesis_zone'])
+        if not current or not any(item.get('id')==attrs.get('prosthesis_id') for item in current['items']):
+            raise ValidationError('Протез для этой атаки не действует')
     if weapon.get('naturalWeapon') or attrs.get('natural_weapon'):
         return
     if functional_arms(data) < (2 if pair(actor) else hands(data)):

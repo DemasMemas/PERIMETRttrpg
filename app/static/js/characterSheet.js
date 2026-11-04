@@ -1,5 +1,6 @@
 import { itemTooltipModel, tooltipPosition } from './itemPresentation.js';
 import { renderPortableLights,usesNightVision } from './portableLights.js';
+import { renderProstheses,prostheticLimb } from './prostheses.js';
 import { hearingModifier } from './hearingRules.js';
 import { passiveTraits, traitCount, backgroundIs, addLearningXp, backpackItemVolume, pocketCapacity,facialProfile,carriedWeaponEntries,ruleText } from './characterTraits.js';
 // static/js/characterSheet.js
@@ -1322,7 +1323,8 @@ async function applyRemoteSheetData(remoteData, characterId = currentCharacterId
         || changes.scalarPaths.some(path => /^skills\..+\.(base|xp)$/.test(path))
         || touches('features')
     ) tasks.push(renderSkillsTab(remoteData));
-    if (touches('equipment') || touches('weapons') || touches('activeWeaponIndex')) {
+    if (touches('equipment') || touches('weapons') || touches('activeWeaponIndex') || touches('inventory')
+        || touches('health.prostheses') || touches('health.combatMeta.portableLights')) {
         tasks.push(renderEquipmentTab(remoteData));
     }
     if (
@@ -1931,6 +1933,9 @@ function getIntoxicationProfile(data) {
 function getHealthRollModifier(data, skillPath, options = {}) {
     const health = data?.health || {};
     let modifier = 0;
+    if(['shooting','melee','medicine','engineering','strength','lockpicking','climbing','search'].includes(skillPath.split('.').at(-1)))
+        modifier+=['leftArm','rightArm'].reduce((sum,zone)=>sum+(prostheticLimb(data,zone)?.efficiency||0),0);
+    if(skillPath==='physical.agility')modifier+=['leftLeg','rightLeg'].reduce((sum,zone)=>sum+(prostheticLimb(data,zone)?.efficiency||0),0);
     if(['physical.shooting','physical.melee','physical.agility'].includes(skillPath))modifier+=facialProfile(data)[skillPath.split('.').at(-1)]||0;
     if (options.includePain !== false) modifier -= Math.max(0,(Number(health.painLevel)||0)-passiveTraits(data).painIgnored-passiveTraits(data).painReduction);
     modifier -= Number(health.exhaustion) || 0;
@@ -2156,6 +2161,8 @@ function getMovementPenaltyBreakdown(data, suppliedWeight = null) {
         .filter(effect => ['mangled_limb', 'amputation'].includes(effect.type))
         .map(effect => [String(effect.area || ''), effect.type]));
     const injuries = ['leftLeg', 'rightLeg'].reduce((sum, key) => {
+        const prosthesis=prostheticLimb(data,key);
+        if(prosthesis)return sum-prosthesis.efficiency;
         const injuryType = catastrophicByArea.get(key);
         if (injuryType === 'amputation') return sum + 6;
         if (injuryType === 'mangled_limb') return sum + 5;
@@ -4681,7 +4688,8 @@ async function renderEquipmentTab(data) {
     await renderWeapons(weapons, weaponTemplates, weaponModuleTemplates, weaponModTemplates);
     renderEquipmentLoadout(container, data, weaponTemplates, helmetTemplates, gasMaskTemplates, armorTemplates);
     await renderPortableLights(container,currentCharacterId,data,window.operatePortableLight,
-        ()=>renderVersion===equipmentRenderVersion,currentCharacterCanEdit).catch(error=>console.warn('Не удалось загрузить фонари:',error));
+        ()=>renderVersion===equipmentRenderVersion,currentCharacterCanEdit&&!medicalOperationInProgress).catch(error=>console.warn('Не удалось загрузить фонари:',error));
+    if(renderVersion===equipmentRenderVersion)renderProstheses(container,data,window.operateProsthesis,currentCharacterCanEdit&&!medicalOperationInProgress,currentCharacterId);
     restoreSheetViewState(viewState);
 }
 
@@ -5385,6 +5393,35 @@ function formatActionPointModifier(value) {
     if (numeric === 0) return 'без изменений';
     return `${numeric > 0 ? '+' : ''}${numeric} ОД`;
 }
+
+window.operateProsthesis = async function(payload) {
+    if(medicalOperationInProgress || !currentCharacterCanEdit)return;
+    const characterId=currentCharacterId;let locked=false;
+    try {
+        if(autoSaveTimer)await forceSyncCharacter();
+        await Server.waitForCharacterSave(characterId);
+        if(currentCharacterId!==characterId || medicalOperationInProgress)return;
+        if(sheetSaveBlocked)throw new Error('Переоткройте лист перед действием с протезом');
+        medicalOperationInProgress=locked=true;medicalRemoteUpdate=null;
+        const state=window.locationCombatState;
+        if(state?.status==='active'){
+            if(!['install','remove'].includes(payload.operation))throw new Error('Обслуживание выполняется вне боя');
+            const result=await Server.performLocationCombatAction(window.currentLobbyId,window.currentLocationId,{
+                location_character_id:state.current_character.location_character_id,action_key:'prosthesis',
+                equipment_operation:payload.operation,equipment_slot:payload.zone,item_path:payload.path,
+                pending_action_id:`prosthesis-${characterId}-${Date.now()}`});
+            showNotification(result.pending_action?'Установка начата и ждёт доплаты ОД':'Протез обновлён','success');
+        }else{
+            const result=await Server.operateProsthesis(characterId,{...payload,character_revision:currentCharacterData._revision});
+            currentCharacterData=result.data;
+            showNotification(payload.operation==='lubricate'?'Смазка начата: 5 минут игрового времени':'Протез обновлён','success');
+        }
+    }catch(error){showNotification(error.message || 'Не удалось выполнить действие с протезом','system');}
+    finally{if(locked){
+        if(medicalRemoteUpdate?.character_id===Number(characterId)&&Number(medicalRemoteUpdate.data?._revision)>Number(currentCharacterData?._revision))currentCharacterData=medicalRemoteUpdate.data;
+        medicalOperationInProgress=false;medicalRemoteUpdate=null;await refreshSavedSheet(characterId);
+    }}
+};
 
 window.operatePortableLight = async function(payload) {
     if (medicalOperationInProgress || !currentCharacterCanEdit) return;
@@ -10152,8 +10189,7 @@ function isItemCompatibleWithPouch(item, pouch) {
 
 function getDisabledArmRetrievalPenalty() {
     const zones = currentCharacterData?.health?.zones || {};
-    const arms = [zones.leftArm, zones.rightArm];
-    return arms.some(zone => zone && Number(zone.current) <= 0) ? 1 : 0;
+    return ['leftArm','rightArm'].some(key=>!prostheticLimb(currentCharacterData,key)&&zones[key]&&Number(zones[key].current)<=0)?1:0;
 }
 
 async function calculateInventoryAccess(item, itemPath) {
