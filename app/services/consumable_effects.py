@@ -70,6 +70,42 @@ def _parse_duration(text: str) -> Optional[int]:
     return None
 
 
+def _without_movement_duration(text):
+    # Тире между подписью срока и числом — пунктуация, а не знак бонуса к движению.
+    return re.sub(r'\b(?:длительность|действует|длится|работает)\s*[-–—:=]?\s*\d+\s*'
+                  r'(?:перемещени[еяй]|передвижени[еяй])\b', '', text, flags=re.I)
+
+
+def remove_stale_movement_modifiers(character_data, lobby_id=None):
+    """Уже введённая официальная ампула также не должна оставлять ложный бонус срока."""
+    meta=((character_data or {}).get('health') or {}).get('combatMeta') or {}
+    modifiers=meta.get('consumableModifiers')
+    if not isinstance(modifiers,list) or not any(isinstance(m,dict) and m.get('stat')=='movement_points' for m in modifiers):return
+    from flask import has_app_context
+    if not has_app_context():return
+    from app.services.item_template_lookup import resolve_item_template, LOCAL_TEMPLATE_ID_OFFSET
+    from app.models.lobby_templates import LobbyItemTemplate
+    from app.extensions import db
+    retained=[]
+    for modifier in modifiers:
+        if not isinstance(modifier,dict) or modifier.get('stat')!='movement_points':
+            retained.append(modifier);continue
+        match=re.fullmatch(r'consumable-template:(\d+)',str(modifier.get('source') or ''))
+        template_id=int(match[1]) if match else 0
+        template=(db.session.get(LobbyItemTemplate,template_id-LOCAL_TEMPLATE_ID_OFFSET)
+                  if template_id>=LOCAL_TEMPLATE_ID_OFFSET and lobby_id is None
+                  else resolve_item_template({'templateId':template_id},lobby_id))
+        attrs=(template.attributes or {}) if template else {}
+        description=(template.description or '') if template else ''
+        official=(attrs.get('catalog_name') and attrs.get('raw_description')==description
+                  and not (attrs.get('consumable') or {}).get('editor_version'))
+        if official and _without_movement_duration(description)!=description:
+            corrected=parse_consumable_effects(attrs['catalog_name']+'. '+description)
+            if 'movement_points_delta' not in corrected['direct']:continue
+        retained.append(modifier)
+    meta['consumableModifiers']=retained
+
+
 def darkness_modifiers_from_description(description: str) -> List[Dict[str, Any]]:
     """Parse conditional vision/shooting modifiers independently of item names."""
     lower = _normalize(description).lower()
@@ -134,6 +170,13 @@ def enrich_imported_consumable(attributes, description):
     if set(old_direct) <= structural and not result.get('modifiers'):
         result['direct'].update(parsed.get('direct') or {})
     name = str(attributes['catalog_name']).casefold()
+    if ('movement_points_delta' not in parsed['direct']
+            and _without_movement_duration(description) != description):
+        result['direct'].pop('movement_points_delta', None)
+        result['modifiers'] = [m for m in result.get('modifiers') or [] if m.get('stat') != 'movement_points']
+        result['effects'] = [e for e in result.get('effects') or []
+                             if e.get('type') != 'movement_points' and not (
+                                 e.get('source') == 'direct' and str(e.get('name') or '').startswith(('ОП ', 'Штраф перемещения ')))]
     if name in {'стимулятор орёл','стимулятор орел','военный стимулятор пчела'}:
         result['direct'].pop('post_duration_exhaustion_delta', None)
         result['direct']['exhaustion_delta'] = 1
@@ -191,7 +234,7 @@ def enrich_imported_consumable(attributes, description):
             if not duplicate:
                 result[field].append(deepcopy(entry))
     result, _ = correct_owl_profile(result, result['direct'], attributes['catalog_name'])
-    result['catalog_rules_version'] = '2026-11-04'
+    result['catalog_rules_version'] = '2026-11-04-duration'
     return result
 
 
@@ -294,7 +337,7 @@ def parse_consumable_effects(description: str) -> Dict[str, Any]:
         ("temperature", r"(?P<sign>[+-])(?P<value>\d+(?:[.,]\d+)?)\s*(?:градус|температур)"),
     ]
     for stat, pattern in mapping:
-        value = _parse_signed(lower, pattern)
+        value = _parse_signed(_without_movement_duration(lower) if stat == 'movement_points' else lower, pattern)
         if value is None:
             continue
         profile["direct"][f"{stat}_delta"] = value

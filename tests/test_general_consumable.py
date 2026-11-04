@@ -15,6 +15,19 @@ from app.services.medical_procedure import minimum_consumable_payment
 from test_consumable_use import pair
 
 
+def test_previously_applied_official_suppressor_does_not_keep_false_movement_bonus(app):
+    from app.services.combat import CombatService
+    description='Ампула. Длительность - 6 перемещений. Пси-состояние -25.'
+    for custom in (False,True):
+        template=ItemTemplate(name='Подавитель эмоций',category='consumable',description=description,
+            attributes={'catalog_name':'Подавитель эмоций','raw_description':description,
+                'consumable':{'direct':{'duration':6,'movement_points_delta':-6},**({'editor_version':1} if custom else {})}})
+        db.session.add(template);db.session.flush()
+        data={'health':{'combatMeta':{'consumableModifiers':[{'stat':'movement_points','value':-6,
+            'remaining':4,'tick':'movement_end','source':f'consumable-template:{template.id}'}]}}}
+        assert CombatService._consumable_stat_value_bonus(data,'movement_points')==(-6 if custom else 0)
+
+
 @pytest.mark.parametrize('name,field,steps', [
     ('Регенеративный стимулятор Альфа', 'exhaustion', [0, 1, 2, 3, 3]),
     ('Регенеративный стимулятор Бета', 'exhaustion', [0, 1, 2, 2, 2]),

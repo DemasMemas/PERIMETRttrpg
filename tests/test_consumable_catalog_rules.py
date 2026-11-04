@@ -4,6 +4,29 @@ from app.services.consumable_catalog_rules import apply_catalog_rules
 from app.services.consumable_effects import parse_consumable_effects
 
 
+@pytest.mark.parametrize('duration_text', ['Длительность - 6 перемещений', 'Длительность — 6 перемещений',
+    'Действует 6 перемещений', 'Длится 6 перемещений'])
+def test_movement_duration_never_grants_movement_bonus(duration_text):
+    from app.services.consumable_effects import enrich_imported_consumable
+    text=duration_text+'. Пси-состояние -25.'
+    fresh=parse_consumable_effects('Подавитель эмоций. '+text)
+    assert fresh['direct']['duration']==6
+    assert fresh['direct']['duration_phase']=='movement_end'
+    assert 'movement_points_delta' not in fresh['direct']
+    assert not any(m.get('stat')=='movement_points' for m in fresh['modifiers'])
+    if '-' in text or '—' in text:
+        old={'direct':{'duration':6,'duration_phase':'movement_end','movement_points_delta':-6},
+            'modifiers':[{'stat':'movement_points','value':-6}], 'effects':[]}
+        migrated=enrich_imported_consumable({'catalog_name':'Подавитель эмоций','raw_description':text,'consumable':old},text)
+        assert 'movement_points_delta' not in migrated['direct']
+        assert not any(m.get('stat')=='movement_points' for m in migrated['modifiers'])
+
+
+def test_real_movement_modifier_is_preserved_next_to_punctuated_duration():
+    profile=parse_consumable_effects('Препарат. Длительность - 6 перемещений. Штраф к перемещению -2. -1 к движению.')
+    assert profile['direct']['movement_points_delta']==-1
+
+
 @pytest.mark.parametrize('name,field,old_type', [
     ('Борщевик','intoxication_delta','intoxication'),
     ('Самопальный стимпак','intoxication_delta','intoxication'),

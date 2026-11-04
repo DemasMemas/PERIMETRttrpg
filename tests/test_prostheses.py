@@ -214,6 +214,69 @@ def installed_for_test(actor):
     return actor.character.data.get('health',{}).get('prostheses',{}).get('leftLeg',{}).get('base')
 
 
+@pytest.mark.parametrize('outcome', ['success','failure','cancel'])
+def test_clamp_removal_reuses_surgery_and_only_detaches_after_success(client,grenade_game,auth_headers,monkeypatch,outcome):
+    from app.services.prostheses import advance_lobby
+    actor=surgical_setup(grenade_game)
+    monkeypatch.setattr('app.services.prosthesis_surgery.random.randint',lambda *_:20)
+    assert operation(client,grenade_game,auth_headers,operation='surgery_install',operation_id='install-before-removal',
+        target_revision=actor.character.revision).status_code==200
+    advance_lobby(grenade_game['lobby'],3600);db.session.commit()
+    before=deepcopy(installed_for_test(actor));assert before['id']=='prosthesis-test'
+    response=operation(client,grenade_game,auth_headers,operation='surgery_remove',operation_id='remove-clamp',
+        target_revision=actor.character.revision)
+    assert response.status_code==200,response.json
+    assert installed_for_test(actor)['id']==before['id']
+    assert sum(i['quantity'] for i in actor.character.data['inventory']['pockets'] if i['name']=='Морфий')==4
+    monkeypatch.setattr('app.services.prosthesis_surgery.random.randint',lambda *_:1 if outcome=='failure' else 20)
+    if outcome=='cancel':
+        assert operation(client,grenade_game,auth_headers,operation='cancel_surgery').status_code==200
+    else:
+        advance_lobby(grenade_game['lobby'],3599);db.session.commit()
+        assert installed_for_test(actor)['id']==before['id']
+        advance_lobby(grenade_game['lobby'],1);db.session.commit()
+    items=[i for i in actor.character.data['inventory']['pockets'] if i.get('id')==before['id']]
+    if outcome=='success':
+        assert not installed_for_test(actor)
+        assert len(items)==1 and items[0]['durability']==before['durability']
+    else:assert installed_for_test(actor)['id']==before['id'] and not items
+    snapshot=deepcopy(actor.character.data)
+    advance_lobby(grenade_game['lobby'],3600);db.session.commit()
+    assert sum(i.get('id')==before['id'] for i in actor.character.data['inventory']['pockets'])==len(items)
+    assert actor.character.data['health']['combatMeta']['prosthesisSurgeryResult']['operation']=='surgery_remove'
+
+
+def test_integrated_prosthesis_cannot_be_removed_by_forged_surgery(client,grenade_game,auth_headers,monkeypatch):
+    from app.services.prostheses import advance_lobby
+    actor=surgical_setup(grenade_game,True)
+    monkeypatch.setattr('app.services.prosthesis_surgery.random.randint',lambda *_:20)
+    assert operation(client,grenade_game,auth_headers,operation='surgery_install',operation_id='install-integrated',
+        target_revision=actor.character.revision).status_code==200
+    advance_lobby(grenade_game['lobby'],28800);db.session.commit();before=deepcopy(actor.character.data)
+    response=operation(client,grenade_game,auth_headers,operation='surgery_remove',operation_id='forged-remove',
+        target_revision=actor.character.revision)
+    assert response.status_code==400
+    assert actor.character.data==before
+
+
+@pytest.mark.parametrize('success', [True,False])
+def test_large_clock_jump_only_spends_power_until_actual_removal(client,grenade_game,auth_headers,monkeypatch,success):
+    from app.services.prostheses import advance_lobby
+    actor=surgical_setup(grenade_game)
+    monkeypatch.setattr('app.services.prosthesis_surgery.random.randint',lambda *_:20)
+    assert operation(client,grenade_game,auth_headers,operation='surgery_install',operation_id='install-clock',
+        target_revision=actor.character.revision).status_code==200
+    advance_lobby(grenade_game['lobby'],3600);db.session.commit()
+    data=deepcopy(actor.character.data);data['health']['prostheses']['leftLeg']['base']['energy_seconds']=10800
+    actor.character.data=data;flag_modified(actor.character,'data');db.session.commit()
+    assert operation(client,grenade_game,auth_headers,operation='surgery_remove',operation_id='remove-clock',
+        target_revision=actor.character.revision).status_code==200
+    monkeypatch.setattr('app.services.prosthesis_surgery.random.randint',lambda *_:20 if success else 1)
+    advance_lobby(grenade_game['lobby'],7200);db.session.commit()
+    item=next(i for i in actor.character.data['inventory']['pockets'] if i.get('id')=='prosthesis-test') if success else installed_for_test(actor)
+    assert item['energy_seconds']==(7200 if success else 3600)
+
+
 def test_failed_operation_keeps_loss_and_returns_prosthesis_but_not_supplies(client,grenade_game,auth_headers,monkeypatch):
     from app.services.prostheses import advance_lobby
     actor=surgical_setup(grenade_game)

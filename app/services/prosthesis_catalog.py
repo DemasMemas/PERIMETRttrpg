@@ -507,6 +507,7 @@ PROFILES = {'Навесная база предплечья': {'durability': 50,
 
 # Масса и объём зависят от заменяемой части, включая базы кистей.
 for _profile in PROFILES.values():
+    if _profile['mount']=='clamp':_profile['installation']['removable']=True
     _profile['weight'], _profile['volume'] = {
         'hand_or_foot': (1, 1),
         'elbow_or_knee': (2, 4),

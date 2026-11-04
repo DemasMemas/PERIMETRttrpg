@@ -2413,7 +2413,7 @@ export async function showMedicalConsumableMenu(characterId, forcedTargetCharact
             inspect:async patientId=>patientId===Number(characterId)?characterData:(await Server.inspectLocationCharacter(
                 window.currentLobbyId,getCurrentLocationId(),patientId,actorLocationCharacterId))?.target_data,
             consent:async patientId=>patientId===Number(characterId)||getLocationCharacterCondition(patientId).state!=='active'?null:
-                requestTreatmentConsent(actorLocationCharacterId,patientId,'Операция установки протеза; расходники и игровое время будут потрачены даже при провале'),
+                requestTreatmentConsent(actorLocationCharacterId,patientId,'Операция с протезом; расходники и игровое время будут потрачены даже при провале'),
             operate:async payload=>{
                 const response=await Server.operateProsthesis(characterId,{...payload,character_revision:characterData._revision});
                 closeMedicalConsumableMenu();showNotification('Операция начата. Дождитесь окончания по игровому времени.','system');return response;

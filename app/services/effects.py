@@ -769,6 +769,8 @@ def _adjust_field(health: Dict[str, Any], field: str, delta: int, minimum: Optio
     if field=="stress":minimum=max(minimum or 0,min(10,_to_float((health.get("combatMeta") or {}).get("hunterStressDebt"),0)))
     current = _to_float(health.get(field, 0), 0)
     health[field] = _clamp(current + delta, minimum, maximum)
+    if field=='painLevel' and health[field]>current:
+        health.setdefault('combatMeta',{})['painIncreased']=True
 
 
 def _distribute_zone_healing(health: Dict[str, Any], amount: float) -> None:
@@ -947,7 +949,7 @@ def apply_effect_to_health(health: Dict[str, Any], raw_effect: Any, *, character
             return health
         _adjust_field(health, "painLevel", pain_delta, 0, 10)
         meta = health.setdefault("combatMeta", {})
-        meta["painIncreased"] = True
+        if pain_delta>0:meta["painIncreased"] = True
         return health
 
     if effect_type == "exhaustion":
@@ -1231,12 +1233,14 @@ def advance_timed_effects(
     include_turn_effects: bool = False,
     advance_medication_turns: bool = False,
     advance_event_modifiers: bool = True,
+    recover_pain: bool = False,
     character_data=None,
 ) -> List[Dict[str, Any]]:
     """Продвинуть игровые сроки; ходовые препараты — только при явном переводе времени."""
     if advance_medication_turns:
         return _advance_medication_time(health, effects, elapsed_seconds,
                                         include_turn_effects=include_turn_effects,
+                                        recover_pain=recover_pain,
                                         character_data=character_data)
     unit_seconds = {"second": 1, "minute": 60, "movement": 600, "hour": 3600}
     survivors = []
@@ -1423,7 +1427,16 @@ def advance_timed_effects(
     return normalize_effect_list(health.get("effects") or [])
 
 
-def _advance_medication_time(health, effects, elapsed_seconds, *, include_turn_effects=False, character_data=None):
+def minimum_pain(health, character_data=None):
+    """Неустранимый минимум: последствия спасения и постоянно надетые артефакты."""
+    floor=min(5,max(0,_to_float(((health.get('combatMeta') or {}).get('toughNut') or {}).get('minimumPain'),0)))
+    if character_data:
+        from app.services.artifact_effects import artifact_passive_profile
+        floor+=max(0,artifact_passive_profile(character_data)['pain_per_movement'])
+    return min(10,floor)
+
+
+def _advance_medication_time(health, effects, elapsed_seconds, *, include_turn_effects=False, recover_pain=False, character_data=None):
     """Использует те же срабатывания и последствия, что боевые ходы, сохраняя дробный остаток."""
     units = {"second": 1, "minute": 60, "movement": 600, "hour": 3600}
     periods = {"turn_start": 6, "turn_end": 6, "round_end": 6,
@@ -1431,10 +1444,16 @@ def _advance_medication_time(health, effects, elapsed_seconds, *, include_turn_e
     periodic = {"regeneration", "radiation_treatment", "blood_recovery", "periodic_adjustment"}
     remaining = max(0, _to_float(elapsed_seconds, 0))
     health["effects"] = identify_effects(effects or [])
+    floor=minimum_pain(health,character_data) if recover_pain else 0
+    meta=health.setdefault('combatMeta',{})
+    if recover_pain:meta.pop('painIncreased',None)
+    pain_progress=max(0,_to_float(meta.get('painRecoverySeconds'),0))%6
     while remaining > 0:
         current = normalize_effect_list(health.get("effects") or [])
         simulated = []
         deadlines = [remaining]
+        if recover_pain and _to_float(health.get('painLevel'),0)>floor:
+            deadlines.append(6-pain_progress)
         for effect in current:
             if not effect.get("active", True) or effect.get("remaining") is None:
                 continue
@@ -1452,6 +1471,7 @@ def _advance_medication_time(health, effects, elapsed_seconds, *, include_turn_e
                     if deadline > 0:
                         deadlines.append(deadline)
         step = min(deadlines)
+        pain_before=_to_float(health.get('painLevel'),0)
         simulated_ids = {effect["id"] for effect, _, _ in simulated}
         ordinary = [effect for effect in current if effect["id"] not in simulated_ids]
         # До срабатываний сохраняем активные блоки боли/стресса в health.
@@ -1475,6 +1495,16 @@ def _advance_medication_time(health, effects, elapsed_seconds, *, include_turn_e
                 interval = units.get(effect.get("time_unit"), periods[phase])
                 effect["remaining_seconds"] = _to_float(effect["remaining"], 0) * interval
             health["effects"] = [effect for effect in health["effects"] if effect["id"] not in due_ids] + ticked
+        if recover_pain:
+            pain_progress+=step
+            if pain_progress>=6-1e-8:
+                # Новая боль в том же интервале не снимается на его границе.
+                increased=bool(meta.pop('painIncreased',False)) or _to_float(health.get('painLevel'),0)>pain_before
+                ticks=int((pain_progress+1e-8)//6)
+                health['painLevel']=max(floor,_to_float(health.get('painLevel'),0)-max(0,ticks-int(increased)))
+                pain_progress=max(0,pain_progress-6*ticks)
+            else:health['painLevel']=max(floor,_to_float(health.get('painLevel'),0))
+            meta['painRecoverySeconds']=pain_progress
         remaining = max(0, remaining - step)
         sync_health_derived_statuses(health)
     return normalize_effect_list(health.get("effects") or [])

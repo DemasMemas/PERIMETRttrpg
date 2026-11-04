@@ -28,7 +28,7 @@ export function renderProstheses(container,data,operate,canEdit,characterId) {
     const section=document.createElement('section');section.className='loadout-group prostheses';
     const heading=document.createElement('h4');heading.textContent='Протезы';section.append(heading);
     if(meta.prosthesisSurgeryId || meta.prosthesisSurgeryPatientId){
-        const status=document.createElement('p');status.textContent='Идёт операция установки протеза. Окончание определяется игровым временем.';section.append(status);
+        const status=document.createElement('p');status.textContent='Идёт операция с протезом. Окончание определяется игровым временем.';section.append(status);
         const cancel=document.createElement('button');cancel.type='button';cancel.className='btn btn-sm btn-secondary';cancel.textContent='Прервать операцию';cancel.disabled=!canEdit;
         cancel.onclick=()=>{if(window.confirm('Прервать операцию? Расходники уже потрачены.'))operate({operation:'cancel_surgery'})};section.append(cancel);
     }else if(meta.prosthesisSurgeryResult){
@@ -50,6 +50,11 @@ export function renderProstheses(container,data,operate,canEdit,characterId) {
         row.append(text);
         if(['strap','base'].includes(p.mount) && (slot==='hand'||!data.health.prostheses[zone].hand))
             button(row,`Снять${active?` · ${slot==='hand'?5:3} ОД`:''}`,{operation:'remove',zone});
+        if(p.mount==='clamp'&&slot==='base'&&!data.health.prostheses[zone].hand){
+            const b=document.createElement('button');b.type='button';b.className='btn btn-sm btn-secondary';
+            b.textContent='Снять операцией · 1 ч';b.disabled=disabled||active||Boolean(meta.prosthesisSurgeryId||meta.prosthesisSurgeryPatientId);
+            b.onclick=()=>window.openProsthesisSurgery(characterId);row.append(b);
+        }
         const supplies=inventory.filter(({item:source})=>/батаре|набор смазочных приспособлений/i.test(source.name)||source.category==='artifact');
         if(supplies.length){
             const select=document.createElement('select');select.className='form-control';select.disabled=disabled||active;

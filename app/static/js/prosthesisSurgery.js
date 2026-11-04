@@ -38,6 +38,8 @@ export async function renderProsthesisSurgery(container,data,doctorId,forcedPati
             if(data.health?.combatMeta?.prosthesisSurgeryId||meta.prosthesisSurgeryId||meta.prosthesisSurgeryPatientId){status.textContent='Врач или пациент уже участвует в операции.';return;}
             for(const [zone,label] of Object.entries(labels)){
                 const parts=patientData?.health?.prostheses?.[zone]||{};
+                if(parts.base?.attributes?.prosthesis?.mount==='clamp'&&!parts.hand)
+                    choices.push({item:parts.base,zone,operation:'surgery_remove',label:`${label}: снять ${parts.base.name}`});
                 const injury=(patientData?.health?.effects||[]).find(effect=>effect.type==='amputation'&&effect.area===zone&&effect.active!==false);
                 for(const source of available){
                     const rule=source.item.attributes.prosthesis;
@@ -46,7 +48,7 @@ export async function renderProsthesisSurgery(container,data,doctorId,forcedPati
                 }
             }
             choices.forEach((choice,index)=>operations.add(new Option(choice.label,index)));
-            submit.disabled=!choices.length;describe();if(!choices.length)status.textContent='Нет подходящих протезов для операции. Протез и расходники должны находиться у врача.';
+            submit.disabled=!choices.length;describe();if(!choices.length)status.textContent='Нет подходящих протезов для установки или снятия. Расходники должны находиться у врача; протез для установки — тоже.';
         }catch(error){if(current===version)status.textContent=error.message||'Не удалось осмотреть пациента';}
     };
     patients.onchange=load;operations.onchange=describe;

@@ -7,7 +7,7 @@ from uuid import uuid4
 from sqlalchemy.orm.attributes import flag_modified
 
 from app.extensions import db
-from app.models import LobbyCharacter, LocationCharacter, LocationCombatState
+from app.models import LobbyCharacter, LocationCharacter, LocationCombatState, DeferredCombatAction
 from app.services.exceptions import ValidationError, ConflictError, NotFoundError
 from app.services.transaction import atomic_operation
 from app.services.prosthesis_catalog import PROFILES
@@ -223,14 +223,23 @@ def discharge(data):
 
 
 def advance_lobby(lobby,seconds):
-    changed=[]
-    for character in LobbyCharacter.query.filter_by(lobby_id=lobby.id).all():
-        if not installed(character.data):continue
-        data=deepcopy(character.data)
-        if advance(data,seconds):
-            character.data=data;flag_modified(character,'data');changed.append(character)
     from app.services.prosthesis_surgery import advance_lobby as advance_surgeries
-    changed.extend(advance_surgeries(lobby,seconds))
+    changed=[];remaining=max(0,seconds)
+    # При крупном сдвиге снятый на первом часу протез не расходует заряд ещё семь часов.
+    while remaining>0:
+        deadlines=[row.payload.get('remaining_seconds',remaining) for row in DeferredCombatAction.query.join(
+            LocationCharacter,LocationCharacter.id==DeferredCombatAction.location_character_id).join(
+            LobbyCharacter,LobbyCharacter.id==LocationCharacter.character_id).filter(
+            LobbyCharacter.lobby_id==lobby.id,DeferredCombatAction.status=='operating').all()
+            if (row.payload or {}).get('action_key')=='prosthesis_surgery']
+        step=min([remaining,*[max(1,value) for value in deadlines]])
+        for character in LobbyCharacter.query.filter_by(lobby_id=lobby.id).all():
+            if not installed(character.data):continue
+            data=deepcopy(character.data)
+            if advance(data,step):
+                character.data=data;flag_modified(character,'data');changed.append(character)
+        changed.extend(advance_surgeries(lobby,step));remaining-=step
+    if seconds==0:changed.extend(advance_surgeries(lobby,0))
     return list({character.id:character for character in changed}.values())
 
 
@@ -251,7 +260,7 @@ def operate(character_id,user_id,payload):
     if payload.get('operation')=='cancel_surgery':
         cancel(character,user_id)
         return character
-    if payload.get('operation')=='surgery_install':
+    if payload.get('operation') in {'surgery_install','surgery_remove'}:
         start(character,user_id,payload)
         return character
     if busy(character.data):raise ValidationError('Сначала дождитесь окончания операции')

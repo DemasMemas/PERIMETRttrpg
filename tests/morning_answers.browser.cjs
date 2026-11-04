@@ -161,7 +161,7 @@ module.exports=async({page,request,token,lobby,base,connect,debugPort,safeSessio
         await page.until(`window.locationCombatState?.characters?.find(c=>c.character_id===${actor.id})?.effects?.some(e=>e.type==='burning'&&e.remaining===8)`,'Боевой снимок после подготовки воды и горения');
         await page.evaluate('window.closeCharacterSheet()');
         const clickElement=async selector=>{
-            const point=await page.evaluate(`(()=>{const e=document.querySelector(${JSON.stringify(selector)});e.scrollIntoView({block:'center',behavior:'instant'});const r=e.getBoundingClientRect();return{x:r.x+r.width/2,y:r.y+r.height/2}})()`);
+            const point=await page.evaluate(`(async()=>{for(let i=0;i<120;i++){const e=document.querySelector(${JSON.stringify(selector)});if(e&&!e.disabled&&e.getClientRects().length){e.scrollIntoView({block:'center',behavior:'instant'});const r=e.getBoundingClientRect();return{x:r.x+r.width/2,y:r.y+r.height/2}}await new Promise(resolve=>setTimeout(resolve,100))}throw Error('Кнопка не появилась: '+${JSON.stringify(selector)})})()`);
             for(const type of ['mousePressed','mouseReleased'])await page.call('Input.dispatchMouseEvent',{type,...point,button:'left',buttons:type==='mousePressed'?1:0,clickCount:1});
         };
         const openWheel=async()=>{
@@ -371,6 +371,24 @@ module.exports=async({page,request,token,lobby,base,connect,debugPort,safeSessio
         const surgeryFinished=await read(actor.id);assert.equal(surgeryFinished.data.health.prostheses.rightLeg.base.id,'native-fixed-leg');
         assert.equal(surgeryFinished.data.health.prostheses.rightLeg.base.weight,2);assert.equal(surgeryFinished.data.health.prostheses.rightLeg.base.volume,4);
         assert.equal(surgeryFinished.data.health.painLevel,0);assert.ok(!surgeryFinished.data.health.combatMeta.prosthesisSurgeryId);
+        await page.until(`Array.from(document.querySelectorAll('.prostheses button')).some(button=>button.textContent==='Снять операцией · 1 ч')`,'Снятие зажима доступно в листе');
+        await page.evaluate(`Array.from(document.querySelectorAll('.prostheses button')).find(button=>button.textContent==='Снять операцией · 1 ч').dataset.nativeRemoval='true'`);
+        await clickElement('[data-native-removal="true"]');
+        await page.until(`document.querySelector('.prosthesis-surgery select[name="operation"]')?.selectedOptions[0]?.textContent.includes('снять')`,'В меню выбрано операционное снятие');
+        await clickElement('.prosthesis-surgery button[type="submit"]');
+        await page.until(`!document.querySelector('#medical-consumable-menu')||getComputedStyle(document.querySelector('#medical-consumable-menu')).display==='none'`,'Начало снятия подтверждено сервером');
+        for(const client of [page,peer]){
+            await client.evaluate(`window.openCharacterSheet(${actor.id},'equipment')`);
+            await client.until(`document.querySelector('.prostheses')?.textContent.includes('Идёт операция')`,'Снятие началось у обоих клиентов');
+        }
+        const removalStart=await read(actor.id);assert.equal(removalStart.data.health.prostheses.rightLeg.base.id,'native-fixed-leg');
+        assert.equal(removalStart.data.inventory.pockets.find(item=>item.name==='Морфий').quantity,4);
+        const removalClock=await request(api,null,token,'GET'),removalAbsolute=removalClock.game_day*1440+removalClock.game_time_minutes+60;
+        await request(api+'/time',{game_day:Math.floor(removalAbsolute/1440),game_time_minutes:removalAbsolute%1440},token,'PATCH');
+        for(const client of [page,peer])await client.until(`document.querySelector('.prostheses')?.textContent.includes('Последняя операция: успех')&&!Array.from(document.querySelectorAll('.prostheses button')).some(button=>button.textContent==='Снять операцией · 1 ч')`,'Снятие завершено у обоих клиентов');
+        const removed=await read(actor.id);assert.ok(!removed.data.health.prostheses.rightLeg.base);
+        assert.equal(removed.data.inventory.pockets.filter(item=>item.id==='native-fixed-leg').length,1);
+        assert.equal(removed.data.health.combatMeta.prosthesisSurgeryResult.operation,'surgery_remove');
         const singleHand=await read(actor.id);singleHand.data.health.zones.rightArm.current=0;
         singleHand.data.health.effects.push({id:'native-right-arm-loss',type:'amputation',area:'rightArm',loss_extent:'entire_limb',active:true});
         await request('/lobbies/characters/'+actor.id,{data:singleHand.data},token,'PUT');
@@ -418,11 +436,23 @@ module.exports=async({page,request,token,lobby,base,connect,debugPort,safeSessio
             }else if(drugName.includes('Сова')){
                 for(const client of [page,peer])await client.until(`document.querySelector('#sheet-tab-basic')?.textContent.includes('Без помехи к стрельбе в темноте: активно')`,'Защита от помех темноты показана словами');
             }else{
-                for(const client of [page,peer])await client.until(`document.querySelector('#sheet-tab-basic')?.textContent.includes('Штраф перемещения: -6')&&!document.querySelector('#sheet-tab-basic').textContent.includes('stat_bonus')`,'Подавитель эмоций показывает название модификатора');
+                assert.ok(!after.combatMeta.consumableModifiers?.some(m=>m.stat==='movement_points'));
+                assert.ok(after.effects.some(effect=>effect.type==='stress_resistance'&&effect.remaining===6&&effect.tick==='movement_end'));
+                for(const client of [page,peer])await client.until(`document.querySelector('#sheet-tab-basic')?.textContent.includes('сопротивление стрессу')&&!document.querySelector('#sheet-tab-basic').textContent.includes('Штраф перемещения: -6')&&!document.querySelector('#sheet-tab-basic').textContent.includes('stat_bonus')`,'Подавитель эмоций работает6перемещений без бонуса движения');
             }
             drugResults.push({name:drugName,health:after});
         }
         fs.writeFileSync(path.join(safeSession.artifacts,'medicines-actual-ui.json'),JSON.stringify({status:'PASS',twoClients:true,drugs:drugResults},null,2));
+        const painSubject=await request(api+'/characters',{name:'Восстановление боли вне боя',data:{health:{...health(),painLevel:6}}},token);
+        await allow(painSubject);await request(loc+'/spawn_character',{character_id:painSubject.id,tile_x:40,tile_y:48},token);
+        for(const client of [page,peer])await client.evaluate(`window.openCharacterSheet(${painSubject.id},'basic')`);
+        const painClock=await request(api,null,token,'GET'),painAbsolute=painClock.game_day*1440+painClock.game_time_minutes+1;
+        await request(api+'/time',{game_day:Math.floor(painAbsolute/1440),game_time_minutes:painAbsolute%1440},token,'PATCH');
+        assert.equal((await read(painSubject.id)).data.health.painLevel,0);
+        for(const client of [page,peer])await client.until(`document.querySelector('[name="health.painLevel"]')?.value==='0'`,'Снижение боли доставлено обоим клиентам');
+        fs.writeFileSync(path.join(safeSession.artifacts,'answers92-93.json'),JSON.stringify({status:'PASS',twoClients:true,
+            clampRemoval:{realButton:true,installedUntilCompletion:true,returnedSameInstance:true,morphineSpent:3,durationSeconds:3600},
+            suppressor:{sixMovements:true,movementBonus:0},painRecovery:{before:6,afterOneMinute:0}},null,2));
         fs.writeFileSync(path.join(safeSession.artifacts,'morning-answers.json'),JSON.stringify({status:'PASS',twoClients:true,scene:'Копия Припяти',medicines:rows.map(r=>({name:r.name,before:r.beforeClock,after:r.afterClock})),armor:armorRows.map(r=>({name:r.name,damage:r.damage,after:r.after})),flash:{noise:flashShot.attack.noise,received:noise.noise_received,targets:flashShot.attack.results[0].flash_targets},grip:{paidTwice:2,reloadStable:true,twoClients:true,observerDenied:true,explicitLeftRightBoth:true,onlyLeftHandDrawsFromUnarmed:true,drawDoesNotChargeGripExtra:true},water:{litres:1,retrieveAP:1,pourAP:2,burningBefore:8,burningAfter:6,reachableTargets:true,styledSelects:true},lights:{gpuBeam:true,twoClients:true,battleBattery:9,afterTenMinutes:8},journal:{persistentServerEntries:true,realCosts:true},prostheses:{installedWithRealButton:true,installAP:10,powerAfterReload:86400,twoClients:true,batteryChoiceSurvivesRefresh:true},combatLightMount:{prepareAP:2,batteryFromBackpackAP:3,stowAP:1},pair:{twoClients:true,eachWeaponFired:true,simultaneousFire:true,simultaneousAP:1,disadvantageBoth:true,ammunition:[18,18],reloadRejectedWithoutPayment:true,reloadStable:true},surgery:{realButton:true,durationSeconds:3600,morphineSpent:3,ordinaryDrugEffects:false,revisionAndReloadStable:true,twoClients:true,installedWeight:2,installedVolume:4}},null,2));
     }catch(error){
         for(const [index,client] of [page,peer].entries())if(client){

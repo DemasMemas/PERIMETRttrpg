@@ -18,6 +18,47 @@ from app.services.effects import advance_timed_effects
 from test_character_interactions import _setup_pair
 
 
+def test_global_pain_recovers_per_six_seconds_and_preserves_fractional_time():
+    health={'painLevel':5,'effects':[],'combatMeta':{'painIncreased':True}}
+    def tick(seconds):
+        health['effects']=advance_timed_effects(health,health['effects'],seconds,advance_medication_turns=True,recover_pain=True)
+    tick(5);assert health['painLevel']==5
+    tick(1);assert health['painLevel']==4
+    tick(12);assert health['painLevel']==2
+    tick(600);assert health['painLevel']==0
+
+
+def test_global_pain_recovery_respects_tough_nut_and_equipped_artifact_minimum():
+    data={'health':{'painLevel':8,'effects':[],'combatMeta':{'toughNut':{'minimumPain':2}}},
+        'equipment':{'armor':{'containers':[{'item':{'name':'Болевой артефакт','category':'artifact',
+            'attributes':{'negative_effect':'Усиливает боль на 1 уровень'}}}]}}}
+    health=data['health']
+    health['effects']=advance_timed_effects(health,health['effects'],600,advance_medication_turns=True,
+        recover_pain=True,character_data=data)
+    assert health['painLevel']==3
+
+
+def test_periodic_pain_prevents_recovery_in_same_interval_but_not_after_source_expires():
+    health={'painLevel':5,'effects':[{'type':'periodic_adjustment','name':'Постоянная боль','remaining':3,
+        'tick':'turn_end','source':'consumable-template:1','adjustments':[{'field':'painLevel','delta':1,'max':10}]}]}
+    for expected in (6,7,8):
+        health['effects']=advance_timed_effects(health,health['effects'],6,advance_medication_turns=True,recover_pain=True)
+        assert health['painLevel']==expected
+    health['effects']=advance_timed_effects(health,health['effects'],6,advance_medication_turns=True,recover_pain=True)
+    assert health['painLevel']==7
+
+
+def test_gm_clock_reduces_surgical_pain_without_changing_existing_shock_recovery(client,time_case,auth_headers):
+    end_combat(client,time_case,auth_headers)
+    character=time_case['actor_character']
+    seed_initial_health(character,[{'type':'shock','source':'maximum_pain','tick':'manual'}])
+    character.data['health']['painLevel']=10;flag_modified(character,'data');db.session.commit()
+    advance_global_minutes(client,time_case,auth_headers,1)
+    health=persisted_health(character.id)
+    assert health['painLevel']==0
+    assert any(e['type']=='shock' for e in health['effects'])
+
+
 @pytest.mark.parametrize('before, after', [(0, 0), (1, 1), (2, 1), (5, 3), (9, 5), (10, 5)])
 def test_daily_sleep_removes_half_exhaustion_rounded_down(before, after):
     from app.lobbies import _resolve_character_day

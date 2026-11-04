@@ -225,7 +225,8 @@ def test_every_consumable_through_actual_use_api(app, client, create_user, auth_
             db.session.refresh(recipient)
             row['before']=before;row['after']=deepcopy(recipient.data['health'])
             advanced=deepcopy(row['after'])
-            advanced['effects']=advance_timed_effects(advanced,advanced.get('effects') or [],600,advance_medication_turns=True)
+            advanced['effects']=advance_timed_effects(advanced,advanced.get('effects') or [],600,advance_medication_turns=True,
+                recover_pain=True,character_data={**recipient.data,'health':advanced})
             row['after_10_minutes']=advanced
             if direct.get('affects_all_limbs'):
                 assert row['after']['zones']['leftArm']['current']==1, raw['name']
@@ -263,9 +264,9 @@ def test_every_consumable_through_actual_use_api(app, client, create_user, auth_
                 'Стимулятор Скала':({'current':300},{'current':200}),
                 'Стимулятор Скала-Н':({'current':500,'max':900},{'current':200,'max':700}),
                 'Жаропонижающее средство Мороз':({'temperature':38},{'temperature':34}),
-                'Стимулятор Гора':({'painLevel':4,'current':300},{'painLevel':5,'current':250}),
+                'Стимулятор Гора':({'painLevel':4,'current':300},{'painLevel':0,'current':250}),
                 'Стимулятор Гора-Д':({'current':200},{}),
-                'Питательный стимулятор':({'painLevel':4,'exhaustion':2},{'painLevel':7}),
+                'Питательный стимулятор':({'painLevel':4,'exhaustion':2},{'painLevel':0}),
                 'Борщевик':({'current':300,'intoxication':10},{'current':550,'intoxication':60}),
                 'Регенеративный стимулятор Альфа':({'exhaustion':5},{'current':700,'exhaustion':8}),
                 'Регенеративный стимулятор Бета':({'exhaustion':5},{'current':700,'exhaustion':7}),

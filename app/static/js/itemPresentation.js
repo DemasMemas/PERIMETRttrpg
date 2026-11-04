@@ -69,7 +69,7 @@ export function itemTooltipModel(template = {}, item = {}) {
     const oldImportedCopy = currentProfile?.catalog_rules_version && !item.attributes?.consumable?.editor_version
         && template.attributes?.catalog_name && template.attributes.catalog_name === item.attributes?.catalog_name
         && template.attributes.raw_description === item.attributes.raw_description
-        && !item.attributes?.consumable?.catalog_rules_version;
+        && item.attributes?.consumable?.catalog_rules_version !== currentProfile.catalog_rules_version;
     const profile = (oldImportedCopy ? currentProfile : attrs.consumable) || {};
     const rawDescription = compact(item.description || template.description || attrs.raw_description || attrs.notes);
     const description = numericDescriptionCovered(rawDescription,profile.direct) ? '' : rawDescription;

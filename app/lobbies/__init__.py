@@ -538,6 +538,7 @@ def _advance_world_time(lobby, minutes):
             health.get('effects') or [],
             minutes * 60,
             advance_medication_turns=True,
+            recover_pain=True,
             character_data=character_data,
         )
         advance_addictions(health, previous_day, lobby.game_day)
@@ -1307,6 +1308,7 @@ def update_lobby_time(lobby_id, lobby):
                 health.get('effects') or [],
                 elapsed_seconds,
                 advance_medication_turns=True,
+                recover_pain=True,
                 character_data=character_data,
             )
             advance_addictions(health, previous_absolute_minutes // 1440, game_day)
@@ -1510,6 +1512,7 @@ def start_lobby_rest(lobby_id, lobby):
             elapsed_seconds,
             include_turn_effects=selected,
             advance_medication_turns=True,
+            recover_pain=True,
             character_data=character_data,
         )
         healed = 0

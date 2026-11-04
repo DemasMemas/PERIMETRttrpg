@@ -28,6 +28,8 @@ class LobbyCharacter(db.Model):
         normalize_character_weapons(data)
         from app.services.prostheses import normalize_dimensions
         normalize_dimensions(data)
+        from app.services.consumable_effects import remove_stale_movement_modifiers
+        remove_stale_movement_modifiers(data,self.lobby_id)
         from app.services.character_traits import sync_pocket_capacity
         sync_pocket_capacity(self.data,data)
         data['_revision'] = self.revision

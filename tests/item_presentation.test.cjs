@@ -56,6 +56,19 @@ test('Импортное описание не повторяется разбо
     assert.deepEqual(Array.from(result.rules),['ОЗ: 5','Боль: -1']);
 });
 
+test('Старая версия официального экземпляра не возвращает ложный бонус срока',async()=>{
+    const {itemTooltipModel}=await load('itemPresentation.js');
+    const description='Длительность - 6 перемещений.';
+    const base={catalog_name:'Подавитель эмоций',raw_description:description};
+    const template={name:'Подавитель эмоций',description,attributes:{...base,
+        consumable:{catalog_rules_version:'2026-11-04-duration',direct:{duration:6,duration_phase:'movement_end'},effects:[],modifiers:[]}}};
+    const item={attributes:{...base,consumable:{catalog_rules_version:'2026-11-04',direct:{movement_points_delta:-6},
+        modifiers:[{stat:'movement_points',value:-6}],effects:[]}}};
+    const model=itemTooltipModel(template,item);
+    assert.ok(!model.rules.some(rule=>rule.includes('-6')));
+    assert.ok(model.rules.some(rule=>rule.includes('6')));
+});
+
 test('Вода: дробь из книги не дублируется direct/effects, инвентарный объём не равен литрам',async()=>{
     const {itemTooltipModel}=await load('itemPresentation.js');
     const effects=[{type:'radiation',name:'radiation',value:-1,tick:'manual'},

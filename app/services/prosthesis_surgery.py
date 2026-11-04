@@ -40,10 +40,17 @@ def _validate_pair(doctor,patient):
 def _validate_item(patient_data,zone,item,operation):
     from app.services.prostheses import ZONES
     rule=profile(item)
-    if operation!='surgery_install':raise ValidationError('Правила снятия операционного крепления ещё не уточнены')
+    if operation not in {'surgery_install','surgery_remove'}:raise ValidationError('Неизвестная операция с протезом')
     if zone not in ZONES or not rule or rule['mount'] not in {'clamp','integrated'}:
         raise ValidationError('Выберите конечность и протез с операционным креплением')
     parts=installed(patient_data).get(zone) or {}
+    if operation=='surgery_remove':
+        current=parts.get('base')
+        if rule['mount']!='clamp':raise ValidationError('Операцией можно снять только протез на металлическом зажиме')
+        if not current or current.get('id')!=item.get('id') or current.get('name')!=item.get('name'):
+            raise ValidationError('Установленный протез изменился')
+        if parts.get('hand'):raise ValidationError('Сначала снимите кисть с базы')
+        return rule
     if parts.get('base'):raise ValidationError('На конечности уже установлен протез')
     injury=loss(patient_data,zone)
     if not injury or injury.get('loss_extent')!=rule['extent'] or rule['kind']!=('arm' if zone.endswith('Arm') else 'leg'):
@@ -120,7 +127,8 @@ def start(doctor_character,user_id,payload):
             CombatService._validate_incapacitated_interaction(doctor.location_id,user_id,doctor.id,patient_id)
     operation=payload['operation'];zone=payload.get('zone');data=deepcopy(doctor_character.data or {})
     target_data=data if doctor_character.id==patient_id else deepcopy(patient_character.data or {})
-    source=CombatService._inventory_item_at_path(data,payload.get('path'))
+    source=((installed(target_data).get(zone) or {}).get('base')
+            if operation=='surgery_remove' else CombatService._inventory_item_at_path(data,payload.get('path')))
     rule=_validate_item(target_data,zone,source,operation);_validate_doctor(data,rule)
     operation_id=payload.get('operation_id')
     if not isinstance(operation_id,str) or not 1<=len(operation_id)<=120:raise ValidationError('Нужен идентификатор операции')
@@ -128,7 +136,8 @@ def start(doctor_character,user_id,payload):
     supplies={key:rule['installation'][key] for key in ('surgical_uses','morphine_ampoules','emotion_suppressor_ampoules')}
     # Копия проверяется целиком; отказ не расходует ни один препарат.
     planned=_supplies(data,supplies,doctor_character.lobby_id)
-    source=CombatService._take_inventory_item(data,payload['path'],1)
+    if operation=='surgery_remove':source.setdefault('id',str(uuid4()))
+    source=(deepcopy(source) if operation=='surgery_remove' else CombatService._take_inventory_item(data,payload['path'],1))
     source.setdefault('id',str(uuid4()));source['quantity']=1
     # Удаление протеза могло сдвинуть индексы расходников.
     planned=_supplies(data,supplies,doctor_character.lobby_id)
@@ -140,7 +149,7 @@ def start(doctor_character,user_id,payload):
         'consent_id':consent.id if consent else None,'user_id':user_id,'supplies':supplies,
         'difficulty':max(1,rule['installation']['base_difficulty']-sum(CombatService._skill_modifier(data,'skills.other.'+skill) for skill in ('medicine','engineering')))}
     db.session.add(DeferredCombatAction(id=operation_id,location_character_id=doctor.id,
-        payload={'action_key':'prosthesis_surgery',**details},label='Операция установки протеза',status='operating',remaining_action_points=0))
+        payload={'action_key':'prosthesis_surgery',**details},label='Операция снятия протеза' if operation=='surgery_remove' else 'Операция установки протеза',status='operating',remaining_action_points=0))
     data.setdefault('health',{}).setdefault('combatMeta',{})[DOCTOR_KEY]=operation_id
     data['health']['combatMeta']['prosthesisSurgeryBackup']={'id':operation_id,**deepcopy(details)}
     target_data.setdefault('health',{}).setdefault('combatMeta',{})[PATIENT_KEY]=operation_id
@@ -195,14 +204,19 @@ def advance_lobby(lobby,seconds):
             parts=target_data.setdefault('health',{}).setdefault('prostheses',{}).setdefault(details['zone'],{})
             item.setdefault('durability',rule['durability']);item.setdefault('energy_seconds',0);item.setdefault('lubrication_elapsed',0)
             item['attributes']={**(item.get('attributes') or {}),'prosthesis':deepcopy(rule)}
-            parts['base']=item
-            # Остаток большого перевода времени относится уже к установленному протезу.
-            extra=max(0,seconds-row.payload['remaining_seconds'])
-            if extra:advance({'health':{'prostheses':{details['zone']:{'base':item}}}},extra)
-        else:
+            if details['operation']=='surgery_remove':
+                # Возвращается актуальный экземпляр: питание и обслуживание шли во время операции.
+                item=parts.pop('base')
+                target_data.setdefault('inventory',{}).setdefault('pockets',[]).append(item)
+            else:
+                parts['base']=item
+                # Остаток большого перевода времени относится уже к установленному протезу.
+                extra=max(0,seconds-row.payload['remaining_seconds'])
+                if extra:advance({'health':{'prostheses':{details['zone']:{'base':item}}}},extra)
+        elif details['operation']=='surgery_install':
             data.setdefault('inventory',{}).setdefault('pockets',[]).append(item)
         result={'id':row.id,'success':bool(success),'roll':roll,'difficulty':details['difficulty'],'reason':reason,
-            'name':item['name'],'zone':details['zone'],'supplies':details['supplies'],'duration_seconds':details['duration_seconds']}
+            'name':item['name'],'operation':details['operation'],'zone':details['zone'],'supplies':details['supplies'],'duration_seconds':details['duration_seconds']}
         data.setdefault('health',{}).setdefault('combatMeta',{}).pop(DOCTOR_KEY,None)
         data['health']['combatMeta'].pop('prosthesisSurgeryBackup',None)
         data['health']['combatMeta']['prosthesisSurgeryResult']=result

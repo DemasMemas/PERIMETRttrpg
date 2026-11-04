@@ -9253,6 +9253,9 @@ class CombatService:
     def _consumable_stat_value_bonus(character_data, stat_name):
         if not isinstance(character_data, dict):
             return 0
+        if stat_name=='movement_points':
+            from app.services.consumable_effects import remove_stale_movement_modifiers
+            remove_stale_movement_modifiers(character_data)
         health = character_data.get('health') if isinstance(character_data.get('health'), dict) else {}
         combat_meta = health.get('combatMeta') if isinstance(health.get('combatMeta'), dict) else {}
         modifiers = combat_meta.get('consumableModifiers')
