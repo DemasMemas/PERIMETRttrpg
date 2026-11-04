@@ -2406,6 +2406,20 @@ export async function showMedicalConsumableMenu(characterId, forcedTargetCharact
         });
     }
 
+    if(characterData && actorLocationCharacterId && combatState?.status!=='active') {
+        const {renderProsthesisSurgery}=await import('./prosthesisSurgery.js');
+        await renderProsthesisSurgery(body,characterData,characterId,forcedTargetCharacterId,{
+            candidates:combatState?.characters || [],
+            inspect:async patientId=>patientId===Number(characterId)?characterData:(await Server.inspectLocationCharacter(
+                window.currentLobbyId,getCurrentLocationId(),patientId,actorLocationCharacterId))?.target_data,
+            consent:async patientId=>patientId===Number(characterId)||getLocationCharacterCondition(patientId).state!=='active'?null:
+                requestTreatmentConsent(actorLocationCharacterId,patientId,'Операция установки протеза; расходники и игровое время будут потрачены даже при провале'),
+            operate:async payload=>{
+                const response=await Server.operateProsthesis(characterId,{...payload,character_revision:characterData._revision});
+                closeMedicalConsumableMenu();showNotification('Операция начата. Дождитесь окончания по игровому времени.','system');return response;
+            },
+        });
+    }
     if (characterData?.basic?.background?.name === 'Хирург' && actorLocationCharacterId) {
         const section = document.createElement('form');
         section.className = 'surgeon-reduction';
@@ -5522,6 +5536,7 @@ async function finalizeAreaFire() {
             volley_count: action.volleyCount,
             action_points: action.actionPoints,
             target_character_ids: targetIds,
+            attribute_choice:action.attributeChoice,
             payment:action.payment,
         };
         if (action.targetType === 'multi_character') {
@@ -5569,6 +5584,7 @@ async function resolveCombatStructureSelection(clientX, clientY) {
             volley_count: action.volleyCount,
             action_points: action.actionPoints,
             target_object_id: locationObject.id,
+            attribute_choice:action.attributeChoice,
         });
         if (typeof action.onResolve === 'function') {
             await action.onResolve({ targetObject: locationObject });

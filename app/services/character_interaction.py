@@ -376,6 +376,9 @@ class CharacterInteractionService:
 
     @staticmethod
     def movement_locked(location_character_id):
+        from app.services.prosthesis_surgery import busy
+        character=db.session.get(LocationCharacter,location_character_id)
+        if character and character.character and busy(character.character.data):return True
         requests = CharacterInteractionRequest.query.filter(
             CharacterInteractionRequest.target_location_character_id == location_character_id,
             CharacterInteractionRequest.kind == 'treatment',

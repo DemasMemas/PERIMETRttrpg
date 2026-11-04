@@ -550,13 +550,25 @@ def get_bleeding_state(health: Dict[str, Any]) -> Dict[str, Any]:
 
     blood_stage = str((health or {}).get("blood") or (health or {}).get("bloodStage") or "normal").lower()
     stage_penalty = _bleeding_stage_value(blood_stage)
+    raw_severity=total_severity
+    severity_modifier=0
     if isinstance(combat_meta.get("bleedingModifiers"), list):
-        modifier_total = sum(_to_int(item.get("value", item), 0) if isinstance(item, dict) else _to_int(item, 0) for item in combat_meta.get("bleedingModifiers", []))
+        modifier_total=0
+        for item in combat_meta['bleedingModifiers']:
+            if isinstance(item,dict):
+                if item.get('remaining') is not None and _to_float(item['remaining'],0)<=0:continue
+                value=_to_int(item.get('value'),0)
+                if item.get('affects_severity') or item.get('note')=='hematogen':severity_modifier+=value
+                else:modifier_total+=value
+            else:modifier_total+=_to_int(item,0)
     else:
         modifier_total = _to_int(combat_meta.get("bleedingModifierTotal", (health or {}).get("bleedingModifierTotal", 0)), 0)
+    total_severity=max(0,raw_severity+severity_modifier)
     return {
         "baseDifficulty": 5,
         "totalSeverity": total_severity,
+        "rawSeverity":raw_severity,
+        "severityModifierTotal":severity_modifier,
         "bloodStage": blood_stage,
         "stagePenalty": stage_penalty,
         "modifierTotal": modifier_total,
@@ -1081,7 +1093,9 @@ def apply_periodic_effects_to_health(health: Dict[str, Any], effects: Iterable[A
                 if not isinstance(adjustment, dict):
                     continue
                 field = str(adjustment.get("field") or "").strip()
-                if field:
+                if field == 'intoxication':
+                    apply_intoxication_dose(health, _to_float(adjustment.get('delta', 0), 0))
+                elif field:
                     _adjust_field(health, field, _to_float(adjustment.get("delta", 0), 0), adjustment.get("min", 0), adjustment.get("max"),character_data=character_data)
     sync_health_derived_statuses(health)
     return health
@@ -1230,7 +1244,8 @@ def advance_timed_effects(
     cured_fracture_areas = set()
     elapsed = max(0.0, _to_float(elapsed_seconds, 0))
     _advance_temperature_recovery(health, elapsed)
-    modifiers_before = {id(m) for m in ((health.get('combatMeta') or {}).get('consumableModifiers') or [])}
+    modifiers_before = {id(m) for key in ('consumableModifiers', 'bleedingModifiers')
+                        for m in ((health.get('combatMeta') or {}).get(key) or [])}
     initial_effects = normalize_effect_list(effects or [])
     _intoxication_check(health, initial_effects)
     for raw_effect in initial_effects:
@@ -1342,8 +1357,8 @@ def advance_timed_effects(
             _restore_limb_health_and_pool(health, area, effect.get("restore_limb_health"))
 
     combat_meta = health.get("combatMeta")
-    if isinstance(combat_meta, dict):
-        modifiers = combat_meta.get("consumableModifiers")
+    for modifier_key in ('consumableModifiers', 'bleedingModifiers') if isinstance(combat_meta, dict) else ():
+        modifiers = combat_meta.get(modifier_key)
         if isinstance(modifiers, list):
             active_modifiers = []
             for raw_modifier in modifiers:
@@ -1389,7 +1404,7 @@ def advance_timed_effects(
                 modifier["remaining_seconds"] = remaining_seconds
                 modifier["remaining"] = max(1, math.ceil(remaining_seconds / seconds_per_unit))
                 active_modifiers.append(modifier)
-            combat_meta["consumableModifiers"] = active_modifiers
+            combat_meta[modifier_key] = active_modifiers
 
     if cured_fracture_areas:
         survivors = [

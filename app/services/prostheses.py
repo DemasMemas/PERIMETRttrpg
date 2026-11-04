@@ -1,6 +1,7 @@
 """Протезы: экземпляры, совместимость, питание и обслуживание по игровому времени."""
 from copy import deepcopy
 import math
+import random
 from uuid import uuid4
 
 from sqlalchemy.orm.attributes import flag_modified
@@ -44,10 +45,30 @@ def preserve(current,incoming):
     if 'prostheses' in ((current or {}).get('health') or {}):
         health['prostheses']=deepcopy(current['health']['prostheses'])
     else:health.pop('prostheses',None)
+    old=((current or {}).get('health') or {}).get('combatMeta') or {}
+    meta=health.setdefault('combatMeta',{})
+    for key in ('prosthesisSurgeryId','prosthesisSurgeryPatientId','prosthesisSurgeryResult','prosthesisSurgeryBackup'):
+        if key in old:meta[key]=deepcopy(old[key])
+        else:meta.pop(key,None)
     sync_weapons(incoming)
 
 
+def normalize_dimensions(data):
+    def visit(value):
+        if isinstance(value,list):
+            for item in value:visit(item)
+        elif isinstance(value,dict):
+            rule=profile(value)
+            if rule:
+                value.update(weight=rule['weight'],volume=rule['volume'])
+                value.setdefault('attributes',{})['prosthesis']=deepcopy(rule)
+            for key,child in value.items():
+                if key!='attributes':visit(child)
+    for root in (data.get('inventory'),data.get('equipment'),installed(data)):visit(root)
+
+
 def sync_weapons(data):
+    normalize_dimensions(data)
     weapons=data.get('weapons') or []
     ordinary=[item for item in weapons if not str(item.get('id') or '').startswith('prosthesis-attack:')]
     attacks=[]
@@ -69,7 +90,7 @@ def missing_templates(existing,subcategory=None):
     if subcategory not in (None,'Протезы'):return []
     names={item.get('name') for item in existing}
     return [{'id':-33001-index,'name':name,'category':'misc','subcategory':'Протезы',
-        'price':rule['price'],'weight':None,'volume':None,'compatible_ids':[],
+        'price':rule['price'],'weight':rule['weight'],'volume':rule['volume'],'compatible_ids':[],
         'description':rule['description']+f" Эффективность {rule['efficiency']}; прочность {rule['durability']}; физическая защита {rule['protection']}%. "
             +f"Крепление: {rule['mount_label']}, {rule['attachment']}. Питание: {rule['power_label']}. Смазка: {rule['lubrication_label']}. "
             +('Устойчив к электрическим аномалиям.' if rule['shielded'] else 'Электрическая аномалия разряжает протез.'),
@@ -80,6 +101,35 @@ def loss(data,zone):
     from app.services.effects import normalize_effect_list
     return next((effect for effect in normalize_effect_list((data.get('health') or {}).get('effects') or [])
         if effect.get('type')=='amputation' and effect.get('area')==zone and effect.get('active',True)),None)
+
+
+def hit_part(data,zone,roll=None):
+    """Один бросок на попадание; контекст передаётся и защите, и урону."""
+    zone={'left_arm':'leftArm','right_arm':'rightArm','left_leg':'leftLeg','right_leg':'rightLeg'}.get(zone,zone)
+    if zone not in ZONES or not loss(data,zone):return None
+    roll=random.randint(1,6) if roll is None else roll
+    part=(roll-1)//2
+    labels=('плечо','предплечье','кисть') if zone.endswith('Arm') else ('бедро','голень','стопа')
+    injury=loss(data,zone);parts=installed(data).get(zone) or {};base=parts.get('base');rule=profile(base)
+    extent=(rule or injury).get('extent',(injury or {}).get('loss_extent'))
+    first={'entire_limb':0,'elbow_or_knee':1,'hand_or_foot':2}.get(extent,3)
+    result={'zone':zone,'roll':roll,'part':part,'label':labels[part],'mechanical':False}
+    if part<first:return result
+    item=parts.get('hand') if part==2 and rule and rule.get('provides_base') else base
+    result.update(mechanical=True,item=item,protection=(profile(item) or {}).get('protection',0))
+    return result
+
+
+def damage_part(data,hit,damage):
+    item=hit.get('item');rule=profile(item)
+    result={'roll':hit['roll'],'part':hit['label'],'damage':0,'missing':not bool(rule)}
+    if rule:
+        before=max(0,item.get('durability',rule['durability']))
+        item['durability']=max(0,before-max(0,damage))
+        if item['durability']<=0:item['broken']=True
+        result.update(name=item['name'],damage=before-item['durability'],durability=item['durability'],broken=bool(item.get('broken')))
+        sync_weapons(data)
+    return result
 
 
 def plan(data,operation,zone,path=None):
@@ -179,19 +229,32 @@ def advance_lobby(lobby,seconds):
         data=deepcopy(character.data)
         if advance(data,seconds):
             character.data=data;flag_modified(character,'data');changed.append(character)
-    return changed
+    from app.services.prosthesis_surgery import advance_lobby as advance_surgeries
+    changed.extend(advance_surgeries(lobby,seconds))
+    return list({character.id:character for character in changed}.values())
 
 
 @atomic_operation
 def operate(character_id,user_id,payload):
     from app.services.character import CharacterService
     from app.services.combat import CombatService
-    if not isinstance(payload,dict) or set(payload)-{'operation','zone','slot','path','character_revision'}:
+    if not isinstance(payload,dict) or set(payload)-{'operation','zone','slot','path','character_revision',
+            'target_character_id','target_revision','interaction_request_id','operation_id'}:
         raise ValidationError('Некорректные параметры протеза')
+    if 'target_character_id' in payload and type(payload['target_character_id']) is not int:
+        raise ValidationError('Некорректный пациент')
     character=db.session.get(LobbyCharacter,character_id)
     if not character:raise NotFoundError('Персонаж не найден')
     CharacterService.check_access(character,user_id,edit=True)
     if type(payload.get('character_revision')) is not int or payload['character_revision']!=character.revision:raise ConflictError()
+    from app.services.prosthesis_surgery import busy,start,cancel
+    if payload.get('operation')=='cancel_surgery':
+        cancel(character,user_id)
+        return character
+    if payload.get('operation')=='surgery_install':
+        start(character,user_id,payload)
+        return character
+    if busy(character.data):raise ValidationError('Сначала дождитесь окончания операции')
     if LocationCharacter.query.join(LocationCombatState,LocationCombatState.location_id==LocationCharacter.location_id).filter(
             LocationCharacter.character_id==character_id,LocationCombatState.status=='active').first():
         raise ValidationError('В бою используйте действие установки или снятия протеза')

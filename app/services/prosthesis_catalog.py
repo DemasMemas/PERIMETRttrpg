@@ -504,3 +504,11 @@ PROFILES = {'Навесная база предплечья': {'durability': 50,
                                                    'morphine_ampoules': 10,
                                                    'emotion_suppressor_ampoules': 1,
                                                    'removable': False}}}
+
+# Масса и объём зависят от заменяемой части, включая базы кистей.
+for _profile in PROFILES.values():
+    _profile['weight'], _profile['volume'] = {
+        'hand_or_foot': (1, 1),
+        'elbow_or_knee': (2, 4),
+        'entire_limb': (3, 10),
+    }[_profile['extent']]

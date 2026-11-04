@@ -129,7 +129,7 @@ module.exports=async({page,request,token,lobby,base,connect,debugPort,safeSessio
             for(const type of ['mousePressed','mouseReleased'])await page.call('Input.dispatchMouseEvent',{type,...point,button:'left',buttons:type==='mousePressed'?1:0,clickCount:1});
         };
         await clickGrip();
-        for(const client of [page,peer])await client.until(`document.querySelector('[data-weapon-grip-label="0"]')?.textContent.includes('одной рукой')`,'Одноручный хват доставлен двум листам');
+        for(const client of [page,peer])await client.until(`document.querySelector('[data-weapon-grip-label="0"]')?.textContent.includes('правая рука')`,'Правая рука доставлена двум листам');
         await request(combat+'/start',{location_character_ids:[actorId],initiator_location_character_id:actorId,initiator_first:true},token);
         state=await request(combat,null,token,'GET');if(state.current_character.drawn_weapon_index!==0)await action({action_key:'draw_weapon',weapon_index:0});
         for(const client of [page,peer])await client.until(`window.locationCombatState?.status==='active'&&window.locationCombatState.current_character?.drawn_weapon_index===0`,'Оружие взято в начале боя');
@@ -141,14 +141,14 @@ module.exports=async({page,request,token,lobby,base,connect,debugPort,safeSessio
         const denied=await fetch(base+'/lobbies/characters/'+actor.id+'/weapon-grip',{method:'POST',headers:{Authorization:'Bearer '+observer.access_token,'Content-Type':'application/json'},body:JSON.stringify({hands:1,weapon_index:0,character_revision:persisted.data._revision})});
         assert.equal(denied.status,403);
         await clickGrip();
-        for(const client of [page,peer])await client.until(`window.locationCombatState.current_character?.weapon_grip_hands===1&&document.querySelector('[data-weapon-grip-label="0"]')?.textContent.includes('одной рукой')`,'Возврат к одной руке за ещё 1 ОД');
+        for(const client of [page,peer])await client.until(`window.locationCombatState.current_character?.weapon_grip_hands===1&&document.querySelector('[data-weapon-grip-label="0"]')?.textContent.includes('правая рука')`,'Возврат к правой руке за ещё 1 ОД');
         const afterOne=await request(combat,null,token,'GET');assert.equal(afterOne.current_character.action_points_current,beforeGrip.current_character.action_points_current-2);
         fs.writeFileSync(path.join(safeSession.artifacts,'weapon-grip-one-hand.png'),Buffer.from((await page.call('Page.captureScreenshot',{format:'png'})).data,'base64'));
         const epoch=await page.evaluate('performance.timeOrigin');await page.call('Page.reload');
         await waitForDocument(page,{href:base+api+'/page?location='+location.id,afterEpoch:epoch,label:'Перезагрузка хвата'});
         await page.until('typeof window.openCharacterSheet===\'function\'','Лист после перезагрузки');
         await page.evaluate(`window.openCharacterSheet(${actor.id},'equipment')`);
-        await page.until(`document.querySelector('[data-weapon-grip-label="0"]')?.textContent.includes('одной рукой')`,'Одноручный хват сохранён после перезагрузки');
+        await page.until(`document.querySelector('[data-weapon-grip-label="0"]')?.textContent.includes('правая рука')`,'Правая рука сохранена после перезагрузки');
         // Тушение: обычная бутылка, реальное доставание, доступные цели и оформление.
         const watered=await read(actor.id);
         watered.data.inventory={pockets:[{id:'water-native',name:'Вода',category:'consumable',volume:2,
@@ -265,15 +265,23 @@ module.exports=async({page,request,token,lobby,base,connect,debugPort,safeSessio
         assert.deepEqual((await read(actor.id)).data.weapons.map(w=>w.ammo),[19,19]);
         const pairAfter=(await request(combat,null,token,'GET')).current_character.action_points_current;
         assert.equal(pairAfter,pairBefore-2);
+        for(const client of [page,peer])await client.until(`document.querySelector('[data-paired-fire="unaimed"]')`,'Общая стрельба доступна в двух листах');
+        const simultaneous=await action({action_key:'attack',weapon_index:0,fire_mode:'unaimed',shot_count:1,action_points:1,
+            target_character_id:pairTarget.id,attribute_choice:'paired_fire',pending_action_id:'native-paired-together'});
+        assert.ok(simultaneous.attack.paired_fire);assert.equal(simultaneous.attack.paired_attacks.length,2);
+        assert.ok(simultaneous.attack.results.every(hit=>hit.rolls.length===2));
+        assert.deepEqual((await read(actor.id)).data.weapons.map(w=>w.ammo),[18,18]);
+        const afterSimultaneous=(await request(combat,null,token,'GET')).current_character.action_points_current;
+        assert.equal(afterSimultaneous,pairAfter-1);
         const deniedReload=await fetch(base+combat+'/action',{method:'POST',headers:{Authorization:'Bearer '+token,'Content-Type':'application/json'},
             body:JSON.stringify({location_character_id:actorId,action_key:'reload_weapon',weapon_index:0})});
-        assert.equal(deniedReload.status,400);assert.equal((await request(combat,null,token,'GET')).current_character.action_points_current,pairAfter);
+        assert.equal(deniedReload.status,400);assert.equal((await request(combat,null,token,'GET')).current_character.action_points_current,afterSimultaneous);
         const pairEpoch=await page.evaluate('performance.timeOrigin');await page.call('Page.reload');
         await waitForDocument(page,{href:base+api+'/page?location='+location.id,afterEpoch:pairEpoch,label:'Перезагрузка парного хвата'});
         await page.until(`window.locationCombatState?.current_character?.secondary_weapon_index===1`,'Две руки сохранены после перезагрузки');
-        assert.deepEqual((await read(actor.id)).data.weapons.map(w=>w.ammo),[19,19]);
+        assert.deepEqual((await read(actor.id)).data.weapons.map(w=>w.ammo),[18,18]);
         await page.evaluate(`window.openCharacterSheet(${actor.id},'equipment')`);
-        await page.until(`document.querySelector('#character-sheet-modal')?.textContent.includes('Во второй руке')`,'Второе оружие видно после перезагрузки');
+        await page.until(`document.querySelector('#character-sheet-modal')?.textContent.includes('В левой руке')`,'Левая рука со вторым оружием видна после перезагрузки');
         fs.writeFileSync(path.join(safeSession.artifacts,'paired-weapons.png'),Buffer.from((await page.call('Page.captureScreenshot',{format:'png'})).data,'base64'));
         await request(combat+'/end',{},token);
         await request('/lobbies/characters/'+actor.id+'/weapon-pair',{operation:'stow',character_revision:(await read(actor.id)).data._revision},token);
@@ -326,10 +334,100 @@ module.exports=async({page,request,token,lobby,base,connect,debugPort,safeSessio
         await page.until(`document.querySelector('.prostheses')?.textContent.includes('питание 1440 мин')`,'Питание сохранено после перезагрузки');
         await page.evaluate("document.querySelector('.prostheses')?.scrollIntoView({block:'center'})");
         fs.writeFileSync(path.join(safeSession.artifacts,'prostheses-and-light-controls.png'),Buffer.from((await page.call('Page.captureScreenshot',{format:'png'})).data,'base64'));
-        fs.writeFileSync(path.join(safeSession.artifacts,'morning-answers.json'),JSON.stringify({status:'PASS',twoClients:true,scene:'Копия Припяти',medicines:rows.map(r=>({name:r.name,before:r.beforeClock,after:r.afterClock})),armor:armorRows.map(r=>({name:r.name,damage:r.damage,after:r.after})),flash:{noise:flashShot.attack.noise,received:noise.noise_received,targets:flashShot.attack.results[0].flash_targets},grip:{paidTwice:2,reloadStable:true,twoClients:true,observerDenied:true},water:{litres:1,retrieveAP:1,pourAP:2,burningBefore:8,burningAfter:6,reachableTargets:true,styledSelects:true},lights:{gpuBeam:true,twoClients:true,battleBattery:9,afterTenMinutes:8},journal:{persistentServerEntries:true,realCosts:true},prostheses:{installedWithRealButton:true,installAP:10,powerAfterReload:86400,twoClients:true,batteryChoiceSurvivesRefresh:true},combatLightMount:{prepareAP:2,batteryFromBackpackAP:3,stowAP:1},pair:{twoClients:true,eachWeaponFired:true,ammunition:[19,19],reloadRejectedWithoutPayment:true,reloadStable:true}},null,2));
+        // Операция через настоящее меню: сохранение, два клиента и игровое время.
+        const fixedProfile=[...prosthesisCatalog.global,...prosthesisCatalog.local].find(t=>t.name==='Фиксированная голень со стопой');assert.ok(fixedProfile);
+        const surgeryData=await read(actor.id);
+        surgeryData.data.skills.other={...(surgeryData.data.skills.other||{}),medicine:{base:40},engineering:{base:40}};
+        surgeryData.data.health.painLevel=0;surgeryData.data.health.stress=0;surgeryData.data.health.current=700;
+        surgeryData.data.health.zones.rightLeg.current=0;
+        surgeryData.data.health.effects.push({id:'surgical-native-loss',type:'amputation',area:'rightLeg',loss_extent:'elbow_or_knee',active:true});
+        surgeryData.data.inventory.pockets.push({id:'native-fixed-leg',name:fixedProfile.name,category:'misc',quantity:1,attributes:fixedProfile.attributes});
+        for(const [name,description,quantity,uses] of [['Хирургический набор "Хирург"','Восстанавливает часть тела. Она имеет 30 здоровья. 5 использований.',2,5],['Морфий','Снижает боль на 5 уровней.',10,1]]){
+            const template=await request(api+'/templates',{name,category:'consumable',description,attributes:{uses,consumable:{direct:name.startsWith('Хирургический')?{surgical_kit:true,uses}:{pain_delta:-5,application_form:'injectable'},effects:[]}}},token);
+            surgeryData.data.inventory.pockets.push({id:'native-surgery-'+template.id,templateId:template.id+1000000,name,category:'consumable',quantity,uses,maxUses:uses,attributes:template.attributes});
+        }
+        await request('/lobbies/characters/'+actor.id,{data:surgeryData.data},token,'PUT');
+        await page.until(`Array.from(document.querySelectorAll('.prostheses button')).some(button=>button.textContent==='Операция · 1 ч')`,'Кнопка операции в листе');
+        await page.evaluate(`Array.from(document.querySelectorAll('.prostheses button')).find(button=>button.textContent==='Операция · 1 ч').dataset.nativeSurgery='true'`);
+        await clickElement('[data-native-surgery="true"]');
+        await page.until(`document.querySelector('.prosthesis-surgery select[name="operation"]')?.options.length>0&&getComputedStyle(document.querySelector('#medical-consumable-menu')).display!=='none'`,'Операционное крепление доступно в меню');
+        const surgeryMenu=await page.evaluate(`document.querySelector('.prosthesis-surgery').innerText`);
+        assert.ok(surgeryMenu.includes('1 ч')&&surgeryMenu.includes('Морфий: 3 амп.'),surgeryMenu);
+        fs.writeFileSync(path.join(safeSession.artifacts,'prosthesis-surgery-menu.png'),Buffer.from((await page.call('Page.captureScreenshot',{format:'png'})).data,'base64'));
+        await clickElement('.prosthesis-surgery button[type="submit"]');
+        await page.until(`!document.querySelector('#medical-consumable-menu')||getComputedStyle(document.querySelector('#medical-consumable-menu')).display==='none'`,'Начало операции подтверждено сервером');
+        await page.evaluate(`window.openCharacterSheet(${actor.id},'equipment')`);
+        for(const client of [page,peer])await client.until(`document.querySelector('.prostheses')?.textContent.includes('Идёт операция')`,'Операция началась у обоих клиентов');
+        const surgeryStarted=await read(actor.id);assert.ok(surgeryStarted.data.health.combatMeta.prosthesisSurgeryId);
+        assert.equal(surgeryStarted.data.health.painLevel,0);
+        assert.equal(surgeryStarted.data.inventory.pockets.find(item=>item.name==='Морфий').quantity,7);
+        const surgeryEpoch=await page.evaluate('performance.timeOrigin');await page.call('Page.reload');
+        await waitForDocument(page,{href:base+api+'/page?location='+location.id,afterEpoch:surgeryEpoch,label:'Сохранённая операция'});
+        await page.until(`typeof window.openCharacterSheet==='function'`,'Лист доступен');await page.evaluate(`window.openCharacterSheet(${actor.id},'equipment')`);
+        await page.until(`document.querySelector('.prostheses')?.textContent.includes('Идёт операция')`,'Операция пережила перезагрузку');
+        const surgeryClock=await request(api,null,token,'GET'),absolute=surgeryClock.game_day*1440+surgeryClock.game_time_minutes+60;
+        await request(api+'/time',{game_day:Math.floor(absolute/1440),game_time_minutes:absolute%1440},token,'PATCH');
+        for(const client of [page,peer])await client.until(`document.querySelector('.prostheses')?.textContent.includes('Последняя операция: успех')`,'Исход операции доставлен двум клиентам');
+        const surgeryFinished=await read(actor.id);assert.equal(surgeryFinished.data.health.prostheses.rightLeg.base.id,'native-fixed-leg');
+        assert.equal(surgeryFinished.data.health.prostheses.rightLeg.base.weight,2);assert.equal(surgeryFinished.data.health.prostheses.rightLeg.base.volume,4);
+        assert.equal(surgeryFinished.data.health.painLevel,0);assert.ok(!surgeryFinished.data.health.combatMeta.prosthesisSurgeryId);
+        const singleHand=await read(actor.id);singleHand.data.health.zones.rightArm.current=0;
+        singleHand.data.health.effects.push({id:'native-right-arm-loss',type:'amputation',area:'rightArm',loss_extent:'entire_limb',active:true});
+        await request('/lobbies/characters/'+actor.id,{data:singleHand.data},token,'PUT');
+        await request(combat+'/start',{location_character_ids:[actorId],initiator_location_character_id:actorId,initiator_first:true},token);
+        await action({action_key:'stow_weapon'});
+        for(const client of [page,peer])await client.until(`window.locationCombatState?.status==='active'&&window.locationCombatState.current_character?.drawn_weapon_index==null`,'Оружие убрано, действует только левая рука');
+        await page.evaluate(`window.openCharacterSheet(${actor.id},'equipment')`);
+        await page.until(`document.querySelector('[data-weapon-draw-hand="left"][data-weapon-draw-index="0"]')&&!document.querySelector('[data-weapon-draw-hand="left"][data-weapon-draw-index="0"]').disabled`,'Выбор руки доступен до доставания');
+        const beforeLeft=await request(combat,null,token,'GET');
+        await clickElement('[data-weapon-draw-hand="left"][data-weapon-draw-index="0"]');
+        for(const client of [page,peer])await client.until(`document.querySelector('[data-weapon-grip-label="0"]')?.textContent.includes('левая рука')&&window.locationCombatState.current_character?.drawn_weapon_index===0`,'Доставание в левую руку синхронизировано');
+        const afterLeft=await request(combat,null,token,'GET');
+        assert.equal(afterLeft.current_character.action_points_current,beforeLeft.current_character.action_points_current-beforeLeft.current_character.weapon_ergonomics.find(profile=>profile.weapon_index===0).draw_action_points);
+        assert.equal((await read(actor.id)).data.health.combatMeta.weaponPrimaryHand,'left');
+        await request(combat+'/end',{},token);
+        // Действительные препараты и отображение результата у владельца и наблюдателя.
+        const drugResults=[];
+        for(const drugName of ['Плитка Гематогена','Стимулятор "Котик"','Стимулятор "Полукровка"',
+                'Стимулятор Шумодав','Стимулятор Воля','Стимулятор Сова','Подавитель эмоций']){
+            const raw=source.consumables.find(item=>item.name===drugName);assert.ok(raw,drugName);
+            const template=await request(api+'/templates',{name:raw.name,category:'consumable',description:raw.description,attributes:raw.attributes},token);
+            const item={id:'native-drug-'+template.id,templateId:template.id+1000000,name:raw.name,category:'consumable',quantity:1,attributes:raw.attributes};
+            const h=health();h.infection=80;
+            if(drugName==='Плитка Гематогена')h.effects=[{type:'bleeding_external_severe',area:'leftArm'},{type:'bleeding_internal_medium',area:'chest'}];
+            const subject=await request(api+'/characters',{name:'Проверка препарата: '+drugName,data:{health:h,skills:{other:{medicine:{base:40}}},inventory:{pockets:[item],backpack:[]}}},token);
+            await allow(subject);await request(loc+'/spawn_character',{character_id:subject.id,tile_x:40,tile_y:48},token);
+            for(const client of [page,peer])await client.evaluate(`window.openCharacterSheet(${subject.id},'basic')`);
+            const current=await read(subject.id),medical=drugName!=='Плитка Гематогена';
+            await request('/lobbies/characters/'+subject.id+(medical?'/medical-procedure':'/general-consumable'),{
+                operation_id:'native-drug-'+subject.id,target_character_id:subject.id,
+                source:{path:['inventory','pockets',0],snapshot:current.data.inventory.pockets[0]},application:{kind:'self',actionPoints:0}},token);
+            const after=(await read(subject.id)).data.health;
+            if(drugName==='Плитка Гематогена'){
+                assert.equal(after.bleeding.totalSeverity,6);assert.equal(after.bleeding.modifierTotal,0);
+                for(const client of [page,peer])await client.until(`document.querySelector('#sheet-tab-basic')?.textContent.includes('Тяжесть +6')`,'Уменьшенная тяжесть кровотечений в двух листах');
+            }else if(drugName.includes('Котик')){
+                assert.ok(after.combatMeta.addictionBlockedUntilMinute>0);
+                for(const client of [page,peer])await client.until(`document.querySelector('[data-sheet-panel="addictions"]')?.textContent.includes('Получение новых зависимостей заблокировано')`,'Защита Котика видна обоим клиентам');
+            }else if(drugName.includes('Полукровка'))assert.equal(after.infection,30);
+            else if(drugName.includes('Шумодав')){
+                assert.ok(after.effects.some(effect=>effect.type==='deafness'&&effect.value===100&&effect.remaining===3));
+                for(const client of [page,peer])await client.until(`document.querySelector('#sheet-tab-basic')?.textContent.includes('Глухота')`,'Глухота от Шумодава видна обоим клиентам');
+            }else if(drugName.includes('Воля')){
+                for(const client of [page,peer])await client.until(`document.querySelector('#sheet-tab-basic')?.textContent.includes('Заблокировано боли: 0; после действия вернётся: 0')`,'Счётчик заблокированной боли виден обоим клиентам');
+            }else if(drugName.includes('Сова')){
+                for(const client of [page,peer])await client.until(`document.querySelector('#sheet-tab-basic')?.textContent.includes('Без помехи к стрельбе в темноте: активно')`,'Защита от помех темноты показана словами');
+            }else{
+                for(const client of [page,peer])await client.until(`document.querySelector('#sheet-tab-basic')?.textContent.includes('Штраф перемещения: -6')&&!document.querySelector('#sheet-tab-basic').textContent.includes('stat_bonus')`,'Подавитель эмоций показывает название модификатора');
+            }
+            drugResults.push({name:drugName,health:after});
+        }
+        fs.writeFileSync(path.join(safeSession.artifacts,'medicines-actual-ui.json'),JSON.stringify({status:'PASS',twoClients:true,drugs:drugResults},null,2));
+        fs.writeFileSync(path.join(safeSession.artifacts,'morning-answers.json'),JSON.stringify({status:'PASS',twoClients:true,scene:'Копия Припяти',medicines:rows.map(r=>({name:r.name,before:r.beforeClock,after:r.afterClock})),armor:armorRows.map(r=>({name:r.name,damage:r.damage,after:r.after})),flash:{noise:flashShot.attack.noise,received:noise.noise_received,targets:flashShot.attack.results[0].flash_targets},grip:{paidTwice:2,reloadStable:true,twoClients:true,observerDenied:true,explicitLeftRightBoth:true,onlyLeftHandDrawsFromUnarmed:true,drawDoesNotChargeGripExtra:true},water:{litres:1,retrieveAP:1,pourAP:2,burningBefore:8,burningAfter:6,reachableTargets:true,styledSelects:true},lights:{gpuBeam:true,twoClients:true,battleBattery:9,afterTenMinutes:8},journal:{persistentServerEntries:true,realCosts:true},prostheses:{installedWithRealButton:true,installAP:10,powerAfterReload:86400,twoClients:true,batteryChoiceSurvivesRefresh:true},combatLightMount:{prepareAP:2,batteryFromBackpackAP:3,stowAP:1},pair:{twoClients:true,eachWeaponFired:true,simultaneousFire:true,simultaneousAP:1,disadvantageBoth:true,ammunition:[18,18],reloadRejectedWithoutPayment:true,reloadStable:true},surgery:{realButton:true,durationSeconds:3600,morphineSpent:3,ordinaryDrugEffects:false,revisionAndReloadStable:true,twoClients:true,installedWeight:2,installedVolume:4}},null,2));
     }catch(error){
         for(const [index,client] of [page,peer].entries())if(client){
             const diagnostic=await client.evaluate(`({heading:document.querySelector('#character-sheet-name')?.textContent,
+                surgery:document.querySelector('.prosthesis-surgery')?.textContent,
                 prostheses:document.querySelector('.prostheses')?.textContent,
                 selections:Array.from(document.querySelectorAll('.prostheses select'),s=>({value:s.value,disabled:s.disabled})),
                 updates:(window.__morningUpdates||[]).slice(-8).map(e=>({id:e.character_id,prostheses:Boolean(e.updates?.data?.health?.prostheses)}))})`).catch(()=>null);

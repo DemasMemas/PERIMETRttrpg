@@ -15,6 +15,91 @@ from app.services.medical_procedure import minimum_consumable_payment
 from test_consumable_use import pair
 
 
+@pytest.mark.parametrize('name,field,steps', [
+    ('Регенеративный стимулятор Альфа', 'exhaustion', [0, 1, 2, 3, 3]),
+    ('Регенеративный стимулятор Бета', 'exhaustion', [0, 1, 2, 2, 2]),
+    ('Регенеративный стимулятор Звезда', 'exhaustion', [1, 1, 1, 1, 1]),
+    ('Препарат "Радист"', 'exhaustion', [0, 1, 2, 3, 3]),
+    ('Борщевик', 'intoxication', [0, 5, 10, 15, 20]),
+    ('Самопальный стимпак', 'intoxication', [0, 15, 30, 30, 30]),
+    ('Научный стимпак', 'radiation', [50, 45, 40, 35, 35]),
+])
+def test_author_medicine_consequences_repeat_with_turns_and_stop(name, field, steps):
+    profile = parse_consumable_effects(name + '. Ампула.')
+    health = {'current': 300, 'max': 700, field: 50 if field == 'radiation' else 0, 'effects': []}
+    _apply_profile(health, profile, profile['direct'], {'name': name, 'templateId': 999}, in_combat=True)
+    actual = [health[field]]
+    for _ in range(4):
+        health['effects'] = advance_timed_effects(health, health['effects'], 6, advance_medication_turns=True)
+        actual.append(health[field])
+    assert actual == steps
+
+
+@pytest.mark.parametrize('name,turns,returned,exhaustion', [
+    ('Стимулятор Воля', 3, 6, 1), ('Стимулятор Воля-Н', 5, 3, 0),
+])
+def test_will_returns_only_accumulated_blocked_pain_at_expiry(name, turns, returned, exhaustion):
+    from app.services.effects import apply_effect_to_health
+    profile = parse_consumable_effects(name + '. Ампула.')
+    health = {'current': 700, 'max': 700, 'painLevel': 0, 'exhaustion': 0, 'effects': []}
+    _apply_profile(health, profile, profile['direct'], {'name': name, 'templateId': 999}, in_combat=True)
+    apply_effect_to_health(health, {'type': 'pain', 'value': 6, 'source': 'new_wound'})
+    assert health['painLevel'] == 0 and health['combatMeta']['blockedPain'] == 6
+    for _ in range(turns - 1):
+        health['effects'] = advance_timed_effects(health, health['effects'], 6, advance_medication_turns=True)
+        assert health['painLevel'] == 0
+    health['effects'] = advance_timed_effects(health, health['effects'], 6, advance_medication_turns=True)
+    assert health['painLevel'] == returned
+    assert health['exhaustion'] == exhaustion
+    health['effects'] = advance_timed_effects(health, health['effects'], 60, advance_medication_turns=True)
+    assert health['painLevel'] == returned
+
+
+def test_morphine_blocks_real_wound_pain_for_three_active_turns_without_return():
+    from app.services.combat import CombatService
+    profile = parse_consumable_effects('Морфин. Ампула.')
+    data = {'health': {'current': 700, 'max': 700, 'painLevel': 9, 'effects': []}}
+    health = data['health']
+    _apply_profile(health, profile, profile['direct'], {'name': 'Морфин', 'templateId': 999}, in_combat=True)
+    for turn, expected in enumerate([6, 3, 0], 1):
+        health['effects'] = advance_timed_effects(health, health['effects'], 6, advance_medication_turns=True)
+        assert health['painLevel'] == expected
+        CombatService._apply_damage_pain(data, 100, turn, 'bullet')
+        assert health['painLevel'] == expected
+        assert not health['combatMeta'].get('blockedPain')
+    health['effects'] = advance_timed_effects(health, health['effects'], 6, advance_medication_turns=True)
+    CombatService._apply_damage_pain(data, 100, 4, 'bullet')
+    assert health['painLevel'] == 1
+
+
+def test_shumodav_preserves_full_deafness_until_three_movements_expire():
+    from app.services.combat import CombatService
+    profile = parse_consumable_effects('Стимулятор Шумодав. Ампула. Длится 3 перемещения. Вы теряете слух.')
+    # Старый импорт также мог хранить одновременно исполняемый эффект и пустую метку.
+    profile['status_additions'] = ['deafness']
+    data = {'health': {'current': 700, 'max': 700, 'effects': []}}
+    health = data['health']
+    _apply_profile(health, profile, profile['direct'], {'name': 'Шумодав', 'templateId': 999}, in_combat=True)
+    assert CombatService._deafness_level(data) == 100
+    for _ in range(2):
+        health['effects'] = advance_timed_effects(health, health['effects'], 600, advance_medication_turns=True)
+        assert CombatService._deafness_level(data) == 100
+    health['effects'] = advance_timed_effects(health, health['effects'], 600, advance_medication_turns=True)
+    assert CombatService._deafness_level(data) == 0
+
+
+def test_military_stimpack_reduces_actual_severity_for_exactly_two_turns():
+    from app.services.effects import get_bleeding_state
+    profile = parse_consumable_effects('Военный стимпак. Ампула. Действует 2 хода.')
+    health = {'current': 300, 'max': 700, 'effects': [{'type': 'bleeding_external_severe', 'area': 'leftArm'}]}
+    _apply_profile(health, profile, profile['direct'], {'name': 'Стимпак', 'templateId': 999}, in_combat=True)
+    assert get_bleeding_state(health)['totalSeverity'] == 3
+    health['effects'] = advance_timed_effects(health, health['effects'], 6, advance_medication_turns=True)
+    assert get_bleeding_state(health)['totalSeverity'] == 3
+    health['effects'] = advance_timed_effects(health, health['effects'], 6, advance_medication_turns=True)
+    assert get_bleeding_state(health)['totalSeverity'] == 5
+
+
 def install_consumable(pair, name, description, *, quantity=2, health=None):
     profile = parse_consumable_effects(f"{name}. {description}")
     template = ItemTemplate(
@@ -45,6 +130,65 @@ def install_consumable(pair, name, description, *, quantity=2, health=None):
 
 def application():
     return {"kind": "self", "actionPoints": 0}
+
+
+@pytest.mark.parametrize('stage,raw,expected',[('light',1,0),('severe',5,3)])
+def test_hematogen_reduces_actual_severity_once_and_never_below_zero(stage,raw,expected):
+    from app.services.effects import get_bleeding_state
+    from app.services.combat import CombatService
+    profile=parse_consumable_effects('Плитка Гематогена. Снижает Тяжесть кровотечений на 2 до конца боя (не меньше 0), Для использования требуется 1/3 бутылки воды.')
+    health={'effects':[{'type':'bleeding_external_'+stage,'area':'leftArm'}]}
+    _apply_profile(health,profile,profile['direct'],{'name':'Плитка Гематогена'},in_combat=True)
+    state=get_bleeding_state(health)
+    assert state['rawSeverity']==raw and state['totalSeverity']==expected
+    assert state['severityModifierTotal']==-2 and state['modifierTotal']==0
+    assert CombatService._bleeding_modifier_total(health)==0
+    assert state['difficulty']==5+expected
+
+
+@pytest.mark.parametrize('initial,expected',[(80,30),(20,0)])
+def test_halfblood_removes_half_maximum_infection_not_half_current(initial,expected):
+    profile=parse_consumable_effects('Стимулятор "Полукровка". Ампула. Останавливает заражение крови на 3 дня. Снимает 50% Прогресса заражения крови')
+    health={'infection':initial,'effects':[]}
+    _apply_profile(health,profile,profile['direct'],{'name':'Стимулятор "Полукровка"'},in_combat=False)
+    assert health['infection']==expected
+    assert any(effect['type']=='infection_growth_block' and effect['remaining']==3 for effect in health['effects'])
+
+
+def test_morphine_relieves_three_pain_three_times_after_delayed_activation():
+    profile=parse_consumable_effects('Морфин. Ампула.')
+    health={'current':700,'max':700,'painLevel':9,'stress':3,'exhaustion':2,'effects':[]}
+    _apply_profile(health,profile,profile['direct'],{'name':'Морфин','templateId':42},in_combat=True)
+    assert health['painLevel']==9
+    levels=[]
+    for _ in range(3):
+        health['effects']=advance_timed_effects(health,health['effects'],6,advance_medication_turns=True)
+        levels.append(health['painLevel'])
+    assert levels==[6,3,0]
+
+
+@pytest.mark.parametrize('name,weight,movement,moves',[
+    ('Стимулятор Бык',-3,-1,6),('Стимулятор Геракл',-5,-2,6),
+    ('Стимулятор Грация',0,-1,5),('Энергетик',-2,0,3)])
+def test_stimulants_change_real_load_and_movement_penalties_until_expiration(name,weight,movement,moves):
+    from app.services.combat import CombatService
+    profile=parse_consumable_effects(name+f'. Действует {moves} перемещений.')
+    value={'skills':{'physical':{'strength':{'base':10}}},'inventory':{'pockets':[{'weight':100}]},
+        'health':{'current':700,'max':700,'effects':[]}}
+    before=CombatService._inventory_weight_details(value)['penalty']
+    _apply_profile(value['health'],profile,profile['direct'],{'name':name,'templateId':1},in_combat=False,character_data=value)
+    assert CombatService._inventory_weight_details(value)['penalty']==before+weight
+    assert CombatService._consumable_stat_bonus(value,'movement_points')==movement
+    value['health']['effects']=advance_timed_effects(value['health'],value['health']['effects'],moves*600,advance_medication_turns=True,character_data=value)
+    assert CombatService._inventory_weight_details(value)['penalty']==before
+    assert CombatService._consumable_stat_bonus(value,'movement_points')==0
+
+
+def test_general_movement_modifier_is_not_also_counted_as_load_reduction():
+    from app.services.combat import CombatService
+    value={'inventory':{'pockets':[{'weight':100}]},'health':{'combatMeta':{'consumableModifiers':[
+        {'stat':'generic','value':-3,'remaining':1}]}}}
+    assert CombatService._inventory_weight_details(value)['penalty']==20
 
 
 @pytest.mark.parametrize('explicit_effect', [False, True])

@@ -62,6 +62,44 @@ def payload(pair, item, application, *, operation='medical-1', target=None, comb
     }
 
 
+@pytest.mark.parametrize('name,bonus',[('Адреналин',3),('Эпинефрин',5)])
+def test_injected_stimulant_grants_real_action_points_for_three_turns(client,pair,auth_headers,monkeypatch,name,bonus):
+    from app.services.combat import CombatService
+    from app.services.medical_procedure import minimum_consumable_payment
+    from test_regression_catalog_application import paid
+    _,_,item=install_item(pair,name,f'Ампула. +{bonus} ОД на 3 хода. Убирает одышку.',quantity=1)
+    actor=pair['actor_location'];actor.action_points_current=5
+    value=deepcopy(actor.character.data);value['health'].update(current=500,max=700,painLevel=0,exhaustion=3,stress=0)
+    actor.character.data=value;flag_modified(actor.character,'data');db.session.commit()
+    base=CombatService._combat_profile(actor)['action_points']
+    monkeypatch.setattr('app.services.deferred_consumable.random.randint',lambda *_:20)
+    monkeypatch.setattr('app.services.medical_procedure.random.randint',lambda *_:20)
+    application={'kind':'self','actionPoints':0}
+    selection={'source':{'path':['inventory','backpack',0],'snapshot':deepcopy(item)},'application':application}
+    cost=minimum_consumable_payment(actor.character.data,actor.character.data,selection,actor.character.lobby_id)['total_action_points']
+    paid(client,pair,auth_headers,item,application,'ap-stimulant',cost)
+    body=payload(pair,item,application,operation='ap-stimulant',combat=True);body['deferred_action_id']='ap-stimulant'
+    response=apply(client,pair,auth_headers,body)
+    assert response.status_code==200,response.json
+    after_dose=actor.action_points_current
+    assert after_dose==5-cost+bonus
+    assert response.json['medical_result']['consumable']['action_points_delta']==bonus
+    maximums=[CombatService._combat_profile(actor)['action_points']]
+    for _ in range(3):
+        CombatService.end_turn(actor.location_id,pair['lobby'].gm_id,actor.id)
+        state=LocationCombatState.query.filter_by(location_id=actor.location_id).one()
+        CombatService.end_turn(actor.location_id,pair['lobby'].gm_id,state.current_location_character_id)
+        maximums.append(actor.action_points_current)
+    assert maximums==[base+bonus,base+bonus,base+bonus,base]
+    import json
+    from pathlib import Path
+    report=Path(__file__).resolve().parents[1]/'.private-testing/reports/catalog-sweep-2026-11-04/action-points.json'
+    rows={} if name=='Адреналин' or not report.is_file() else json.loads(report.read_text(encoding='utf-8'))
+    rows[name]={'status':'PASS','before':5,'retrieval_and_use_cost':cost,'drug_grants':bonus,'after_dose':after_dose,
+        'turn_maximums':maximums,'base_per_turn':base,'phases':['ход применения','следующий ход','второй следующий ход','после окончания']}
+    report.parent.mkdir(parents=True,exist_ok=True);report.write_text(json.dumps(rows,ensure_ascii=False,indent=2),encoding='utf-8')
+
+
 def apply(client, pair, auth_headers, body, user=None):
     return client.post(
         f"/lobbies/characters/{pair['actor_character'].id}/medical-procedure",
@@ -1037,6 +1075,34 @@ def test_failed_server_medical_retry_does_not_expose_or_apply_procedure(
     data = pair['actor_character'].data
     assert data['inventory']['backpack'][0]['quantity'] == 1
     assert any(entry.get('id') == 'bleed-1' for entry in data['health']['effects'])
+
+
+def test_splint_cannot_create_fixed_fracture_on_unfractured_limb(client, pair, auth_headers, monkeypatch):
+    _, _, item = install_item(pair, 'Шина', 'Используется при лечении переломов.', quantity=2,
+        effects=[], zones={'leftArm': {'current': 50, 'max': 50}})
+    monkeypatch.setattr('app.services.medical_procedure.random.randint', lambda *_: 20)
+    application = {'kind':'injury', 'effect':{'id':'forged-fracture','type':'fracture','area':'leftArm'},
+        'treatmentMode':'fix_fracture', 'actionPoints':6}
+    response = apply(client, pair, auth_headers, payload(pair, item, application))
+    assert response.status_code == 409
+    assert not any(e['type']=='fracture_fixed' for e in pair['actor_character'].data['health']['effects'])
+    assert pair['actor_character'].data['inventory']['backpack'][0]['quantity'] == 2
+
+
+@pytest.mark.parametrize('name,pain', [('Кустарный набор "Айболит"',6), ('Хирургический набор "Крест"',5)])
+def test_limb_surgery_without_preexisting_pain_does_not_cause_maximum_pain_shock(
+        client, pair, auth_headers, monkeypatch, name, pain):
+    _, _, item = install_item(pair, name,
+        f'Восстанавливает часть тела. Она имеет 10 здоровья. Усиливает боль на {pain} уровней.',
+        quantity=10, pain=0, zones={'leftArm': {'current':0,'max':50}})
+    monkeypatch.setattr('app.services.medical_procedure.random.randint', lambda *_: 20)
+    application={'kind':'injury','effect':{'type':'damaged_zone','area':'leftArm'},
+        'treatmentMode':'restore_disabled_limb','actionPoints':6}
+    response=apply(client,pair,auth_headers,payload(pair,item,application))
+    assert response.status_code == 200, response.json
+    health=response.json['actor_data']['health']
+    assert health['painLevel']==pain
+    assert not any(e['type']=='shock' for e in health['effects'])
 
 
 def test_splint_fix_and_restore_are_separate_procedures(client, pair, auth_headers, monkeypatch):

@@ -1,6 +1,7 @@
 import { itemTooltipModel, tooltipPosition } from './itemPresentation.js';
 import { renderPortableLights,usesNightVision } from './portableLights.js';
 import { renderProstheses,prostheticLimb } from './prostheses.js';
+import { pairedFireOptions } from './pairedFire.js';
 import { hearingModifier } from './hearingRules.js';
 import { passiveTraits, traitCount, backgroundIs, addLearningXp, backpackItemVolume, pocketCapacity,facialProfile,carriedWeaponEntries,ruleText } from './characterTraits.js';
 // static/js/characterSheet.js
@@ -1856,7 +1857,8 @@ function migratePouchesToNewFormat() {
 // Рекурсивно вычисляет общий вес предмета с учётом содержимого
 function getTotalWeight(item) {
     if (!item || typeof item !== 'object') return 0;
-    let baseWeight = item.weight || 0;
+    if(item.attributes?.prosthesis_id)return 0;
+    let baseWeight = item.attributes?.prosthesis?.weight ?? item.weight ?? 0;
     if (item.category === 'magazine') {
         const currentAmmo = Number(item.currentAmmo) || (Array.isArray(item.ammo)
             ? item.ammo.reduce((sum, stack) => sum + (Number(stack?.quantity) || 0), 0)
@@ -1969,7 +1971,7 @@ function getHealthRollModifier(data, skillPath, options = {}) {
     );
     const suppressedFractureAreas = new Set(activeEffects
         .filter(effect => effect.suppress_fracture)
-        .map(effect => String(effect.area || '').toLowerCase()));
+        .map(effect => String(effect.area || '').toLowerCase().replaceAll('_','')));
     if(['physical.shooting','physical.accuracy'].includes(skillPath)&&activeEffects.some(e=>e.type==='burning'))modifier-=3;
     activeEffects.forEach(effect => {
         const penalties = effect.modifiers || {};
@@ -1980,13 +1982,13 @@ function getHealthRollModifier(data, skillPath, options = {}) {
         if (effect.type === 'stimulant_crash') {
             modifier -= Number(effect.phase_penalty ?? effect.value ?? 0) || 0;
         } else if (skillPath.startsWith('physical.') && ['fracture', 'fracture_fixed', 'fracture_unfixed'].includes(effect.type)) {
-            const area = String(effect.area || '').toLowerCase();
+            const area = String(effect.area || '').toLowerCase().replaceAll('_','');
             if (suppressedFractureAreas.has(area)) return;
             if (area.includes('arm') || area.includes('hand')) {
                 modifier -= effect.type === 'fracture_fixed' ? 1 : 2;
             }
         } else if (skillPath.startsWith('physical.') && effect.type === 'fracture_sequela') {
-            const area = String(effect.area || '').toLowerCase();
+            const area = String(effect.area || '').toLowerCase().replaceAll('_','');
             if (area.includes('arm') || area.includes('hand')) modifier -= 1;
         }
     });
@@ -2108,6 +2110,7 @@ function calculateCarriedWeight(data) {
         });
     }
     if (Array.isArray(data?.weapons)) items.push(...data.weapons);
+    for(const parts of Object.values(data?.health?.prostheses || {}))items.push(...Object.values(parts));
     return items.reduce((sum, item) => sum + getTotalWeight(item), 0);
 }
 
@@ -2118,7 +2121,7 @@ function getMovementPenaltyBreakdown(data, suppliedWeight = null) {
     const weightPerPenalty = getWeightPerMovementPenalty(data);
     const rawWeightPenalty = Math.floor(totalWeight / weightPerPenalty);
     const backpackReduction = Math.max(0, Number(eq.backpack?.attributes?.weight_reduction) || 0);
-    let weightPenalty = Math.max(0, Math.floor(rawWeightPenalty*passiveTraits(data).weightMultiplier) - backpackReduction);
+    let weightPenalty = Math.max(0, Math.floor(rawWeightPenalty*passiveTraits(data).weightMultiplier) - backpackReduction+getConsumableStatValue(data,'weight'));
     let armorPenalty = Number(armor.movementPenalty ?? armor.movement_penalty) || 0;
     const helmet = eq.helmet || {};
     const helmetPenalty = helmet.integratedWithArmor
@@ -2148,10 +2151,10 @@ function getMovementPenaltyBreakdown(data, suppliedWeight = null) {
     );
     const suppressedFractureAreas = new Set(activeHealthEffects
         .filter(effect => effect.suppress_fracture)
-        .map(effect => String(effect.area || '').toLowerCase()));
+        .map(effect => String(effect.area || '').toLowerCase().replaceAll('_','')));
     const fractureInjuries = activeHealthEffects.reduce((sum, effect) => {
         if (!['fracture', 'fracture_fixed', 'fracture_unfixed', 'fracture_sequela'].includes(effect.type)) return sum;
-        const area = String(effect.area || '').toLowerCase();
+        const area = String(effect.area || '').toLowerCase().replaceAll('_','');
         if (suppressedFractureAreas.has(area)) return sum;
         if (!area.includes('leg') && !area.includes('foot')) return sum;
         if (effect.type === 'fracture_sequela') return sum + 1;
@@ -3303,7 +3306,7 @@ function renderHealthTab(data, container = null) {
     const needs = normalizeDailyNeeds(health.needs);
     health.needs = needs;
     const modifierLabels = {
-        strength: 'Сила', agility: 'Ловкость', accuracy: 'Точность', weight: 'Штраф к весу', movement_points:'ОП', hp_max:'Максимум ОЗ',
+        strength: 'Сила', agility: 'Ловкость', accuracy: 'Точность', weight: 'Штраф нагрузки', movement_points:'Штраф перемещения', hp_max:'Максимум ОЗ',
         will: 'Воля', psy_defense: 'Пси-защита', vision_awareness: 'Внимательность (зрение)',
         darkness_awareness: 'Внимательность в темноте', light_awareness: 'Внимательность на свету',
         darkness_visual_immunity: 'Без помехи к зрению в темноте',
@@ -3327,9 +3330,20 @@ function renderHealthTab(data, container = null) {
         ...(Number(health.combatMeta?.willShockBonus) ? [`Следующая проверка Воли против шока: ${Number(health.combatMeta.willShockBonus)>0?'+':''}${health.combatMeta.willShockBonus}`] : []),
         ...(health.combatMeta?.willShockAdvantage ? ['Следующая проверка Воли против шока: преимущество'] : []),
     ])];
+    const painReturnEffect = (health.effects || []).find(effect => effect.type === 'pain_block'
+        && effect.active !== false && Number(effect.remaining) > 0);
+    if (painReturnEffect) {
+        const blocked = Number(health.combatMeta?.blockedPain || 0);
+        visibleEffectChips.push(`Заблокировано боли: ${blocked}; после действия вернётся: ${blocked * Number(painReturnEffect.return_fraction ?? 1)}`);
+    }
     const addictionRecords = Object.values(health.addictions?.records || {})
         .filter(record => record && record.active !== false);
     const currentGameDay = Math.max(1, Number(window.lobbyGameDay || 1));
+    const addictionProtectionMinutes=Math.max(0,Number(health.combatMeta?.addictionBlockedUntilMinute||0)
+        -currentGameDay*1440-Number(window.lobbyGameTimeMinutes??480));
+    const addictionProtectionLabel=addictionProtectionMinutes>0
+        ?`Получение новых зависимостей заблокировано: ещё ${Math.floor(addictionProtectionMinutes/60)} ч ${Math.ceil(addictionProtectionMinutes%60)} мин`:'';
+    if(addictionProtectionLabel)visibleEffectChips.push(addictionProtectionLabel);
     const addictionHtml = addictionRecords.map((record) => {
         const withdrawalDays = Math.max(0, Number(record.withdrawal_days || 0));
         const remaining = Math.max(0, Number(record.withdrawal_remaining ?? 28));
@@ -3452,9 +3466,10 @@ function renderHealthTab(data, container = null) {
                     ${visibleEffectChips.length ? visibleEffectChips.map((text) => `<span style="display:inline-flex; align-items:center; gap:6px; padding:5px 10px; border-radius:999px; background:rgba(255,255,255,0.07); border:1px solid rgba(255,255,255,0.08); font-size:12px;">${escapeHtml(text)}</span>`).join('') : '<span style="opacity:0.7; font-size:12px;">Числовых изменений нет; состояния показаны ниже</span>'}
                 </div>
             </div>
-            <details class="health-compact-panel" data-sheet-panel="addictions" ${addictionRecords.length ? 'open' : ''}>
+            <details class="health-compact-panel" data-sheet-panel="addictions" ${addictionRecords.length || addictionProtectionLabel ? 'open' : ''}>
                 <summary><span>Зависимости</span><strong>${addictionRecords.length}</strong></summary>
                 <div style="display:grid;gap:7px;padding-top:8px;">
+                    ${addictionProtectionLabel?`<span class="text-muted" style="font-size:12px;">${escapeHtml(addictionProtectionLabel)}</span>`:''}
                     ${addictionHtml || '<span class="text-muted" style="font-size:12px;">Активных зависимостей нет</span>'}
                 </div>
             </details>
@@ -5368,8 +5383,7 @@ window.changeWeaponPair = async function(operation,weaponIndex) {
         if (sheetSaveBlocked) throw new Error('Переоткройте лист перед сменой оружия');
         medicalOperationInProgress=locked=true;medicalRemoteUpdate=null;
         const state=window.locationCombatState;
-        if (state?.status==='active') {
-            if (operation!=='take') throw new Error('Уберите второе оружие после боя');
+        if (state?.status==='active' && operation==='take') {
             const result=await Server.performLocationCombatAction(window.currentLobbyId,window.currentLocationId,{
                 location_character_id:state.current_character.location_character_id,action_key:'draw_weapon',weapon_index:weaponIndex,
                 attribute_choice:'second_hand',pending_action_id:`draw-second-${state.current_character.location_character_id}-${Date.now()}`});
@@ -5393,6 +5407,15 @@ function formatActionPointModifier(value) {
     if (numeric === 0) return 'без изменений';
     return `${numeric > 0 ? '+' : ''}${numeric} ОД`;
 }
+
+window.openProsthesisSurgery = async function(characterId) {
+    if(medicalOperationInProgress)return;
+    if(autoSaveTimer)await forceSyncCharacter();
+    await Server.waitForCharacterSave(characterId);
+    closeCharacterSheet();
+    const scene=await import('./locationScene.js');
+    await scene.showMedicalConsumableMenu(characterId,characterId);
+};
 
 window.operateProsthesis = async function(payload) {
     if(medicalOperationInProgress || !currentCharacterCanEdit)return;
@@ -5443,7 +5466,7 @@ window.operatePortableLight = async function(payload) {
     }
 };
 
-window.changeWeaponGrip = async function(weaponIndex, hands) {
+window.changeWeaponGrip = async function(weaponIndex, hands, hand) {
     if (medicalOperationInProgress) return;
     const characterId = currentCharacterId;
     let locked = false;
@@ -5454,9 +5477,9 @@ window.changeWeaponGrip = async function(weaponIndex, hands) {
         if (sheetSaveBlocked) throw new Error('Переоткройте лист перед сменой хвата');
         medicalOperationInProgress = locked = true;
         medicalRemoteUpdate = null;
-        const result = await Server.changeWeaponGrip(characterId, {hands, weapon_index:weaponIndex, character_revision:currentCharacterData._revision});
+        const result = await Server.changeWeaponGrip(characterId, {hands, ...(hand?{hand}:{}), weapon_index:weaponIndex, character_revision:currentCharacterData._revision});
         currentCharacterData = result.data;
-        showNotification(hands === 1 ? 'Оружие удерживается одной рукой' : 'Оружие удерживается двумя руками', 'success');
+        showNotification(hands === 1 ? `Оружие в ${hand==='left'?'левой':'правой'} руке` : 'Оружие удерживается двумя руками', 'success');
     } catch (error) { showNotification(error.message || 'Не удалось сменить хват', 'system'); }
     finally {
         if (locked) {
@@ -5477,45 +5500,57 @@ function renderWeaponGripControl(weapon, index) {
     const hands = currentCharacterData?.health?.combatMeta?.weaponGripHands === 1 ? 1 : 2;
     const secondary=secondaryWeaponIndex();
     const disabled = !currentCharacterCanEdit || active && state.current_character?.character_id !== currentCharacterId;
-    if (secondary===index) return `<span>Во второй руке</span>${!active?`<button type="button" class="btn btn-sm btn-secondary" ${disabled?'disabled':''} onclick="changeWeaponPair('stow',${index})">Убрать второе оружие</button>`:''}`;
-    if (!isSelectedWeaponIndex(selected, index)) return selected!=null && hands===1 && secondary==null
-        ? `<button type="button" data-weapon-pair-take="${index}" class="btn btn-sm btn-secondary" ${disabled?'disabled':''} onclick="changeWeaponPair('take',${index})">Взять во вторую руку</button>` : '';
+    const side=currentCharacterData?.health?.combatMeta?.weaponPrimaryHand==='left'?'left':'right';
+    if (secondary===index) return `<span>В ${side==='left'?'правой':'левой'} руке</span><button type="button" class="btn btn-sm btn-secondary" ${disabled?'disabled':''} onclick="changeWeaponPair('stow',${index})">Убрать второе оружие</button>`;
+    if (!isSelectedWeaponIndex(selected, index)) {
+        const cost=active?` · ${getCombatWeaponErgonomics(index)?.draw_action_points??4} ОД`:'';
+        const choices=[['right','Взять в правую руку'],['left','Взять в левую руку'],['both','Взять двумя руками']].map(([hand,label])=>
+            `<button type="button" data-weapon-draw-hand="${hand}" data-weapon-draw-index="${index}" class="btn btn-sm btn-secondary" ${disabled?'disabled':''} onclick="drawWeaponFromEquipment(${index},'${hand}')">${label}${cost}</button>`).join('');
+        return (selected!=null && hands===1 && secondary==null
+            ? `<button type="button" data-weapon-pair-take="${index}" class="btn btn-sm btn-secondary" ${disabled?'disabled':''} onclick="changeWeaponPair('take',${index})">Взять во вторую руку</button>` : '')+choices;
+    }
     if (secondary!=null) return '<span>По оружию в каждой руке</span>';
-    return `<span data-weapon-grip-label="${index}">Хват: ${hands === 1 ? 'одной рукой' : 'двумя руками'}</span><button type="button" data-weapon-grip-change="${index}" class="btn btn-sm btn-secondary" ${disabled?'disabled':''} onclick="changeWeaponGrip(${index},${hands===1?2:1})">${hands===1?'Взять двумя руками':'Взять одной рукой'} · 1 ОД</button>`;
+    return `<span data-weapon-grip-label="${index}">Хват: ${hands === 1 ? `${side==='left'?'левая':'правая'} рука` : 'двумя руками'}</span>`
+        + [['right','Взять в правую руку'],['left','Взять в левую руку'],['both','Взять двумя руками']].map(([hand,label])=>
+            `<button type="button" data-weapon-grip-hand="${hand}" ${hand===(hands===2?'right':'both')?`data-weapon-grip-change="${index}"`:''} class="btn btn-sm btn-secondary" ${disabled || (hand==='both'?hands===2:hands===1&&side===hand)?'disabled':''} onclick="changeWeaponGrip(${index},${hand==='both'?2:1},'${hand==='both'?side:hand}')">${label}${active?' · 1 ОД':''}</button>`).join('');
 }
 
-window.drawWeaponFromEquipment = async function(weaponIndex) {
-    const combatState = window.locationCombatState;
-    const actor = combatState?.current_character;
-    if (!combatState || combatState.status !== 'active') {
-        currentCharacterData.activeWeaponIndex = weaponIndex;
-        renderEquipmentTab(currentCharacterData);
-        scheduleAutoSave();
-        forceSyncCharacter();
-        showNotification('Оружие взято в руки', 'success');
-        return;
-    }
-    if (actor?.character_id !== currentCharacterId) {
-        showNotification('Достать оружие можно только в свой ход', 'system');
-        return;
-    }
+window.drawWeaponFromEquipment = async function(weaponIndex,hand) {
+    if(medicalOperationInProgress||!currentCharacterCanEdit)return;
+    const characterId=currentCharacterId;let locked=false;
     try {
+        if(autoSaveTimer)await forceSyncCharacter();
+        await Server.waitForCharacterSave(characterId);
+        if(currentCharacterId!==characterId||medicalOperationInProgress)return;
+        if(sheetSaveBlocked)throw new Error('Переоткройте лист перед доставанием оружия');
+        medicalOperationInProgress=locked=true;medicalRemoteUpdate=null;
+        const combatState=window.locationCombatState,actor=combatState?.current_character;
+        if(combatState?.status!=='active'){
+            const result=await Server.changeWeaponGrip(characterId,{draw:true,weapon_index:weaponIndex,
+                hands:hand==='both'?2:hand?1:currentCharacterData.health?.combatMeta?.weaponGripHands===1?1:2,
+                ...(hand?{hand:hand==='both'?'right':hand}:{}),character_revision:currentCharacterData._revision});
+            currentCharacterData=result.data;showNotification('Оружие взято в руки','success');return;
+        }
+        if(actor?.character_id!==characterId)throw new Error('Достать оружие можно только в свой ход');
         const result = await Server.performLocationCombatAction(window.currentLobbyId, window.currentLocationId, {
             location_character_id: actor.location_character_id,
             action_key: 'draw_weapon',
             weapon_index: weaponIndex,
+            ...(hand?{attribute_choice:hand==='both'?'both_hands':hand+'_hand'}:{}),
             pending_action_id: `draw-weapon-${actor.location_character_id}-${Date.now()}-${Math.random().toString(36).slice(2)}`,
         });
         if (result?.pending_action) {
             showNotification('Доставание оружия начато. Оно окажется в руках после полной оплаты ОД.', 'system');
             return;
         }
-        currentCharacterData.activeWeaponIndex = weaponIndex;
-        renderEquipmentTab(currentCharacterData);
         showNotification('Оружие подготовлено', 'success');
     } catch (error) {
         showNotification(error.message || 'Не удалось достать оружие', 'system');
     }
+    finally{if(locked){
+        if(medicalRemoteUpdate?.character_id===Number(characterId)&&Number(medicalRemoteUpdate.data?._revision)>Number(currentCharacterData?._revision))currentCharacterData=medicalRemoteUpdate.data;
+        medicalRemoteUpdate=null;medicalOperationInProgress=false;await refreshSavedSheet(characterId);
+    }}
 };
 
 window.rebreakUnfixedFracture = function(index) {
@@ -5794,6 +5829,16 @@ function renderRangedAttackButtons(weapon, template, index, disabled) {
             const areaShots = machineGun ? 10 : burstShots * 2;
             buttons.push(`<button type="button" class="btn btn-sm btn-warning" ${firingDisabledAttr} onclick="${action('area', 5, 2)}">По области · ${areaShots} выстр. · 5 ОД</button>`);
         }
+    }
+    const secondary=secondaryWeaponIndex();
+    if(isCombatActive&&index===Number(drawnWeaponIndex)&&secondary!=null){
+        const indices=[index,secondary],weapons=indices.map(value=>currentCharacterData.weapons[value]);
+        const templates=weapons.map(item=>(allTemplatesCache||[]).find(candidate=>candidate.id==item.templateId));
+        const options=pairedFireOptions(weapons,weapons.map((item,i)=>getWeaponFireProfile(item,templates[i])),
+            weapons.map((item,i)=>getWeaponClass(item,templates[i])),indices.map(getCombatWeaponErgonomics),
+            backgroundIs(currentCharacterData,'Полицейский'),backgroundIs(currentCharacterData,'Пост принял')?10:2);
+        if(options.length)buttons.push('<span class="paired-fire-label">Два оружия одновременно · с помехой</span>',
+            ...options.map(option=>`<button type="button" class="btn btn-sm btn-warning" data-paired-fire="${option.mode}" ${firingDisabledAttr} onclick="useWeaponFromEquipment(${index},'${option.mode}',${option.shots},${option.cost},${option.volleys},true)">${option.label} из двух · ${option.cost} ОД</button>`));
     }
     return buttons.join('');
 }
@@ -9403,7 +9448,8 @@ window.useWeaponFromEquipment = async function(
     fireMode = 'unaimed',
     shotCount = 1,
     actionPoints = 2,
-    volleyCount = 1
+    volleyCount = 1,
+    pairedFire = false
 ) {
     const sheetData = currentCharacterData;
     const actorCharacterId = currentCharacterId;
@@ -9551,7 +9597,7 @@ window.useWeaponFromEquipment = async function(
             actionKey: 'attack',
             weaponIndex,
             fireMode,
-            attributeChoice: sniperMode ? {sniperMode} : undefined,
+            attributeChoice: pairedFire ? 'paired_fire' : sniperMode ? {sniperMode} : undefined,
             shotCount: shots,
             actionPoints,
             volleyCount,
@@ -12034,6 +12080,7 @@ async function useConsumable(item, itemPath, options = {}) {
             health.combatMeta.bleedingModifiers = [];
         }
         health.combatMeta.bleedingModifiers.push({
+            affects_severity: true,
             stat: 'bleeding',
             value: Number(direct.bleeding_modifier_delta) || 0,
             remaining: direct.duration ?? null,
@@ -15503,6 +15550,9 @@ function recalculateInventoryTotals() {
         totalWeight += getTotalWeight(weapon);
         totalVolume += getTotalVolume(weapon);
     });
+    for(const parts of Object.values(currentCharacterData.health?.prostheses || {})) {
+        for(const item of Object.values(parts))totalWeight+=getTotalWeight(item);
+    }
 
     // Обновляем отображение общего веса и объёма
     const totalWeightSpan = document.getElementById('total-weight-display');

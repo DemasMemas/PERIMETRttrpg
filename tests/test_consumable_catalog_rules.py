@@ -4,6 +4,44 @@ from app.services.consumable_catalog_rules import apply_catalog_rules
 from app.services.consumable_effects import parse_consumable_effects
 
 
+@pytest.mark.parametrize('name,field,old_type', [
+    ('Борщевик','intoxication_delta','intoxication'),
+    ('Самопальный стимпак','intoxication_delta','intoxication'),
+    ('Регенеративный стимулятор Альфа','exhaustion_delta','temporary_exhaustion'),
+    ('Регенеративный стимулятор Бета','exhaustion_delta','temporary_exhaustion'),
+    ('Препарат "Радист"','exhaustion_delta','temporary_exhaustion'),
+    ('Научный стимпак','radiation_delta','radiation'),
+])
+def test_official_legacy_profiles_replace_single_dose_with_periodic_consequences(name, field, old_type):
+    from copy import deepcopy
+    from app.services.consumable_effects import enrich_imported_consumable
+    old={'direct':{field:1},'effects':[{'type':old_type,'name':'Старая схема'}]}
+    attributes={'catalog_name':name,'raw_description':'Ампула.','consumable':old}
+    migrated=enrich_imported_consumable(attributes,'Ампула.')
+    assert field not in migrated['direct']
+    assert not any(e.get('name')=='Старая схема' for e in migrated['effects'])
+    assert any(e['type'] in {'periodic_adjustment','radiation_treatment'} for e in migrated['effects'])
+    custom=deepcopy(attributes);custom['consumable']['editor_version']=1
+    assert enrich_imported_consumable(custom,'Ампула.')==custom['consumable']
+
+
+def test_old_official_halfblood_and_morphine_profiles_receive_author_corrections():
+    from copy import deepcopy
+    from app.services.consumable_effects import enrich_imported_consumable
+    for name in ('Стимулятор "Полукровка"','Морфин'):
+        description='Ампула.';profile=parse_consumable_effects(name+'. '+description)
+        old=deepcopy(profile)
+        if name=='Морфин':
+            delayed=next(effect for effect in old['effects'] if effect['type']=='delayed_treatment')
+            delayed['activate_effects']=[effect for effect in delayed['activate_effects'] if effect['type']!='periodic_adjustment']
+        else:old['direct'].pop('infection_delta');old['direct']['infection_multiplier']=.5
+        result=enrich_imported_consumable({'catalog_name':name,'raw_description':description,'consumable':old},description)
+        if name=='Морфин':
+            delayed=next(effect for effect in result['effects'] if effect['type']=='delayed_treatment')
+            assert any(effect['type']=='periodic_adjustment' and effect['remaining']==2 for effect in delayed['activate_effects'])
+        else:assert result['direct']['infection_delta']==-50 and 'infection_multiplier' not in result['direct']
+
+
 @pytest.mark.parametrize(
     ("description", "expected_stage"),
     [
@@ -46,7 +84,8 @@ def test_radist_variants_do_not_share_capacity_or_temporary_exhaustion():
     assert light["direct"]["radiation_filter_capacity"] == 50
     assert standard["direct"]["radiation_filter_capacity"] == 100
     assert not any(effect["type"] == "temporary_exhaustion" for effect in light["effects"])
-    assert any(effect["type"] == "temporary_exhaustion" for effect in standard["effects"])
+    assert 'exhaustion_delta' not in standard['direct']
+    assert any(effect["type"] == "periodic_adjustment" and effect['remaining'] == 3 for effect in standard["effects"])
 
 
 def test_owl_variants_have_different_sleep_and_aftereffects():

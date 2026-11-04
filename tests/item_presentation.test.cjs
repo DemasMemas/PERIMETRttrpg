@@ -9,6 +9,23 @@ async function load(name){
     }
     const module=await moduleAt(path.resolve(__dirname,'../app/static/js/',name));await module.evaluate();return module.namespace;
 }
+test('Морфин не сохраняет долг боли, а Воля сохраняет',async()=>{
+    const {applyEffectToHealth}=await load('effects.js');
+    for(const [type,debt] of [['analgesia',undefined],['pain_block',3]]){
+        const health={painLevel:0,effects:[{type,blocks_new_pain:true,remaining:3,active:true}],combatMeta:{}};
+        applyEffectToHealth(health,{type:'pain',value:3});
+        assert.equal(health.painLevel,0);assert.equal(health.combatMeta.blockedPain,debt);
+    }
+});
+test('Гематоген в браузере снижает тяжесть без повторного уменьшения сложности',async()=>{
+    const {syncHealthDerivedStatuses}=await load('effects.js');
+    const health={effects:[{type:'bleeding_external_severe',area:'leftArm'}],combatMeta:{bleedingModifiers:[{value:-2,note:'hematogen',scope:'combat'}]}};
+    syncHealthDerivedStatuses(health);
+    assert.equal(health.bleeding.totalSeverity,3);assert.equal(health.bleeding.rawSeverity,5);
+    assert.equal(health.bleeding.modifierTotal,0);assert.equal(health.bleeding.difficulty,8);
+    health.effects=[{type:'bleeding_external_light'}];syncHealthDerivedStatuses(health);
+    assert.equal(health.bleeding.totalSeverity,0);assert.equal(health.bleeding.difficulty,5);
+});
 test('Подсказка берёт текущие значения экземпляра, полную защиту и модули',async()=>{
     const {itemTooltipModel}=await load('itemPresentation.js');
     const result=itemTooltipModel({name:'Шлем',category:'helmet',attributes:{max_durability:100,uses:5,protection:{physical:.5,thermal:.4,chemical:.3,electric:.2,radiation:.1}}},

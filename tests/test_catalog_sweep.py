@@ -163,7 +163,11 @@ def test_every_consumable_through_actual_use_api(app, client, create_user, auth_
             effects.append({'id':'sweep-shock','type':'shock','tick':'manual'})
         if direct.get('affects_all_limbs'):
             health['zones']['leftArm']['current']=0
-            effects.append({'id':'sweep-disabled-fracture','type':'fracture','area':'leftArm','tick':'manual'})
+            effects.extend([{'id':'sweep-disabled-fracture','type':'fracture','area':'left_arm','tick':'manual'},
+                {'id':'sweep-leg-fracture','type':'fracture','area':'right_leg','tick':'manual'}])
+        if raw['name']=='Плитка Гематогена':
+            effects.extend([{'type':'bleeding_external_severe','area':'leftArm'},
+                {'type':'bleeding_internal_medium','area':'chest'}])
         if direct.get('applications'):
             option=deepcopy(direct['applications'][0])
             effect={'id':'sweep-bleed','type':'bleeding_'+('internal' if option.get('internal') or option.get('internal_only') else 'external')+'_light','area':'leftArm'}
@@ -177,6 +181,11 @@ def test_every_consumable_through_actual_use_api(app, client, create_user, auth_
         elif direct.get('special_limb_treatment') or direct.get('surgical_kit'):
             health['zones']['leftArm']['current']=0
             application={'kind':'injury','treatmentMode':'restore_disabled_limb','effect':{'area':'leftArm'},'actionPoints':1}
+            if direct.get('special_limb_treatment') == 'chimera':
+                effects.extend([{'id':'sweep-chimera-fracture','type':'fracture','area':'leftArm'},
+                    {'id':'sweep-chimera-bleed','type':'bleeding_external_medium','area':'leftArm'}])
+        if raw['name']=='Военный стимпак':
+            effects.append({'id':'sweep-stimpack-bleed','type':'bleeding_external_severe','area':'leftArm'})
         if direct.get('stop_all_bleeding'):
             effects.extend([{'id':'sweep-external','type':'bleeding_external_severe','area':'rightArm'},
                             {'id':'sweep-internal','type':'bleeding_internal_medium','area':'chest'},
@@ -230,9 +239,9 @@ def test_every_consumable_through_actual_use_api(app, client, create_user, auth_
                 'Стимулятор Котик':({'exhaustion':6},{}),
                 'Научный стимулятор Волкодав':({'current':300},{'current':250}),
                 'Стимулятор Полнокровка':({},{'blood':'normal'}),
-                'Морфин':({'painLevel':5,'stress':3,'exhaustion':4},{'painLevel':2,'stress':1,'exhaustion':4}),
+                'Морфин':({'painLevel':5,'stress':3,'exhaustion':4},{'painLevel':0,'stress':1,'exhaustion':4}),
                 'Миколий':({'painLevel':4,'intoxication':50},{}),
-                'Стимулятор Полукровка':({'infection':5},{}),
+                'Стимулятор Полукровка':({'infection':0},{}),
                 'Стимулятор Варвар':({'painLevel':2},{}),
                 'Стимулятор Викинг':({'painLevel':0},{}),
                 'Препарат 02':({'painLevel':2,'stress':1},{}),
@@ -257,13 +266,14 @@ def test_every_consumable_through_actual_use_api(app, client, create_user, auth_
                 'Стимулятор Гора':({'painLevel':4,'current':300},{'painLevel':5,'current':250}),
                 'Стимулятор Гора-Д':({'current':200},{}),
                 'Питательный стимулятор':({'painLevel':4,'exhaustion':2},{'painLevel':7}),
-                'Борщевик':({'current':300,'intoxication':15},{'current':550}),
-                'Регенеративный стимулятор Альфа':({'exhaustion':6},{'current':700,'exhaustion':5}),
-                'Регенеративный стимулятор Бета':({'exhaustion':6},{'current':700,'exhaustion':5}),
+                'Борщевик':({'current':300,'intoxication':10},{'current':550,'intoxication':60}),
+                'Регенеративный стимулятор Альфа':({'exhaustion':5},{'current':700,'exhaustion':8}),
+                'Регенеративный стимулятор Бета':({'exhaustion':5},{'current':700,'exhaustion':7}),
                 'Регенеративный стимулятор Звезда':({'exhaustion':6},{'current':700,'exhaustion':6}),
-                'Самопальный стимпак':({'current':300,'intoxication':25},{'current':500}),
+                'Самопальный стимпак':({'current':300,'intoxication':10},{'current':500,'intoxication':40}),
                 'Военный стимпак':({'current':300},{'current':700}),
-                'Научный стимпак':({'radiation':45},{'current':700,'radiation':45}),
+                'Научный стимпак':({'radiation':50},{'current':700,'radiation':35}),
+                'Препарат Радист':({'exhaustion':5},{'exhaustion':8}),
                 'Антирад-А':({'radiation':50},{'radiation':40}),
                 'Антирад-Б':({'radiation':50},{'radiation':30}),
                 'Антирад-Г':({'radiation':50},{'radiation':20}),
@@ -271,6 +281,101 @@ def test_every_consumable_through_actual_use_api(app, client, create_user, auth_
             }.get(raw['name'].replace('"',''))
             row['numeric_rule_checks']=0
             plain_name=raw['name'].replace('"','')
+            from app.services.combat import CombatService
+            if plain_name in {'Борщевик','Самопальный стимпак','Регенеративный стимулятор Альфа',
+                    'Регенеративный стимулятор Бета','Регенеративный стимулятор Звезда','Препарат Радист',
+                    'Научный стимпак','Военный стимпак'}:
+                probe=deepcopy(row['after']);row['turns']=[]
+                for turn in range(1,11):
+                    probe['effects']=advance_timed_effects(probe,probe['effects'],6,advance_medication_turns=True)
+                    row['turns'].append({'turn':turn,'health':deepcopy(probe)})
+            if plain_name in {'Стимулятор Воля','Стимулятор Воля-Н'}:
+                from app.services.effects import apply_effect_to_health
+                probe=deepcopy(row['after']);probe['painLevel']=0
+                apply_effect_to_health(probe,{'type':'pain','value':6,'source':'bullet'})
+                assert probe['painLevel']==0 and probe['combatMeta']['blockedPain']==6
+                turns=5 if plain_name.endswith('-Н') else 3
+                for _ in range(turns-1):
+                    probe['effects']=advance_timed_effects(probe,probe['effects'],6,advance_medication_turns=True)
+                    assert probe['painLevel']==0
+                probe['effects']=advance_timed_effects(probe,probe['effects'],6,advance_medication_turns=True)
+                expected_return=3 if turns==5 else 6
+                assert probe['painLevel']==expected_return
+                row['provoked_rule_checks']=[f'Новое ранение:6боли заблокированы; до конца{turns}ходов боль0; при окончании возвращено{expected_return}']
+            if plain_name=='Стимулятор Шумодав':
+                assert CombatService._deafness_level({'health':row['after']})==100
+                probe=deepcopy(row['after']);probe['psyState']=0;levels=[]
+                for _ in range(3):
+                    probe['effects']=advance_timed_effects(probe,probe['effects'],600,advance_medication_turns=True)
+                    levels.append(CombatService._deafness_level({'health':probe}))
+                assert levels==[100,100,0]
+                row['provoked_rule_checks']=['Фактическая глухота100; при отсутствии отдельной пси-глухоты после1/2/3перемещений:100/100/0']
+            if direct.get('fracture_splint'):
+                assert any(e['type']=='fracture' for e in before['effects'])
+                assert any(e['type']=='fracture_fixed' for e in row['after']['effects'])
+                row['provoked_rule_checks']=['До процедуры есть перелом руки; после процедуры он заменён зафиксированным переломом']
+            if direct.get('special_limb_treatment')=='chimera':
+                assert any(e['type']=='fracture' for e in before['effects'])
+                assert not any(e['type']=='fracture' and e.get('area')=='leftArm' for e in advanced['effects'])
+                assert not any(e.get('id')=='sweep-chimera-bleed' for e in row['after']['effects'])
+                row['provoked_rule_checks']=['Подготовлены перелом и кровотечение руки; кровотечение закрыто сразу, перелом вылечен через1минуту']
+            if direct.get('surgical_kit'):
+                row['provoked_rule_checks']=[f"Исходно боль{before['painLevel']}; набор добавляет{direct.get('pain_delta',0)}: итог{row['after']['painLevel']}. Шок вызван достижением10, а не провалом лечения"]
+            if direct.get('affects_all_limbs'):
+                active=deepcopy(recipient.data);control=deepcopy(active)
+                control['health']['effects']=[effect for effect in control['health']['effects'] if effect.get('type')!='temporary_limb_restoration']
+                active_roll=CombatService._health_roll_modifier(active,'skills.physical.melee')
+                injured_roll=CombatService._health_roll_modifier(control,'skills.physical.melee')
+                active_move=CombatService._movement_penalty_breakdown(active)['total']
+                injured_move=CombatService._movement_penalty_breakdown(control)['total']
+                assert active_roll-injured_roll==2,(raw['name'],active_roll,injured_roll)
+                assert injured_move-active_move==3,(raw['name'],active_move,injured_move)
+                row['provoked_rule_checks']=['Перелом руки временно не даёт штраф−2 к броску; перелом ноги не даёт штраф3 к перемещению',
+                    'Выбитая рука0ОЗ→1ОЗ; через1перемещение снова0ОЗ, подавление переломов истекло']
+            if plain_name=='Плитка Гематогена':
+                from app.services.effects import get_bleeding_state
+                state=get_bleeding_state(row['after'])
+                assert state['rawSeverity']==8 and state['totalSeverity']==6 and state['modifierTotal']==0
+                row['provoked_rule_checks']=['Подготовлены кровотечения тяжестью5+3=8; после плитки итоговая тяжесть6, уменьшение−2 учтено один раз']
+            if plain_name=='Морфин':
+                probe=deepcopy(row['after']);probe['painLevel']=9;levels=[]
+                for _ in range(3):
+                    probe['effects']=advance_timed_effects(probe,probe['effects'],6,advance_medication_turns=True)
+                    levels.append(probe['painLevel'])
+                assert levels==[6,3,0]
+                row['provoked_rule_checks']=['После задержки боль9→6→3→0: три снятия по3, всего9; новые уровни боли блокируются на срок препарата']
+            if plain_name=='Стимулятор Полукровка':
+                from app.services.general_consumable import _apply_profile
+                probe=deepcopy(before);probe['infection']=80
+                _apply_profile(probe,profile,direct,item,in_combat=False)
+                assert probe['infection']==30
+                row['provoked_rule_checks']=['От максимального прогресса100 снимаются50пунктов: контроль80→30; при исходных10 итог0']
+            if plain_name in {'Стимулятор Бык','Стимулятор Геракл','Стимулятор Б.О.Л.Т.','Стимулятор Грация','Энергетик','Стимулятор Гора-Д'}:
+                active=deepcopy(recipient.data);active['inventory']={'pockets':[{'name':'Контрольный груз','weight':100,'quantity':1}]};active['weapons']=[]
+                control=deepcopy(active);control['health']['combatMeta']['consumableModifiers']=[
+                    m for m in control['health']['combatMeta']['consumableModifiers'] if m.get('stat')!='weight']
+                raw_weight=CombatService._inventory_weight_details(control)['penalty']
+                actual_weight=CombatService._inventory_weight_details(active)['penalty']
+                expected_weight={'Стимулятор Бык':3,'Стимулятор Геракл':5,'Стимулятор Б.О.Л.Т.':3,'Стимулятор Грация':0,'Энергетик':2,'Стимулятор Гора-Д':3}[plain_name]
+                assert raw_weight-actual_weight==expected_weight,(plain_name,raw_weight,actual_weight)
+                actual_move=CombatService._consumable_stat_bonus(active,'movement_points')
+                expected_move={'Стимулятор Бык':-1,'Стимулятор Геракл':-2,'Стимулятор Б.О.Л.Т.':-3,'Стимулятор Грация':-1,'Энергетик':0,'Стимулятор Гора-Д':0}[plain_name]
+                assert actual_move==expected_move,(plain_name,actual_move)
+                row['provoked_rule_checks']=[f'На контрольном грузе100кг штраф нагрузки{raw_weight}→{actual_weight}; модификатор штрафа перемещения{actual_move:+g}']
+                if plain_name=='Стимулятор Грация':
+                    assert CombatService._consumable_stat_value_bonus(active,'anomaly_escape_roll')==2
+                    row['provoked_rule_checks'].append('Расчёт выхода из аномалии получает+2 к броску')
+            if plain_name=='Стимулятор Котик':
+                from app.services.addictions import record_exposure
+                minute=(pair['lobby'].game_day or 1)*1440+(pair['lobby'].game_time_minutes or 0)
+                with monkeypatch.context() as scoped:
+                    scoped.setattr('app.services.addictions.random',SimpleNamespace(random=lambda:0))
+                    protected=deepcopy(row['after'])
+                    blocked=record_exposure(protected,'Борщевик',0,minute+1)
+                    assert blocked['blocked'] and not blocked['acquired']
+                    expired=record_exposure(protected,'Борщевик',0,minute+1441)
+                    assert not expired['blocked'] and expired['acquired']
+                row['provoked_rule_checks']=['После реальной ампулы попытка получения зависимости с гарантированным броском заблокирована; через24часа+1минуту та же попытка создаёт зависимость']
             if expected:
                 for snapshot,values in zip((row['after'],advanced),expected):
                     for field,value in values.items():

@@ -23,9 +23,18 @@ export function renderProstheses(container,data,operate,canEdit,characterId) {
     for(const [key,item] of Object.entries(data.equipment || {}))visit(item,['equipment',key]);
     const available=inventory.filter(v=>v.item.attributes?.prosthesis);
     const entries=Object.entries(data.health?.prostheses || {}).flatMap(([zone,parts])=>Object.entries(parts).map(([slot,item])=>({zone,slot,item})));
-    if(!available.length && !entries.length)return;
+    const meta=data.health?.combatMeta || {};
+    if(!available.length && !entries.length && !meta.prosthesisSurgeryId && !meta.prosthesisSurgeryPatientId && !meta.prosthesisSurgeryResult)return;
     const section=document.createElement('section');section.className='loadout-group prostheses';
     const heading=document.createElement('h4');heading.textContent='Протезы';section.append(heading);
+    if(meta.prosthesisSurgeryId || meta.prosthesisSurgeryPatientId){
+        const status=document.createElement('p');status.textContent='Идёт операция установки протеза. Окончание определяется игровым временем.';section.append(status);
+        const cancel=document.createElement('button');cancel.type='button';cancel.className='btn btn-sm btn-secondary';cancel.textContent='Прервать операцию';cancel.disabled=!canEdit;
+        cancel.onclick=()=>{if(window.confirm('Прервать операцию? Расходники уже потрачены.'))operate({operation:'cancel_surgery'})};section.append(cancel);
+    }else if(meta.prosthesisSurgeryResult){
+        const result=meta.prosthesisSurgeryResult,status=document.createElement('p');
+        status.textContent=`Последняя операция: ${result.success?'успех':result.reason?'прервана':'провал'}${result.roll!=null?` · d20: ${result.roll}, СЛ ${result.difficulty}`:''}. Расходники потрачены.`;section.append(status);
+    }
     const active=window.locationCombatState?.status==='active';
     const disabled=!canEdit || active && window.locationCombatState.current_character?.character_id!==characterId;
     const button=(row,text,payload,blocked=false)=>{
@@ -53,13 +62,14 @@ export function renderProstheses(container,data,operate,canEdit,characterId) {
     }
     for(const {item,path} of available){
         const row=document.createElement('div'),caption=document.createElement('span');caption.textContent=item.name+' ';row.append(caption);
-        const select=document.createElement('select');select.className='form-control';select.disabled=disabled;
-        for(const [zone,label] of Object.entries(labels)){const o=document.createElement('option');o.value=zone;o.textContent=label;select.append(o)}row.append(select);
-        rememberEquipmentChoice(select,`${characterId}:prosthesis-target:${item.id||JSON.stringify(path)}`);
         const rule=item.attributes.prosthesis, surgical=['clamp','integrated'].includes(rule.mount);
-        const b=document.createElement('button');b.type='button';b.className='btn btn-sm btn-secondary';b.disabled=disabled||surgical;
-        b.textContent=surgical?'Требуется операция':`Установить${active?` · ${rule.mount==='base'?5:10} ОД`:''}`;
-        b.onclick=()=>operate({operation:'install',zone:select.value,path});row.append(b);section.append(row);
+        const select=document.createElement('select');select.className='form-control';select.disabled=disabled;
+        for(const [zone,label] of Object.entries(labels)){const o=document.createElement('option');o.value=zone;o.textContent=label;select.append(o)}if(!surgical)row.append(select);
+        rememberEquipmentChoice(select,`${characterId}:prosthesis-target:${item.id||JSON.stringify(path)}`);
+        const b=document.createElement('button');b.type='button';b.className='btn btn-sm btn-secondary';b.disabled=disabled||surgical&&active||Boolean(meta.prosthesisSurgeryId||meta.prosthesisSurgeryPatientId);
+        b.textContent=surgical?`Операция · ${rule.installation.duration_seconds/3600} ч`:`Установить${active?` · ${rule.mount==='base'?5:10} ОД`:''}`;
+        b.onclick=()=>surgical?window.openProsthesisSurgery(characterId):
+            operate({operation:'install',zone:select.value,path});row.append(b);section.append(row);
     }
     container.append(section);
 }

@@ -14,6 +14,10 @@ from app.services.exceptions import ConflictError, PermissionDenied, ValidationE
 def _bound_items(actor, payload):
     data = actor.character.data or {}
     result = {}
+    if payload.get('action_key')=='attack' and payload.get('attribute_choice')=='paired_fire':
+        from app.services.weapon_grip import pair,hands,primary_hand
+        result['pairedWeapons']=deepcopy(pair(actor))
+        result['pairedGrip']={'hands':hands(data),'hand':primary_hand(data),'primary':getattr(actor,'drawn_weapon_index',None)}
     if payload.get('action_key')=='draw_weapon' and payload.get('attribute_choice')=='second_hand':
         index=getattr(actor,'drawn_weapon_index',None)
         weapons=data.get('weapons') or []
@@ -187,6 +191,16 @@ def validate_deferred_conditions(actor, row):
     if kind=='draw_weapon' and payload.get('attribute_choice')=='second_hand':
         from app.services.weapon_grip import validate_secondary
         validate_secondary(actor,payload.get('weapon_index'))
+    elif kind=='draw_weapon':
+        from app.services.weapon_grip import draw_plan
+        weapons=actor.character.data.get('weapons') or [];index=payload.get('weapon_index')
+        if type(index) is not int or not 0<=index<len(weapons):raise ValidationError('Оружие не найдено')
+        draw_plan(actor.character.data,weapons[index],payload.get('attribute_choice'),extra_occupied=bool(actor.grapple_target_id))
+    if kind=='attack' and payload.get('attribute_choice')=='paired_fire':
+        from app.services.weapon_grip import pair,ensure_usable
+        weapons=pair(actor)
+        if len(weapons)!=2:raise ValidationError('Для общей стрельбы нужны два оружия в руках')
+        for weapon in weapons:ensure_usable(actor,weapon)
     if kind=='brigadier_order':
         from app.services.brigadier_order import prepare
         prepare(actor,payload.get('target_character_id'),payload.get('attribute_choice'))

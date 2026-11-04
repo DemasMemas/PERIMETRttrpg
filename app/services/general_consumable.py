@@ -585,6 +585,7 @@ def _apply_profile(health, profile, direct, item, *, in_combat,character_data=No
         )
         replacement = {
             "stat": "bleeding", "value": _number(direct["bleeding_modifier_delta"]),
+            "affects_severity": True,
             "remaining": duration, "note": "hematogen" if bleeding_scope == "combat" else "consumable",
             "scope": bleeding_scope,
             "tick": tick, "source": source,
@@ -622,6 +623,10 @@ def _apply_profile(health, profile, direct, item, *, in_combat,character_data=No
     for status in profile.get("status_additions") or []:
         status = str(status or "").strip()
         if not status:
+            continue
+        # Исполняемый эффект уже содержит силу и срок; метка статуса не должна обнулять их.
+        if any(effect.get('type') == status and effect.get('source') == source
+               and effect.get('active', True) for effect in health.get('effects') or []):
             continue
         meta.setdefault("consumableStatusAdditions", []).append(status)
         apply_effect_to_health(health, {

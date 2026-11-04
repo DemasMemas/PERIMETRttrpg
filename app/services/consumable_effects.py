@@ -148,8 +148,29 @@ def enrich_imported_consumable(attributes, description):
     if name == 'стимулятор воля':
         result['direct'].pop('exhaustion_delta', None)
         result['effects'] = [e for e in result.get('effects') or [] if e.get('type') != 'exhaustion']
-    if 'полукровка' in name and old_direct.get('infection_delta') == -50:
-        result['direct'].pop('infection_delta', None)
+    if 'полукровка' in name:
+        result['direct'].pop('infection_multiplier',None)
+        result['direct']['infection_delta']=-50
+    if name=='морфин':
+        result['effects']=[effect for effect in result.get('effects') or [] if effect.get('type')!='delayed_treatment']
+    # Уточнения автора к официальному каталогу; пользовательские профили выше исключены.
+    periodic_corrections = {
+        'борщевик': ('intoxication_delta', {'intoxication', 'periodic_adjustment'}),
+        'самопальный стимпак': ('intoxication_delta', {'intoxication', 'periodic_adjustment'}),
+        'регенеративный стимулятор альфа': ('exhaustion_delta', {'exhaustion', 'temporary_exhaustion', 'periodic_adjustment'}),
+        'регенеративный стимулятор бета': ('exhaustion_delta', {'exhaustion', 'temporary_exhaustion', 'periodic_adjustment'}),
+        'препарат "радист"': ('exhaustion_delta', {'exhaustion', 'temporary_exhaustion', 'periodic_adjustment'}),
+        'научный стимпак': ('radiation_delta', {'radiation', 'radiation_treatment'}),
+        'стимулятор шумодав': (None, {'deafness'}),
+    }
+    correction = periodic_corrections.get(name.replace('«', '"').replace('»', '"'))
+    if correction:
+        field, kinds = correction
+        if field:
+            result['direct'].pop(field, None)
+        result['effects'] = [effect for effect in result.get('effects') or [] if effect.get('type') not in kinds]
+        if name == 'стимулятор шумодав':
+            result['status_additions'] = [status for status in result.get('status_additions') or [] if status != 'deafness']
     if ('питательный стимулятор' in name and old_direct.get('pain_delta') == 3
             or name == 'стимулятор гора' and old_direct.get('pain_delta') == 1):
         result['direct']['pain_delta'] = -1

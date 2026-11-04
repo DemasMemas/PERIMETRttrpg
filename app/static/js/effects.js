@@ -378,12 +378,19 @@ function getBleedingState(health = {}) {
 
     const bloodStage = String(health.blood || health.bloodStage || 'normal').toLowerCase();
     const stagePenalty = getBleedingStageValue(bloodStage);
-    const modifierTotal = Array.isArray(combatMeta.bleedingModifiers)
-        ? combatMeta.bleedingModifiers.reduce((sum, item) => sum + toInt(item?.value ?? item, 0), 0)
-        : toInt(combatMeta.bleedingModifierTotal ?? health.bleedingModifierTotal ?? 0, 0);
+    const rawSeverity=totalSeverity;
+    let severityModifierTotal=0,modifierTotal=0;
+    if(Array.isArray(combatMeta.bleedingModifiers))for(const item of combatMeta.bleedingModifiers){
+        if(item?.remaining!=null&&Number(item.remaining)<=0)continue;
+        const value=toInt(item?.value??item,0);
+        if(item?.affects_severity||item?.note==='hematogen')severityModifierTotal+=value;
+        else modifierTotal+=value;
+    }else modifierTotal=toInt(combatMeta.bleedingModifierTotal??health.bleedingModifierTotal??0,0);
+    totalSeverity=Math.max(0,rawSeverity+severityModifierTotal);
     return {
         baseDifficulty: 5,
         totalSeverity,
+        rawSeverity,severityModifierTotal,
         bloodStage,
         stagePenalty,
         modifierTotal,
@@ -666,7 +673,10 @@ export function applyEffectToHealth(healthInput = {}, rawEffect = {}) {
     if (effect.type === 'pain') {
         if (signedValue > 0 && activeEffects.some(item => item.blocks_new_pain && item.active !== false)) {
             health.combatMeta = health.combatMeta || {};
-            health.combatMeta.blockedPain = Number(health.combatMeta.blockedPain || 0) + signedValue;
+            if (activeEffects.some(item => item.blocks_new_pain && item.active !== false
+                && (item.type === 'pain_block' || 'return_fraction' in item))) {
+                health.combatMeta.blockedPain = Number(health.combatMeta.blockedPain || 0) + signedValue;
+            }
             return { health, effect, applied: false, summary: 'pain_blocked' };
         }
         adjustHealthField(health, 'painLevel', Number.isFinite(signedValue) ? signedValue : magnitude, 0, 10);

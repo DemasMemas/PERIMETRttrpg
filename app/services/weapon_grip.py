@@ -17,23 +17,61 @@ def hands(data):
 
 
 def functional_arms(data):
+    return sum(functional_hand(data,side) for side in ('left','right'))
+
+
+def primary_hand(data):
+    value=(((data or {}).get('health') or {}).get('combatMeta') or {}).get('weaponPrimaryHand')
+    return value if value in {'left','right'} else 'right'
+
+
+def functional_hand(data,side):
     from app.services.combat import CombatService
     from app.services.prostheses import limb
     zones = ((data or {}).get('health') or {}).get('zones') or {}
     from app.services.effects import normalize_effect_list
     missing={effect.get('area') for effect in normalize_effect_list(((data or {}).get('health') or {}).get('effects') or [])
         if effect.get('active',True) and effect.get('type') in {'amputation','mangled_limb'}}
-    values = []
-    for aliases in (('leftArm', 'left_arm'), ('rightArm', 'right_arm')):
-        zone = next((zones.get(key) for key in aliases if isinstance(zones.get(key), dict)), None)
-        values.append(bool(limb(data,aliases[0])) or not any(key in missing for key in aliases) and (zone is None or CombatService._coerce_float(zone.get('current'),0) > 0))
-    return sum(values)
+    aliases=(side+'Arm',side+'_arm')
+    zone = next((zones.get(key) for key in aliases if isinstance(zones.get(key), dict)), None)
+    return bool(limb(data,aliases[0])) or not any(key in missing for key in aliases) and (zone is None or CombatService._coerce_float(zone.get('current'),0) > 0)
+
+
+def validate_load(data,weapon,sides):
+    from app.services.combat import CombatService
+    from app.services.prostheses import limb
+    template=CombatService._weapon_template(weapon)
+    weight=CombatService._item_total_weight({**weapon,'weight':weapon.get('weight',template.weight if template else 0)})
+    for side in sides:
+        if not functional_hand(data,side):raise ValidationError('Выбранная рука не действует')
+        prosthesis=limb(data,side+'Arm')
+        if prosthesis and weight/len(sides)>prosthesis['max_load']:
+            raise ValidationError('Вес оружия превышает допустимую нагрузку протеза')
+
+
+def draw_plan(data,weapon,choice=None,*,extra_occupied=False):
+    from app.services.combat import CombatService
+    from app.services.portable_lights import held_hand
+    if weapon.get('naturalWeapon') or CombatService._template_attributes(weapon).get('natural_weapon'):return None
+    choices={'left_hand':(1,'left'),'right_hand':(1,'right'),'both_hands':(2,primary_hand(data))}
+    if choice is not None and choice not in choices:raise ValidationError('Выберите руку для оружия')
+    meta=((data.get('health') or {}).get('combatMeta') or {})
+    occupied=int(bool(meta.get('heldWaterItem')))+int(bool(held_hand(data)))+int(bool(extra_occupied or meta.get('bodyTransport')))
+    candidates=[choices[choice]] if choice else [(hands(data),primary_hand(data)),(1,primary_hand(data)),(1,'left' if primary_hand(data)=='right' else 'right')]
+    error=None
+    for count,side in candidates:
+        try:
+            if count+occupied>functional_arms(data):raise ValidationError('Для оружия не хватает свободных действующих рук')
+            validate_load(data,weapon,['left','right'] if count==2 else [side])
+            return {'hands':count,'hand':side}
+        except ValidationError as rejected:error=rejected
+    raise error
 
 
 def preserve(current, incoming):
     old = (((current or {}).get('health') or {}).get('combatMeta') or {})
     new = incoming.setdefault('health', {}).setdefault('combatMeta', {})
-    for key in ('weaponGripHands','secondaryWeaponId'):
+    for key in ('weaponGripHands','weaponPrimaryHand','secondaryWeaponId'):
         if key in old:new[key]=old[key]
         else:new.pop(key,None)
 
@@ -75,11 +113,11 @@ def validate_secondary(actor,index):
     if ((data.get('health') or {}).get('combatMeta') or {}).get('bodyTransport') or actor.grapple_target_id:
         raise ValidationError('Рука занята переноской или захватом')
     selected=[weapons[primary],weapons[index]]
+    validate_load(data,selected[0],[primary_hand(data)])
+    validate_load(data,selected[1],['left' if primary_hand(data)=='right' else 'right'])
     if any(weapon.get('naturalWeapon') or CombatService._template_attributes(weapon).get('natural_weapon') for weapon in selected):
         raise ValidationError('Врождённую атаку нельзя взять во вторую руку')
-    if melee(selected[0])!=melee(selected[1]):
-        raise ValidationError('Смешанная пара огнестрельного и холодного оружия пока недоступна')
-    if melee(selected[0]):
+    if all(melee(weapon) for weapon in selected):
         for weapon in selected:
             template=CombatService._weapon_template(weapon)
             weight=CombatService._coerce_float(weapon.get('weight',template.weight if template else None),-1)
@@ -96,7 +134,8 @@ def take_secondary(actor,index):
 
 def firearm_penalty(actor,weapon):
     from app.services.combat import CombatService
-    if not pair(actor) or melee(weapon):return 0
+    weapons=pair(actor)
+    if not weapons or any(melee(item) for item in weapons):return 0
     if revolver(weapon):return 3
     return {'pistol':2,'submachine_gun':4}.get(CombatService._weapon_class(weapon),5)
 
@@ -163,10 +202,18 @@ def prepare_pair(character_id,user_id,payload):
     if not character:raise NotFoundError('Персонаж не найден')
     CharacterService.check_access(character,user_id,edit=True)
     if type(payload.get('character_revision')) is not int or payload['character_revision']!=character.revision:raise ConflictError()
-    if LocationCharacter.query.join(LocationCombatState,LocationCombatState.location_id==LocationCharacter.location_id).filter(
-            LocationCharacter.character_id==character_id,LocationCombatState.status=='active').first():
+    active=LocationCharacter.query.join(LocationCombatState,LocationCombatState.location_id==LocationCharacter.location_id).filter(
+            LocationCharacter.character_id==character_id,LocationCombatState.status=='active').all()
+    if active and payload.get('operation')!='stow':
         raise ValidationError('В бою второе оружие нужно доставать отдельным действием')
+    if len(active)>1:raise ValidationError('Персонаж участвует в нескольких боях')
+    if active:
+        actor=active[0];state=LocationCombatState.query.filter_by(location_id=actor.location_id,status='active').one()
+        if state.current_location_character_id!=actor.id:raise PermissionDenied('Убрать оружие можно только в свой ход')
+        CombatService.ensure_character_can_act(actor)
     data=character.data or {}
+    from app.services.prosthesis_surgery import busy
+    if busy(data):raise ValidationError('Персонаж участвует в операции установки протеза')
     if CombatService._character_condition(data)['state']!='active':raise ValidationError('Персонаж не может менять оружие')
     index=payload.get('weapon_index');weapons=data.get('weapons') or []
     if payload.get('operation')=='take':
@@ -191,8 +238,9 @@ def ensure_usable(actor, weapon):
             raise ValidationError('Протез для этой атаки не действует')
     if weapon.get('naturalWeapon') or attrs.get('natural_weapon'):
         return
-    if functional_arms(data) < (2 if pair(actor) else hands(data)):
-        raise ValidationError('Для этого хвата не хватает действующих рук. Смените хват или уберите оружие.')
+    side=primary_hand(data)
+    if secondary_index(actor) is not None and pair(actor)[1].get('id')==weapon.get('id'):side='left' if side=='right' else 'right'
+    validate_load(data,weapon,['left','right'] if hands(data)==2 and not pair(actor) else [side])
 
 
 @journaled(kind='weapon_grip')
@@ -200,9 +248,10 @@ def ensure_usable(actor, weapon):
 def change(character_id, user_id, payload):
     from app.services.character import CharacterService
     from app.services.combat import CombatService
-    if not isinstance(payload, dict) or set(payload) - {'hands', 'weapon_index', 'character_revision'}:
+    if not isinstance(payload, dict) or set(payload) - {'hands', 'hand', 'draw', 'weapon_index', 'character_revision'}:
         raise ValidationError('Некорректные параметры хвата')
     requested, index = payload.get('hands'), payload.get('weapon_index')
+    if 'draw' in payload and type(payload['draw']) is not bool:raise ValidationError('Некорректный выбор оружия')
     if type(requested) is not int or requested not in {1, 2} or type(index) is not int:
         raise ValidationError('Выберите хват одной или двумя руками')
     character = LobbyCharacter.query.filter_by(id=character_id).with_for_update().populate_existing().first()
@@ -212,11 +261,15 @@ def change(character_id, user_id, payload):
     if type(payload.get('character_revision')) is not int or payload['character_revision'] != character.revision:
         raise ConflictError()
     data = deepcopy(character.data or {})
+    from app.services.prosthesis_surgery import busy
+    if busy(data):raise ValidationError('Персонаж участвует в операции установки протеза')
+    side=payload.get('hand',primary_hand(data))
+    if side not in {'left','right'}:raise ValidationError('Выберите левую или правую руку')
     weapons = data.get('weapons') or []
     if not 0 <= index < len(weapons) or not isinstance(weapons[index], dict):
         raise ValidationError('Оружие не найдено')
     weapon = weapons[index]
-    if weapon.get('naturalWeapon') or CombatService._template_attributes(weapon).get('natural_weapon'):
+    if not payload.get('draw') and (weapon.get('naturalWeapon') or CombatService._template_attributes(weapon).get('natural_weapon')):
         raise ValidationError('У врождённой атаки нет оружейного хвата')
     active = (LocationCharacter.query.join(LocationCombatState,
         LocationCombatState.location_id == LocationCharacter.location_id).filter(
@@ -236,20 +289,39 @@ def change(character_id, user_id, payload):
         active_index = data.get('activeWeaponIndex')
         if CombatService._character_condition(data)['state'] != 'active':
             raise ValidationError('Персонаж не может менять хват')
-    if active_index is None or int(active_index) != index:
+    drawing=payload.get('draw',False)
+    if drawing:
+        if actor:raise ValidationError('В бою доставайте оружие боевым действием')
+        choice=('both_hands' if requested==2 else side+'_hand') if 'hand' in payload else None
+        plan=draw_plan(data,weapon,choice)
+        data['activeWeaponIndex']=index
+        data.setdefault('health',{}).setdefault('combatMeta',{}).pop('secondaryWeaponId',None)
+        for placed in LocationCharacter.query.filter_by(character_id=character.id).all():placed.drawn_weapon_index=index
+        if plan is None:
+            character.data=data;flag_modified(character,'data')
+            return character,None,{'hands':hands(data),'hand':primary_hand(data),'weapon_index':index,'action_points':0,'natural':True}
+        requested,side=plan['hands'],plan['hand']
+    elif active_index is None or int(active_index) != index:
         raise ValidationError('Сначала возьмите это оружие в руки')
     before = hands(data)
-    if before == requested:
-        return character, actor, {'hands':before, 'weapon_index':index, 'action_points':0}
+    if not drawing and before == requested and (requested==2 or primary_hand(data)==side):
+        return character, actor, {'hands':before, 'hand':primary_hand(data), 'weapon_index':index, 'action_points':0}
     meta = data.setdefault('health', {}).setdefault('combatMeta', {})
-    occupied = bool(meta.get('heldWaterItem')) or bool(meta.get('bodyTransport')) or bool(actor and (actor.grapple_target_id or secondary_index(actor) is not None))
+    from app.services.portable_lights import held_hand
+    paired=bool(meta.get('secondaryWeaponId'))
+    occupied = bool(meta.get('heldWaterItem')) or bool(meta.get('bodyTransport')) or held_hand(data) or bool(actor and actor.grapple_target_id)
+    if paired:raise ValidationError('Сначала освободите вторую руку')
+    if requested==1 and before==1 and primary_hand(data)!=side and occupied:
+        raise ValidationError('Выбранная рука занята')
     if functional_arms(data) < requested or requested == 2 and occupied:
         raise ValidationError('Для двуручного хвата нужна свободная действующая вторая рука' if requested == 2 else 'Нет действующей руки для оружия')
+    validate_load(data,weapon,['left','right'] if requested==2 else [side])
     if actor and actor.action_points_current < 1:
         raise ValidationError('Для смены хвата нужен 1 ОД')
     meta['weaponGripHands'] = requested
+    meta['weaponPrimaryHand'] = side
     character.data = data
     flag_modified(character, 'data')
     if actor:
         actor.action_points_current -= 1
-    return character, actor, {'hands':requested, 'weapon_index':index, 'action_points':1 if actor else 0}
+    return character, actor, {'hands':requested, 'hand':side, 'weapon_index':index, 'action_points':1 if actor else 0}

@@ -26,6 +26,8 @@ class LobbyCharacter(db.Model):
         data = deepcopy(self.data or {})
         from app.services.weapon_catalog import normalize_character_weapons
         normalize_character_weapons(data)
+        from app.services.prostheses import normalize_dimensions
+        normalize_dimensions(data)
         from app.services.character_traits import sync_pocket_capacity
         sync_pocket_capacity(self.data,data)
         data['_revision'] = self.revision

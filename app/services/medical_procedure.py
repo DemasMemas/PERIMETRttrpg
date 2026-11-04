@@ -704,7 +704,8 @@ def _apply_temporary_limb_effects(health, direct, item):
     applied = []
     source = _consumable_effect_source(item)
     for area in LIMB_AREAS:
-        zone = (health.get('zones') or {}).get(area)
+        zones=health.get('zones') or {}
+        zone=next((value for key,value in zones.items() if str(key).replace('_','').casefold()==area.casefold()),None)
         if not isinstance(zone, dict):
             continue
         previous = max(0, float(zone.get('current') or 0))

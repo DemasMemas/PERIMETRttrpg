@@ -4836,8 +4836,17 @@ def portable_lights(character_id):
 def prosthesis_action(character_id):
     from app.services.prostheses import operate
     user_id=int(get_jwt_identity())
-    character=operate(character_id,user_id,request.get_json() or {})
+    payload=request.get_json() or {}
+    if not isinstance(payload,dict):raise ValidationError('Некорректные параметры протеза')
+    from app.services.prosthesis_surgery import participants
+    before=db.session.get(LobbyCharacter,character_id)
+    related=participants(before) if before else []
+    character=operate(character_id,user_id,payload)
     emit_character_update({'character_id':character.id,'updates':{'data':character.data_snapshot()},'source':'prosthesis'})
+    for identity in set(related+[payload.get('target_character_id')])-{None,character.id}:
+        patient=db.session.get(LobbyCharacter,identity)
+        if patient and patient.lobby_id==character.lobby_id:
+            emit_character_update({'character_id':patient.id,'updates':{'data':patient.data_snapshot()},'source':'prosthesis'})
     for model in LocationCharacter.query.filter_by(character_id=character.id).all():
         socketio.emit('combat_state_updated',CombatService.get_state(model.location_id,user_id),room=f'location_{model.location_id}')
     return jsonify({'data':character.data_snapshot()}),200

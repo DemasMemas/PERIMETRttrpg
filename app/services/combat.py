@@ -482,6 +482,8 @@ class CombatService:
 
     @staticmethod
     def ensure_character_can_act(loc_char, action_key=None):
+        from app.services.prosthesis_surgery import busy
+        if loc_char.character and busy(loc_char.character.data):raise ValidationError('Персонаж участвует в операции установки протеза')
         condition = CombatService._location_character_condition(loc_char)
         if condition['state'] == 'active':
             return condition
@@ -1480,7 +1482,7 @@ class CombatService:
         health = data.get('health', {}) if isinstance(data, dict) else {}
         effects = normalize_effect_list(health.get('effects') or []) if isinstance(health, dict) else []
         suppressed_fracture_areas = {
-            str(effect.get('area') or '').strip().lower()
+            str(effect.get('area') or '').strip().lower().replace('_','')
             for effect in effects
             if effect.get('suppress_fracture')
             and effect.get('active', True)
@@ -1493,7 +1495,7 @@ class CombatService:
             if effect.get('remaining') is not None and CombatService._coerce_float(effect.get('remaining'), 0) <= 0:
                 continue
             effect_type = str(effect.get('type') or '').strip()
-            area = str(effect.get('area') or '').strip().lower()
+            area = str(effect.get('area') or '').strip().lower().replace('_','')
             if area in suppressed_fracture_areas:
                 continue
             if effect_type in {'fracture', 'fracture_fixed', 'fracture_unfixed'} and any(token in area for token in ('leg', 'foot')):
@@ -1592,10 +1594,14 @@ class CombatService:
     def _item_total_weight(item,character_data=None):
         if not isinstance(item, dict):
             return 0.0
+        if (item.get('attributes') or {}).get('prosthesis_id'):return 0.0
         category = item.get('category')
         quantity = max(0, CombatService._coerce_int(item.get('quantity'), 1))
         try:
             base_weight = float(item.get('weight') or 0)
+            from app.services.prostheses import profile as prosthesis_profile
+            prosthesis = prosthesis_profile(item)
+            if prosthesis:base_weight=prosthesis['weight']
             from app.services.weapon_catalog import is_standard_nvg
             if is_standard_nvg(item):base_weight=1
         except (TypeError, ValueError):
@@ -1667,6 +1673,9 @@ class CombatService:
         if isinstance(weapons, list):
             carried_items.extend(weapons)
 
+        from app.services.prostheses import installed
+        carried_items.extend(item for parts in installed(character_data).values() for item in parts.values())
+
         total_weight = sum(CombatService._item_total_weight(item,character_data) for item in carried_items)
         strength = ((character_data.get('skills') or {}).get('physical') or {}).get('strength')
         effective_strength = (
@@ -1689,8 +1698,10 @@ class CombatService:
                 CombatService._coerce_int(attributes.get('weight_reduction'), 0),
             )
         raw_penalty = math.floor(total_weight / weight_per_penalty)
+        temporary_modifier=CombatService._consumable_stat_value_bonus(character_data,'weight')
         return {
-            'penalty': max(0, math.floor(raw_penalty*character_passives(character_data)['weight_multiplier']) - backpack_reduction),
+            'penalty': max(0, math.floor(raw_penalty*character_passives(character_data)['weight_multiplier']) - backpack_reduction+temporary_modifier),
+            'temporary_modifier':temporary_modifier,
             'raw_penalty': raw_penalty,
             'backpack_reduction': backpack_reduction,
             'weight_per_penalty': weight_per_penalty,
@@ -1775,7 +1786,7 @@ class CombatService:
         if skill_path in {'skills.physical.shooting','skills.physical.accuracy'} and any(e['type']=='burning' and e.get('active',True) and (e.get('remaining') or 0)>0 for e in active_effects):
             modifier-=3
         suppressed_fracture_areas = {
-            str(effect.get('area') or '').strip().lower()
+            str(effect.get('area') or '').strip().lower().replace('_','')
             for effect in active_effects
             if effect.get('suppress_fracture')
             and effect.get('active', True)
@@ -1799,7 +1810,7 @@ class CombatService:
                 modifier -= CombatService._coerce_int(effect.get('phase_penalty', effect.get('value', 0)), 0)
             if skill_path.startswith('skills.physical.'):
                 effect_type = str(effect.get('type') or '').strip()
-                area = str(effect.get('area') or '').strip().lower()
+                area = str(effect.get('area') or '').strip().lower().replace('_','')
                 if area in suppressed_fracture_areas:
                     continue
                 if effect_type in {'fracture', 'fracture_fixed', 'fracture_unfixed'} and any(token in area for token in ('arm', 'hand')):
@@ -5083,7 +5094,7 @@ class CombatService:
         return bool(state and state.status=='active' and target.id in (state.turn_order or []))
 
     @staticmethod
-    def _target_armor(target_data, zone, head_protection_zone=None,*,target=None):
+    def _target_armor(target_data, zone, head_protection_zone=None,*,target=None,limb_hit=None):
         if head_protection_zone is None and isinstance(target_data, dict):
             head_protection_zone = target_data.get('_headProtectionZone')
         equipment = target_data.get('equipment') if isinstance(target_data, dict) else {}
@@ -5189,7 +5200,9 @@ class CombatService:
                 'protection': 80.0,
                 'is_gas_mask': False,
             })
-        artifact_protection = max(
+        mechanical=bool(limb_hit and limb_hit.get('mechanical'))
+        if mechanical:total=min(100,total+limb_hit.get('protection',0))
+        artifact_protection = 0 if mechanical else max(
             0,
             artifact_passive_profile(target_data)['protection']['physical'],
         )
@@ -5996,9 +6009,19 @@ class CombatService:
         armor_penetrated=True,
         prepared_trauma_rolls=None,
         precision_attacker=None,
+        limb_hit=None,
     ):
         character = target.character
         data = dict(character.data or {})
+        from app.services.prostheses import hit_part,damage_part
+        limb_hit=hit_part(data,zone) if limb_hit is None else limb_hit
+        if limb_hit and limb_hit.get('mechanical'):
+            prosthesis_damage=damage_part(data,limb_hit,damage)
+            character.data=data;flag_modified(character,'data')
+            health=data.setdefault('health',{})
+            health['_attackOutcome']={'applied_damage':0,'prosthesis_damage':prosthesis_damage,
+                'bleedings':[],'additional_traumas':[],'death':False}
+            return health
         stoic_active=CombatService._combat_background_active(target,'Стойкий')
         if stoic_active:damage=max(0,damage*.9)
         previous_condition = CombatService._character_condition(data)['state']
@@ -6748,7 +6771,9 @@ class CombatService:
             penetration*=.9
         incoming=max(0,damage*cover_multiplier)
         data=target.character.data or {}
-        armor,layers=CombatService._target_armor(data,zone,**({'target':target} if background_is(data,'Стойкий') else {}))
+        from app.services.prostheses import hit_part
+        limb_hit=hit_part(data,zone)
+        armor,layers=CombatService._target_armor(data,zone,**({'limb_hit':limb_hit} if limb_hit else {}),**({'target':target} if background_is(data,'Стойкий') else {}))
         penetrated=penetration>=armor
         applied=(0 if additional and not penetrated else
                  round(incoming*CombatService._penetration_damage_multiplier(penetration,armor)))
@@ -6764,7 +6789,7 @@ class CombatService:
             health=CombatService._apply_attack_damage(target,applied,zone,
                 {'damage_type':'fragment','armor_piercing':penetration},round_number=round_number,
                 allow_bleeding=additional,trauma_checks=1 if additional else 0,force_trauma=additional,
-                stress_trigger='explosion')
+                stress_trigger='explosion',**({'limb_hit':limb_hit} if limb_hit else {}))
             if isinstance(health,dict):applied=(health.get('_attackOutcome') or {}).get('applied_damage',applied)
         return {'damage':applied,'penetrated':penetrated,'penetration':penetration,
                 'armor':armor,'armor_damage':wear,'health':health}
@@ -7414,7 +7439,9 @@ class CombatService:
         }
         leg_results = []
         for leg in ('left_leg', 'right_leg'):
-            protection, _ = CombatService._target_armor(attacker_data, leg,**({'target':target} if background_is(attacker_data,'Стойкий') else {}))
+            from app.services.prostheses import hit_part
+            limb_hit=hit_part(attacker_data,leg)
+            protection, _ = CombatService._target_armor(attacker_data, leg,**({'limb_hit':limb_hit} if limb_hit else {}),**({'target':target} if background_is(attacker_data,'Стойкий') else {}))
             # Physical protection is stored as a percentage, as in the armor sheet.
             damage = max(0, round(base_damage * (1 - protection / 100)))
             health = CombatService._apply_attack_damage(
@@ -7426,11 +7453,14 @@ class CombatService:
                 allow_bleeding=False,
                 trauma_checks=0,
                 stress_trigger='indirect_damage',
+                **({'limb_hit':limb_hit} if limb_hit else {}),
             )
             leg_results.append({
                 'area': leg,
                 'protection': round(protection),
-                'damage': damage,
+                'damage': (health.get('_attackOutcome') or {}).get('applied_damage',damage),
+                **({'prosthesis_damage':(health.get('_attackOutcome') or {}).get('prosthesis_damage'),
+                    'mechanical':limb_hit['mechanical']} if limb_hit else {}),
                 'current': health.get('zones', {}).get(
                     'leftLeg' if leg == 'left_leg' else 'rightLeg', {}
                 ).get('current'),
@@ -7449,6 +7479,7 @@ class CombatService:
                 })
             if fracture_both_legs:
                 for leg in ('leftLeg', 'rightLeg'):
+                    if any(item.get('mechanical') for item in leg_results if item['area']==('left_leg' if leg=='leftLeg' else 'right_leg')):continue
                     apply_effect_to_health(health, {
                         'type': 'fracture', 'source': 'fall', 'area': leg,
                     })
@@ -8234,6 +8265,8 @@ class CombatService:
                           bleeding_check=None,bleedings=[],additional_traumas=[],non_damaging_round=True)
             return result
         head_impact_roll = random.randint(1, 20) if zone == 'head' else None
+        from app.services.prostheses import hit_part
+        limb_hit=hit_part(target_data,zone)
         head_impact = (
             CombatService._head_impact_profile(
                 head_impact_roll, attacker, target,
@@ -8248,7 +8281,8 @@ class CombatService:
         if head_impact:
             armor_target_data = dict(target_data)
             armor_target_data['_headProtectionZone'] = head_impact.get('armor_zone')
-        armor, armor_layers = CombatService._target_armor(armor_target_data, zone,**({'target':target} if background_is(armor_target_data,'Стойкий') else {}))
+        armor, armor_layers = CombatService._target_armor(armor_target_data, zone,
+            **({'limb_hit':limb_hit} if limb_hit else {}),**({'target':target} if background_is(armor_target_data,'Стойкий') else {}))
         back_protection = (
             CombatService._mutant_back_torso_protection(armor_target_data)
             if zone in {'chest', 'abdomen'}
@@ -8312,7 +8346,7 @@ class CombatService:
                 penetration_deficit=penetration_deficit,
             )
             damage_multiplier = behind_armor_multiplier
-        incoming_artifact_modifier = artifact_passive_profile(target_data)[
+        incoming_artifact_modifier = 0 if limb_hit and limb_hit['mechanical'] else artifact_passive_profile(target_data)[
             'incoming_physical_percent'
         ]
         final_damage = max(0, round(
@@ -8330,7 +8364,7 @@ class CombatService:
         )
         bleeding_result = (
             None
-            if melee
+            if melee or limb_hit and limb_hit['mechanical']
             else CombatService._roll_firearm_bleeding(profile, armor)
         )
         trauma_checks = 1
@@ -8369,13 +8403,16 @@ class CombatService:
                 [head_impact_roll] if head_impact_roll is not None else None
             ),
             **({'precision_attacker':attacker} if attack_details.get('sniper_mode')=='precision' else {}),
+            **({'limb_hit':limb_hit} if limb_hit else {}),
         )
         attack_outcome = health.pop('_attackOutcome', {})
+        if limb_hit:result['limb_hit']={key:limb_hit[key] for key in ('roll','label','mechanical')}
+        if attack_outcome.get('prosthesis_damage'):result['prosthesis_damage']=attack_outcome['prosthesis_damage']
         if incendiary_protection is not None and incendiary_protection < 50:
             from app.services.burning import ignite
             ignite(target,3,source='ammunition_incendiary',source_character_id=getattr(attacker,'character_id',None))
             result['ignited_rounds'] = 3
-        if not melee and armor_penetrated and final_damage > 0:
+        if not melee and armor_penetrated and final_damage > 0 and not (limb_hit and limb_hit['mechanical']):
             extra_pain = profile.get('pain_on_penetration', 0)
             if extra_pain:
                 apply_effect_to_health(health, {'type':'pain','value':extra_pain,
@@ -8416,7 +8453,7 @@ class CombatService:
                 health.get('zones') or {}
             ).get({'left_arm': 'leftArm', 'right_arm': 'rightArm', 'left_leg': 'leftLeg', 'right_leg': 'rightLeg'}.get(zone, zone), {}).get('current'),
         })
-        if melee and result.get('hit'):
+        if melee and result.get('hit') and not (limb_hit and limb_hit['mechanical']):
             CombatService._apply_mutant_melee_hit_effects(
                 attacker, target, attack_type, final_damage, result,
             )
@@ -8694,7 +8731,7 @@ class CombatService:
             results[0].get('mode'),
             attack.get('attack_type') or attack.get('fire_mode') or 'атака',
         )
-        lines = [f"{actor}: {mode}."]
+        lines = [f"{actor}: {mode}{' из двух оружий одновременно' if attack.get('paired_fire') else ''}."]
         for frightened in attack.get('frightened_mutants') or []:
             check = frightened.get('check') or {}
             rolls = '/'.join(str(value) for value in check.get('rolls') or [check.get('roll')])
@@ -8717,6 +8754,12 @@ class CombatService:
             )
         for index, hit_result in enumerate(results, start=1):
             target_name = hit_result.get('target_name') or 'цель'
+            if hit_result.get('prosthesis_damage'):
+                hit=hit_result['prosthesis_damage']
+                description=(f"{hit.get('name')}: урон {hit.get('damage',0):g}, прочность {hit.get('durability',0):g}"
+                    +(' — сломан' if hit.get('broken') else '')) if not hit.get('missing') else 'утраченная часть отсутствует'
+                lines.append(f"{index}. {target_name}: d6 {hit.get('roll')} — {hit.get('part')}; {description}.")
+                continue
             if hit_result.get('flash_round'):
                 lines.append(f"{index}. {target_name}: светошумовой выстрел без проверки попадания; "
                     f"ослепление {hit_result.get('blindness',0):g}."
@@ -9257,6 +9300,7 @@ class CombatService:
             total = 0
             for item in modifiers:
                 if isinstance(item, dict):
+                    if item.get('affects_severity') or item.get('note')=='hematogen':continue
                     remaining = item.get('remaining')
                     if remaining is not None and CombatService._coerce_int(remaining, 0) <= 0:
                         continue
@@ -12279,6 +12323,8 @@ class CombatService:
         state.current_location_character_id = ordered_chars[first_actionable_index].id
         state.pending_explosives = []
         state.area_effects = []
+        from app.services.prosthesis_surgery import interrupt_location
+        interrupted_surgeries=interrupt_location(location)
         from app.services.location_scout import start_combat as apply_scout
         apply_scout(location_id,ordered_chars)
         from app.services.character_rules import start_turn
@@ -12311,6 +12357,10 @@ class CombatService:
         psi_start = CombatService._resolve_psi_turn_start(first_character,1)
         CombatService._sync_location_effects_from_character(first_character)
         db.session.commit()
+        if interrupted_surgeries:
+            from app.services.character_events import emit_character_update
+            for updated in interrupted_surgeries:
+                emit_character_update({'character_id':updated.id,'updates':{'data':updated.data_snapshot()},'source':'prosthesis'})
         if not CombatService._can_take_combat_turn(first_character):
             return CombatService.end_turn(location_id,user_id,location_character_id=first_character.id,_continue_pending=True)
         payload = CombatService._serialize_state(location,state)
@@ -13454,6 +13504,7 @@ class CombatService:
         special_action_cost = None
         resolved_hits = []
         single_fire = False
+        prepared_attacks = None
         current_round = max(1, state.round_number or 1)
         order_plan=None
         reduction_plan=None
@@ -14873,6 +14924,11 @@ class CombatService:
             if attribute_choice=='second_hand':
                 from app.services.weapon_grip import validate_secondary
                 validate_secondary(character,weapon_index)
+                draw_grip=None
+            else:
+                from app.services.weapon_grip import draw_plan
+                draw_grip=draw_plan(data,weapons[weapon_index],attribute_choice,extra_occupied=bool(character.grapple_target_id))
+                if draw_grip:deferred_request['attribute_choice']='both_hands' if draw_grip['hands']==2 else draw_grip['hand']+'_hand'
             ergonomics_profile = CombatService._weapon_ergonomics_profile(
                 character,
                 weapons[weapon_index],
@@ -14883,6 +14939,7 @@ class CombatService:
             draw_details = {
                 'weapon_index': weapon_index,
                 'secondary': attribute_choice=='second_hand',
+                'grip':draw_grip,
                 'action_points': draw_cost,
                 'ergonomics': ergonomics_profile,
             }
@@ -15243,7 +15300,7 @@ class CombatService:
                 'weapon_accuracy': accuracy,
             }
 
-        if action_key == 'attack' and fire_mode:
+        def prepare_firearm(weapon_index,shot_count,action_points,volley_count,target_character_ids,area_center_x,area_center_y,*,paired_fire=False):
             from app.services.sniper_position import require_reposition
             require_reposition(character,state)
             if fire_mode not in {'unaimed', 'rapid', 'aimed', 'burst', 'suppression', 'area'}:
@@ -15255,6 +15312,13 @@ class CombatService:
             if not held(character,weapon_index):
                 raise ValidationError("Draw this weapon first")
             weapon = weapons[weapon_index] or {}
+            if paired_fire:
+                from app.services.weapon_grip import ensure_usable,melee,revolver
+                ensure_usable(character,weapon)
+                if melee(weapon) or CombatService._weapon_class(weapon)=='grenade_launcher':
+                    raise ValidationError('Общая стрельба доступна для двух огнестрельных оружий')
+                if revolver(weapon) and fire_mode in {'burst','area','suppression'}:
+                    raise ValidationError('При парном хвате револьвером нельзя стрелять очередью')
             CombatService._weapon_durability(weapon)
             active_jam = weapon.get('jam') if isinstance(weapon.get('jam'), dict) else None
             active_jam_effects = CombatService._weapon_jam_effects(weapon)
@@ -15313,7 +15377,7 @@ class CombatService:
             from app.services.sniper_trauma import declared
             sniper_mode=declared(data,weapon,fire_mode,attribute_choice)
             if sniper_mode=='precision':expected_action_points+=1
-            if requested_action_points != expected_action_points:
+            if not paired_fire and requested_action_points != expected_action_points:
                 raise ValidationError("Invalid action point cost")
             allowed_volley_counts = {1}
             if fire_mode == 'area':
@@ -15697,6 +15761,37 @@ class CombatService:
                 hit_difficulty - attack_details['weapon_jam_accuracy_penalty'],
             )
             attack_details['target_zone'] = target_zone if fire_mode == 'aimed' else None
+            return attack_details
+
+        if action_key=='attack' and fire_mode:
+            paired_fire=attribute_choice=='paired_fire'
+            if paired_fire:
+                from app.services.weapon_grip import secondary_index
+                if not paired or fire_mode=='aimed':raise ValidationError('Общая стрельба требует двух оружий и неприцельного режима')
+                indices=[character.drawn_weapon_index,secondary_index(character)]
+                prepared_attacks=[]
+                for index in indices:
+                    item=(data.get('weapons') or [])[index]
+                    fire_profile=item.get('fireModes') or CombatService._template_attributes(item).get('fire_modes') or {}
+                    paired_shots=shot_count
+                    if fire_mode in {'burst','suppression','area'} and not fire_profile.get('machine_gun_burst'):
+                        paired_shots=CombatService._coerce_int(fire_profile.get('burst_size'),0)*CombatService._coerce_int(volley_count,1)
+                    elif fire_profile.get('machine_gun_burst'):
+                        paired_shots=(10 if fire_mode=='area' else max(CombatService._coerce_int(shot_count,1),
+                            (10 if background_is(data,'Пост принял') else 2)*CombatService._coerce_int(volley_count,1))) if fire_mode in {'burst','suppression','area'} else shot_count
+                    if fire_mode in {'area','suppression'} and not fire_profile.get('supports_area_fire' if fire_mode=='area' else 'supports_suppression'):
+                        raise ValidationError('Общий режим недоступен одному из оружий')
+                    details=prepare_firearm(index,paired_shots,action_points,volley_count,target_character_ids,area_center_x,area_center_y,paired_fire=True)
+                    details['shooting_disadvantage']=details['base_shooting_disadvantage']=True
+                    details['paired_fire']=True
+                    prepared_attacks.append(details)
+                priced=min(prepared_attacks,key=lambda details:(details['ergonomics']['value'],-details['action_points']))
+                special_action_cost=priced['action_points']
+                if CombatService._coerce_int(action_points,0)!=special_action_cost:raise ValidationError('Неверная стоимость общей стрельбы')
+                attack_details=prepared_attacks[0]
+            else:
+                attack_details=prepare_firearm(weapon_index,shot_count,action_points,volley_count,target_character_ids,area_center_x,area_center_y)
+            single_fire=fire_mode in {'unaimed','rapid','aimed'}
 
         if action_key == 'convert_free_action_to_movement':
             gain = max(0, DEFAULT_CONVERSION_BASE - CombatService._movement_penalty(character))
@@ -15801,7 +15896,11 @@ class CombatService:
                 if draw_details.get('secondary'):
                     from app.services.weapon_grip import take_secondary
                     take_secondary(character,weapon_index)
-                else:CombatService._set_active_weapon(character, weapon_index)
+                else:
+                    CombatService._set_active_weapon(character, weapon_index)
+                    if draw_details.get('grip'):
+                        meta=character.character.data.setdefault('health',{}).setdefault('combatMeta',{})
+                        meta.update(weaponGripHands=draw_details['grip']['hands'],weaponPrimaryHand=draw_details['grip']['hand'])
                 data = character.character.data
                 health=data.setdefault('health',{})
                 combat_meta=health.setdefault('combatMeta',{})
@@ -16457,15 +16556,12 @@ class CombatService:
                 )
                 help_bonus = CombatService._consume_help_advantage(character, help_skill)
                 if help_bonus:
-                    attack_details['help'] = help_bonus
-                    for key in ('hit_difficulty','hit_difficulty_without_weapon_jam'):
-                        if key in attack_details:attack_details[key]-=CombatService._coerce_int(help_bonus.get('roll_bonus'),0)
-                    advantage_key = (
-                        'melee_advantage'
-                        if attack_details.get('melee')
-                        else 'shooting_advantage'
-                    )
-                    attack_details[advantage_key] = True
+                    for details in prepared_attacks or [attack_details]:
+                        details['help'] = help_bonus
+                        for key in ('hit_difficulty','hit_difficulty_without_weapon_jam'):
+                            if key in details:details[key]-=CombatService._coerce_int(help_bonus.get('roll_bonus'),0)
+                        advantage_key = 'melee_advantage' if details.get('melee') else 'shooting_advantage'
+                        details[advantage_key] = True
             if action_key == 'attack' and attack_details and fire_mode == 'rapid':
                 character.rapid_fire_round = state.round_number
             if action_key == 'aim' and aim_details:
@@ -16661,7 +16757,8 @@ class CombatService:
             flag_modified(character.character, 'data')
             CombatService._clear_aim(character)
 
-        if attack_details:
+        def resolve_prepared_attack(attack_details):
+            resolved_hits=[]
             if action_key == 'attack':
                 # A retry belongs only to the most recent failed check. A new
                 # attack replaces the previous opportunity even when it hits.
@@ -17104,6 +17201,18 @@ class CombatService:
                     )
                 character.character.data = data
                 flag_modified(character.character, 'data')
+
+            return attack_details
+
+        if attack_details:
+            if prepared_attacks:
+                resolved=[resolve_prepared_attack(details) for details in prepared_attacks]
+                results=[{**hit,'weapon_index':details['weapon_index']} for details in resolved for hit in details.get('results') or []]
+                attack_details={**resolved[0],'paired_fire':True,'paired_attacks':resolved,'results':results,
+                    'action_points':special_action_cost,'hits':sum(bool(hit.get('hit')) for hit in results),
+                    'shot_count':sum(details.get('shot_count',0) for details in resolved),
+                    'damage_total':sum(details.get('damage_total',0) for details in resolved)}
+            else:attack_details=resolve_prepared_attack(attack_details)
 
         if character.cover_object_id and character.cover_object_id!=(combat_meta.get('sniperOldCover') or {}).get('id'):
             combat_meta.pop('sniperOldCover',None)
