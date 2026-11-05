@@ -119,6 +119,7 @@ def _tools(character,data,recipe,option):
 
 def quote(character,data,payload):
     from app.services.combat import CombatService
+    from app.services.equipment_passives import craft_difficulty_modifier
     recipe=recipe_by_id(payload.get('recipe_id'));option=payload.get('tool_option',0)
     if recipe.get('requires_tool_crafting'):
         from app.services.character_traits import trait_count,background_is
@@ -134,7 +135,8 @@ def quote(character,data,payload):
     level=CombatService._skill_value(data,'skills.'+recipe['skill'])
     difficulty=recipe['difficulty_options'][option] if recipe['difficulty_options'] else 0
     result=({'difficulty':0,'automatic_success':True,'failure_loss':{'random':0,'chosen':0,'all':False}}
-        if recipe.get('maintenance') else creation_quote(level,difficulty,base_automatic=recipe['automatic'],difficulty_modifier=approval.get('modifier',0) if approval else 0))
+        if recipe.get('maintenance') else creation_quote(level,difficulty,base_automatic=recipe['automatic'],
+            difficulty_modifier=(approval.get('modifier',0) if approval else 0)+craft_difficulty_modifier(data)))
     output=_template(recipe['output_name'])
     if not output:missing.append('В каталоге нет шаблона результата: '+recipe['output_name'])
     if missing_tools:missing.append('Нужны: '+', '.join(missing_tools))
@@ -265,6 +267,8 @@ def modification_plan(character,data,payload):
         material_value+=amount*max(0,template.price or 0)/maximum
         allocations.append({'component':len(allocations),'path':path,'amount':amount,'item':deepcopy(source)})
     plan=modification_quote(kind,rule['level'],'Н' if slot['factor']==4 else slot['factor'],level,double_charges=payload.get('double_charges') is True,workbench=workbench,material_value=material_value)
+    from app.services.equipment_passives import craft_difficulty_modifier
+    plan['difficulty']+=craft_difficulty_modifier(data)
     if rule['kind']=='belt':plan['professional_price']=1000
     if not plan['skill_sufficient']:raise ValidationError(f"Нужна Инженерия {plan['required_engineering']}")
     grade={'simplified':1,'standard':2,'advanced':3}[plan['tool_grade']]

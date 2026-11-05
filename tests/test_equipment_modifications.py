@@ -2,6 +2,7 @@
 from copy import deepcopy
 import pytest
 from app.extensions import db
+from app.models.templates import ItemTemplate
 from app.services.combat import CombatService
 from app.services.crafting_rules import catalog
 from app.services.equipment_modifications import make_record,stat,rule,fire_profile
@@ -385,6 +386,21 @@ def test_belt_padding_requires_weapon_size_six(gunsmith,amplified,bonus):
     data['equipment']['belt']['protectionDisabled']=True
     actor.character.data=data
     assert value()==small
+
+
+def test_work_gloves_lower_modification_difficulty(client,gunsmith,auth_headers):
+    args={'rule_id':'weapon-c23','target_path':['weapons',0],'tool_path':['inventory','pockets',4]}
+    baseline=call(client,gunsmith,auth_headers,'quote_modification',**args)
+    assert baseline.status_code==200,baseline.json
+    gloves=ItemTemplate(name='Рабочие',category='gloves',price=100,
+        attributes={'craft_difficulty_modifier':-5})
+    db.session.add(gloves);db.session.flush()
+    data=deepcopy(gunsmith['actor_character'].data)
+    data['equipment']={'gloves':{'name':'Рабочие','category':'gloves','templateId':gloves.id}}
+    gunsmith['actor_character'].data=data;db.session.commit()
+    equipped=call(client,gunsmith,auth_headers,'quote_modification',**args)
+    assert equipped.status_code==200,equipped.json
+    assert equipped.json['result']['difficulty']==baseline.json['result']['difficulty']-5
 
 
 @pytest.mark.parametrize('gunsmith,expected_blast,expected_wear',[(False,55,27.5),(True,42,10.5)])

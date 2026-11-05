@@ -23,6 +23,12 @@ def glove_protection(data):
     return max(0, CombatService._coerce_float(attrs.get('anomaly_protection_bonus'), 0))
 
 
+def craft_difficulty_modifier(data):
+    from app.services.combat import CombatService
+    _, attrs = _worn(data, 'gloves')
+    return CombatService._coerce_float(attrs.get('craft_difficulty_modifier'), 0)
+
+
 def flash_multiplier(data):
     from app.services.combat import CombatService
     item, attrs = _worn(data, 'glasses')

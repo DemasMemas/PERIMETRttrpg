@@ -70,6 +70,24 @@ def test_analgin_recipe_finishes_with_thirty_five_catalog_tablets_once(client,wo
     assert units(repeated.json['data'],'Анальгин (Таблетка)')==35
 
 
+def test_work_gloves_lower_creation_difficulty_only_while_worn(client,workshop,auth_headers):
+    baseline=call(client,workshop,auth_headers,'quote',recipe_id='recipe-f4')
+    assert baseline.status_code==200,baseline.json
+    gloves=ItemTemplate(name='Рабочие',category='gloves',price=100,
+        attributes={'craft_difficulty_modifier':-5})
+    db.session.add(gloves);db.session.flush()
+    data=deepcopy(workshop['actor_character'].data)
+    data['equipment']['gloves']={'name':'Рабочие','category':'gloves','templateId':gloves.id}
+    workshop['actor_character'].data=data;db.session.commit()
+    equipped=call(client,workshop,auth_headers,'quote',recipe_id='recipe-f4')
+    assert equipped.status_code==200,equipped.json
+    assert equipped.json['result']['difficulty']==baseline.json['result']['difficulty']-5
+    data['equipment']['gloves']['protectionDisabled']=True
+    workshop['actor_character'].data=data;db.session.commit()
+    disabled=call(client,workshop,auth_headers,'quote',recipe_id='recipe-f4')
+    assert disabled.json['result']['difficulty']==baseline.json['result']['difficulty']
+
+
 def test_approved_salvage_materials_and_craft_only_flamethrowers():
     from app.services.equipment_catalog import load_catalog
     from app.services.crafting_rules import catalog
