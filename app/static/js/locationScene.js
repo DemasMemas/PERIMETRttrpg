@@ -1,4 +1,4 @@
-import { renderTradeEditor, tradeResultNotice } from './characterTrade.js';
+import { renderTradeEditor, renderProfessionalRepairEditor, tradeResultNotice } from './characterTrade.js';
 import { renderMerchantEditor } from './merchantEditor.js';
 import { terrainLineHit, terrainOpeningAt } from './terrainLineOfSight.js';
 import { createPortableLightRenderer } from './portableLights.js';
@@ -9832,6 +9832,29 @@ export async function showCharacterTradeMenu(actorLocationCharacterId, actorChar
             } catch (error) {
                 showNotification(error.message || 'Не удалось открыть прайс', 'system');
             }
+        } : null,
+        onRepair:npc && targetData.merchant?.repair_enabled ? () => {
+            const owned=actorCharacter?.data||{};
+            const repairEntries=[...getCharacterTransferEntries(owned),
+                ...(owned.weapons||[]).map((item,index)=>({item,path:['weapons',index]})),
+                ...Object.entries(owned.equipment||{}).filter(([,item])=>item&&typeof item==='object'&&item.name)
+                    .map(([slot,item])=>({item,path:['equipment',slot]}))];
+            const request=(entry,mode,extra={})=>Server.professionalRepair(window.currentLobbyId,getCurrentLocationId(),{
+                actor_location_character_id:actorLocationCharacterId,mechanic_character_id:targetCharacterId,
+                item_path:entry.path,item_id:entry.item.id,mode,...extra,
+            });
+            renderProfessionalRepairEditor(modal,{
+                entries:repairEntries,balance:Number(owned.inventory?.money||0),
+                onQuote:(entry,mode)=>request(entry,mode),
+                onSubmit:async(entry,mode,operationId)=>{
+                    const result=await request(entry,mode,{execute:true,operation_id:operationId,
+                        actor_revision:owned._revision??actorCharacter.revision,
+                        mechanic_revision:targetData._revision});
+                    modal.style.display='none';
+                    showNotification(result.duplicate?'Ремонт уже выполнен':`Ремонт выполнен за ${result.price} ₽`,'success');
+                },
+                onClose:()=>showCharacterTradeMenu(actorLocationCharacterId,actorCharacterId,targetCharacterId),
+            });
         } : null,
         onClose:() => { modal.style.display = 'none'; },
         onSubmit:async payload => {

@@ -636,6 +636,12 @@ export const Server = {
         });
     },
 
+    async professionalRepair(lobbyId, locationId, payload) {
+        return apiFetch(`/lobbies/${lobbyId}/locations/${locationId}/professional-repair`, {
+            method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload),
+        });
+    },
+
     async createCharacterInteraction(lobbyId, locationId, payload) {
         return apiFetch(`/lobbies/${lobbyId}/locations/${locationId}/character-interactions`, {
             method: 'POST',

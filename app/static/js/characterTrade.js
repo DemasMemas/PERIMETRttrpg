@@ -62,7 +62,7 @@ export function validateTrade({actorOffer, targetOffer, actorMoney, targetMoney,
 }
 
 export function renderTradeEditor(modal, {actor, target, actorEntries, targetEntries, quantity, onSubmit, onClose,
-                                        merchant=null, onConfigure=null}) {
+                                        merchant=null, onConfigure=null, onRepair=null}) {
     const shop = merchant?.enabled === true;
     const prices = merchant?.prices || {};
     const selected = {actor: new Map(), target: new Map()};
@@ -86,7 +86,8 @@ export function renderTradeEditor(modal, {actor, target, actorEntries, targetEnt
                 <div class="trade-item-list"></div>
             </section>`).join('')}</div>
         <div class="trade-summary" aria-live="polite"></div><div class="trade-error" role="status"></div>
-        <div class="form-actions">${onConfigure ? '<button type="button" class="btn btn-secondary trade-configure">Настроить торговца</button>' : ''}
+        <div class="form-actions">${onConfigure ? '<button type="button" class="btn btn-secondary trade-configure">Настроить услуги НПС</button>' : ''}
+            ${onRepair ? '<button type="button" class="btn btn-secondary trade-repair">Ремонт у механика</button>' : ''}
             ${target.data?.merchant?.enabled ? `<button type="button" class="btn btn-secondary trade-mode">${shop ? 'Обычный обмен' : 'Торговля по прайсу'}</button>` : ''}
             <button type="button" class="btn btn-secondary trade-reset">Очистить выбор</button>
             <button type="button" class="btn btn-primary trade-confirm">${shop ? 'Заключить сделку' : 'Предложить обмен'}</button></div></div>`;
@@ -156,9 +157,11 @@ export function renderTradeEditor(modal, {actor, target, actorEntries, targetEnt
     modal.querySelector('.trade-close').onclick = () => { if (!submitting) onClose(); };
     const configure = modal.querySelector('.trade-configure');
     if (configure) configure.onclick = () => { if (!submitting) onConfigure(); };
+    const repair = modal.querySelector('.trade-repair');
+    if (repair) repair.onclick = () => { if (!submitting) onRepair(); };
     const mode = modal.querySelector('.trade-mode');
     if (mode) mode.onclick = () => { if (!submitting) renderTradeEditor(modal, {
-        actor,target,actorEntries,targetEntries,quantity,onSubmit,onClose,onConfigure,merchant:shop ? null : target.data.merchant,
+        actor,target,actorEntries,targetEntries,quantity,onSubmit,onClose,onConfigure,onRepair,merchant:shop ? null : target.data.merchant,
     }); };
     modal.querySelector('.trade-reset').onclick = () => {
         if (submitting) return;
@@ -186,4 +189,55 @@ export function renderTradeEditor(modal, {actor, target, actorEntries, targetEnt
         }
     };
     update();
+}
+
+export function renderProfessionalRepairEditor(modal,{entries,balance,onQuote,onSubmit,onClose}) {
+    const options=entries.filter(entry=>entry.item&&(
+        ['weapon','melee_weapon','armor','helmet','gas_mask'].includes(entry.item.category)||entry.path[0]==='weapons'||entry.item.model));
+    modal.innerHTML=`<div class="modal-content character-trade merchant-editor">
+        <div class="character-trade-heading"><h3>Ремонт у механика</h3><button type="button" class="btn btn-secondary repair-close" aria-label="Закрыть">×</button></div>
+        <p>Доступно: ${rubles(balance)}. Цена рассчитывается по каталогу, износу и наценке механика.</p>
+        <label>Предмет <select class="form-control repair-item">${options.map((entry,index)=>
+            `<option value="${index}">${escape(entry.item.name||entry.item.model||'Предмет')}</option>`).join('')}</select></label>
+        <label>Вид ремонта <select class="form-control repair-mode"></select></label>
+        <div class="trade-summary repair-quote" aria-live="polite"></div><div class="trade-error" role="status"></div>
+        <div class="form-actions"><button type="button" class="btn btn-secondary repair-check">Рассчитать</button>
+            <button type="button" class="btn btn-primary repair-confirm" disabled>Оплатить ремонт</button></div></div>`;
+    const itemSelect=modal.querySelector('.repair-item'),modeSelect=modal.querySelector('.repair-mode');
+    const confirm=modal.querySelector('.repair-confirm'),message=modal.querySelector('.trade-error'),summary=modal.querySelector('.repair-quote');
+    let quoted=null,operationId=null,busy=false;
+    const refresh=()=>{
+        const entry=options[Number(itemSelect.value)];
+        modeSelect.innerHTML=entry?.path[0]==='weapons'||entry?.item?.model||['weapon','melee_weapon'].includes(entry?.item?.category)
+            ? '<option value="weapon">Починить оружие</option>'
+            : '<option value="armor_stage">Восстановить стадию брони</option><option value="armor_durability">Восстановить прочность текущей стадии</option>';
+        quoted=null;operationId=null;confirm.disabled=true;summary.textContent='';message.textContent='';
+    };
+    itemSelect.onchange=refresh;modeSelect.onchange=()=>{quoted=null;operationId=null;confirm.disabled=true;summary.textContent='';};
+    modal.querySelector('.repair-close').onclick=()=>{if(!busy)onClose();};
+    modal.querySelector('.repair-check').onclick=async()=>{
+        const entry=options[Number(itemSelect.value)];if(!entry)return;
+        busy=true;message.textContent='';confirm.disabled=true;
+        try{
+            quoted={entry,mode:modeSelect.value,result:await onQuote(entry,modeSelect.value)};
+            operationId=crypto.randomUUID();
+            const outcome=quoted.result.result;
+            const after=outcome.kind==='weapon'
+                ? `Прочность после ремонта: ${outcome.after} из ${outcome.maximum_after}.`
+                : `Стадия после ремонта: ${outcome.stage_after}. Прочность: ${outcome.durability_after}.`;
+            summary.textContent=`${quoted.result.item_name}: ${rubles(quoted.result.price)}. ${after}`;
+            confirm.disabled=quoted.result.price>balance;
+            if(quoted.result.price>balance)message.textContent='Не хватает денег.';
+        }catch(error){quoted=null;message.textContent=error.message||'Не удалось рассчитать ремонт';}
+        finally{busy=false;}
+    };
+    confirm.onclick=async()=>{
+        if(busy||!quoted)return;
+        busy=true;confirm.disabled=true;message.textContent='';
+        try{await onSubmit(quoted.entry,quoted.mode,operationId);}
+        catch(error){message.textContent=error.message||'Не удалось оплатить ремонт';confirm.disabled=false;}
+        finally{busy=false;}
+    };
+    if(options.length)refresh();
+    else {itemSelect.innerHTML='<option>Нет подходящих предметов</option>';modal.querySelector('.repair-check').disabled=true;}
 }

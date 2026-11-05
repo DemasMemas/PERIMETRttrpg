@@ -3,6 +3,21 @@ import {traitChoiceFields} from './characterCreation.js';
 import {ruleText} from './characterTraits.js';
 
 const escape=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const historyText=value=>ruleText(value).replace(/^\d+\.\s*/u,'');
+const rubles=value=>Number(value).toLocaleString('ru-RU');
+
+export function historyMonthPresentation(event,income){
+    const delta=Number(event.cashDelta||0);
+    const total=Number((event.incomeOptions||[0])[0]);
+    const original=Number((income?.options||[])[0]);
+    const base=Number.isFinite(original)?original*Number(event.incomeMultiplier??1):total-delta;
+    const details=(event.details||[]).map(historyText).filter(text=>
+        !(delta&&/^\+?\d+$/u.test(text.replace(/\s/g,''))&&Number(text.replace(/\s/g,''))===delta));
+    const incomeText=delta
+        ? `Доход за месяц: ${rubles(base)} ₽ + ${rubles(delta)} ₽ = ${rubles(total)} ₽`
+        : `Доход за месяц: ${rubles(total)} ₽`;
+    return {title:historyText(event.title||'Жизнь в Зоне'),details,incomeText};
+}
 
 export async function completeCharacterHistory(lobbyId,characterId,initialData,onUpdated=()=>{}){
     if(document.getElementById('character-history-modal'))return initialData;
@@ -20,7 +35,8 @@ export async function completeCharacterHistory(lobbyId,characterId,initialData,o
         const history=data.creation.zoneHistory,index=Number(history.confirmedThrough||0),event=history.events[index];
         modal.querySelector('[data-history-progress]').innerHTML=history.events.map((item,i)=>'<span aria-label="Месяц '+item.month+(i<index?' подтверждён':i===index?' текущий':'')+'" style="flex:1;height:5px;border-radius:3px;background:'+(i<index?'#758c6c':i===index?'#bcb587':'rgba(255,255,255,.14)')+'"></span>').join('');
         content.dataset.month=event.month;
-        content.innerHTML='<p class="creation-hint">Месяц '+event.month+' из '+history.events.length+'</p><h4>'+escape(ruleText(event.title||'Жизнь в Зоне'))+'</h4>'+(event.details||[]).map(text=>'<p>'+escape(ruleText(text))+'</p>').join('')+'<p>Доход за месяц: '+Number((event.incomeOptions||[0])[0]).toLocaleString('ru-RU')+' ₽</p>';
+        const view=historyMonthPresentation(event,history.income);
+        content.innerHTML='<p class="creation-hint">Месяц '+event.month+' из '+history.events.length+'</p><h4>'+escape(view.title)+'</h4>'+view.details.map(text=>'<p>'+escape(text)+'</p>').join('')+'<p>'+escape(view.incomeText)+'</p>';
         if(event.teacher){
             content.insertAdjacentHTML('beforeend','<label>Учитель · '+event.teacher.xp+' опыта без бонусов обучения<select data-teacher class="form-control" required><option value="">Выберите навык</option>'+rules.skillOrder.filter(path=>!event.teacher.group||path.startsWith(event.teacher.group+'.')).map(path=>'<option value="'+escape(path)+'">'+escape(rules.skills[path.split('.')[0]][path.split('.')[1]])+'</option>').join('')+'</select></label>');
         }else if(event.hardening){

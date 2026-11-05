@@ -72,7 +72,7 @@ function displayLobbyCharacters(characters) {
             charDiv.appendChild(loot);
             const merchant = document.createElement('button');
             merchant.type = 'button';merchant.className = 'btn btn-sm btn-secondary npc-merchant-open';
-            merchant.textContent = 'Настроить торговлю';
+            merchant.textContent = 'Торговля и ремонт';
             merchant.onclick = async () => {
                 try { await openNpcMerchant(currentLobbyId, char.id, loadLobbyCharacters); }
                 catch (error) { showNotification(error.message, 'error'); }

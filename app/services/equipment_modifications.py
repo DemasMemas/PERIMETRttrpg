@@ -51,7 +51,7 @@ SPECIAL_ARMOR={
 
 
 def supported(rule):
-    if rule['kind']=='weapon':return rule['id'] not in {'weapon-b33','weapon-b40','weapon-b49'}
+    if rule['kind']=='weapon':return True
     if rule['kind']=='belt':return rule['id']=='armor-g58'
     return rule['id'] in DIRECT_ARMOR or rule['id'].removeprefix('armor-') in SPECIAL_ARMOR
 

@@ -1,5 +1,6 @@
 """Торговец с явным прайсом ГМа, конечными товарами и конечным запасом денег."""
 from copy import deepcopy
+from math import isfinite
 
 from sqlalchemy.orm.attributes import flag_modified
 
@@ -41,12 +42,16 @@ def configure(lobby_id, character_id, user_id, payload):
     if not is_npc(character):
         raise ValidationError('Автоматическую торговлю можно включить только для НПС')
     if (not isinstance(payload, dict) or not {'enabled', 'prices', 'character_revision'} <= set(payload)
-            or set(payload) - {'enabled', 'prices', 'character_revision', 'money'}):
+            or set(payload) - {'enabled', 'prices', 'character_revision', 'money','repair_enabled','repair_markup'}):
         raise ValidationError('Некорректные настройки торговца')
     if type(payload['character_revision']) is not int or payload['character_revision'] != character.revision:
         raise ConflictError('Лист НПС изменился. Откройте настройки заново.')
     if type(payload['enabled']) is not bool or not isinstance(payload['prices'], dict) or len(payload['prices']) > 2000:
         raise ValidationError('Некорректный прайс торговца')
+    repair_enabled=payload.get('repair_enabled',((character.data or {}).get('merchant') or {}).get('repair_enabled',False))
+    repair_markup=payload.get('repair_markup',((character.data or {}).get('merchant') or {}).get('repair_markup',1))
+    if type(repair_enabled) is not bool or type(repair_markup) not in {int,float} or not isfinite(repair_markup) or not 1<=repair_markup<=10:
+        raise ValidationError('Настройки ремонта: укажите наценку механика от 1 до 10')
     prices = {}
     for key, value in payload['prices'].items():
         try:
@@ -75,7 +80,8 @@ def configure(lobby_id, character_id, user_id, payload):
     data = deepcopy(character.data or {})
     if 'money' in payload:
         data.setdefault('inventory', {})['money'] = money(payload['money'], label='Деньги торговца')
-    data['merchant'] = {'enabled': payload['enabled'], 'prices': prices}
+    data['merchant'] = {'enabled': payload['enabled'], 'prices': prices,
+                        'repair_enabled':repair_enabled,'repair_markup':repair_markup}
     character.data = data
     flag_modified(character, 'data')
     db.session.flush()
