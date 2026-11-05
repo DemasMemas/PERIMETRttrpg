@@ -2442,6 +2442,8 @@ class CombatService:
             character_data, skill_path, darkness=darkness and not nvg and (awareness_mode == 'visual' or skill_path=='skills.physical.shooting'),
         )
         from app.services.equipment_modifications import worn_rule
+        if skill_path=='skills.other.stealth':
+            equipment_modifier+=worn_rule(character_data,'stealth_hiding_bonus')
         advantage = bool(advantage or CombatService._has_roll_advantage(character_data,skill_path,consume=True)
             or awareness_mode=='hearing' and worn_rule(character_data,'hearing_advantage'))
         deafness = (

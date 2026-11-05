@@ -353,6 +353,20 @@ def test_helmet_explosion_upgrade_and_combined_anomaly_tradeoff(app):
     assert CombatService._target_elemental_protection(data,'thermal')==20
 
 
+@pytest.mark.parametrize('gunsmith,bonus',[(False,4),(True,6)])
+def test_stealth_upgrade_affects_only_worn_armor(app,monkeypatch,gunsmith,bonus):
+    monkeypatch.setattr('app.services.combat.random.randint',lambda *a:10)
+    armor={'modifications':[make_record('armor-a14',gunsmith=gunsmith)]}
+    data={'equipment':{'armor':armor}}
+    def total(skill):return CombatService._narrative_skill_check(data,skill)['total']
+    baseline=total('skills.other.stealth')
+    armor['protectionDisabled']=True
+    assert total('skills.other.stealth')==baseline-bonus
+    armor.pop('protectionDisabled')
+    assert total('skills.physical.awareness.visual')==CombatService._narrative_skill_check(
+        {'equipment':{}},'skills.physical.awareness.visual')['total']
+
+
 @pytest.mark.parametrize('gunsmith,expected_blast,expected_wear',[(False,55,27.5),(True,42,10.5)])
 def test_explosion_upgrade_changes_wave_damage_and_real_wear(grenade_game,monkeypatch,gunsmith,expected_blast,expected_wear):
     from test_grenade_rules import profile

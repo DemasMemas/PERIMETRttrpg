@@ -31,6 +31,7 @@ DIRECT_ARMOR={'armor-'+key for key in ('a5','a6','a7','a9','a10','a18','a19','a2
     'd5','d6','d9','d15','d18','d19','d20','g5','g7','g29','g30','g31','g41','g42','g50','g51','g52')}
 
 SPECIAL_ARMOR={
+ 'a14':({}, {'stealth_hiding_bonus':4}),
  'd23':({}, {'anomaly_escape_reduction':3}),'a34':({}, {'fixed_reload_extra':1}),
  'd24':({'radiation':30,'anomaly':-10},{}),'g40':({'explosive_physical':20},{}),
  'a20':({'explosive_physical':25},{'explosion_wear_reduction':.5}),
@@ -151,7 +152,8 @@ def make_record(rule_id,*,gunsmith=False,installer_id=None):
     stats={key:amplified(key,value) for key,value in stats.items()}
     for key in ('burst_no_wear','repair_discount','aimed_accuracy','burst_accuracy_reduction','radiation_with_mask','throwing_bonus',
                 'ear_protection','filter_wear_reduction','flash_reduction','aimed_head_difficulty','concussion_reduction','belt_weight_reduction',
-                'explosion_wear_reduction','anomaly_wear_reduction','supported_accuracy','anomaly_escape_reduction'):
+                'explosion_wear_reduction','anomaly_wear_reduction','supported_accuracy','anomaly_escape_reduction',
+                'stealth_hiding_bonus'):
         if key in flags:flags[key]*=factor
     if flags.get('pistol_burst'):flags['pistol_burst_factor']=factor
     return {'ruleId':rule_id,'name':rule.get('name') or rule['description'],'description':rule['description'],
