@@ -15,7 +15,15 @@ NAMES={'фонарик':'hand','улучшенный фонарик':'improved',
 
 
 def glow(item):
-    return str((item or {}).get('name') or '').strip().casefold() == 'светящаяся палочка'
+    return str((item or {}).get('name') or '').strip().casefold() in {'светящаяся палочка','хис'}
+
+
+def glow_range(item):
+    return 8 if str((item or {}).get('name') or '').strip().casefold()=='хис' else 5
+
+
+def glow_duration(item):
+    return 1800 if str((item or {}).get('name') or '').strip().casefold()=='хис' else 600
 
 
 def definition(item):
@@ -252,7 +260,7 @@ def ready_sources(actor,*,objects=None):
         facing=math.hypot(actor.facing_x or 0,actor.facing_y or 0) or 1
         radial=glow(item)
         result.append({'id':binding['id'],'mount':mount,'improved':definition(item)=='improved' or radial,
-            'radial':radial,'range':5 if radial else 35,'end_width':5,
+            'radial':radial,'range':glow_range(item) if radial else 35,'end_width':5,
             'x':actor.pos_x+.5+(.35*(actor.facing_x or 0)/facing if not radial else 0),
             'z':actor.pos_y+.5+(.35*(actor.facing_y or 0)/facing if not radial else 0),
             'y':CombatService.physical_position(actor,objects=objects)['height']+1.4,
@@ -268,7 +276,7 @@ def ground_sources(location_id,objects=None):
         for item in (obj.properties or {}).get('contents') or []:
             if not glow(item) or (item.get('glowState') or {}).get('remaining_seconds',0)<=0:continue
             sources.append({'id':f'ground-glow-{obj.id}-{item.get("id")}', 'mount':'ground',
-                'radial':True,'improved':True,'range':5,'x':obj.tile_x+.5,'z':obj.tile_y+.5,
+                'radial':True,'improved':True,'range':glow_range(item),'x':obj.tile_x+.5,'z':obj.tile_y+.5,
                 'y':.15,'floor_level':(obj.properties or {}).get('floor_level',0)})
     return sources
 
@@ -288,7 +296,7 @@ def covers(actor,target,*,wide=False,objects=None):
     if length>35:return []
     if CombatService._cover_analysis(actor.location_id,actor,target,objects=objects).get('zones',{}).get('head'):
         return []
-    return [source for source in sources if (length<=5 if source.get('radial') else dot>=angle-1e-9)]
+    return [source for source in sources if (length<=source['range'] if source.get('radial') else dot>=angle-1e-9)]
 
 
 def illumination(target,*,actors=None,objects=None):
@@ -302,7 +310,7 @@ def illumination(target,*,actors=None,objects=None):
     scene_objects=objects if objects is not None else LocationObject.query.filter_by(location_id=target.location_id).all()
     for source in ground_sources(target.location_id,scene_objects):
         if source['floor_level']!=(target.floor_level or 0):continue
-        if math.hypot(source['x']-target.pos_x-.5,source['z']-target.pos_y-.5)<=5 and _light_path_open(
+        if math.hypot(source['x']-target.pos_x-.5,source['z']-target.pos_y-.5)<=source['range'] and _light_path_open(
             (source['x'],source['z']),(target.pos_x+.5,target.pos_y+.5),scene_objects):lights.append(source)
     return {'lit':bool(lights),'penalty':0 if any(light['improved'] for light in lights) else 3 if lights else None,
         'base_dark':CombatService._is_dark_at_character(target.location,target,objects=objects)}
@@ -318,7 +326,7 @@ def shooting(actor,target,fire_mode):
     from app.services.lighting_rules import _light_path_open
     scene_objects=LocationObject.query.filter_by(location_id=actor.location_id).all()
     if any(source['floor_level']==(target.floor_level or 0)
-            and math.hypot(source['x']-target.pos_x-.5,source['z']-target.pos_y-.5)<=5
+            and math.hypot(source['x']-target.pos_x-.5,source['z']-target.pos_y-.5)<=source['range']
             and _light_path_open((source['x'],source['z']),
                 (target.pos_x+.5,target.pos_y+.5),scene_objects)
             for source in ground_sources(actor.location_id,scene_objects)):
@@ -412,20 +420,20 @@ def operate(character_id,user_id,payload):
             raise ValidationError('Выберите установленный ПНВ и переключение или замену батарейки')
         binding={'on':bool(nvg_on(selected)),**{key:power(selected)[key] for key in ('period_used','battle_used') if key in power(selected)}}
     if glow(selected) and operation not in {'ignite','prepare','stow'}:
-        raise ValidationError('Светящуюся палочку нельзя выключить или перезарядить')
+        raise ValidationError('Одноразовый источник света нельзя выключить или перезарядить')
     if operation=='ignite':
         if not glow(selected) or binding or selected.get('glowState'):
-            raise ValidationError('Палочка уже активирована')
-        if path[0]!='inventory':raise ValidationError('Выберите палочку в инвентаре')
+            raise ValidationError('Источник уже активирован')
+        if path[0]!='inventory':raise ValidationError('Выберите источник света в инвентаре')
         if not LocationCharacter.query.filter_by(character_id=character_id).first():
-            raise ValidationError('Активировать палочку можно на подлокации')
+            raise ValidationError('Активировать источник света можно на подлокации')
         from app.services.weapon_grip import functional_arms
         meta=data.get('health',{}).get('combatMeta',{})
         primary=actor.drawn_weapon_index if actor else data.get('activeWeaponIndex')
         armed=type(primary) is int and 0<=primary<len(data.get('weapons') or [])
         if (held_hand(data) or functional_arms(data)<(2 if armed or meta.get('heldWaterItem') else 1)
                 or meta.get('bodyTransport') or meta.get('secondaryWeaponId') or actor and actor.grapple_target_id):
-            raise ValidationError('Для палочки нужна свободная действующая рука')
+            raise ValidationError('Для источника света нужна свободная действующая рука')
         from app.services.magazine import inventory_slot
         parent,index=inventory_slot(data,path)
         if selected.get('quantity',1)>1:
@@ -433,7 +441,7 @@ def operate(character_id,user_id,payload):
             selected=deepcopy(parent[index]);selected['quantity']=1;selected['id']=str(uuid4())
             parent.insert(index+1,selected)
         selected.setdefault('id',str(uuid4()))
-        selected['glowState']={'activated':True,'remaining_seconds':600}
+        selected['glowState']={'activated':True,'remaining_seconds':glow_duration(selected)}
         binding={'id':selected['id'],'mount':'hand','on':True}
         states.append(binding)
         cost=(1+int(calculate_inventory_access(data,path,parent[index])['retrieval_action_points'])) if actor else 0
@@ -447,7 +455,7 @@ def operate(character_id,user_id,payload):
         if mount=='head' and definition(selected)!='head':raise ValidationError('Для головы нужен налобный фонарь')
         if definition(selected)=='module' and mount!='weapon':raise ValidationError('Оружейный модуль крепится к оружию')
         if glow(selected) and (mount!='hand' or (selected.get('glowState') or {}).get('remaining_seconds',0)<=0):
-            raise ValidationError('Эту палочку нельзя снова активировать')
+            raise ValidationError('Этот источник света нельзя снова активировать')
         binding={'id':selected['id'],'mount':mount,'on':bool(glow(selected))}
         if mount in {'weapon','taped'}:
             index=payload.get('weapon_index')

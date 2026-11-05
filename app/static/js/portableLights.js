@@ -55,7 +55,7 @@ export async function renderPortableLights(container,characterId,data,operate,is
         } else {
             if(light.kind==='glow'){
                 if(!light.activated)button(`Активировать${active?' · 1 ОД + достать':''}`,'ignite');
-                else if(light.remaining_seconds>0)button('Взять горящую палочку','prepare',{mount:'hand'});
+                else if(light.remaining_seconds>0)button('Взять горящий источник','prepare',{mount:'hand'});
                 root.append(row);continue;
             }
             const mount=light.kind==='head'?'head':light.kind==='module'?'weapon':'hand';
@@ -108,7 +108,7 @@ export function createPortableLightRenderer(THREE,scene) {
             for (const {source,character,model,modelEntry} of wanted.slice(0,4)) {
                 let entry=lights.get(source.id);
                 if (!entry) {
-                    const light=source.radial?new THREE.PointLight('#dcf0aa',12,5,1)
+                    const light=source.radial?new THREE.PointLight('#dcf0aa',12,source.range||5,1)
                         :new THREE.SpotLight('#fff4d8',14,35,Math.atan(2.5/35),.4,1);
                     light.castShadow=true;light.shadow.mapSize.set(512,512);light.shadow.camera.near=.08;
                     light.shadow.bias=-.0002;light.shadow.normalBias=.015;light.shadow.autoUpdate=false;

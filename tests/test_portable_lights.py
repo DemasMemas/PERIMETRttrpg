@@ -199,3 +199,35 @@ def test_glow_stick_can_be_placed_on_own_floor(client,grenade_game,auth_headers)
     assert not bindings(actor.character.data)
     assert len(ground_sources(actor.location_id))==1
     assert ground_sources(actor.location_id)[0]['floor_level']==1
+
+
+def test_his_uses_eight_meter_light_for_thirty_minutes(client,grenade_game,auth_headers):
+    actor=grenade_game['actor_location']
+    data=deepcopy(actor.character.data)
+    data['inventory']['pockets']=[{'id':'his-1','name':'ХИС','category':'misc','quantity':1}]
+    actor.character.data=data;flag_modified(actor.character,'data');db.session.commit()
+
+    response=client.post(f'/lobbies/characters/{actor.character_id}/portable-lights',
+        headers=auth_headers(grenade_game['actor_user']),json={
+            'operation':'ignite','path':['inventory','pockets',0],
+            'source_id':'his-1','character_revision':actor.character.revision})
+    assert response.status_code==200,response.json
+    source=ready_sources(actor)[0]
+    assert source['radial'] and source['range']==8
+    assert actor.character.data['inventory']['pockets'][0]['glowState']['remaining_seconds']==1800
+    from app.services.portable_lights import advance_glow
+    data=deepcopy(actor.character.data)
+    advance_glow(data,1799)
+    assert data['inventory']['pockets'][0]['glowState']['remaining_seconds']==1
+    advance_glow(data,1)
+    assert data['inventory']['pockets'][0]['glowState']['remaining_seconds']==0
+    assert not bindings(data)[0]['on']
+    item=actor.character.data['inventory']['pockets'][0]
+    response=client.post(f"/lobbies/{grenade_game['lobby'].id}/locations/{actor.location_id}/drop-item",
+        headers=auth_headers(grenade_game['actor_user']),json={
+            'character_id':actor.character_id,'character_revision':actor.character.revision,
+            'item_path':['inventory','pockets',0],'expected_item':item,'amount':1})
+    assert response.status_code==200,response.json
+    assert ground_sources(actor.location_id)[0]['range']==8
+    advance_ground(actor.location_id,1800)
+    assert not ground_sources(actor.location_id)

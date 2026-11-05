@@ -268,9 +268,10 @@ function syncPortableLights() {
     if (!scene) return;
     if (!portableLightRenderer) portableLightRenderer=createPortableLightRenderer(THREE,scene);
     const ground=(currentLocationData?.objects||[]).filter(object=>object.type==='ground_item').flatMap(object=>
-        (object.properties?.contents||[]).filter(item=>item.name==='Светящаяся палочка'
+        (object.properties?.contents||[]).filter(item=>['Светящаяся палочка','ХИС'].includes(item.name)
             && item.glowState?.remaining_seconds>0).map(item=>({
-                id:`ground-glow-${object.id}-${item.id}`,radial:true,x:object.tile_x+.5,z:object.tile_y+.5,
+                id:`ground-glow-${object.id}-${item.id}`,radial:true,range:item.name==='ХИС'?8:5,
+                x:object.tile_x+.5,z:object.tile_y+.5,
                 y:getTileHeight(object.tile_x,object.tile_y)+(object.properties?.floor_level||0)*STOREY_HEIGHT+.15,
             })));
     portableLightRenderer.update(combatState?.characters || [],characterModels,ground);
