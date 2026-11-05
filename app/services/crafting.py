@@ -236,17 +236,14 @@ def modification_targets(data):
     return result
 
 
-def modification_plan(character,data,payload):
-    from app.services.crafting_rules import modification_quote
+def modification_target_plan(data,payload):
     from app.services.equipment_modifications import definition,supported,installed,slots
-    from app.services.combat import CombatService
     rule=definition(payload.get('rule_id'))
     if not supported(rule):raise ValidationError('Эта модификация ожидает подключения своего специального механизма')
     target=next((entry['item'] for entry in modification_targets(data) if entry['path']==payload.get('target_path')),None)
     if not target:raise ValidationError('Выберите предмет для модификации')
     slot=slots(target)
     if slot['family']!=rule['family']:raise ValidationError('Модификация предназначена для другого вида снаряжения')
-    if rule.get('scientist_only'):raise ValidationError('Модификации экзоскелета устанавливаются только у учёных')
     existing=installed(target);replacing=next((m for m in existing if m['ruleId']==payload.get('replace_rule_id')),None)
     if payload.get('replace_rule_id') and (not replacing or replacing['level']!=rule['level']):raise ValidationError('Заменить можно модификацию того же уровня')
     others=[m for m in existing if m is not replacing]
@@ -258,6 +255,15 @@ def modification_plan(character,data,payload):
         for candidate in proposed:
             if candidate['level']>1 and any(not any(m.get('branch')==candidate.get('branch') and m['level']==level for m in proposed) for level in range(1,candidate['level'])):
                 raise ValidationError('Модификации ветки устанавливаются последовательно')
+    return {'rule':rule,'target':target,'slots':slot,'previous':[m['ruleId'] for m in existing]}
+
+
+def modification_plan(character,data,payload):
+    from app.services.crafting_rules import modification_quote
+    from app.services.combat import CombatService
+    common=modification_target_plan(data,payload)
+    rule,target,slot=common['rule'],common['target'],common['slots']
+    if rule.get('scientist_only'):raise ValidationError('Модификации экзоскелета устанавливаются только у учёных')
     if rule['family'] not in {'Ушанка','Забрала','Пояс'} and not any(book.get('book_kind')=='equipment' and normalized(book.get('book_subject')).replace(' броня','')==normalized(rule['family']) for book in (data.get('crafting') or {}).get('library',[])):
         raise ValidationError('Сначала прочитайте книгу об этом виде снаряжения')
     tool=next((item for path,item in entries(data) if path==payload.get('tool_path')),None)

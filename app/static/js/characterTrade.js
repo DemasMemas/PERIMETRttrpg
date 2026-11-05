@@ -72,7 +72,7 @@ export function validateTrade({actorOffer, targetOffer, actorMoney, targetMoney,
 }
 
 export function renderTradeEditor(modal, {actor, target, actorEntries, targetEntries, quantity, onSubmit, onClose,
-                                        merchant=null, onConfigure=null, onRepair=null}) {
+                                        merchant=null, onConfigure=null, onRepair=null, onModification=null}) {
     const shop = merchant?.enabled === true;
     const prices = merchant?.prices || {};
     const selected = {actor: new Map(), target: new Map()};
@@ -98,6 +98,7 @@ export function renderTradeEditor(modal, {actor, target, actorEntries, targetEnt
         <div class="trade-summary" aria-live="polite"></div><div class="trade-error" role="status"></div>
         <div class="form-actions">${onConfigure ? '<button type="button" class="btn btn-secondary trade-configure">Настроить услуги НПС</button>' : ''}
             ${onRepair ? '<button type="button" class="btn btn-secondary trade-repair">Ремонт у механика</button>' : ''}
+            ${onModification ? '<button type="button" class="btn btn-secondary trade-modification">Установить модификацию</button>' : ''}
             ${target.data?.merchant?.enabled ? `<button type="button" class="btn btn-secondary trade-mode">${shop ? 'Обычный обмен' : 'Торговля по прайсу'}</button>` : ''}
             <button type="button" class="btn btn-secondary trade-reset">Очистить выбор</button>
             <button type="button" class="btn btn-primary trade-confirm">${shop ? 'Заключить сделку' : 'Предложить обмен'}</button></div></div>`;
@@ -169,9 +170,12 @@ export function renderTradeEditor(modal, {actor, target, actorEntries, targetEnt
     if (configure) configure.onclick = () => { if (!submitting) onConfigure(); };
     const repair = modal.querySelector('.trade-repair');
     if (repair) repair.onclick = () => { if (!submitting) onRepair(); };
+    const modification=modal.querySelector('.trade-modification');
+    if (modification) modification.onclick=()=>{if(!submitting)onModification();};
     const mode = modal.querySelector('.trade-mode');
     if (mode) mode.onclick = () => { if (!submitting) renderTradeEditor(modal, {
-        actor,target,actorEntries,targetEntries,quantity,onSubmit,onClose,onConfigure,onRepair,merchant:shop ? null : target.data.merchant,
+        actor,target,actorEntries,targetEntries,quantity,onSubmit,onClose,onConfigure,onRepair,onModification,
+        merchant:shop ? null : target.data.merchant,
     }); };
     modal.querySelector('.trade-reset').onclick = () => {
         if (submitting) return;
@@ -250,4 +254,76 @@ export function renderProfessionalRepairEditor(modal,{entries,balance,onQuote,on
     };
     if(options.length)refresh();
     else {itemSelect.innerHTML='<option>Нет подходящих предметов</option>';modal.querySelector('.repair-check').disabled=true;}
+}
+
+export function renderProfessionalModificationEditor(modal,{targets,rules,balance,onQuote,onSubmit,onClose}) {
+    const options=(targets||[]).filter(entry=>entry?.item && entry?.slots?.family);
+    modal.innerHTML=`<div class="modal-content character-trade modification-service">
+        <div class="character-trade-heading"><div><h3>Установка модификации</h3><small>Услуга специалиста · сразу после оплаты</small></div>
+            <button type="button" class="btn btn-secondary modification-close" aria-label="Закрыть">×</button></div>
+        <div class="modification-service-grid">
+            <section class="modification-service-panel"><label>Ваш предмет<select class="form-control modification-item">${options.map((entry,index)=>
+                `<option value="${index}">${escape(entry.item.name||entry.item.model||'Предмет')}</option>`).join('')}</select></label>
+                <div class="modification-item-card"></div></section>
+            <section class="modification-service-panel"><label>Улучшение<select class="form-control modification-rule"></select></label>
+                <div class="modification-rule-details"></div>
+                <label>Заменить установленное улучшение<select class="form-control modification-replace"></select></label>
+                <div class="modification-service-price"><small>На руках: ${rubles(balance)}</small><strong class="modification-price-value">Выберите улучшение</strong></div></section>
+        </div><div class="trade-error modification-error" role="status"></div>
+        <div class="form-actions"><button type="button" class="btn btn-secondary modification-check">Рассчитать стоимость</button>
+            <button type="button" class="btn btn-primary modification-confirm" disabled>Оплатить и установить</button></div></div>`;
+    const itemSelect=modal.querySelector('.modification-item'),ruleSelect=modal.querySelector('.modification-rule');
+    const replaceSelect=modal.querySelector('.modification-replace'),card=modal.querySelector('.modification-item-card');
+    const details=modal.querySelector('.modification-rule-details'),price=modal.querySelector('.modification-price-value');
+    const error=modal.querySelector('.modification-error'),confirm=modal.querySelector('.modification-confirm');
+    let quoted=null,operationId=null,busy=false;
+    const reset=()=>{quoted=null;operationId=null;confirm.disabled=true;price.textContent='Выберите улучшение';error.textContent='';};
+    const current=()=>options[Number(itemSelect.value)];
+    const rule=()=>((rules||[]).find(entry=>entry.id===ruleSelect.value));
+    const renderRule=()=>{
+        reset();const selected=rule(),entry=current();
+        details.textContent=selected ? `${selected.description||selected.name} · Уровень ${selected.level}` : '';
+        const installed=(entry?.item?.modifications||[]).filter(value=>value?.ruleId&&value.level===selected?.level);
+        replaceSelect.innerHTML='<option value="">Без замены</option>'+installed.map(value=>
+            `<option value="${escape(value.ruleId)}">${escape(value.name||value.ruleId)}</option>`).join('');
+    };
+    const renderItem=()=>{
+        reset();const entry=current();if(!entry)return;
+        const item=entry.item,slots=entry.slots,installed=(item.modifications||[]).filter(value=>value?.ruleId);
+        const glyph=entry.path?.[0]==='weapons'||item.category==='weapon'?'⌖':'◇';
+        card.innerHTML=`<div class="modification-item-heading"><span class="modification-item-glyph" aria-hidden="true">${glyph}</span>
+            <div><strong>${escape(item.name||item.model||'Предмет')}</strong><small>${escape(slots.family)} · Класс ${escape(slots.factor??'—')}</small></div></div>
+            <div class="modification-slots" aria-label="Слоты модификаций">${Array.from({length:slots.maximum},(_,index)=>
+                `<span class="${index<installed.length?'filled':index>=slots.available?'locked':''}" title="${index<installed.length?'Занят':index>=slots.available?'Закрыт':'Свободен'}"></span>`).join('')}</div>
+            <small>${installed.length} занято · ${Math.max(0,slots.available-installed.length)} свободно · ${slots.maximum-slots.available} закрыто</small>
+            <div class="modification-installed">${installed.length?installed.map(value=>`<span>${escape(value.name||value.ruleId)}</span>`).join(''):'Пока нет улучшений'}</div>`;
+        const available=(rules||[]).filter(value=>value.automatic_installation && value.family===slots.family);
+        ruleSelect.innerHTML=available.map(value=>`<option value="${escape(value.id)}">Ур. ${value.level} · ${escape(value.name||value.description)}</option>`).join('');
+        if(!available.length)ruleSelect.innerHTML='<option value="">Нет доступных улучшений</option>';
+        modal.querySelector('.modification-check').disabled=!available.length;
+        renderRule();
+    };
+    itemSelect.onchange=renderItem;ruleSelect.onchange=renderRule;replaceSelect.onchange=reset;
+    modal.querySelector('.modification-close').onclick=()=>{if(!busy)onClose();};
+    modal.querySelector('.modification-check').onclick=async()=>{
+        const entry=current(),selected=rule();if(!entry||!selected)return;
+        busy=true;error.textContent='';confirm.disabled=true;
+        try{
+            const result=await onQuote(entry,selected,replaceSelect.value||null);
+            quoted={entry,selected,replace:replaceSelect.value||null,result};operationId=crypto.randomUUID();
+            price.textContent=`К оплате ${rubles(result.price)}`;
+            confirm.disabled=result.price>balance;
+            if(result.price>balance)error.textContent='Не хватает денег на установку.';
+        }catch(reason){quoted=null;error.textContent=reason.message||'Не удалось рассчитать установку';}
+        finally{busy=false;}
+    };
+    confirm.onclick=async()=>{
+        if(busy||!quoted)return;
+        busy=true;confirm.disabled=true;error.textContent='';
+        try{await onSubmit(quoted.entry,quoted.selected,quoted.replace,operationId);}
+        catch(reason){error.textContent=reason.message||'Не удалось установить улучшение';confirm.disabled=false;}
+        finally{busy=false;}
+    };
+    if(options.length)renderItem();
+    else {itemSelect.innerHTML='<option>Нет подходящих предметов</option>';modal.querySelector('.modification-check').disabled=true;}
 }

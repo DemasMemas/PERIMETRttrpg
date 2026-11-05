@@ -1,4 +1,4 @@
-import { renderTradeEditor, renderProfessionalRepairEditor, tradeResultNotice } from './characterTrade.js';
+import { renderTradeEditor, renderProfessionalRepairEditor, renderProfessionalModificationEditor, tradeResultNotice } from './characterTrade.js';
 import { renderMerchantEditor } from './merchantEditor.js';
 import { terrainLineHit, terrainOpeningAt } from './terrainLineOfSight.js';
 import { createPortableLightRenderer } from './portableLights.js';
@@ -9855,6 +9855,30 @@ export async function showCharacterTradeMenu(actorLocationCharacterId, actorChar
                 },
                 onClose:()=>showCharacterTradeMenu(actorLocationCharacterId,actorCharacterId,targetCharacterId),
             });
+        } : null,
+        onModification:npc && (targetData.merchant?.modification_enabled || targetData.merchant?.scientist_enabled) ? async () => {
+            try {
+                const snapshot=await Server.getCrafting(actorCharacterId);
+                const rules=(snapshot.catalog?.modifications||[]).filter(rule=>rule.scientist_only
+                    ? targetData.merchant?.scientist_enabled : targetData.merchant?.modification_enabled);
+                const request=(entry,rule,replace,extra={})=>Server.professionalModification(window.currentLobbyId,getCurrentLocationId(),{
+                    actor_location_character_id:actorLocationCharacterId,specialist_character_id:targetCharacterId,
+                    target_path:entry.path,item_id:entry.item.id,rule_id:rule.id,
+                    ...(replace?{replace_rule_id:replace}:{}),...extra,
+                });
+                renderProfessionalModificationEditor(modal,{
+                    targets:snapshot.targets,rules,balance:Number(actorCharacter?.data?.inventory?.money||0),
+                    onQuote:(entry,rule,replace)=>request(entry,rule,replace),
+                    onSubmit:async(entry,rule,replace,operationId)=>{
+                        const result=await request(entry,rule,replace,{execute:true,operation_id:operationId,
+                            actor_revision:actorCharacter?.data?._revision??actorCharacter.revision,
+                            specialist_revision:targetData._revision});
+                        modal.style.display='none';
+                        showNotification(result.duplicate?'Улучшение уже установлено':`Модификация установлена за ${result.price} ₽`,'success');
+                    },
+                    onClose:()=>showCharacterTradeMenu(actorLocationCharacterId,actorCharacterId,targetCharacterId),
+                });
+            } catch(error) {showNotification(error.message||'Не удалось открыть установку модификаций','system');}
         } : null,
         onClose:() => { modal.style.display = 'none'; },
         onSubmit:async payload => {

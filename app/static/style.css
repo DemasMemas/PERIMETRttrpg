@@ -3932,6 +3932,25 @@ input[type=range]::-webkit-slider-thumb {
 .merchant-price-row > span { min-width: 0; overflow-wrap: anywhere; }
 .merchant-price-row small { display: block; opacity: .65; margin-top: 3px; }
 .character-trade .merchant-price { width: 100%; max-width: 100%; min-width: 0; }
+.modification-service { width: min(900px, calc(100vw - 24px)); }
+.modification-service-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin: 20px 0 8px; }
+.modification-service-panel { min-width: 0; padding: 16px; border: 1px solid rgba(185,188,139,.3); border-radius: 14px; background: linear-gradient(145deg, rgba(60,66,47,.42), rgba(13,17,15,.55)); }
+.modification-service-panel label { display: grid; gap: 7px; margin-bottom: 14px; font-weight: 600; }
+.modification-service-panel .form-control { width: 100%; min-width: 0; }
+.modification-item-card { min-height: 164px; padding: 16px; border-radius: 12px; border: 1px solid rgba(214,195,134,.35); background: radial-gradient(circle at 12% 10%, rgba(206,185,114,.14), transparent 55%), rgba(0,0,0,.26); }
+.modification-item-heading { display: flex; align-items: center; gap: 14px; }
+.modification-item-heading strong, .modification-item-heading small { display: block; }
+.modification-item-heading small, .modification-item-card > small { opacity: .72; margin-top: 4px; }
+.modification-item-glyph { display: grid; place-items: center; width: 56px; height: 56px; border: 1px solid rgba(220,205,146,.55); border-radius: 12px; color: #e0d39d; font-size: 32px; background: rgba(0,0,0,.3); }
+.modification-slots { display: flex; gap: 7px; margin: 18px 0 5px; }
+.modification-slots span { width: 26px; height: 11px; border: 1px solid #b0b98b; border-radius: 3px; background: rgba(176,185,139,.13); }
+.modification-slots span.filled { background: #b0b98b; box-shadow: 0 0 10px rgba(176,185,139,.3); }
+.modification-slots span.locked { border-color: rgba(150,150,150,.35); background: rgba(0,0,0,.3); }
+.modification-installed { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 15px; opacity: .8; }
+.modification-installed span { padding: 3px 8px; border: 1px solid rgba(185,188,139,.35); border-radius: 14px; font-size: 12px; }
+.modification-rule-details { min-height: 74px; line-height: 1.5; opacity: .83; }
+.modification-service-price { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-top: 16px; padding: 13px; border-radius: 10px; background: rgba(0,0,0,.24); }
+.modification-service-price strong { color: #e0d39d; font-size: 18px; }
 .npc-loot-editor { width: min(960px, calc(100vw - 24px)); max-width: 960px; max-height: 90vh; overflow: auto; box-sizing: border-box; }
 .npc-loot-editor p { opacity: .8; }
 .loot-profile-fields, .loot-pool-filters, .loot-pool-numbers { display: grid; gap: 10px; margin: 12px 0; }
@@ -3944,6 +3963,7 @@ input[type=range]::-webkit-slider-thumb {
 .loot-receipt { overflow-wrap: anywhere; line-height: 1.5; }
 .npc-loot-editor .form-actions { flex-wrap: wrap; }
 @media(max-width: 640px) {
+    .modification-service-grid { grid-template-columns: minmax(0,1fr); }
     .loot-profile-fields, .loot-pool-filters, .loot-pool-numbers { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     .character-trade-sides { grid-template-columns: minmax(0,1fr); }
     .trade-item-list { height: 210px; }

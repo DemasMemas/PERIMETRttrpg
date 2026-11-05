@@ -3986,6 +3986,30 @@ def professional_repair(lobby_id,location_id,lobby,participant):
     return jsonify(result)
 
 
+@lobbies_bp.route('/<int:lobby_id>/locations/<int:location_id>/professional-modification', methods=['POST'])
+@jwt_required()
+@requires_participant
+def professional_modification(lobby_id, location_id, lobby, participant):
+    from app.services.professional_modification import quote, perform
+    location = db.session.get(Location, location_id)
+    if not location or location.lobby_id != lobby_id:
+        raise NotFoundError('Локация не найдена в этой комнате')
+    payload = request.get_json(silent=True) or {}
+    if payload.get('execute') is True:
+        result = perform(location_id, participant.user_id, payload)
+        if not result['duplicate']:
+            for character_id in (result['actor_character_id'], result['specialist_character_id']):
+                character = db.session.get(LobbyCharacter, character_id)
+                emit_character_update({'character_id': character_id, 'updates': {'data': character.data_snapshot()},
+                                       'updated_by': participant.user_id})
+            _emit_lobby_chat_message(lobby_id, participant.user_id,
+                f"Установка модификации: «{result['rule_name']}» на «{result['item_name']}», {result['price']} ₽.",
+                username='Система')
+    else:
+        result = quote(location_id, participant.user_id, payload)
+    return jsonify(result)
+
+
 @lobbies_bp.route(
     '/<int:lobby_id>/locations/<int:location_id>/character-interactions',
     methods=['POST'],

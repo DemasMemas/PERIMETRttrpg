@@ -641,6 +641,11 @@ export const Server = {
             method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload),
         });
     },
+    async professionalModification(lobbyId, locationId, payload) {
+        return apiFetch(`/lobbies/${lobbyId}/locations/${locationId}/professional-modification`, {
+            method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(payload),
+        });
+    },
 
     async createCharacterInteraction(lobbyId, locationId, payload) {
         return apiFetch(`/lobbies/${lobbyId}/locations/${locationId}/character-interactions`, {
