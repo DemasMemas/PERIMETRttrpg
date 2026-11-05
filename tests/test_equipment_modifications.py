@@ -12,6 +12,20 @@ from test_grenade_rules import grenade_game
 from test_flamethrower import flame_game
 
 
+def test_exoskeleton_run_upgrade_changes_actual_movement(grenade_game):
+    actor=grenade_game['actor_location'];location=grenade_game['location']
+    data=deepcopy(actor.character.data)
+    data['equipment']={'armor':{'name':'Экзоскелет','category':'armor',
+        'modifications':[make_record('armor-d32')]}}
+    actor.character.data=data
+    actor.movement_points_current=100;actor.action_points_current=20
+    db.session.commit()
+    moved,_,_=CombatService.move_character(location.id,grenade_game['lobby'].gm_id,
+        actor.character_id,3.1,5.2,movement_mode='run')
+    assert moved.pos_x==pytest.approx(3.1)
+    assert CombatService._serialize_character(moved)['exoskeleton_can_run']
+
+
 @pytest.fixture
 def gunsmith(workshop):
     data=deepcopy(workshop['actor_character'].data)

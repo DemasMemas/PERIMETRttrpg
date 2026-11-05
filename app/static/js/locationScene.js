@@ -1452,8 +1452,9 @@ function getMovementModeAvailability(movementType, route = null, evasion = armed
     } else if (
         ['run', 'sprint'].includes(movementType)
         && current.is_exoskeleton
+        && (movementType==='sprint' || !current.exoskeleton_can_run)
     ) {
-        reason = 'Бег и спринт недоступны в экзоскелете';
+        reason = movementType==='sprint'?'Спринт недоступен в экзоскелете':'Бег недоступен в экзоскелете';
     } else if (movementType === 'correction' && posture === 'prone') {
         reason = 'Корректировка недоступна лёжа';
     } else if (

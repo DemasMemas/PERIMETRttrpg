@@ -1312,6 +1312,7 @@ class CombatService:
         if (
             movement_mode in {'run', 'sprint'}
             and profile['blocks_strenuous_movement']
+            and (movement_mode!='run' or not profile['can_run'])
         ):
             raise ValidationError("Running and sprinting are unavailable in an exoskeleton")
         return profile
@@ -1604,11 +1605,14 @@ class CombatService:
                 ) > 0
             elif armor.get('requiresExoskeletonBattery') is False:
                 powered = bool(armor.get('powered', attributes.get('powered')))
+        from app.services.equipment_modifications import rule as modification_rule
         return {
             'is_exoskeleton': is_exoskeleton,
             'powered': powered,
             'strength_level_bonus': 8 if powered else 0,
             'blocks_strenuous_movement': is_exoskeleton,
+            'can_run': bool(is_exoskeleton and not armor.get('protectionDisabled')
+                and modification_rule(armor,'exoskeleton_run')),
         }
 
     @staticmethod
@@ -11328,6 +11332,7 @@ class CombatService:
             'movement_gain': profile['movement_gain'],
             'is_exoskeleton': CombatService._exoskeleton_power_profile(data)['is_exoskeleton'],
             'powered_exoskeleton': CombatService._exoskeleton_power_profile(data)['powered'],
+            'exoskeleton_can_run': CombatService._exoskeleton_power_profile(data)['can_run'],
             'movement_mode_this_turn': loc_char.movement_mode_this_turn,
             'slippery_movement': health.get('combatMeta', {}).get('slipperyMovement', {}) if loc_char.movement_mode_this_turn else {},
             'grenade_reaction':deepcopy(health.get('combatMeta',{}).get('grenadeReaction')),

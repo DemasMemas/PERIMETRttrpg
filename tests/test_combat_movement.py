@@ -907,6 +907,20 @@ def test_exoskeleton_blocks_run_and_sprint_even_when_powered():
         CombatService._validate_equipment_movement(data, "sprint")
 
 
+def test_exoskeleton_run_modification_allows_run_but_not_sprint():
+    from app.services.equipment_modifications import make_record, supported, definition
+    assert supported(definition('armor-d32'))
+    armor={'name':'Экзоскелет','modifications':[make_record('armor-d32')]}
+    data={'equipment':{'armor':armor}}
+    profile=CombatService._validate_equipment_movement(data,'run')
+    assert profile['is_exoskeleton'] and profile['can_run']
+    with pytest.raises(ValidationError, match='unavailable in an exoskeleton'):
+        CombatService._validate_equipment_movement(data,'sprint')
+    armor['protectionDisabled']=True
+    with pytest.raises(ValidationError, match='unavailable in an exoskeleton'):
+        CombatService._validate_equipment_movement(data,'run')
+
+
 def test_powered_exoskeleton_adds_strength_level_and_roll_bonuses():
     data = {
         "skills": {"physical": {"strength": {"base": 10, "bonus": 0}}},
