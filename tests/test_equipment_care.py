@@ -2,11 +2,68 @@
 from copy import deepcopy
 import pytest
 from app.extensions import db
-from app.services.portable_lights import advance,start_battle,preserve
-from app.services.equipment_care import infection_multiplier
+from app.services.portable_lights import advance,advance_lobby,start_battle,preserve
+from app.services.equipment_care import infection_multiplier,has_timers
+from app.services.equipment_modifications import make_record,supported,definition
 from app.services.weapon_modules import uses_nvg
 from app.services.combat import CombatService
 from test_quick_skill_checks import checks
+
+
+def test_polymer_regenerator_restores_current_stage_over_game_time():
+    assert supported(definition('armor-d26'))
+    armor={'name':'Экзоскелет','category':'armor','stage':2,'stageDurability':1000,
+        'currentStageDurability':350,'modifications':[make_record('armor-d26')]}
+    data={'equipment':{'armor':armor}}
+    assert has_timers(data)
+    advance(data,300)
+    assert armor['currentStageDurability']==400
+    advance(data,6000)
+    assert armor['currentStageDurability']==1000
+    assert armor['stage']==2
+    assert not has_timers(data)
+
+
+def test_polymer_regenerator_does_not_restore_destroyed_stage_or_other_armor():
+    armor={'name':'Экзоскелет','category':'armor','stage':5,'stageDurability':1000,
+        'currentStageDurability':0,'modifications':[make_record('armor-d26')]}
+    other={'name':'Экзоскелет','stage':2,'stageDurability':1000,'currentStageDurability':350}
+    data={'equipment':{'armor':armor},'inventory':{'pockets':[other]}}
+    assert not has_timers(data)
+    advance(data,600)
+    assert armor['currentStageDurability']==0
+    assert other['currentStageDurability']==350
+    armor['stage']=2
+    assert has_timers(data)
+    advance(data,600)
+    assert armor['currentStageDurability']==100
+
+
+def test_polymer_regenerator_advances_with_lobby_time(checks):
+    character=checks['actor_character']
+    data=deepcopy(character.data)
+    data['equipment']['armor']={'name':'Экзоскелет','stage':2,'stageDurability':500,
+        'currentStageDurability':200,'modifications':[make_record('armor-d26')]}
+    character.data=data
+    db.session.commit()
+
+    updated=advance_lobby(checks['lobby'],600)
+    db.session.commit()
+
+    assert character in updated
+    assert character.data['equipment']['armor']['currentStageDurability']==300
+
+
+def test_polymer_regenerator_advances_with_combat_round(checks):
+    actor=checks['actor_location']
+    data=deepcopy(actor.character.data)
+    data['equipment']['armor']={'name':'Экзоскелет','stage':2,'stageDurability':500,
+        'currentStageDurability':200,'modifications':[make_record('armor-d26')]}
+    actor.character.data=data
+
+    CombatService._advance_character_time(actor,6)
+
+    assert actor.character.data['equipment']['armor']['currentStageDurability']==201
 
 
 def test_nvg_clock_battle_and_raised_device_share_light_consumption():

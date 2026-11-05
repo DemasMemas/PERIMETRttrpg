@@ -15,6 +15,18 @@ def medical_gloves(item):
         or item.get('category')=='gloves' and str(item.get('name','')).casefold()=='медицинские')
 
 
+def regenerating_armor(item):
+    from app.services.equipment_modifications import rule
+    if not isinstance(item,dict) or not rule(item,'polymer_regeneration'):return False
+    try:stage=int(item.get('stage') or 1)
+    except (TypeError,ValueError):return False
+    if not 1<=stage<5:return False
+    capacity=item.get('stageDurability')
+    current=item.get('currentStageDurability')
+    return (type(capacity) in {int,float} and capacity>0
+        and type(current) in {int,float} and 0<=current<capacity)
+
+
 def preserve(current,incoming):
     from app.services.portable_lights import walk
     previous={item.get('id'):item for _,item in walk(current or {},True) if item.get('id')}
@@ -34,6 +46,10 @@ def advance(data,seconds):
     from app.services.portable_lights import walk
     changed=False
     for _,item in walk(data,True):
+        if seconds>0 and regenerating_armor(item):
+            before=item['currentStageDurability']
+            item['currentStageDurability']=min(item['stageDurability'],before+seconds/6)
+            changed=changed or before!=item['currentStageDurability']
         state=item.get('sterility')
         if not medical_gloves(item) or not isinstance(state,dict):continue
         before=state.get('remaining_seconds',0)
@@ -44,7 +60,8 @@ def advance(data,seconds):
 
 def has_timers(data):
     from app.services.portable_lights import walk
-    return any(medical_gloves(item) and item.get('sterility') for _,item in walk(data,True))
+    return any((medical_gloves(item) and item.get('sterility')) or regenerating_armor(item)
+        for _,item in walk(data,True))
 
 
 def infection_multiplier(data):
