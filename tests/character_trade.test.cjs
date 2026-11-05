@@ -31,6 +31,18 @@ test('торговля вычитает стоимость проданного 
     assert.deepEqual(merchantTotals({actor:[a],target:[b]},selected,prices),{sale:25,purchase:150,actorMoney:125,targetMoney:0});
 });
 
+test('неполный инструмент оценивается по зарядам с округлением вниз для обеих цен',async()=>{
+    const {merchantTotals,merchantUnitPrice,tradeEntryKey}=await load();
+    const actor={item:{id:'tool-actor',templateId:42,category:'tool',uses:7,maxUses:12},path:['inventory','pockets',0]};
+    const target={item:{id:'tool-target',templateId:42,category:'tool',uses:3,maxUses:12},path:['inventory','backpack',0]};
+    const prices={'42':{buy:101,sell:211}};
+    assert.equal(merchantUnitPrice(actor.item,prices,'buy'),58);
+    assert.equal(merchantUnitPrice(target.item,prices,'sell'),52);
+    assert.deepEqual(merchantTotals({actor:[actor],target:[target]},
+        {actor:new Map([[tradeEntryKey(actor),1]]),target:new Map([[tradeEntryKey(target),1]])},prices),
+        {sale:58,purchase:52,actorMoney:0,targetMoney:6});
+});
+
 test('ответ сервера и сетевое событие показывают одно уведомление о сделке',async()=>{
     const {tradeResultNotice}=await load();
     const result={id:'notice-test',status:'completed',payload:{_merchant:true}};

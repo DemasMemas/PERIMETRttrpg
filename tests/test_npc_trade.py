@@ -54,6 +54,45 @@ def test_craft_only_flamethrower_cannot_enter_merchant_price_list(client,shop,au
         price_for(shop['target_character'].data,{'templateId':template.id,'attributes':template.attributes},'sell')
 
 
+def test_partly_used_tool_prorates_catalog_and_both_merchant_prices():
+    from app.services.npc_trade import price_for, tool_price
+    from app.services.exceptions import ValidationError
+
+    item = {'category': 'tool', 'templateId': 42, 'uses': 7, 'maxUses': 12}
+    merchant = {'merchant': {'prices': {'42': {'buy': 101, 'sell': 211}}}}
+    assert tool_price(item, 1001) == 583
+    assert price_for(merchant, item, 'buy') == 58
+    assert price_for(merchant, item, 'sell') == 123
+    item['uses'] = 0
+    assert price_for(merchant, item, 'buy') == 0
+    item['uses'] = 13
+    with pytest.raises(ValidationError, match='зарядов'):
+        price_for(merchant, item, 'sell')
+
+
+def test_shop_trades_partly_used_tools_at_prorated_prices(client, shop, auth_headers):
+    template = ItemTemplate(name='Инструмент для торговли', category='tool', price=1001,
+                            attributes={'uses': 12})
+    db.session.add(template)
+    db.session.flush()
+    for key, uses in [('actor_character', 7), ('target_character', 3)]:
+        data = deepcopy(shop[key].data)
+        item = data['inventory']['backpack'][0]
+        item.update(name=template.name, category='tool', templateId=template.id,
+                    price=1001, uses=uses, maxUses=12, attributes={'uses': 12})
+        shop[key].data = data
+    db.session.commit()
+    configured = configure(client, shop, auth_headers,
+        prices={str(template.id): {'buy': 101, 'sell': 211}})
+    assert configured.status_code == 200, configured.json
+    result = propose(client, shop, auth_headers, sell=1, buy=1)
+    assert result.status_code == 201, result.json
+    assert result.json['payload']['sale_total'] == 58
+    assert result.json['payload']['purchase_total'] == 52
+    assert shop['actor_character'].data['inventory']['money'] == 1006
+    assert shop['target_character'].data['inventory']['money'] == 494
+
+
 def propose(client, shop, auth_headers, *, sell=0, buy=0, as_user='actor_user', **extra):
     payload = {'merchant_mode':True, 'actor_money':0, 'target_money':0,
         'actor_revision':shop['actor_character'].revision, 'target_revision':shop['target_character'].revision}

@@ -35,9 +35,19 @@ export function tradeOffer(entries, selected) {
 
 export function merchantTotals(entries, selected, prices) {
     const total = (side, field) => entries[side].reduce((sum, entry) => sum
-        + (selected[side].get(tradeEntryKey(entry)) || 0) * Number(prices[String(entry.item?.templateId)]?.[field] || 0), 0);
+        + (selected[side].get(tradeEntryKey(entry)) || 0) * merchantUnitPrice(entry.item, prices, field), 0);
     const sale = total('actor', 'buy'), purchase = total('target', 'sell');
     return {sale, purchase, actorMoney:Math.max(0, purchase-sale), targetMoney:Math.max(0, sale-purchase)};
+}
+
+export function merchantUnitPrice(item, prices, side) {
+    const price = Number(prices[String(item?.templateId)]?.[side] || 0);
+    if (item?.category !== 'tool') return price;
+    const maximum = Number(item.maxUses ?? item.attributes?.max_uses ?? item.attributes?.uses);
+    if (!Number.isSafeInteger(maximum) || maximum <= 0) return price;
+    const remaining = Number(item.uses ?? item.attributes?.uses_remaining ?? maximum);
+    return Number.isSafeInteger(remaining) && remaining >= 0 && remaining <= maximum
+        ? Math.floor(price * remaining / maximum) : price;
 }
 
 export function validateTrade({actorOffer, targetOffer, actorMoney, targetMoney, actorBalance, targetBalance}) {
@@ -130,7 +140,7 @@ export function renderTradeEditor(modal, {actor, target, actorEntries, targetEnt
             const row = document.createElement('div');
             row.className = 'trade-item-row';
             row.innerHTML = `<label><input type="checkbox" ${selected[side].has(key) ? 'checked' : ''}><span><strong>${escape(entry.item?.name || 'Предмет')}</strong>
-                <small>${escape(entry.rootLabel || '')} · доступно ${available}${shop ? ` · ${rubles(prices[String(entry.item?.templateId)][side==='actor'?'buy':'sell'])}/шт.` : ''}</small></span></label>
+                <small>${escape(entry.rootLabel || '')} · доступно ${available}${shop ? ` · ${rubles(merchantUnitPrice(entry.item, prices, side==='actor'?'buy':'sell'))}/шт.` : ''}</small></span></label>
                 <input type="number" class="form-control trade-quantity" value="${selected[side].get(key) ?? 1}" min="1" max="${available}" step="1" aria-label="Количество: ${escape(entry.item?.name)}" ${selected[side].has(key) ? '' : 'disabled'}>`;
             const checkbox = row.querySelector('[type="checkbox"]'), input = row.querySelector('.trade-quantity');
             checkbox.onchange = () => {

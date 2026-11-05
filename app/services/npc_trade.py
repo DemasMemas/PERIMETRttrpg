@@ -89,6 +89,20 @@ def configure(lobby_id, character_id, user_id, payload):
             'money': (data.get('inventory') or {}).get('money', 0)}
 
 
+def tool_price(item, full_price):
+    """Цена за экземпляр с учётом оставшихся зарядов инструмента."""
+    price = money(full_price, label='Цена инструмента')
+    if item.get('category') == 'tool':
+        attrs = item.get('attributes') or {}
+        maximum = item.get('maxUses', attrs.get('max_uses', attrs.get('uses')))
+        if type(maximum) is int and maximum > 0:
+            remaining = item.get('uses', attrs.get('uses_remaining', maximum))
+            if type(remaining) is not int or not 0 <= remaining <= maximum:
+                raise ValidationError('Некорректное количество зарядов инструмента')
+            price = price * remaining // maximum
+    return money(price, label='Цена инструмента')
+
+
 def price_for(data, item, side):
     if (item.get('attributes') or {}).get('not_for_sale'):
         raise ValidationError('Этот предмет нельзя продать или купить у торговца')
@@ -100,7 +114,7 @@ def price_for(data, item, side):
     price = (((data or {}).get('merchant') or {}).get('prices') or {}).get(key, {}).get(side)
     if price is None:
         raise ValidationError('Для этого предмета торговец не установил цену')
-    return money(price, label='Цена торговца')
+    return tool_price(item, price)
 
 
 def totals(actor_data, target_data, actor_offer, target_offer):
