@@ -2103,6 +2103,7 @@ function getExoskeletonPowerProfile(data) {
     return {
         isExoskeleton,
         powered,
+        batteryPresent: Boolean(battery),
         strengthLevelBonus: powered ? 8 : 0,
     };
 }
@@ -2146,6 +2147,9 @@ function getMovementPenaltyBreakdown(data, suppliedWeight = null) {
     if (isExoskeleton) armor.powered = powered;
     if (powered) {
         armorPenalty = 5;
+        weightPenalty = 0;
+    } else if (isExoskeleton && exoskeleton.batteryPresent && !armor.protectionDisabled
+        && modificationRule(armor, 'unpowered_weight_penalty_suppression')) {
         weightPenalty = 0;
     }
     const activeModifiers = data?.health?.combatMeta?.consumableModifiers;
@@ -2198,6 +2202,8 @@ function getMovementPenaltyBreakdown(data, suppliedWeight = null) {
         injuries,
         intoxicationPenalty,
         poweredExoskeleton: powered,
+        unpoweredWeightUpgrade: isExoskeleton && !powered && exoskeleton.batteryPresent
+            && !armor.protectionDisabled && Boolean(modificationRule(armor, 'unpowered_weight_penalty_suppression')),
     };
 }
 
@@ -13963,6 +13969,9 @@ async function renderInventoryTab(data) {
                     <span id="exoskeleton-weight-rule" style="grid-column:span 2; opacity:.7; font-size:12px; display:${movementPenalty.poweredExoskeleton ? 'block' : 'none'};">
                         Запитанный экзоскелет: броня устанавливает штраф 5, перегруз не учитывается. Бег и спринт недоступны.
                     </span>
+                    <span id="exoskeleton-unpowered-weight-rule" style="grid-column:span 2; opacity:.7; font-size:12px; display:${movementPenalty.unpoweredWeightUpgrade ? 'block' : 'none'};">
+                        Система распределения веса: при разряженной батарее штраф груза не добавляется.
+                    </span>
                 </div>
             </details>
         </div>
@@ -15724,6 +15733,8 @@ function recalculateInventoryTotals() {
     });
     const exoskeletonRule = document.getElementById('exoskeleton-weight-rule');
     if (exoskeletonRule) exoskeletonRule.style.display = movementPenalty.poweredExoskeleton ? 'block' : 'none';
+    const unpoweredWeightRule = document.getElementById('exoskeleton-unpowered-weight-rule');
+    if (unpoweredWeightRule) unpoweredWeightRule.style.display = movementPenalty.unpoweredWeightUpgrade ? 'block' : 'none';
 
     // Заполненность карманов
     const pocketMaxVolume = pocketCapacity(currentCharacterData);

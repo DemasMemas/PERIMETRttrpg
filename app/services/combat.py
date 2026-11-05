@@ -1494,7 +1494,7 @@ class CombatService:
             if isinstance(helmet, dict) else 0
         )
 
-        from app.services.equipment_modifications import stat as modification_stat
+        from app.services.equipment_modifications import stat as modification_stat, rule as modification_rule
         armor_penalty=modification_stat(armor,'movement_penalty',CombatService._coerce_float(armor_penalty,0))
         helmet_penalty=modification_stat(helmet,'movement_penalty',CombatService._coerce_float(helmet_penalty,0))
         weight_details = CombatService._inventory_weight_details(data)
@@ -1540,6 +1540,9 @@ class CombatService:
             if exoskeleton['powered']:
                 armor_penalty = 5
                 weight_penalty = 0
+            elif (exoskeleton['battery_present'] and not armor.get('protectionDisabled')
+                  and modification_rule(armor, 'unpowered_weight_penalty_suppression')):
+                weight_penalty = 0
         total = (
             CombatService._coerce_int(armor_penalty, 0)
             + CombatService._coerce_int(helmet_penalty, 0)
@@ -1581,6 +1584,7 @@ class CombatService:
             armor.get('isExoskeleton') or attributes.get('is_exoskeleton')
         )
         powered = False
+        battery = None
         if is_exoskeleton:
             battery = next(
                 (
@@ -1609,6 +1613,7 @@ class CombatService:
         return {
             'is_exoskeleton': is_exoskeleton,
             'powered': powered,
+            'battery_present': battery is not None,
             'strength_level_bonus': 8 if powered else 0,
             'blocks_strenuous_movement': is_exoskeleton,
             'can_run': bool(is_exoskeleton and not armor.get('protectionDisabled')

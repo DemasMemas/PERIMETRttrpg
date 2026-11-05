@@ -995,6 +995,32 @@ def test_exoskeleton_without_charged_battery_keeps_weight_penalty():
     assert CombatService._movement_penalty(location_character) == 6
 
 
+@pytest.mark.parametrize('charge,disabled,modified,expected_weight', [
+    (0, False, True, 0),
+    (1, False, True, 0),
+    (0, True, True, 1),
+    (0, False, False, 1),
+    (None, False, True, 1),
+])
+def test_exoskeleton_weight_distribution_requires_discharged_installed_battery(
+        charge, disabled, modified, expected_weight):
+    from app.services.equipment_modifications import make_record, supported, definition
+
+    assert supported(definition('armor-d27'))
+    armor = {'name': 'Экзоскелет', 'movementPenalty': 5,
+             'installedModules': ([{'slotType': 'exoskeleton_battery',
+                                   'attributes': {'remaining_days': charge}}]
+                                  if charge is not None else []),
+             'protectionDisabled': disabled,
+             'modifications': [make_record('armor-d27')] if modified else []}
+    data = {'inventory': {'pockets': [{'category': 'item', 'weight': 5, 'quantity': 1}]},
+            'equipment': {'armor': armor}}
+    details = CombatService._movement_penalty_breakdown(data)
+
+    assert details['weight'] == expected_weight
+    assert details['total'] == 5 + expected_weight
+
+
 def test_helmet_movement_penalty_is_added_but_integrated_helmet_is_not():
     data = {
         "equipment": {

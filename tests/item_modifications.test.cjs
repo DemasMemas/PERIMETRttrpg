@@ -53,6 +53,27 @@ test('масса на поясе и карманы совпадают с пра�
     data.equipment.armor.protectionDisabled=true;assert.equal(traits.pocketCapacity(data),10);
 });
 
+test('система распределения веса экзоскелета совпадает с серверным правилом',async()=>{
+    const api=await rules(),source=fs.readFileSync(path.join(__dirname,'../app/static/js/characterSheet.js'),'utf8');
+    const begin=source.indexOf('function getExoskeletonPowerProfile('),end=source.indexOf('function applyModifier(',begin);
+    const context=vm.createContext({modificationRule:api.modificationRule,modificationStat:api.modificationStat,
+        wornModificationStat:()=>0,getWeightPerMovementPenalty:()=>5,getConsumableStatValue:()=>0,
+        passiveTraits:()=>({weightMultiplier:1,movementPenalty:0}),prostheticLimb:()=>null,
+        getIntoxicationProfile:()=>({movement:0})});
+    vm.runInContext(source.slice(begin,end),context);
+    const armor={name:'Экзоскелет',movementPenalty:5,
+        installedModules:[{slotType:'exoskeleton_battery',attributes:{remaining_days:0}}],
+        modifications:[{ruleId:'armor-d27',rules:{unpowered_weight_penalty_suppression:true}}]};
+    const data={equipment:{armor},inventory:{}};
+    assert.equal(context.getMovementPenaltyBreakdown(data,5).weightPenalty,0);
+    assert.equal(context.getMovementPenaltyBreakdown(data,5).unpoweredWeightUpgrade,true);
+    armor.installedModules=[];
+    assert.equal(context.getMovementPenaltyBreakdown(data,5).weightPenalty,1);
+    armor.installedModules=[{slotType:'exoskeleton_battery',attributes:{remaining_days:0}}];
+    armor.protectionDisabled=true;
+    assert.equal(context.getMovementPenaltyBreakdown(data,5).weightPenalty,1);
+});
+
 test('модификация брони добавляет реальный патрон при зарядке, ограничиваясь местом',async()=>{
     const api=await rules(),source=fs.readFileSync(path.join(__dirname,'../app/static/js/characterSheet.js'),'utf8');
     const begin=source.indexOf('function fixedMagazineLoadingPlans('),end=source.indexOf('window.calculateInventoryAccess',begin);

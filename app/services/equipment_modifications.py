@@ -51,6 +51,7 @@ SPECIAL_ARMOR={
  'g46':({'accuracy_penalty':-2},{}),'g47':({'charisma_penalty':-3},{}),
  'g48':({'movement_penalty':-1},{'filter_wear_reduction':.5}),'g58':({}, {'belt_weight_reduction':.5}),
  'g77':({}, {'belt_reload_ap_reduction':1}),'g78':({}, {'large_weapon_ergonomics':10}),
+ 'd27':({}, {'unpowered_weight_penalty_suppression':True}),
  'd32':({}, {'exoskeleton_run':True})}
 
 
