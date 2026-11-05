@@ -36,6 +36,7 @@ def units(data,name):return sum(_available_uses(i) for i in data['inventory']['p
     ('recipe-aa21','Анальгин (Таблетка)'),
     ('recipe-aa24','Пенициллин (Таблетка)'),
     ('recipe-aa35','Хирургический набор "Крест"'),
+    ('recipe-aa28','Кустарный набор "Айболит"'),
     ('recipe-aa39','Ибупрофен (Таблетка)'),
     ('recipe-aa41','Жаропонижающее средство "Мороз"'),
 ])
