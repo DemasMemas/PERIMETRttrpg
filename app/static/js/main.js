@@ -73,6 +73,7 @@ import {
 } from './locationScene.js';
 import { getUserColorHex, updateMyColor } from './colors.js';
 import { openLobbyRestModal, closeLobbyRestModal, saveLobbyTimeActivity, startLobbyRest } from './rest.js';
+import { initTimePlanning } from './timePlanning.js';
 import {
     beginWorldGroupCreation,
     beginWorldMapEventCreation,
@@ -152,6 +153,7 @@ initCharacters(currentLobbyId, token);
 initMutantForm();
 initMapEdit(currentLobbyId, token);
 const socket = initSocket(currentLobbyId, token);
+initTimePlanning(currentLobbyId, socket);
 
 // Инициализация маркеров
 initMarkers(currentLobbyId, token, socket);

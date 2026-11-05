@@ -35,6 +35,15 @@ const characterSaver = createCharacterSaver((characterId, updates) => apiFetch(`
 }), getCharacterBase);
 
 export const Server = {
+    getTimePlans: lobbyId => apiFetch(`/lobbies/${lobbyId}/time-plans`),
+    createTimePlanRequest: (lobbyId,payload) => apiFetch(`/lobbies/${lobbyId}/time-plans`,{
+        method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}),
+    saveTimePlan: (lobbyId,planId,payload) => apiFetch(`/lobbies/${lobbyId}/time-plans/${planId}`,{
+        method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}),
+    reviewTimePlan: (lobbyId,planId,payload) => apiFetch(`/lobbies/${lobbyId}/time-plans/${planId}/review`,{
+        method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}),
+    rollTimePlan: (lobbyId,planId,payload) => apiFetch(`/lobbies/${lobbyId}/time-plans/${planId}/roll`,{
+        method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}),
     getCrafting: characterId => apiFetch(`/lobbies/characters/${characterId}/crafting`),
     craft: (characterId,payload) => apiFetch(`/lobbies/characters/${characterId}/crafting`,{
         method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}),

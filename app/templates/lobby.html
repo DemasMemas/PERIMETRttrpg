@@ -78,6 +78,7 @@
             <button class="menu-item" id="common-tools-toggle" type="button" aria-label="Инструменты карты" aria-controls="panel-common-tools" aria-expanded="false" title="Открыть или закрыть инструменты карты"><svg class="menu-icon" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="m3 6 6-3 6 3 6-3v15l-6 3-6-3-6 3V6Zm6-3v15m6-12v15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg></button>
             <button class="menu-item edit-toggle" id="edit-toggle" style="display:none;" onclick="toggleEditMode()" title="Режим редактирования карты">✏️</button>
             <button class="menu-item" id="lobby-rest-btn" style="display:none;" onclick="openLobbyRestModal()" title="Отдых и сон персонажей">Отдых</button>
+            <button class="menu-item" id="time-plans-btn" type="button" title="Планы игрового времени">Планы <span id="time-plans-count" hidden></span></button>
             <button class="menu-item" id="world-travel-btn" onclick="openWorldTravelModal()" title="Группы и перемещение по миру">Путь</button>
             <button class="menu-item settings-btn" id="settings-btn" style="display:none;" onclick="toggleSettings()" title="Настройки комнаты">⚙️</button>
             <button class="menu-item" id="templates-manager-btn" style="display:none;" onclick="openTemplatesManager()" title="Управление шаблонами">📁</button>
@@ -753,6 +754,16 @@
                 <select id="anomaly-field-character" class="form-control"></select>
             </label>
             <div id="anomaly-field-results" class="anomaly-field-results"></div>
+        </div>
+    </div>
+
+    <div id="time-plans-modal" class="modal" style="display:none;" role="dialog" aria-modal="true" aria-labelledby="time-plans-title">
+        <div class="modal-content time-plans-dialog">
+            <button type="button" class="time-plans-close" aria-label="Закрыть">×</button>
+            <h2 id="time-plans-title">Планы игрового времени</h2>
+            <p class="time-plans-note">План согласует намерения. Игровое время и ресурсы меняются только при выполнении действий в игре.</p>
+            <div id="time-plans-create" hidden></div>
+            <div id="time-plans-list"></div>
         </div>
     </div>
 

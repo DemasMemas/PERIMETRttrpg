@@ -3970,3 +3970,43 @@ input[type=range]::-webkit-slider-thumb {
     .trade-filters { grid-template-columns: minmax(0,1fr); }
     .merchant-columns, .merchant-price-row { grid-template-columns: minmax(0,1fr) 80px 80px; gap: 6px; }
 }
+/* Планы игрового времени: каждый персонаж сохраняет собственную шкалу. */
+.time-plans-dialog { width:min(980px,96vw); max-width:96vw; max-height:92vh; overflow-y:auto; padding:24px; position:relative; }
+.time-plans-dialog h2 { margin:0 42px 8px 0; }
+.time-plans-close { position:absolute; top:15px; right:18px; border:0; background:transparent; color:inherit; font-size:30px; cursor:pointer; }
+.time-plans-note { margin:0 0 18px; opacity:.75; }
+.time-plan-request, .time-plan-card { border:1px solid #64716a; border-radius:10px; padding:16px; margin:14px 0; background:rgba(24,34,30,.88); color:#e8e9df; }
+.time-plan-request h3, .time-plan-card h3 { margin:0 0 5px; }
+.time-plan-owners { display:flex; flex-wrap:wrap; gap:8px 18px; margin:10px 0; }
+.time-plan-owners label { display:inline-flex; gap:5px; align-items:center; }
+.time-plan-request > label { display:inline-flex; gap:8px; align-items:center; margin-right:12px; }
+.time-plan-request input[type=number] { width:110px; }
+.time-plan-card header { display:flex; justify-content:space-between; gap:12px; align-items:start; }
+.time-plan-card header small { opacity:.7; }
+.time-plan-status { font-size:13px; border:1px solid #7b8e7c; border-radius:999px; padding:4px 9px; white-space:nowrap; }
+.time-plan-timeline { margin:14px 0; }
+.time-plan-track { position:relative; height:48px; border:1px solid #a4ac9c; border-radius:5px; background:#27362f; overflow:hidden; }
+.time-plan-segment { position:absolute; top:0; bottom:0; display:flex; align-items:center; justify-content:center; min-width:0; border-right:2px solid #17241d; background:#647b63; overflow:hidden; }
+.time-plan-segment:nth-child(even) { background:#58745d; }
+.time-plan-segment.is-free { background:repeating-linear-gradient(135deg,#35473c,#35473c 10px,#405246 10px,#405246 20px); }
+.time-plan-segment.is-over { background:#9b6849; }
+.time-plan-segment.is-approved { box-shadow:inset 0 -5px #a7d69b; }
+.time-plan-segment span { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; padding:0 5px; font-size:12px; }
+.time-plan-limit { position:absolute; top:0; bottom:0; border-left:2px dashed #f6d77f; z-index:2; }
+.time-plan-scale { display:flex; justify-content:space-between; gap:8px; font-size:12px; margin-top:4px; }
+.time-plan-scale strong { text-align:center; }
+.time-plan-activity-list { display:grid; gap:7px; }
+.time-plan-activity-row { display:flex; gap:7px; align-items:center; padding:7px 0; border-bottom:1px solid #536358; flex-wrap:wrap; }
+.time-plan-activity-row > div:first-child { flex:1 1 200px; }
+.time-plan-activity-row p { margin:3px 0; opacity:.75; }
+.time-plan-activity-row input, .time-plan-activity-row select, .time-plan-request input[type=number] { background:#1d2b24; color:#f1f1e9; border:1px solid #819183; border-radius:5px; padding:6px; }
+.time-plan-activity-row input[data-time-field=name] { flex:2 1 150px; }
+.time-plan-activity-row input[data-time-field=duration], .time-plan-activity-row input[data-roll-difficulty] { width:75px; }
+.time-plan-activity-row input[data-time-field=note] { flex:3 1 160px; }
+.time-plan-row-actions, .time-plan-actions { display:flex; gap:7px; flex-wrap:wrap; align-items:center; }
+.time-plan-actions { margin-top:12px; }
+.time-plan-approved { color:#a7d69b; font-size:12px; }
+.time-plan-roll-result { color:#f4d692; font-size:12px; }
+#time-plans-count { display:inline-block; min-width:18px; border-radius:12px; padding:1px 5px; background:#b35d3f; color:white; text-align:center; }
+#time-plans-count[hidden] { display:none; }
+@media(max-width:650px) { .time-plans-dialog { padding:16px; } .time-plan-scale { flex-wrap:wrap; } .time-plan-card header { flex-direction:column; } }

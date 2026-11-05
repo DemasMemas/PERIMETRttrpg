@@ -27,3 +27,4 @@ from .character_interaction import CharacterInteractionRequest
 from .deferred_action import DeferredCombatAction
 from .consumable_use import ConsumableUse
 from .world_travel import WorldGroup, WorldMapEvent, WorldTravelEvent
+from .time_planning import TimePlanRequest, TimePlan

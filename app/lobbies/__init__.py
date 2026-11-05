@@ -3630,6 +3630,53 @@ def perform_social_check(character_id):
     return jsonify(result),200
 
 
+@lobbies_bp.route('/<int:lobby_id>/time-plans', methods=['GET','POST'])
+@jwt_required()
+@requires_participant
+def lobby_time_plans(lobby_id,lobby,participant):
+    from app.services.time_planning import list_plans,create_request
+    if request.method=='GET':return jsonify(list_plans(lobby,participant.user_id)),200
+    return jsonify(create_request(lobby,participant.user_id,request.get_json() or {})),200
+
+
+@lobbies_bp.route('/<int:lobby_id>/time-plans/<int:plan_id>', methods=['PUT'])
+@jwt_required()
+@requires_participant
+def update_lobby_time_plan(lobby_id,plan_id,lobby,participant):
+    from app.services.time_planning import save_plan
+    return jsonify(save_plan(lobby,plan_id,participant.user_id,request.get_json() or {})),200
+
+
+@lobbies_bp.route('/<int:lobby_id>/time-plans/<int:plan_id>/review', methods=['POST'])
+@jwt_required()
+@requires_participant
+def review_lobby_time_plan(lobby_id,plan_id,lobby,participant):
+    from app.services.time_planning import review_plan
+    return jsonify(review_plan(lobby,plan_id,participant.user_id,request.get_json() or {})),200
+
+
+@lobbies_bp.route('/<int:lobby_id>/time-plans/<int:plan_id>/roll', methods=['POST'])
+@jwt_required()
+@requires_participant
+def roll_lobby_time_plan(lobby_id,plan_id,lobby,participant):
+    from app.services.time_planning import roll_activity
+    result=roll_activity(lobby,plan_id,participant.user_id,request.get_json() or {})
+    if result.get('rolled_activity_id') and not result.get('replayed'):
+        from app.models import LobbyCharacter
+        character=db.session.get(LobbyCharacter,result['character_id'])
+        entry=next(item for item in result['activities'] if item['id']==result['rolled_activity_id'])
+        check=entry['roll']
+        outcome=(check['failure_reason'] if check.get('failure_reason') else
+            f"d20 {'/'.join(str(value) for value in check['rolls'])}, итог {check['total']} "
+            f"против СЛ {check['difficulty']} — {'успех' if check['success'] else 'провал'}")
+        _emit_lobby_chat_message(lobby_id,participant.user_id,
+            f"{character.name}: {entry['name']} — {check['skill_label']}: {outcome}",
+            username='План времени')
+        emit_character_update({'character_id':character.id,'updates':{'data':character.data_snapshot()},
+            'updated_by':participant.user_id,'source':'time_plan_roll'})
+    return jsonify(result),200
+
+
 @lobbies_bp.route('/characters/<int:character_id>/medical-procedure', methods=['POST'])
 @jwt_required()
 def apply_medical_procedure(character_id):
