@@ -11665,7 +11665,7 @@ class CombatService:
             key: {
                 **profile,
                 'available': key not in unavailable,
-                'unit_price': round(base_price * profile['price_multiplier']),
+                'unit_price': math.floor(base_price * profile['price_multiplier']),
                 'radiation': CombatService.BUTCHERING_MEAT_RADIATION.get(species, 0) if key == 'meat' else 0,
             }
             for key, profile in CombatService.BUTCHERING_PARTS.items()

@@ -84,12 +84,16 @@ def _allocate(data,recipe):
     candidates=entries(data);spent={};allocations=[];missing=[]
     for index,component in enumerate(recipe['components']):
         if _environment(component):continue
+        meat_component = index == 0 and recipe['id'] in {'recipe-aa15', 'recipe-aa16'}
         names={normalized(name) for name in component['name'].split('/')}
         left=component['quantity']
         for path,item in candidates:
             from app.services.flamethrower import charges
-            attrs=item.get('attributes') or {};whole=bool(component.get('whole_tank') or component.get('whole_air'))
-            matches=(attrs.get('flamethrower_tank')==component.get('whole_tank') and charges(item)==0 if component.get('whole_tank')
+            attrs=item.get('attributes') or {};whole=bool(meat_component or component.get('whole_tank') or component.get('whole_air'))
+            if meat_component:
+                from app.services.cooked_meat import ingredient_matches
+                matches=ingredient_matches(recipe['id'],item)
+            else:matches=(attrs.get('flamethrower_tank')==component.get('whole_tank') and charges(item)==0 if component.get('whole_tank')
                 else bool(attrs.get('flamethrower_air')) if component.get('whole_air') else normalized(item['name']) in names)
             if not matches or _contains_individual_items(item):continue
             key=tuple(path);available=(item.get('quantity',1) if whole else _available_uses(item) if item.get('quantity',1)>0 else 0)-spent.get(key,0)
@@ -484,6 +488,10 @@ def operate(character_id,user_id,payload):
             output=db.session.get(ItemTemplate,job['output_id'])
             if not output:raise ConflictError('Шаблон результата удалён')
             produced=item_from_template(output,job['output_count'])
+            if job['recipe_id'] in {'recipe-aa15', 'recipe-aa16'}:
+                from app.services.cooked_meat import cooked_output
+                source=next(entry['item'] for entry in job['escrow'] if entry['component']==0)
+                cooked_output(source,job['recipe_id'],produced)
             if job.get('output_uses') is not None:
                 if type(produced.get('maxUses')) is not int or not 0<job['output_uses']<produced['maxUses']:
                     raise ConflictError('Каталожный максимум зарядов инструмента изменился')

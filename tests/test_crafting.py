@@ -140,6 +140,96 @@ def test_crafted_tool_has_recipe_charges_and_catalog_maximum(client,workshop,aut
     assert sum(i.get('templateId')==template.id for i in repeated.json['data']['inventory']['pockets'])==1
 
 
+def test_cooking_mutant_meat_keeps_source_radiation_and_reboils_without_duplication(
+        client, workshop, auth_headers, monkeypatch):
+    from app.services.cooked_meat import templates as meat_templates
+
+    db.session.add_all(ItemTemplate(**entry) for entry in meat_templates())
+    data=deepcopy(workshop['actor_character'].data)
+    data['skills']['other']['survival']={'base':20}
+    data['inventory']['pockets'].extend([
+        {'id':'raw-meat','name':'Мясо: Слепыш','category':'mutant_part','quantity':1,'price':25,
+         'attributes':{'mutant_part':'meat','source_mutant':'Слепыш','radiation':25}},
+        {'name':'Вода','category':'consumable','quantity':4},
+        {'name':'Костер','category':'tool','quantity':1},
+        {'name':'котелок','category':'tool','quantity':1},
+    ])
+    workshop['actor_character'].data=data
+    db.session.commit()
+    monkeypatch.setattr('app.services.crafting.resolve_creation',lambda quote:{'success':True,'roll':100,'automatic':False})
+    for sequence,expected in [(1,18.75),(2,12.5)]:
+        started=call(client,workshop,auth_headers,'start',recipe_id='recipe-aa16',
+                     operation_id=f'start-meat-{sequence}')
+        assert started.status_code==200,started.json
+        workshop['lobby'].game_time_minutes+=60
+        db.session.commit()
+        completed=call(client,workshop,auth_headers,'finish',job_id=started.json['result']['id'],
+                       operation_id=f'finish-meat-{sequence}')
+        assert completed.status_code==200,completed.json
+        cooked=[item for item in completed.json['data']['inventory']['pockets']
+                if item.get('attributes',{}).get('cooked_meat')=='boiled']
+        assert len(cooked)==1
+        assert cooked[0]['attributes']['meat_remaining_radiation']==expected
+        assert (cooked[0]['uses'],cooked[0]['price'],cooked[0]['weight'],cooked[0]['volume'])==(3,25,1,1)
+    assert not any(item.get('id')=='raw-meat' for item in completed.json['data']['inventory']['pockets'])
+
+
+def test_meat_from_tusha_cannot_be_fried_but_loses_half_radiation_when_boiled():
+    from app.services.cooked_meat import ingredient_matches, cooked_output, templates
+    raw={'name':'Мясо: Туша','category':'mutant_part','price':300,
+         'attributes':{'mutant_part':'meat','source_mutant':'Туша','radiation':25}}
+    assert not ingredient_matches('recipe-aa15',raw)
+    assert ingredient_matches('recipe-aa16',raw)
+    output={**templates()[1], 'attributes':deepcopy(templates()[1]['attributes']), 'uses':3}
+    cooked_output(raw,'recipe-aa16',output)
+    assert output['attributes']['meat_remaining_radiation']==12.5
+    assert output['price']==300
+
+
+def test_frying_meat_uses_real_raw_part_and_fat(client, workshop, auth_headers, monkeypatch):
+    from app.services.cooked_meat import templates as meat_templates
+
+    db.session.add_all(ItemTemplate(**entry) for entry in meat_templates())
+    data=deepcopy(workshop['actor_character'].data)
+    data['skills']['other']['survival']={'base':20}
+    data['inventory']['pockets'].extend([
+        {'id':'raw-frying','name':'Мясо: Слепыш','category':'mutant_part','quantity':1,'price':25,
+         'attributes':{'mutant_part':'meat','source_mutant':'Слепыш','radiation':25}},
+        {'name':'Жир','category':'crafting_material','quantity':1},
+        {'name':'Костер','category':'tool','quantity':1},
+        {'name':'котелок','category':'tool','quantity':1},
+    ])
+    workshop['actor_character'].data=data
+    db.session.commit()
+    started=call(client,workshop,auth_headers,'start',recipe_id='recipe-aa15')
+    assert started.status_code==200,started.json
+    workshop['lobby'].game_time_minutes+=30
+    db.session.commit()
+    monkeypatch.setattr('app.services.crafting.resolve_creation',lambda quote:{'success':True,'roll':100,'automatic':False})
+    completed=call(client,workshop,auth_headers,'finish',job_id=started.json['result']['id'])
+    assert completed.status_code==200,completed.json
+    cooked=[item for item in completed.json['data']['inventory']['pockets']
+            if item.get('attributes',{}).get('cooked_meat')=='fried']
+    assert len(cooked)==1
+    assert cooked[0]['attributes']['meat_remaining_radiation']==6.25
+    assert cooked[0]['attributes']['cooking_count']==1
+    assert cooked[0]['price']==25
+
+
+def test_cooked_meat_migration_adds_only_missing_templates(app, monkeypatch):
+    import importlib.util
+    from pathlib import Path
+
+    path=Path(__file__).resolve().parents[1]/'migrations/versions/d39b6c1f2a82_add_cooked_meat_templates.py'
+    spec=importlib.util.spec_from_file_location('cooked_meat_migration',path)
+    migration=importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(migration)
+    monkeypatch.setattr(migration.op,'get_bind',lambda:db.session.connection())
+    migration.upgrade();migration.upgrade()
+    from app.services.cooked_meat import NAMES
+    assert ItemTemplate.query.filter(ItemTemplate.name.in_(NAMES.values())).count()==2
+
+
 def test_approved_salvage_materials_and_craft_only_flamethrowers():
     from app.services.equipment_catalog import load_catalog
     from app.services.crafting_rules import catalog

@@ -80,6 +80,8 @@ def parse_catalog(workbook_path):
                 'Станки', {'craft_workbench': True, 'uses': 50, 'max_uses': 50, 'hourly_rent': bench['hourly_rent'],
                            'unspecified_fields': ['weight', 'volume']}))
     entries.extend(additional_water_templates(entries))
+    from app.services.cooked_meat import templates as cooked_meat_templates
+    entries.extend(cooked_meat_templates())
     return prepare_catalog(entries)
 
 
@@ -125,7 +127,8 @@ def load_catalog(path=None):
     if payload.get('version') != 1 or not isinstance(payload.get('templates'), list):
         raise ValueError('Неизвестный формат каталога снаряжения')
     entries = payload['templates']
-    return prepare_catalog([*entries, *additional_water_templates(entries)])
+    from app.services.cooked_meat import templates as cooked_meat_templates
+    return prepare_catalog([*entries, *additional_water_templates(entries), *cooked_meat_templates()])
 
 
 def shifted_helmet_updates(previous,canonical):

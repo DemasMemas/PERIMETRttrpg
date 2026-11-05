@@ -457,6 +457,37 @@ def test_new_water_can_be_drunk_through_game_action(client, pair, auth_headers, 
     assert response.json['data']['inventory']['backpack'][0]['uses'] == 2
 
 
+@pytest.mark.parametrize('source_radiation,expected_radiation,expected_exhaustion', [
+    (25, 6.25 / 3, 2.5), (0, 0, 1),
+])
+def test_cooked_meat_applies_one_third_radiation_and_one_meal(
+        client, pair, auth_headers, source_radiation, expected_radiation, expected_exhaustion):
+    from app.services.cooked_meat import templates, cooked_output
+    from app.services.character_starting_purchase import item_from_template
+
+    template = ItemTemplate(**templates()[0])
+    db.session.add(template)
+    db.session.flush()
+    raw = {'name': 'Мясо: Слепыш', 'category': 'mutant_part', 'price': 25,
+           'attributes': {'mutant_part': 'meat', 'source_mutant': 'Слепыш',
+                          'radiation': source_radiation}}
+    item = cooked_output(raw, 'recipe-aa15', item_from_template(template))
+    data = deepcopy(pair['actor_character'].data)
+    data['inventory']['backpack'] = [item]
+    data['health'].update(radiation=0, exhaustion=2)
+    pair['actor_character'].data = data
+    flag_modified(pair['actor_character'], 'data')
+    LocationCombatState.query.one().status = 'idle'
+    db.session.commit()
+    response = apply_general(client, pair, auth_headers, item)
+    assert response.status_code == 200, response.json
+    health = response.json['data']['health']
+    assert health['radiation'] == pytest.approx(expected_radiation)
+    assert health['exhaustion'] == expected_exhaustion
+    assert health['needs']['mealsToday'] == 1
+    assert response.json['data']['inventory']['backpack'][0]['uses'] == 2
+
+
 def test_custom_lobby_consumable_uses_profile_after_rename(client, pair, auth_headers):
     LocationCombatState.query.one().status = "idle"
     profile = {

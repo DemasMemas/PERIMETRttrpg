@@ -712,6 +712,8 @@ class GeneralConsumableService:
         profile = with_darkness_modifiers(
             (template.attributes or {}).get("consumable") or {}, template.description or "",
         )
+        from app.services.cooked_meat import portion_profile
+        profile, direct = portion_profile(template, item, profile, direct)
         from app.services.character_medicine import prepare_profile
         profile,direct=prepare_profile(profile,direct,item,data,template)
         application = payload.get("application")
