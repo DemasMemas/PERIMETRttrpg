@@ -82,14 +82,17 @@ def test_unlock_is_paid_once_and_cannot_exceed_maximum(client,gunsmith,auth_head
     assert repeated.status_code==200 and repeated.json['data']['inventory']['money']==2500
 
 
-def test_belt_uses_class_one_armor_rules_and_own_service_price(client,gunsmith,auth_headers,monkeypatch):
+@pytest.mark.parametrize('rule_id,effect,expected',[
+    ('armor-g58','belt_weight_reduction',.75),('armor-g78','large_weapon_ergonomics',15),
+])
+def test_belt_uses_class_one_armor_rules_and_own_service_price(client,gunsmith,auth_headers,monkeypatch,rule_id,effect,expected):
     data=deepcopy(gunsmith['actor_character'].data)
     data['inventory']['pockets'].extend([
         {'id':'belt-one','name':'Пояс','category':'belt','quantity':1,'modifications':[]},
         {'id':'belt-tools','name':'Набор инструментов Бронника (Упрощенные)','category':'tool','quantity':1,'uses':30,'maxUses':30},
     ])
     gunsmith['actor_character'].data=data;db.session.commit()
-    args={'rule_id':'armor-g58','target_path':['inventory','pockets',5],'tool_path':['inventory','pockets',6]}
+    args={'rule_id':rule_id,'target_path':['inventory','pockets',5],'tool_path':['inventory','pockets',6]}
     quote=call(client,gunsmith,auth_headers,'quote_modification',**args)
     assert quote.status_code==200,quote.json
     assert quote.json['result']['slots']['factor']==1
@@ -101,7 +104,7 @@ def test_belt_uses_class_one_armor_rules_and_own_service_price(client,gunsmith,a
     assert started.json['data']['inventory']['pockets'][6]['uses']==20
     completed=finish(client,gunsmith,auth_headers,started.json['result'])
     assert completed.status_code==200,completed.json
-    assert rule(completed.json['data']['inventory']['pockets'][5],'belt_weight_reduction')==.75
+    assert rule(completed.json['data']['inventory']['pockets'][5],effect)==expected
 
 
 def test_missing_book_or_insufficient_tool_grade_does_not_spend_charges(client,gunsmith,auth_headers):
@@ -365,6 +368,23 @@ def test_stealth_upgrade_affects_only_worn_armor(app,monkeypatch,gunsmith,bonus)
     armor.pop('protectionDisabled')
     assert total('skills.physical.awareness.visual')==CombatService._narrative_skill_check(
         {'equipment':{}},'skills.physical.awareness.visual')['total']
+
+
+@pytest.mark.parametrize('amplified,bonus',[(False,10),(True,15)])
+def test_belt_padding_requires_weapon_size_six(gunsmith,amplified,bonus):
+    actor=gunsmith['actor_location']
+    data=deepcopy(actor.character.data)
+    weapon=data['weapons'][0]
+    data['equipment']={'belt':{'category':'belt','modifications':[make_record('armor-g78',gunsmith=amplified)]}}
+    actor.character.data=data;db.session.commit()
+    def value():return CombatService._weapon_ergonomics_profile(actor,weapon,0)['value']
+    weapon['size']=5
+    small=value()
+    weapon['size']=6
+    assert value()==small+bonus
+    data['equipment']['belt']['protectionDisabled']=True
+    actor.character.data=data
+    assert value()==small
 
 
 @pytest.mark.parametrize('gunsmith,expected_blast,expected_wear',[(False,55,27.5),(True,42,10.5)])

@@ -1021,10 +1021,13 @@ class CombatService:
         from app.services.portable_lights import ergonomics as light_ergonomics
         portable_light_modifier=light_ergonomics(loc_char,weapon)
         effective_value=max(0,effective_value+portable_light_modifier)
-        from app.services.equipment_modifications import worn_stat
+        from app.services.equipment_modifications import worn_stat,worn_rule
         effective_value=max(0,effective_value+worn_stat(data,'ergonomics'))
+        weapon_size=weapon.get('size')
+        if weapon_size is None:weapon_size=(weapon.get('attributes') or {}).get('size',template_attributes.get('size'))
+        if CombatService._coerce_float(weapon_size,0)>=6:
+            effective_value+=worn_rule(data,'large_weapon_ergonomics')
         effective_value=math.floor(effective_value+.5)
-        from app.services.equipment_modifications import worn_rule
         tiers=int(modification_rule(weapon,'ergonomics_tiers')+worn_rule(data,'ergonomics_tiers'))
         thresholds=[0,11,21,31,41,51,71,81,91,100]
         band=max(i for i,minimum in enumerate(thresholds) if effective_value>=minimum)

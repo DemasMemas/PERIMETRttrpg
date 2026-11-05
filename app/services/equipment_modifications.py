@@ -48,12 +48,13 @@ SPECIAL_ARMOR={
  'g26':({'ergonomics':3},{'hearing_advantage':True}),'g27':({}, {'aimed_head_difficulty':3}),
  'g35':({}, {'concussion_reduction':2}),'g36':({'ergonomics':3},{'hearing_advantage':True}),
  'g46':({'accuracy_penalty':-2},{}),'g47':({'charisma_penalty':-3},{}),
- 'g48':({'movement_penalty':-1},{'filter_wear_reduction':.5}),'g58':({}, {'belt_weight_reduction':.5})}
+ 'g48':({'movement_penalty':-1},{'filter_wear_reduction':.5}),'g58':({}, {'belt_weight_reduction':.5}),
+ 'g78':({}, {'large_weapon_ergonomics':10})}
 
 
 def supported(rule):
     if rule['kind']=='weapon':return True
-    if rule['kind']=='belt':return rule['id']=='armor-g58'
+    if rule['kind']=='belt':return rule['id'] in {'armor-g58','armor-g78'}
     return rule['id'] in DIRECT_ARMOR or rule['id'].removeprefix('armor-') in SPECIAL_ARMOR
 
 
@@ -153,7 +154,7 @@ def make_record(rule_id,*,gunsmith=False,installer_id=None):
     for key in ('burst_no_wear','repair_discount','aimed_accuracy','burst_accuracy_reduction','radiation_with_mask','throwing_bonus',
                 'ear_protection','filter_wear_reduction','flash_reduction','aimed_head_difficulty','concussion_reduction','belt_weight_reduction',
                 'explosion_wear_reduction','anomaly_wear_reduction','supported_accuracy','anomaly_escape_reduction',
-                'stealth_hiding_bonus'):
+                'stealth_hiding_bonus','large_weapon_ergonomics'):
         if key in flags:flags[key]*=factor
     if flags.get('pistol_burst'):flags['pistol_burst_factor']=factor
     return {'ruleId':rule_id,'name':rule.get('name') or rule['description'],'description':rule['description'],
