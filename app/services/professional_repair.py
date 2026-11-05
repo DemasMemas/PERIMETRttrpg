@@ -22,8 +22,8 @@ from app.services.transaction import atomic_operation
 
 
 def markup_value(value):
-    if type(value) not in {int,float} or not isfinite(value) or not 1<=value<=10:
-        raise ValidationError('Наценка механика должна быть числом от 1 до 10')
+    if type(value) not in {int,float} or not isfinite(value) or not 0<value<=10:
+        raise ValidationError('Множитель услуг механика должен быть числом больше 0 и не выше 10')
     return Decimal(str(value))
 
 

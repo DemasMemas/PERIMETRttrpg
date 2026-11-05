@@ -75,8 +75,20 @@ def test_repair_requires_nearby_mechanic_and_valid_markup(client,mechanic,auth_h
     response=request(client,mechanic,auth_headers)
     assert response.status_code==400 and 'Подойдите' in response.json['error']['message']
     mechanic['target_location'].pos_x=2;db.session.commit()
-    response=configure(client,mechanic,auth_headers,repair_enabled=True,repair_markup=.5)
+    response=configure(client,mechanic,auth_headers,repair_enabled=True,repair_markup=0)
     assert response.status_code==400
+
+
+def test_discounted_mechanic_multiplier_below_one(client,mechanic,auth_headers):
+    response=configure(client,mechanic,auth_headers,repair_enabled=True,repair_markup=.5)
+    assert response.status_code==200,response.json
+    quote=request(client,mechanic,auth_headers)
+    assert quote.status_code==200 and quote.json['price']==125
+    paid=request(client,mechanic,auth_headers,execute=True,operation_id='half-price-repair',
+        actor_revision=mechanic['actor_character'].revision,
+        mechanic_revision=mechanic['target_character'].revision)
+    assert paid.status_code==200 and paid.json['price']==125
+    assert mechanic['actor_character'].data['inventory']['money']==875
 
 
 def test_armor_stage_repair_uses_ten_percent_of_catalog_price(client,mechanic,auth_headers):

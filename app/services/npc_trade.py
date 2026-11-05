@@ -50,8 +50,8 @@ def configure(lobby_id, character_id, user_id, payload):
         raise ValidationError('Некорректный прайс торговца')
     repair_enabled=payload.get('repair_enabled',((character.data or {}).get('merchant') or {}).get('repair_enabled',False))
     repair_markup=payload.get('repair_markup',((character.data or {}).get('merchant') or {}).get('repair_markup',1))
-    if type(repair_enabled) is not bool or type(repair_markup) not in {int,float} or not isfinite(repair_markup) or not 1<=repair_markup<=10:
-        raise ValidationError('Настройки ремонта: укажите наценку механика от 1 до 10')
+    if type(repair_enabled) is not bool or type(repair_markup) not in {int,float} or not isfinite(repair_markup) or not 0<repair_markup<=10:
+        raise ValidationError('Настройки ремонта: укажите множитель услуг механика больше 0 и не выше 10')
     prices = {}
     for key, value in payload['prices'].items():
         try:

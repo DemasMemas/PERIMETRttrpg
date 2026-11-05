@@ -32,7 +32,7 @@ export function renderMerchantEditor(modal, {character, templates, onSave, onClo
         <div class="character-trade-heading"><h3>Торговля и ремонт: ${escape(character.name)}</h3><button type="button" class="btn btn-secondary trade-close" aria-label="Закрыть">×</button></div>
         <label class="merchant-enable"><input type="checkbox" class="merchant-enabled" ${character.data?.merchant?.enabled ? 'checked' : ''}> НПС торгует по прайсу без отдельного согласия ГМа</label>
         <label class="merchant-enable"><input type="checkbox" class="merchant-repair-enabled" ${character.data?.merchant?.repair_enabled ? 'checked' : ''}> НПС оказывает платный ремонт</label>
-        <label class="trade-money-label">Наценка механика <input type="number" min="1" max="10" step="0.01" class="form-control merchant-repair-markup" value="${Number(character.data?.merchant?.repair_markup||1)}"></label>
+        <label class="trade-money-label">Множитель услуг механика <input type="number" min="0.01" max="10" step="0.01" class="form-control merchant-repair-markup" value="${Number(character.data?.merchant?.repair_markup||1)}"></label>
         <label class="trade-money-label">Деньги НПС <input type="number" min="0" step="1" class="form-control merchant-money" value="${Number(character.data?.inventory?.money||0)}"></label>
         <p>Цены за один экземпляр. Пустое поле — не продаёт или не выкупает. Износ, содержимое и установленные модули автоматически цену не меняют.</p>
         <div class="trade-filters"><input type="search" class="form-control merchant-search" placeholder="Поиск товара" aria-label="Поиск товара">
@@ -93,7 +93,7 @@ export function renderMerchantEditor(modal, {character, templates, onSave, onClo
             const funds=merchantPriceInput(modal.querySelector('.merchant-money').value);
             if(funds===null)throw Error('Укажите запас денег НПС.');
             const repairMarkup=Number(modal.querySelector('.merchant-repair-markup').value);
-            if(!Number.isFinite(repairMarkup)||repairMarkup<1||repairMarkup>10)throw Error('Наценка механика должна быть от 1 до 10.');
+            if(!Number.isFinite(repairMarkup)||repairMarkup<=0||repairMarkup>10)throw Error('Множитель услуг механика должен быть больше 0 и не выше 10.');
             saving=true;modal.querySelectorAll('button,input,select').forEach(element=>element.disabled=true);
             await onSave({enabled:modal.querySelector('.merchant-enabled').checked,prices:payload,money:funds,
                 repair_enabled:modal.querySelector('.merchant-repair-enabled').checked,repair_markup:repairMarkup,
