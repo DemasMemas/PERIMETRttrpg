@@ -203,7 +203,7 @@ def scatter_cell(location,objects,x,y,level,units):
 def fire(actor,state,plan):
     from app.services.combat import CombatService as C
     from app.services.weapon_modules import weapon_stat
-    from app.services.burning import ignite,ignite_objects
+    from app.services.burning import ignite,ignite_objects,ignite_tile_objects
     from app.services.weather_rules import at_character as weather_at
     data=actor.character.data;weapon=data['weapons'][plan['weapon_index']];fuel,air=resources(data,weapon)
     mixture=FUELS[plan['fuel']];kind=plan['kind'];mode=plan['mode']
@@ -235,6 +235,8 @@ def fire(actor,state,plan):
         {**area,'shape':'flame_rectangle','x':floor(x+.5),'y':floor(y+.5),'length':0,'width':0})
     object_hits=ignite_objects(objects,object_cells,rounds=max(1,mixture['rounds']-(kind=='reactive')),
         damage=mixture['damage'],source=area['name'])
+    tile_object_hits=ignite_tile_objects(actor.location,object_cells,rounds=max(1,mixture['rounds']-(kind=='reactive')),
+        damage=mixture['damage'],source=area['name'])
     for target in targets:
         if target.id==actor.id or not target.character:continue
         if kind=='jet' or mode=='long':hit=[floor(target.pos_x+.5),floor(target.pos_y+.5),target.floor_level or 0] in footprint
@@ -256,5 +258,6 @@ def fire(actor,state,plan):
     noise_targets=noise.apply(actor.location,actor.pos_x,actor.pos_y,actor.floor_level or 0,3 if kind=='jet' else 4)
     flag_modified(actor.character,'data')
     return {'name':('Струйный' if kind=='jet' else 'Реактивный')+' огнемёт','action_points':plan['action_points'],
-        'roll_required':True,'check':check,'success':success,'target':{'x':x,'y':y},'hits':hits,'object_hits':object_hits,
+        'roll_required':True,'check':check,'success':success,'target':{'x':x,'y':y},'hits':hits,
+        'object_hits':object_hits,'tile_object_hits':tile_object_hits,
         'fuel_left':charges(fuel),'air_left':charges(air),'wear':wear,'noise_targets':noise_targets}

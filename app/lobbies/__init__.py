@@ -4168,6 +4168,24 @@ def _publish_detonations(lobby_id, location_id, user_id, detonations, *, chat=Tr
             )
 
 
+def _publish_object_fire_updates(location_id, events):
+    """Передать клиентам изменённые и уничтоженные огнём объекты."""
+    object_ids={event.get('object_id') for event in events if event.get('object_id')}
+    tile_cells={(event['tile_x'],event['tile_y']) for event in events
+                if event.get('tile_x') is not None and event.get('tile_y') is not None}
+    for object_id in object_ids:
+        obj=db.session.get(LocationObject,object_id)
+        payload={'location_id':location_id}
+        payload.update({'object':LocationObjectSchema().dump(obj)} if obj else {'object_id':object_id})
+        socketio.emit('location_object_updated' if obj else 'location_object_deleted',payload,
+                      room=f'location_{location_id}')
+    if tile_cells:
+        location=db.session.get(Location,location_id)
+        updates=[{'x':x,'z':y,'objects':location.tiles_data[y][x].get('objects',[])} for x,y in sorted(tile_cells)]
+        socketio.emit('location_tiles_updated',{'location_id':location_id,'updates':updates},
+                      room=f'location_{location_id}')
+
+
 def _publish_combat_start(lobby_id, location_id, gm_id, state):
     socketio.emit('combat_state_updated', state, room=f"location_{location_id}")
     _publish_location_character_snapshots(location_id)
@@ -4336,6 +4354,7 @@ def end_location_combat_turn(lobby_id, location_id, lobby, participant):
             username='\u0410\u043d\u043e\u043c\u0430\u043b\u0438\u044f',
         )
     socketio.emit('combat_state_updated', state, room=f"location_{location_id}")
+    _publish_object_fire_updates(location_id,state.get('area_updates') or [])
     _publish_location_character_snapshots(location_id)
     _publish_detonations(lobby_id, location_id, participant.user_id, state.get('detonations') or [])
     return jsonify(state), 200
@@ -5099,6 +5118,11 @@ def perform_location_combat_action(lobby_id, location_id, lobby, participant):
         )
     medical_retry_result = (result.get('must_do_it') or {}).get('medical_result')
     reduction=result.get('narrative_action') or {}
+    if reduction.get('object_hits') or reduction.get('tile_object_hits'):
+        _publish_object_fire_updates(location_id,[
+            *({'object_id':object_id} for object_id in reduction.get('object_hits') or []),
+            *(reduction.get('tile_object_hits') or []),
+        ])
     if reduction.get('order'):
         socketio.emit('character_interaction_requested',reduction['order'],room=f"user_{reduction['order']['target_user_id']}")
     if result.get('action') in {'surgeon_reduction','choose_sniper_trauma'} and reduction.get('target_character_id'):

@@ -1,12 +1,13 @@
 """Настоящие боевые запросы огнемётов, ресурсы и существующее горение."""
 from copy import deepcopy
 import pytest
+from sqlalchemy.orm.attributes import flag_modified
 from app.extensions import db
 from app.models import LocationCombatState,LocationObject
 from app.models.templates import ItemTemplate
 from app.services.combat import CombatService as C
 from app.services.flamethrower import templates,prepare,resources,charges,cells,scatter_cell
-from app.services.burning import ignite_objects,advance_object_fires
+from app.services.burning import ignite_objects,ignite_tile_objects,advance_object_fires
 from app.services.character_starting_purchase import item_from_template
 from app.services.exceptions import ValidationError
 from test_grenade_rules import grenade_game
@@ -176,6 +177,69 @@ def test_fire_spreads_diagonally_at_fifty_percent_next_round_only(flame_game,mon
     monkeypatch.setattr('app.services.burning.random.randint',lambda low,high:1)
     advance_object_fires(flame_game['location'].id)
     assert objects[2].properties['object_fire']['damage_per_round']==50
+
+
+@pytest.mark.parametrize('plant_type',['tree','nature_bush_green','nature_tall_grass_dry'])
+def test_flamethrower_ignites_embedded_tree_and_round_damage_is_saved(client,flame_game,auth_headers,plant_type):
+    location=flame_game['location']
+    location.tiles_data[5][7]['objects']=[{'type':plant_type,'properties':{'cover_max_hp':120,'cover_hp':120}}]
+    flag_modified(location,'tiles_data');db.session.commit()
+    response=shoot(client,flame_game,auth_headers)
+    assert response.status_code==200,response.json
+    assert {'tile_x':7,'tile_y':5,'object_index':0} in response.json['narrative_action']['tile_object_hits']
+    assert location.tiles_data[5][7]['objects'][0]['properties']['object_fire']['remaining']==4
+    state=LocationCombatState.query.filter_by(location_id=location.id).one()
+    updates=C._advance_area_effects(state)
+    assert {'type':'fire','tile_x':7,'tile_y':5,'object_index':0,'damage':50,'destroyed':False} in updates
+    db.session.commit();db.session.expire(location)
+    assert location.tiles_data[5][7]['objects'][0]['properties']['cover_hp']==70
+
+
+def test_embedded_and_placed_trees_spread_fire_both_ways(flame_game,monkeypatch):
+    location=flame_game['location']
+    location.tiles_data[5][7]['objects']=[{'type':'tree','properties':{'cover_max_hp':300,'cover_hp':300}}]
+    placed=LocationObject(location_id=location.id,type='tree',name='Соседнее дерево',tile_x=8,tile_y=6,
+        properties={'cover_max_hp':300,'cover_hp':300})
+    db.session.add(placed);flag_modified(location,'tiles_data');db.session.commit()
+    assert ignite_tile_objects(location,[[7,5,0]],rounds=4,damage=50,source='Бензин')==[
+        {'tile_x':7,'tile_y':5,'object_index':0}]
+    monkeypatch.setattr('app.services.burning.random.randint',lambda low,high:50)
+    updates=advance_object_fires(location.id)
+    assert {'type':'fire_spread','object_id':placed.id,
+        'from_tile':{'x':7,'y':5,'object_index':0}} in updates
+    assert placed.properties['cover_hp']==300
+    location.tiles_data[7][9]['objects']=[{'type':'tree','properties':{'cover_max_hp':300,'cover_hp':300}}]
+    flag_modified(location,'tiles_data')
+    updates=advance_object_fires(location.id)
+    assert any(update.get('type')=='fire_spread' and update.get('tile_x')==9 and
+               update.get('from_object_id')==placed.id for update in updates)
+    assert location.tiles_data[7][9]['objects'][0]['properties']['cover_hp']==300
+
+
+def test_embedded_tree_is_removed_after_fire_damage(flame_game):
+    location=flame_game['location']
+    location.tiles_data[5][7]['objects']=[{'type':'tree','properties':{'cover_max_hp':40,'cover_hp':40}}]
+    flag_modified(location,'tiles_data');db.session.commit()
+    ignite_tile_objects(location,[[7,5,0]],rounds=4,damage=50,source='Бензин')
+    updates=advance_object_fires(location.id)
+    assert {'type':'fire','tile_x':7,'tile_y':5,'object_index':0,'damage':50,'destroyed':True} in updates
+    db.session.commit();db.session.expire(location)
+    assert not location.tiles_data[5][7]['objects']
+
+
+def test_fire_updates_are_sent_to_clients(flame_game,monkeypatch):
+    from app.lobbies import _publish_object_fire_updates
+    location=flame_game['location']
+    location.tiles_data[5][7]['objects']=[{'type':'nature_bush_green','properties':{'object_fire':{'remaining':3}}}]
+    placed=LocationObject(location_id=location.id,type='tree',name='Дерево',tile_x=8,tile_y=6,properties={})
+    db.session.add(placed);flag_modified(location,'tiles_data');db.session.commit()
+    emitted=[]
+    monkeypatch.setattr('app.lobbies.socketio.emit',lambda name,payload,**kwargs:emitted.append((name,payload)))
+    _publish_object_fire_updates(location.id,[{'object_id':placed.id},{'tile_x':7,'tile_y':5}])
+    assert any(name=='location_object_updated' and payload['object']['id']==placed.id
+               for name,payload in emitted)
+    assert any(name=='location_tiles_updated' and payload['updates'][0]['objects'][0]['properties']['object_fire']['remaining']==3
+               for name,payload in emitted)
 
 
 def test_service_mount_replaces_one_real_air_bottle_and_detaches_outside_combat(client,flame_game,auth_headers):

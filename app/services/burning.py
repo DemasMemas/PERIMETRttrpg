@@ -20,7 +20,8 @@ def ignite(target,rounds,*,source,damage=50,threshold=35,inclusive=False,extingu
 def flammable_object(obj):
     from app.services.movement_geometry import tree_movement_profiles
     kind=str(obj.type or '').casefold();material=str((obj.properties or {}).get('material') or '').casefold()
-    plant=kind in {'tree','bush','vegetation'} or kind.startswith('nature_') and kind[7:] in tree_movement_profiles()
+    plant=kind in {'tree','bush','vegetation'} or (kind.startswith('nature_') and (
+        kind[7:].startswith(('bush_','tall_grass_')) or kind[7:] in tree_movement_profiles()))
     return plant or material in {'wood','дерево','vegetation','растительность'}
 
 
@@ -58,43 +59,109 @@ def ignite_objects(objects,cells,*,rounds,damage,source):
     return ignited
 
 
+def _tile_plants(location):
+    from app.services.combat import CombatService
+    for y,row in enumerate(location.tiles_data or []):
+        for x,tile in enumerate(row if isinstance(row,list) else []):
+            for index,raw in enumerate((tile.get('objects') or []) if isinstance(tile,dict) else []):
+                if not isinstance(raw,dict):continue
+                proxy=CombatService._embedded_movement_object(raw,x,y)
+                if flammable_object(proxy):yield x,y,index,raw,proxy
+
+
+def ignite_tile_objects(location,cells,*,rounds,damage,source):
+    """Поджог растительности, встроенной в клетки локации."""
+    from app.services.combat import CombatService
+    from app.services.location_navigation import contains,level_of
+    occupied=set(map(tuple,cells));ignited=[]
+    for x,y,index,raw,proxy in _tile_plants(location):
+        level=level_of(proxy)
+        if not any(cell_level==level and ((cell_x,cell_y)==(x,y) or contains(proxy,cell_x+.5,cell_y+.5))
+                   for cell_x,cell_y,cell_level in occupied):continue
+        if CombatService._cover_profile(proxy)['hp']<=0:continue
+        properties=dict(raw.get('properties') or {})
+        current=properties.get('object_fire') or {}
+        properties['object_fire']={'remaining':max(rounds,int(current.get('remaining') or 0)),
+            'duration_rounds':rounds,'damage_per_round':damage,'source':source}
+        raw['properties']=properties
+        ignited.append({'tile_x':x,'tile_y':y,'object_index':index})
+    if ignited:flag_modified(location,'tiles_data')
+    return ignited
+
+
 def advance_object_fires(location_id):
-    """Один тик урона объектам в конце общего раунда."""
-    from app.models import LocationObject
+    """Один тик урона и переход огня в конце общего раунда."""
+    from app.extensions import db
+    from app.models import Location,LocationObject
     from app.services.combat import CombatService
     from app.services.location_navigation import level_of
-    affected=[]
+    affected=[];location=db.session.get(Location,location_id)
     objects=LocationObject.query.filter_by(location_id=location_id).all()
-    burning=[(obj,dict((obj.properties or {})['object_fire'])) for obj in objects
-             if isinstance((obj.properties or {}).get('object_fire'),dict)
-             and int((obj.properties or {})['object_fire'].get('remaining') or 0)>0]
+    entries=[{'key':('object',obj.id),'obj':obj,'cells':object_cells(obj),'level':level_of(obj)}
+             for obj in objects if flammable_object(obj)]
+    entries.extend({'key':('tile',x,y,index),'obj':proxy,'raw':raw,'cells':object_cells(proxy),
+                    'level':level_of(proxy),'x':x,'y':y,'index':index}
+                   for x,y,index,raw,proxy in _tile_plants(location))
+    def properties(entry):
+        if 'raw' in entry:return entry['raw'].get('properties') or {}
+        return entry['obj'].properties or {}
+    def set_properties(entry,value):
+        if 'raw' in entry:
+            entry['raw']['properties']=value
+            flag_modified(location,'tiles_data')
+        else:
+            entry['obj'].properties=value
+            flag_modified(entry['obj'],'properties')
+    burning=[(entry,dict(properties(entry)['object_fire'])) for entry in entries
+             if isinstance(properties(entry).get('object_fire'),dict)
+             and int(properties(entry)['object_fire'].get('remaining') or 0)>0]
     if not burning:return []
-    burning_ids={obj.id for obj,_ in burning}
-    for obj,fire in burning:
+    burning_ids={entry['key'] for entry,_ in burning};destroyed=set()
+    for entry,fire in burning:
         damage=max(0,int(fire.get('damage_per_round') or 0))
-        state=CombatService.apply_cover_damage(obj,damage,'fire')
-        affected.append({'object_id':obj.id,'type':'fire','damage':damage,'destroyed':state['destroyed']})
+        if 'raw' in entry:
+            profile=CombatService._cover_profile(entry['obj'])
+            hp=max(0,profile['hp']-damage)
+            next_props={**properties(entry),'cover_class':profile['class'],'cover_max_hp':profile['max_hp'],
+                'cover_hp':hp,'cover_base_physical_protection':profile['base_physical_protection'],
+                'cover_physical_protection':min(profile['physical_protection'],
+                    round(profile['base_physical_protection']*hp/profile['max_hp']))}
+            set_properties(entry,next_props)
+            state={'destroyed':hp<=0}
+            affected.append({'type':'fire','tile_x':entry['x'],'tile_y':entry['y'],
+                'object_index':entry['index'],'damage':damage,'destroyed':state['destroyed']})
+        else:
+            state=CombatService.apply_cover_damage(entry['obj'],damage,'fire')
+            affected.append({'object_id':entry['obj'].id,'type':'fire','damage':damage,'destroyed':state['destroyed']})
+        if state['destroyed']:destroyed.add(entry['key'])
         if state['destroyed']:continue
-        properties=dict(obj.properties or {})
+        next_props=dict(properties(entry))
         remaining=int(fire['remaining'])-1
-        if remaining:properties['object_fire']={**fire,'remaining':remaining}
-        else:properties.pop('object_fire',None)
-        obj.properties=properties;flag_modified(obj,'properties')
-    cells_by_id={obj.id:object_cells(obj) for obj in objects if flammable_object(obj)}
+        if remaining:next_props['object_fire']={**fire,'remaining':remaining}
+        else:next_props.pop('object_fire',None)
+        set_properties(entry,next_props)
     for source,fire in burning:
-        source_cells=cells_by_id.get(source.id,set())
-        for target in objects:
-            if target.id in burning_ids or target.id not in cells_by_id or level_of(target)!=level_of(source):continue
-            if not any(max(abs(sx-tx),abs(sy-ty))<=1 for sx,sy in source_cells for tx,ty in cells_by_id[target.id]):continue
+        for target in entries:
+            if target['key'] in burning_ids or target['key'] in destroyed or target['level']!=source['level']:continue
+            if not any(max(abs(sx-tx),abs(sy-ty))<=1 for sx,sy in source['cells'] for tx,ty in target['cells']):continue
             if random.randint(1,100)>50:continue
-            properties=dict(target.properties or {})
+            next_props=dict(properties(target))
             rounds=max(1,int(fire.get('duration_rounds') or fire.get('remaining') or 1))
-            properties['object_fire']={'remaining':rounds,'duration_rounds':rounds,
+            next_props['object_fire']={'remaining':rounds,'duration_rounds':rounds,
                                        'damage_per_round':max(0,int(fire.get('damage_per_round') or 0)),
                                        'source':fire.get('source')}
-            target.properties=properties;flag_modified(target,'properties')
-            burning_ids.add(target.id)
-            affected.append({'object_id':target.id,'type':'fire_spread','from_object_id':source.id})
+            set_properties(target,next_props)
+            burning_ids.add(target['key'])
+            event={'type':'fire_spread'}
+            if 'raw' in target:event.update(tile_x=target['x'],tile_y=target['y'],object_index=target['index'])
+            else:event['object_id']=target['obj'].id
+            if 'raw' in source:event['from_tile']={'x':source['x'],'y':source['y'],'object_index':source['index']}
+            else:event['from_object_id']=source['obj'].id
+            affected.append(event)
+    for x,y,index in sorted(((entry['x'],entry['y'],entry['index']) for entry in entries
+                             if entry['key'] in destroyed and 'raw' in entry),reverse=True):
+        location.tiles_data[y][x]['objects'].pop(index)
+        flag_modified(location,'tiles_data')
     return affected
 
 
