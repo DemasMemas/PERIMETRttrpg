@@ -78,23 +78,22 @@ def prepare(location, actor, data, item_path, item_id, target_x, target_y, targe
         raise ValidationError('Предмет слишком тяжёлый для выбранной дальности')
     if not CombatService._is_in_facing_arc(actor, x, y):
         raise ValidationError('Точка вне поля зрения персонажа')
-    strength = CombatService._base_skill_modifier(data, 'skills.physical.strength')
-    agility = CombatService._base_skill_modifier(data, 'skills.physical.agility')
-    tactics = CombatService._base_skill_modifier(data, 'skills.other.tactics')
-    posture = {'standing': 0, 'sitting': 3, 'prone': 5}.get(CombatService._posture_key(actor), 0)
-    obstacle = CombatService._throw_obstacle_difficulty(location.id, actor, x, y)
-    difficulty = max(1, 3 - strength - agility - tactics + distance + obstacle + posture + band['difficulty'])
+    check = CombatService._hand_throw_difficulty(
+        location.id, actor, data, x, y, distance, band['difficulty'])
+    from app.services.weather_rules import at_character as weather_at
+    weather = weather_at(location, actor)
     return {'item': item, 'path': item_path, 'item_name': item.get('name') or 'Предмет',
         'target_x': x, 'target_y': y, 'floor_level': floor, 'weight': weight, 'band': band,
-        'difficulty': difficulty, 'distance': distance, 'obstacle': obstacle,
-        'posture': posture, 'action_points': 2 + retrieval_cost, 'attack_type': attack_type,
+        'difficulty': check['difficulty'] - weather['accuracy'], 'distance': distance,
+        'disadvantage': weather['accuracy_disadvantage'], 'obstacle': check['obstacle'],
+        'posture': check['posture'], 'action_points': 2 + retrieval_cost, 'attack_type': attack_type,
         'split_stack': item.get('quantity', 1) > 1, 'held_binding': bool(held_binding)}
 
 
 def execute(location, actor, data, plan, round_number):
     from app.services.combat import CombatService
     from app.services.brigadier_order import boost_roll
-    rolls, roll, order_bonus = boost_roll(data, [])
+    rolls, roll, order_bonus = boost_roll(data, [], disadvantage=plan['disadvantage'])
     success = roll + order_bonus >= plan['difficulty']
     failure = max(0, plan['difficulty'] - roll - order_bonus) if not success else 0
     x, y = (plan['target_x'], plan['target_y']) if success else CombatService._scatter_point(

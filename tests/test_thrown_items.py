@@ -53,6 +53,24 @@ def test_heavy_item_cannot_exceed_range(grenade_game):
         prepare(location,actor,actor.character.data,['inventory','pockets',0],'heavy',8,5)
 
 
+def test_throw_uses_shared_worn_modifier(grenade_game):
+    from app.services.equipment_modifications import make_record
+    actor=grenade_game['actor_location'];location=grenade_game['location']
+    data=deepcopy(actor.character.data)
+    data['inventory']['pockets']=[{'id':'weighted-rock','name':'Камень','category':'misc',
+        'weight':.5,'quantity':1}]
+    actor.character.data=data;db.session.commit()
+    base=prepare(location,actor,actor.character.data,['inventory','pockets',0],
+        'weighted-rock',4,5)['difficulty']
+    data=deepcopy(actor.character.data)
+    data['equipment']={'armor':{'name':'Броня','category':'armor',
+        'modifications':[make_record('armor-a35')]}}
+    actor.character.data=data;db.session.commit()
+    improved=prepare(location,actor,actor.character.data,['inventory','pockets',0],
+        'weighted-rock',4,5)['difficulty']
+    assert improved==max(1,base-4)
+
+
 def test_throw_hit_uses_random_d6_zone_and_armor_damage(grenade_game, monkeypatch):
     actor=grenade_game['actor_location'];target=grenade_game['target_location']
     target.pos_x,target.pos_y=4,5

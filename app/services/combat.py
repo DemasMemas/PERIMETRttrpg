@@ -6910,6 +6910,30 @@ class CombatService:
         return 5
 
     @staticmethod
+    def _hand_throw_difficulty(location_id, thrower, data, target_x, target_y, distance, weight_modifier=0):
+        throwing_bonus = sum(CombatService._base_skill_modifier(data, path) for path in (
+            'skills.physical.strength', 'skills.physical.agility', 'skills.other.tactics'))
+        if any(effect.get('source') == 'background_aggressor' and effect.get('active', True)
+               and (effect.get('remaining') or 0) > 0
+               for effect in normalize_effect_list((data.get('health') or {}).get('effects') or [])):
+            throwing_bonus += 3
+        from app.services.equipment_modifications import worn_rule
+        throwing_bonus += worn_rule(data, 'throwing_bonus')
+        posture = {'standing': 0, 'sitting': 3, 'prone': 5}.get(CombatService._posture_key(thrower), 0)
+        obstacle = CombatService._throw_obstacle_difficulty(location_id, thrower, target_x, target_y)
+        if background_is(data, 'Глаз-Алмаз'):
+            posture = obstacle = 0
+        throw_distance = distance
+        if trait_count(data, 'Волейболист'):
+            if distance < 5:
+                raise ValidationError('С чертой «Волейболист» нельзя метать ближе 5 метров')
+            throw_distance = max(0, distance - 5)
+        condition = CombatService._health_roll_modifier(data, 'skills.physical.agility')
+        difficulty = max(1, 3 + throw_distance + posture + obstacle + weight_modifier
+                         - throwing_bonus - condition)
+        return {'difficulty': difficulty, 'posture': posture, 'obstacle': obstacle}
+
+    @staticmethod
     def _apply_general_damage(target, damage, *, round_number=0, source='explosion',cause_stress=True):
         damage = max(0, round(CombatService._coerce_float(damage, 0)))
         data = dict(target.character.data or {})
@@ -14245,34 +14269,9 @@ class CombatService:
                 actual_distance=spatial_distance(location,LocationObject.query.filter_by(location_id=location_id).all(),character.pos_x,character.pos_y,character.floor_level or 0,target_proxy)
             disadvantage = no_direct_sight if source != 'hand' else False
             if source == 'hand':
-                throwing_bonus = sum(
-                    CombatService._base_skill_modifier(data, path)
-                    for path in (
-                        'skills.physical.strength',
-                        'skills.physical.agility',
-                        'skills.other.tactics',
-                    )
-                )
-                if any(e.get('source')=='background_aggressor' and e.get('active',True) and (e.get('remaining') or 0)>0
-                       for e in normalize_effect_list((data.get('health') or {}).get('effects') or [])):throwing_bonus+=3
-                from app.services.equipment_modifications import worn_rule
-                throwing_bonus+=worn_rule(data,'throwing_bonus')
-                posture_penalty = {'standing': 0, 'sitting': 3, 'prone': 5}.get(
-                    CombatService._posture_key(character), 0,
-                )
-                condition_modifier = CombatService._health_roll_modifier(
-                    data, 'skills.physical.agility',
-                )
-                obstacle_difficulty = CombatService._throw_obstacle_difficulty(
-                    location_id, character, impact_x, impact_y,
-                )
-                if background_is(data,'Глаз-Алмаз'):posture_penalty=obstacle_difficulty=0
-                throw_distance=actual_distance
-                if trait_count(data,'Волейболист'):
-                    if actual_distance<5:raise ValidationError('С чертой «Волейболист» нельзя метать ближе 5 метров')
-                    throw_distance=max(0,actual_distance-5)
-                difficulty = max(1,3 + throw_distance + posture_penalty + obstacle_difficulty
-                                 - throwing_bonus - condition_modifier)
+                throw_check = CombatService._hand_throw_difficulty(
+                    location_id, character, data, impact_x, impact_y, actual_distance)
+                difficulty = throw_check['difficulty']
                 roll_kind = 'throwing'
             else:
                 shooting_bonus = CombatService._base_skill_modifier(
@@ -14342,7 +14341,7 @@ class CombatService:
                 'disadvantage': disadvantage,
                 'direct_sight': not no_direct_sight,
                 'obstacle_difficulty': (
-                    obstacle_difficulty if source == 'hand' else 0
+                    throw_check['obstacle'] if source == 'hand' else 0
                 ),
             }
         elif action_key=='prosthesis':
