@@ -185,6 +185,49 @@ def test_published_equipment_matches_current_book_and_accepted_builtin_rules():
     assert parse_catalog(source) == load_catalog()
 
 
+def test_water_variants_have_author_effects_without_price_or_trade(app, monkeypatch):
+    import importlib.util
+    from pathlib import Path
+    from app.extensions import db
+    from app.models.templates import ItemTemplate
+    from app.services.equipment_catalog import WATER_VARIANTS, load_catalog
+    from app.services.npc_trade import price_for
+    from app.services.exceptions import ValidationError
+    from app.services.general_consumable import _apply_profile
+    import pytest
+
+    catalog = {item['name']: item for item in load_catalog()}
+    for name, radiation, exhaustion in WATER_VARIANTS:
+        item = catalog[name]
+        attrs = item['attributes']
+        direct = attrs['consumable']['direct']
+        assert (direct['radiation_delta'], direct['exhaustion_delta']) == (radiation, exhaustion)
+        assert direct['water_source'] and direct['uses'] == 3
+        assert item['price'] == 0 and attrs['not_for_sale']
+        assert 'price' in attrs['unspecified_fields']
+        assert {(effect['type'], effect['value']) for effect in attrs['consumable']['effects']
+                if effect['type'] in {'radiation', 'exhaustion'}} == {
+                    ('radiation', radiation), ('exhaustion', exhaustion)}
+        health = {'radiation': 0, 'exhaustion': 0}
+        _apply_profile(health, attrs['consumable'], direct, item, in_combat=False)
+        assert (health['radiation'], health['exhaustion']) == (radiation, exhaustion)
+
+    path = Path(__file__).resolve().parents[1] / 'migrations/versions/c28f5b0e1a71_add_water_variants.py'
+    spec = importlib.util.spec_from_file_location('water_variants_migration', path)
+    migration = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(migration)
+    monkeypatch.setattr(migration.op, 'get_bind', lambda: db.session.connection())
+    migration.upgrade()
+    migration.upgrade()
+    assert ItemTemplate.query.filter(ItemTemplate.name.in_([row[0] for row in WATER_VARIANTS])).count() == 3
+    template = ItemTemplate.query.filter_by(name='Болотная вода').one()
+    from app.services.crafting import _template
+    assert _template('Радиоактивная вода').name == 'Радиоактивная вода'
+    with pytest.raises(ValidationError, match='нельзя продать'):
+        price_for({'merchant': {'prices': {str(template.id): {'buy': 10, 'sell': 20}}}},
+                  {'templateId': template.id, 'attributes': template.attributes}, 'buy')
+
+
 def test_molotov_cocktail_is_not_imported_as_ammunition():
     assert _looks_like_grenade_ammo({"L": "Коктейль Молотова"}) is True
 

@@ -14,6 +14,44 @@ def _json_keys(value):
     return value
 
 
+WATER_VARIANTS = (
+    ('Болотная вода', 10, 2),
+    ('Дождевая вода', 5, 1),
+    ('Радиоактивная вода', 3, 0.5),
+)
+
+
+def additional_water_templates(entries):
+    """Утверждённые виды воды используют тару и число порций обычной воды."""
+    base = next(item for item in entries if item['category'] == 'consumable' and item['name'] == 'Вода')
+    result = []
+    for name, radiation, exhaustion in WATER_VARIANTS:
+        item = deepcopy(base)
+        item['name'] = name
+        item['price'] = 0
+        item['description'] = (f'+{radiation} радиации, +{exhaustion:g} уровня истощения, '
+                               '-10 опьянения при питье. 3 использования.')
+        attrs = item['attributes']
+        attrs['catalog_name'] = name
+        attrs.pop('source_order', None)
+        attrs['not_for_sale'] = True
+        attrs['unspecified_fields'] = ['price']
+        attrs['raw_description'] = item['description']
+        attrs['source_description'] = item['description']
+        profile = attrs['consumable']
+        profile['direct']['radiation_delta'] = radiation
+        profile['direct']['exhaustion_delta'] = exhaustion
+        profile['effects'] = [effect for effect in profile['effects'] if effect['type'] not in {'generic'}]
+        for effect in profile['effects']:
+            if effect['type'] == 'radiation':
+                effect['value'] = radiation
+            elif effect['type'] == 'exhaustion':
+                effect['value'] = exhaustion
+        attrs['effects'] = deepcopy(profile['effects'])
+        result.append(item)
+    return result
+
+
 def parse_catalog(workbook_path):
     from app.services.consumable_importer import parse_consumable_templates_v2
     from app.services.portable_lights import missing_templates as missing_lights
@@ -41,6 +79,7 @@ def parse_catalog(workbook_path):
                 'Рабочий станок. Ремонт и модификация занимают вдвое меньше времени; имеется расширенный набор инструментов. Аренда: %s ₽/ч.' % bench['hourly_rent'],
                 'Станки', {'craft_workbench': True, 'uses': 50, 'max_uses': 50, 'hourly_rent': bench['hourly_rent'],
                            'unspecified_fields': ['weight', 'volume']}))
+    entries.extend(additional_water_templates(entries))
     return prepare_catalog(entries)
 
 
@@ -85,7 +124,8 @@ def load_catalog(path=None):
     payload = json.loads(source.read_text(encoding='utf-8'))
     if payload.get('version') != 1 or not isinstance(payload.get('templates'), list):
         raise ValueError('Неизвестный формат каталога снаряжения')
-    return prepare_catalog(payload['templates'])
+    entries = payload['templates']
+    return prepare_catalog([*entries, *additional_water_templates(entries)])
 
 
 def shifted_helmet_updates(previous,canonical):

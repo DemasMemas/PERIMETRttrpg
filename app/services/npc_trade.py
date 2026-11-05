@@ -90,6 +90,8 @@ def configure(lobby_id, character_id, user_id, payload):
 
 
 def price_for(data, item, side):
+    if (item.get('attributes') or {}).get('not_for_sale'):
+        raise ValidationError('Этот предмет нельзя продать или купить у торговца')
     if (item.get('attributes') or {}).get('craft_only'):
         raise ValidationError('Этот предмет доступен только через создание')
     if item.get('createdByPlayer'):
