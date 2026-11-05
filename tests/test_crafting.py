@@ -367,3 +367,34 @@ def test_reading_takes_four_hours_and_only_skill_books_give_training(client,work
     data['skills']['physical']['strength'].update(base=16,xp=0)
     reward=award_session(data,{'operationId':'book-xp-cap','trainingSkill':'physical.strength'})
     assert reward['trainingPoints']==1
+
+
+def test_electronic_book_requires_powered_pda_at_start_and_finish(client,workshop,auth_headers):
+    from app.services.character_starting_purchase import item_from_template
+    book=ItemTemplate(name='Проверочная электронная книга',category='misc',price=100,weight=0,volume=1,
+        attributes={'book_kind':'equipment','book_subject':'Пистолеты','reading_seconds':60})
+    db.session.add(book);db.session.flush()
+    data=deepcopy(workshop['actor_character'].data)
+    data['inventory']['pockets'].append(item_from_template(book))
+    data['inventory']['pockets'][2]['pdaState']={'on':False,'charge_percent':100}
+    workshop['actor_character'].data=data;db.session.commit()
+    assert call(client,workshop,auth_headers,'read_book',path=['inventory','pockets',4]).status_code==400
+    data=deepcopy(workshop['actor_character'].data)
+    data['inventory']['pockets'][2]['pdaState']={'on':True,'charge_percent':0}
+    workshop['actor_character'].data=data;db.session.commit()
+    assert call(client,workshop,auth_headers,'read_book',path=['inventory','pockets',4]).status_code==400
+    data=deepcopy(workshop['actor_character'].data)
+    data['inventory']['pockets'][2]['pdaState']={'on':True,'charge_percent':100}
+    workshop['actor_character'].data=data;db.session.commit()
+    started=call(client,workshop,auth_headers,'read_book',path=['inventory','pockets',4])
+    assert started.status_code==200,started.json
+    workshop['lobby'].game_time_minutes+=1
+    data=deepcopy(workshop['actor_character'].data)
+    data['inventory']['pockets'][2]['pdaState']['on']=False
+    workshop['actor_character'].data=data;db.session.commit()
+    assert call(client,workshop,auth_headers,'finish',job_id=started.json['result']['id']).status_code==409
+    data=deepcopy(workshop['actor_character'].data)
+    data['inventory']['pockets'][2]['pdaState']['on']=True
+    workshop['actor_character'].data=data;db.session.commit()
+    finished=call(client,workshop,auth_headers,'finish',job_id=started.json['result']['id'])
+    assert finished.status_code==200,finished.json

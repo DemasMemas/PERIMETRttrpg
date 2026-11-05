@@ -24,6 +24,7 @@ def definition(item):
     if attrs.get('flashlight') or (str((item or {}).get('name') or '').strip().casefold()=='фонарик'
             and ((item or {}).get('category')=='weapon_module' or (item or {}).get('slotType')=='handguard')):kind='module'
     if glow(item):return 'glow'
+    if str((item or {}).get('name') or '').strip().casefold()=='кпк':return 'pda'
     return kind if kind in {'hand','improved','head','module'} else None
 
 
@@ -83,6 +84,14 @@ def preserve(current,incoming):
         if glow(item) and item.get('id') in old_glow:
             if old_glow[item['id']] is None:item.pop('glowState',None)
             else:item['glowState']=deepcopy(old_glow[item['id']])
+    def pda_identity(path,item):return item.get('id') or (tuple(path),item.get('templateId'),item.get('name'))
+    old_pda={pda_identity(path,item):item.get('pdaState') for path,item in walk(current or {})
+        if definition(item)=='pda'}
+    for path,item in walk(incoming):
+        if definition(item)=='pda' and pda_identity(path,item) in old_pda:
+            previous=old_pda[pda_identity(path,item)]
+            if previous is None:item.pop('pdaState',None)
+            else:item['pdaState']=deepcopy(previous)
     def identity(path,item):return item.get('id') or (*path,item.get('templateId'),item.get('name'))
     previous={identity(path,item):item for path,item in nvg_items(current or {})}
     for path,item in nvg_items(incoming):
@@ -97,6 +106,31 @@ def preserve(current,incoming):
 def held_hand(data):
     ids={item.get('id') for _,item in walk(data)}
     return any(binding.get('mount')=='hand' and binding.get('id') in ids for binding in bindings(data))
+
+
+def pda_state(item):
+    stored=item.get('pdaState') if isinstance(item,dict) else None
+    if not isinstance(stored,dict):return {'on':True,'charge_percent':100.0}
+    charge=stored.get('charge_percent',100)
+    charge=float(charge) if type(charge) in {int,float} and math.isfinite(charge) else 0.0
+    return {'on':stored.get('on') is not False,'charge_percent':max(0.0,min(100.0,charge))}
+
+
+def pda_ready(data):
+    return any(pda_state(item)['on'] and pda_state(item)['charge_percent']>0
+        for _,item in walk(data) if definition(item)=='pda')
+
+
+def advance_pda(data,seconds):
+    if seconds<=0:return False
+    changed=False
+    for _,item in walk(data):
+        if definition(item)!='pda':continue
+        state=pda_state(item)
+        if not state['on'] or state['charge_percent']<=0:continue
+        state['charge_percent']=max(0.0,state['charge_percent']-seconds/7200)
+        item['pdaState']=state;changed=True
+    return changed
 
 
 def advance_glow(data,seconds):
@@ -154,10 +188,11 @@ def advance(data,seconds=0,*,battle_end=False):
     from app.services.equipment_care import advance as advance_care
     changed=advance_care(data,seconds)
     changed=advance_glow(data,seconds) or changed
+    changed=advance_pda(data,seconds) or changed
     for binding in bindings(data):
         item=items.get(binding.get('id'))
         if not item:continue
-        if glow(item):continue
+        if glow(item) or definition(item)=='pda':continue
         state=power(item);before=deepcopy((state,binding))
         _advance_power(state,binding,seconds,battle_end)
         changed=changed or before!=(state,binding)
@@ -191,7 +226,8 @@ def advance_lobby(lobby,seconds):
     for character in LobbyCharacter.query.filter_by(lobby_id=lobby.id).all():
         has_glow=any(glow(item) and (item.get('glowState') or {}).get('remaining_seconds',0)>0
             for _,item in walk(character.data or {}))
-        if not bindings(character.data) and not nvg_items(character.data or {}) and not has_timers(character.data or {}) and not has_glow:continue
+        has_pda=any(definition(item)=='pda' for _,item in walk(character.data or {}))
+        if not bindings(character.data) and not nvg_items(character.data or {}) and not has_timers(character.data or {}) and not has_glow and not has_pda:continue
         data=deepcopy(character.data or {})
         if advance(data,seconds):
             character.data=data;flag_modified(character,'data');updated.append(character)
@@ -345,6 +381,31 @@ def operate(character_id,user_id,payload):
     selected.setdefault('id',str(uuid4()));states=data.setdefault('health',{}).setdefault('combatMeta',{}).setdefault('portableLights',[])
     binding=next((item for item in states if item['id']==selected['id']),None)
     operation=payload.get('operation');cost=0
+    if definition(selected)=='pda':
+        if operation not in {'pda_toggle','pda_battery'}:
+            raise ValidationError('Выберите действие с КПК')
+        status=pda_state(selected)
+        if operation=='pda_toggle':
+            if not status['on'] and status['charge_percent']<=0:
+                raise ValidationError('Сначала замените батарейку КПК')
+            status['on']=not status['on']
+            cost=1 if actor else 0
+        else:
+            battery=CombatService._inventory_item_at_path(data,payload.get('battery_path'))
+            if str(battery.get('name') or '').strip().casefold()!='батарейки':
+                raise ValidationError('Выберите батарейки для КПК')
+            if actor:
+                if not CombatService._has_usable_free_hand(actor):
+                    raise ValidationError('Для замены батарейки нужна свободная действующая рука')
+                cost=3+int(calculate_inventory_access(data,payload['battery_path'],battery)['retrieval_action_points'])
+            CombatService._take_inventory_item(data,payload['battery_path'],1)
+            status['charge_percent']=100.0
+        if actor and actor.action_points_current<cost:
+            raise ValidationError('Недостаточно ОД для КПК')
+        selected['pdaState']=status
+        if actor:actor.action_points_current-=cost
+        character.data=data;flag_modified(character,'data')
+        return character,actor,{'operation':operation,'action_points':cost,'source_id':selected['id']}
     nvg=any(item is selected for _,item in nvg_items(data))
     if nvg:
         if path[:3]!=['equipment','helmet','installedModules'] or operation not in {'toggle','battery'}:

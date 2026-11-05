@@ -402,7 +402,8 @@ def operate(character_id,user_id,payload):
         template=resolve_item_template(item,character.lobby_id) if item else None
         attrs=(template.attributes or {}) if template else {}
         if attrs.get('book_kind') not in {'skill','equipment'}:raise ValidationError('Выберите электронную книгу')
-        if not any(normalized(item['name'])=='кпк' for _,item in entries(data)):raise ValidationError('Для электронной книги нужен КПК')
+        from app.services.portable_lights import pda_ready
+        if not pda_ready(data):raise ValidationError('Для электронной книги нужен включённый заряженный КПК')
         item.setdefault('id',str(uuid4()));path=payload.get('skill_path')
         if attrs['book_kind']=='skill':
             subject=str(attrs.get('book_subject','')).casefold()
@@ -438,7 +439,8 @@ def operate(character_id,user_id,payload):
         lost={};roll=None;success=bool(action=='finish' and job['kind']=='book')
         if success:
             if not any(item.get('id')==job['book_id'] for _,item in entries(data)):raise ConflictError('Книга больше не доступна')
-            if not any(normalized(item['name'])=='кпк' for _,item in entries(data)):raise ConflictError('КПК больше не доступен')
+            from app.services.portable_lights import pda_ready
+            if not pda_ready(data):raise ConflictError('КПК выключен или разряжен')
             learned={key:job[key] for key in ('book_kind','book_subject','skill_path','name')}
             library=state.setdefault('library',[])
             if not any(e['book_kind']==learned['book_kind'] and e.get('skill_path')==learned['skill_path'] and e.get('book_subject')==learned['book_subject'] for e in library):library.append(learned)

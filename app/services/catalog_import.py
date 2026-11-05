@@ -53,14 +53,14 @@ def misc_templates(rows):
         if 'бинокль' in name.casefold():attrs['scouting_bonus']=25 if 'дальномером' in name.casefold() else 15
         litres=re.search(r'объем\s*([\d.,]+)\s*литр',name,re.I)
         if litres:attrs['liquid_capacity_liters']=number(litres[1])
-        if name=='КПК':attrs.update(uses_battery=True,battery_duration_seconds=7*86400)
+        if name=='КПК':attrs.update(uses_battery=True,battery_duration_seconds=200*3600,battery_drain_percent_per_hour=.5)
         if row.get('D') in (None,'','---','-'):attrs.setdefault('unspecified_fields',[]).append('volume')
         item=template(name,category,row.get('C'),row.get('B'),row.get('D'),description,
                       'battery' if attrs.get('slot_type')=='battery' else section,attrs)
         result.append(item)
     # КПК и книги находятся в отдельных таблицах, не в основной колонке цен.
     if any(text(r.get('G'))=='КПК' for r in rows):
-        result.append(template('КПК','misc',1500,.25,1,'КПК для связи и хранения электронных книг. Батарейка работает одну игровую неделю.','Электроника',{'uses_battery':True,'battery_duration_seconds':7*86400}))
+        result.append(template('КПК','misc',1500,.25,1,'КПК для связи и хранения электронных книг. Включённый КПК расходует 0,5% заряда батарейки за игровой час.','Электроника',{'uses_battery':True,'battery_duration_seconds':200*3600,'battery_drain_percent_per_hour':.5}))
     mode=None
     for row in rows:
         name=text(row.get('A'));price=text(row.get('B'))

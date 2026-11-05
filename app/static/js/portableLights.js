@@ -10,7 +10,7 @@ export async function renderPortableLights(container,characterId,data,operate,is
     const result=await Server.getPortableLights(characterId);
     if (!isCurrent() || !result.lights.length) return;
     const root=document.createElement('section');root.className='loadout-group portable-lights';
-    const heading=document.createElement('h4');heading.textContent='Свет и ПНВ';root.append(heading);
+    const heading=document.createElement('h4');heading.textContent='Приборы, свет и ПНВ';root.append(heading);
     const active=window.locationCombatState?.status==='active';
     const ownTurn=canEdit && (!active || window.locationCombatState?.current_character?.character_id===characterId);
     for (const light of result.lights) {
@@ -18,7 +18,9 @@ export async function renderPortableLights(container,characterId,data,operate,is
         row.dataset.lightId=light.id || JSON.stringify(light.path);
         const caption=document.createElement('strong');
         const mount={hand:'в руке',head:'на голове',taped:'на оружии',weapon:'модуль оружия'}[light.binding?.mount];
-        caption.textContent=light.kind==='glow'
+        caption.textContent=light.kind==='pda'
+            ? `${light.name} · ${Number(light.pda_state?.charge_percent??100).toFixed(1)}% · ${light.pda_state?.on?'включён':'выключен'}`
+            : light.kind==='glow'
             ? `${light.name} · ${light.activated?`${Math.ceil((light.remaining_seconds||0)/60)} мин осталось`:'не активирована'}${mount?` · ${mount}`:''}`
             : `${light.name} · ${light.uses_left}/10${mount?` · ${mount}`:''}${light.binding?` · ${light.binding.on?'включён':'выключен'}`:''}`;
         row.append(caption);
@@ -28,6 +30,25 @@ export async function renderPortableLights(container,characterId,data,operate,is
             control.dataset.lightOperation=operation;
             control.onclick=()=>operate({operation,path:light.path,source_id:light.id??null,...extra});row.append(control);
         };
+        if(light.kind==='pda'){
+            button(`${light.pda_state?.on?'Выключить':'Включить'}${active?' · 1 ОД':''}`,
+                'pda_toggle',{},!light.pda_state?.on && (light.pda_state?.charge_percent??100)<=0);
+            if(result.batteries.length){
+                const choices=document.createElement('select');choices.className='form-control';
+                choices.setAttribute('aria-label','Батарейки для КПК');
+                result.batteries.filter(battery=>battery.name==='Батарейки').forEach(battery=>{
+                    const option=document.createElement('option');option.value=JSON.stringify(battery.path);
+                    option.textContent=battery.name;choices.append(option);
+                });
+                if(choices.options.length){
+                    row.append(choices);
+                    button(`Заменить батарейку${active?' · 3 ОД + достать':''}`,'pda_battery');
+                    row.lastElementChild.onclick=()=>operate({operation:'pda_battery',path:light.path,
+                        source_id:light.id??null,battery_path:JSON.parse(choices.value)});
+                }
+            }
+            root.append(row);continue;
+        }
         if (light.binding) {
             if(light.kind!=='glow')button(`${light.binding.on?'Выключить':'Включить'}${active?' · 1 ОД':''}`,'toggle',{},!light.binding.on && light.uses_left<=0);
             if (!['weapon','nvg'].includes(light.binding.mount)) button(`Убрать${active?' · 1 ОД':''}`,'stow');

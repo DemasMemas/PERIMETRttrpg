@@ -11433,13 +11433,14 @@
       "price": 1500,
       "weight": 0.25,
       "volume": 1.0,
-      "description": "КПК для связи и хранения электронных книг. Батарейка работает одну игровую неделю.",
+      "description": "КПК для связи и хранения электронных книг. Включённый КПК расходует 0,5% заряда батарейки за игровой час.",
       "attributes": {
         "import_source": "equipment_workbook",
         "uses_battery": true,
-        "battery_duration_seconds": 604800,
+        "battery_duration_seconds": 720000,
+        "battery_drain_percent_per_hour": 0.5,
         "source_order": 315,
-        "source_description": "КПК для связи и хранения электронных книг. Батарейка работает одну игровую неделю."
+        "source_description": "КПК для связи и хранения электронных книг. Включённый КПК расходует 0,5% заряда батарейки за игровой час."
       },
       "compatible_ids": []
     },

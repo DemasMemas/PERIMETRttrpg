@@ -9667,8 +9667,9 @@ class CombatService:
         character_data = loc_char.character.data if isinstance(loc_char.character.data, dict) else {}
         from app.services.equipment_care import advance as advance_care
         advance_care(character_data,elapsed_seconds)
-        from app.services.portable_lights import advance_glow
+        from app.services.portable_lights import advance_glow, advance_pda
         advance_glow(character_data,elapsed_seconds)
+        advance_pda(character_data,elapsed_seconds)
         health = character_data.get('health')
         if not isinstance(health, dict):
             return loc_char

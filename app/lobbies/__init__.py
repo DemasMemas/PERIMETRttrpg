@@ -4956,7 +4956,7 @@ def get_extinguishing_options(lobby_id, location_id, actor_id, lobby, participan
 @lobbies_bp.route('/characters/<int:character_id>/portable-lights', methods=['GET','POST'])
 @jwt_required()
 def portable_lights(character_id):
-    from app.services.portable_lights import operate,walk,bindings,definition,nvg_items,nvg_on,glow
+    from app.services.portable_lights import operate,walk,bindings,definition,nvg_items,nvg_on,glow,pda_state
     user_id=int(get_jwt_identity())
     character=db.session.get(LobbyCharacter,character_id)
     if not character:raise NotFoundError('Персонаж не найден')
@@ -4968,7 +4968,8 @@ def portable_lights(character_id):
             items.append({'path':path,'id':item.get('id'),'name':item.get('name'),'kind':definition(item),'binding':binding,
                 'uses_left':(item.get('lightPower') or {}).get('uses_left',10),
                 'remaining_seconds':(item.get('glowState') or {}).get('remaining_seconds') if glow(item) else None,
-                'activated':bool((item.get('glowState') or {}).get('activated')) if glow(item) else None})
+                'activated':bool((item.get('glowState') or {}).get('activated')) if glow(item) else None,
+                'pda_state':pda_state(item) if definition(item)=='pda' else None})
         for path,item in nvg_items(character.data or {}):
             if path[:3]!=['equipment','helmet','installedModules']:continue
             items.append({'path':path,'id':item.get('id'),'name':item.get('name') or 'ПНВ','kind':'nvg',
