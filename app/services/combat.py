@@ -2937,17 +2937,18 @@ class CombatService:
         return max(1, 6 - math.floor(distance))
 
     @staticmethod
-    def _burst_followup_accuracy_penalty(weapon, shot_index):
+    def _burst_followup_accuracy_penalty(weapon, shot_index, character_data=None):
         if CombatService._coerce_int(shot_index, 0) <= 0:
             return 0
         weapon_class = CombatService._weapon_class(weapon)
         if weapon_class == 'machine_gun':
             return 0
+        from app.services.equipment_modifications import rule as modification_rule, worn_rule
         if weapon_class == 'shotgun':
-            return 6
-        from app.services.equipment_modifications import rule as modification_rule
+            return max(0,6-worn_rule(character_data,'worn_burst_accuracy_reduction'))
         base=2 if weapon_class=='submachine_gun' else 4
-        return max(0,base-modification_rule(weapon,'burst_accuracy_reduction'))
+        return max(0,base-modification_rule(weapon,'burst_accuracy_reduction')
+            -worn_rule(character_data,'worn_burst_accuracy_reduction'))
 
     @staticmethod
     def _burst_action_points(weapon):
@@ -8736,8 +8737,12 @@ class CombatService:
                 if attack_details.get('machine_gun_burst')
                 else 0
             )
+            if machine_gun_penalty:
+                from app.services.equipment_modifications import worn_rule
+                machine_gun_penalty=max(0,machine_gun_penalty
+                    -worn_rule(attacker_data,'worn_burst_accuracy_reduction'))
             burst_followup_penalty = (
-                CombatService._burst_followup_accuracy_penalty(weapon, index)
+                CombatService._burst_followup_accuracy_penalty(weapon, index, attacker_data)
                 if attack_details.get('fire_mode') == 'burst'
                 and not attack_details.get('machine_gun_burst')
                 and isinstance(weapon, dict)
@@ -14629,6 +14634,8 @@ class CombatService:
             difficulty = 8 - actor_bonus + target_bonus
             if target.drawn_weapon_index is not None:
                 difficulty += 4
+                from app.services.equipment_modifications import worn_rule
+                difficulty += worn_rule(target_data,'snatch_difficulty_bonus')
             success = roll == 20 or (roll != 1 and roll >= difficulty)
             removed_weapon_index = target.drawn_weapon_index if success else None
             transferred_weapon = None

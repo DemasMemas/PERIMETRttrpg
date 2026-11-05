@@ -3716,6 +3716,32 @@ def test_machine_gun_burst_difficulty_increases_every_two_shots(monkeypatch):
     assert observed_difficulties == [10, 10, 11, 11, 12, 12]
 
 
+@pytest.mark.parametrize('machine_gun,shots,expected',[
+    (False,3,[10,12,12]),
+    (True,8,[10,10,10,10,10,10,11,11]),
+])
+def test_iron_grip_reduces_real_burst_penalty(monkeypatch,machine_gun,shots,expected):
+    from app.services.equipment_modifications import make_record
+    seen=[]
+    def resolve_attack(_target,_attacker,details,**_kwargs):
+        seen.append(details['hit_difficulty'])
+        return {'roll':20,'hit':True}
+    monkeypatch.setattr(CombatService,'_resolve_attack',resolve_attack)
+    weapon={'durability':100,'maxDurability':100,
+        'subcategory':'Пулеметы' if machine_gun else 'Штурмовые винтовки и карабины'}
+    data={'weapons':[weapon],
+        'equipment':{'armor':{'name':'Экзоскелет','modifications':[make_record('armor-d30')]}}}
+    attacker=SimpleNamespace(character=SimpleNamespace(data=data))
+    details={'weapon_index':0,'shot_count':shots,'requested_shot_count':shots,
+        'hit_difficulty':10,'hit_difficulty_without_weapon_jam':10,
+        'base_shooting_disadvantage':False,'machine_gun_burst':machine_gun,
+        'fire_mode':'burst'}
+
+    CombatService._resolve_shot_sequence([SimpleNamespace()],attacker,details)
+
+    assert seen==expected
+
+
 @pytest.mark.parametrize(("subcategory", "expected"), [
     ("Пистолеты-пулеметы", [10, 12, 12]),
     ("Штурмовые винтовки и карабины", [10, 14, 14]),

@@ -26,6 +26,41 @@ def test_exoskeleton_run_upgrade_changes_actual_movement(grenade_game):
     assert CombatService._serialize_character(moved)['exoskeleton_can_run']
 
 
+def test_iron_grip_reduces_burst_penalty_only_while_worn():
+    from app.services.equipment_modifications import worn_rule
+    armor={'name':'Экзоскелет','modifications':[make_record('armor-d30')]}
+    data={'equipment':{'armor':armor}}
+    rifle={'subcategory':'Штурмовые винтовки и карабины'}
+    shotgun={'subcategory':'Дробовики'}
+    assert CombatService._burst_followup_accuracy_penalty(rifle,1,data)==2
+    assert CombatService._burst_followup_accuracy_penalty(shotgun,1,data)==4
+    assert worn_rule(data,'snatch_difficulty_bonus')==6
+    armor['protectionDisabled']=True
+    assert CombatService._burst_followup_accuracy_penalty(rifle,1,data)==4
+    assert worn_rule(data,'snatch_difficulty_bonus')==0
+
+
+def test_iron_grip_raises_real_disarm_difficulty(client,grenade_game,auth_headers,monkeypatch):
+    case=grenade_game
+    target=case['target_location']
+    target.pos_x,target.pos_y=3.1,5.2
+    target.drawn_weapon_index=0
+    data=deepcopy(target.character.data)
+    data['weapons']=[{'id':'target-gun','name':'Пистолет','category':'weapon'}]
+    data['equipment']={'armor':{'name':'Экзоскелет','modifications':[make_record('armor-d30')]}}
+    target.character.data=data
+    db.session.commit()
+    monkeypatch.setattr('app.services.combat.random.randint',lambda *_:10)
+
+    response=client.post(f"/lobbies/{case['lobby'].id}/locations/{case['location'].id}/combat/action",
+        headers=auth_headers(case['actor_user']),json={'location_character_id':case['actor_location'].id,
+        'action_key':'melee_disarm','target_character_id':case['target_character'].id})
+
+    assert response.status_code==200,response.json
+    assert response.json['melee_action']['difficulty']==18
+    assert response.json['melee_action']['success'] is False
+
+
 def test_reinforced_frame_adds_armor_and_durability_only_while_worn():
     from app.services.equipment_modifications import install, worn_rule
     armor={'name':'Броня','category':'armor','durability':50,'maxDurability':100}

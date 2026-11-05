@@ -35,6 +35,7 @@ SPECIAL_ARMOR={
  'a14':({}, {'stealth_hiding_bonus':4}),
  'd23':({}, {'anomaly_escape_reduction':3}),'a34':({}, {'fixed_reload_extra':1}),
  'd26':({}, {'polymer_regeneration':True}),
+ 'd30':({}, {'worn_burst_accuracy_reduction':2,'snatch_difficulty_bonus':6}),
  'd24':({'radiation':30,'anomaly':-10},{}),'g40':({'explosive_physical':20},{}),
  'a20':({'explosive_physical':25},{'explosion_wear_reduction':.5}),
  'd10':({}, {'anomaly_wear_reduction':.5}),'a48':({}, {'supported_accuracy':2}),
@@ -158,7 +159,7 @@ def make_record(rule_id,*,gunsmith=False,installer_id=None):
     for key in ('burst_no_wear','repair_discount','aimed_accuracy','burst_accuracy_reduction','radiation_with_mask','throwing_bonus',
                 'ear_protection','filter_wear_reduction','flash_reduction','aimed_head_difficulty','concussion_reduction','belt_weight_reduction',
                 'explosion_wear_reduction','anomaly_wear_reduction','supported_accuracy','anomaly_escape_reduction',
-                'stealth_hiding_bonus','large_weapon_ergonomics'):
+                'stealth_hiding_bonus','large_weapon_ergonomics','worn_burst_accuracy_reduction','snatch_difficulty_bonus'):
         if key in flags:flags[key]*=factor
     if flags.get('pistol_burst'):flags['pistol_burst_factor']=factor
     return {'ruleId':rule_id,'name':rule.get('name') or rule['description'],'description':rule['description'],
