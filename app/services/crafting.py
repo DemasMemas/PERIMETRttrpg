@@ -17,6 +17,16 @@ from app.services.magazine import inventory_slot
 from app.services.portable_lights import walk
 from app.services.transaction import atomic_operation
 
+CRAFTED_TOOLS={
+    'recipe-m31':('Шлифовальные инструменты 50/50',20),
+    'recipe-m32':('Паяльные инструменты 50/50',10),
+    'recipe-m33':('Смесительные инструменты 50/50',30),
+    'recipe-m35':('Набор инструментов Оружейника (Упрощёные) 15/15',5),
+    'recipe-m36':('Набор инструментов Оружейника (Стандартные) 25/25',10),
+    'recipe-m37':('Набор инструментов Бронника (Упрощёные) 10/10',5),
+    'recipe-m38':('Набор инструментов Бронника (Стандартные) 20/20',10),
+}
+
 
 def preserve(current,incoming):
     if 'crafting' in (current or {}):incoming['crafting']=deepcopy(current['crafting'])
@@ -137,11 +147,16 @@ def quote(character,data,payload):
     result=({'difficulty':0,'automatic_success':True,'failure_loss':{'random':0,'chosen':0,'all':False}}
         if recipe.get('maintenance') else creation_quote(level,difficulty,base_automatic=recipe['automatic'],
             difficulty_modifier=(approval.get('modifier',0) if approval else 0)+craft_difficulty_modifier(data)))
-    output=_template(recipe['output_name'])
+    tool_output=CRAFTED_TOOLS.get(recipe['id'])
+    output=_template(tool_output[0] if tool_output else recipe['output_name'])
     if not output:missing.append('В каталоге нет шаблона результата: '+recipe['output_name'])
+    if tool_output and output and (output.category!='tool' or type((output.attributes or {}).get('uses')) is not int
+            or not tool_output[1]<output.attributes['uses']):
+        missing.append('Каталожный максимум зарядов инструмента не совпадает с рецептом')
     if missing_tools:missing.append('Нужны: '+', '.join(missing_tools))
     if recipe.get('duration_seconds') is None:missing.append('В рецепте не задан срок работы')
     return {**result,'recipe':recipe,'allocations':allocations,'missing':missing,'output_id':output.id if output else None,
+        'output_uses':tool_output[1] if tool_output else None,
         'approval_id':approval['id'] if approval else None,'duration_seconds':recipe.get('duration_seconds')}
 
 
@@ -400,6 +415,7 @@ def operate(character_id,user_id,payload):
         result={'id':str(uuid4()),'kind':'recipe','recipe_id':plan['recipe']['id'],'name':plan['recipe']['name'],
             'quote':{k:deepcopy(plan[k]) for k in ('difficulty','automatic_success','failure_loss')},
             'escrow':reserve,'output_id':plan['output_id'],'output_count':plan['recipe']['output_count'],
+            'output_uses':plan['output_uses'],
             'started_at':now(character),'ready_at':now(character)+plan['duration_seconds']}
         state['current']=result
         if plan['approval_id']:
@@ -466,7 +482,13 @@ def operate(character_id,user_id,payload):
         if success and job['kind']=='recipe':
             output=db.session.get(ItemTemplate,job['output_id'])
             if not output:raise ConflictError('Шаблон результата удалён')
-            data.setdefault('inventory',{}).setdefault('pockets',[]).append(item_from_template(output,job['output_count']))
+            produced=item_from_template(output,job['output_count'])
+            if job.get('output_uses') is not None:
+                if type(produced.get('maxUses')) is not int or not 0<job['output_uses']<produced['maxUses']:
+                    raise ConflictError('Каталожный максимум зарядов инструмента изменился')
+                produced['uses']=job['output_uses']
+                produced['attributes']['uses_remaining']=job['output_uses']
+            data.setdefault('inventory',{}).setdefault('pockets',[]).append(produced)
         result={'job_id':job['id'],'kind':job['kind'],'name':job['name'],'cancelled':action=='cancel','success':success,'roll':roll,
             'difficulty':job['quote']['difficulty'],'lost':lost,
             'lost_items':[{'name':entry['item']['name'],'amount':lost.get(index,0)} for index,entry in enumerate(job['escrow']) if lost.get(index,0) and not success],

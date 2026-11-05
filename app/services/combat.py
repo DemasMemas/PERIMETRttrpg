@@ -15133,7 +15133,9 @@ class CombatService:
             access = calculate_inventory_access(data, item_path)
             retrieval_cost = int(access['retrieval_action_points'])
             use_discount = int(access['use_action_discount'])
-            reload_cost = trait_action_cost(data,'reload',max(0, reload_cost - use_discount)) + retrieval_cost
+            from app.services.equipment_modifications import worn_rule
+            belt_discount = int(worn_rule(data,'belt_reload_ap_reduction')) if item_path[:3]==['equipment','belt','pouches'] else 0
+            reload_cost = trait_action_cost(data,'reload',max(0, reload_cost - use_discount - belt_discount)) + retrieval_cost
             special_action_cost = reload_cost
             reload_details = {
                 'weapon_index': weapon_index,
@@ -15142,6 +15144,7 @@ class CombatService:
                 'ergonomics_modifier': ergonomics_profile['reload_action_points_modifier'],
                 'inventory_retrieval_action_points': retrieval_cost,
                 'inventory_use_action_discount': use_discount,
+                'belt_modification_discount': belt_discount,
                 'action_points': reload_cost,
             }
 

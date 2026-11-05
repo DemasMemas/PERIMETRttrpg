@@ -7,6 +7,7 @@ from app.models import DeferredCombatAction, LobbyCharacter, LocationCharacter, 
 from app.models.templates import ItemTemplate
 from app.services.exceptions import ValidationError
 from app.services.magazine import install_magazine
+from app.services.equipment_modifications import make_record
 from test_character_interactions import _setup_pair
 
 
@@ -117,6 +118,23 @@ def test_immediate_reload_spends_and_swaps_in_one_request(client, case, auth_hea
     assert response.json['reload_weapon']['inventory_retrieval_action_points'] == 0
     assert case['actor_location'].action_points_current == 2
     assert contents(case['actor_character'].data)[0]['id'] == 'old-magazine'
+
+
+@pytest.mark.parametrize('from_belt,expected_cost',[(True,5),(False,8)])
+def test_belt_reload_upgrade_only_discounts_magazines_from_belt(client,case,auth_headers,from_belt,expected_cost):
+    data=deepcopy(case['actor_character'].data)
+    data['equipment']['belt']['modifications']=[make_record('armor-g77',gunsmith=True)]
+    path=case['path']
+    if not from_belt:
+        data['inventory']['backpack']=[data['equipment']['belt']['pouches'][0]['contents'].pop()]
+        path=['inventory','backpack',0]
+    case['actor_character'].data=data
+    case['actor_location'].action_points_current=12
+    db.session.commit()
+    response=start(client,case,auth_headers,item_path=path)
+    assert response.status_code==200,response.json
+    assert response.json['reload_weapon']['action_points']==expected_cost
+    assert response.json['reload_weapon']['belt_modification_discount']==int(from_belt)
 
 
 def test_reload_uses_server_inventory_access_instead_of_client_numbers(client, case, auth_headers):

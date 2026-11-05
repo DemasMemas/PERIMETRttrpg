@@ -93,6 +93,52 @@ def test_work_gloves_lower_creation_difficulty_only_while_worn(client,workshop,a
     assert forged.json['result']['difficulty']==baseline.json['result']['difficulty']
 
 
+@pytest.mark.parametrize('recipe_id,catalog_name,uses,maximum',[
+    ('recipe-m31','Шлифовальные инструменты 50/50',20,50),
+    ('recipe-m32','Паяльные инструменты 50/50',10,50),
+    ('recipe-m33','Смесительные инструменты 50/50',30,50),
+    ('recipe-m35','Набор инструментов Оружейника (Упрощёные) 15/15',5,15),
+    ('recipe-m36','Набор инструментов Оружейника (Стандартные) 25/25',10,25),
+    ('recipe-m37','Набор инструментов Бронника (Упрощёные) 10/10',5,10),
+    ('recipe-m38','Набор инструментов Бронника (Стандартные) 20/20',10,20),
+])
+def test_crafted_tool_quote_keeps_catalog_maximum(client,workshop,auth_headers,recipe_id,catalog_name,uses,maximum):
+    data=deepcopy(workshop['actor_character'].data)
+    data['basic']={'background':{'name':'Полевой учёный'}}
+    workshop['actor_character'].data=data
+    template=ItemTemplate(name=catalog_name,category='tool',price=3000,attributes={'uses':maximum})
+    db.session.add(template);db.session.commit()
+    response=call(client,workshop,auth_headers,'quote',recipe_id=recipe_id)
+    assert response.status_code==200,response.json
+    assert response.json['result']['output_id']==template.id
+    assert response.json['result']['output_uses']==uses
+
+
+def test_crafted_tool_has_recipe_charges_and_catalog_maximum(client,workshop,auth_headers,monkeypatch):
+    data=deepcopy(workshop['actor_character'].data)
+    data['basic']={'background':{'name':'Полевой учёный'}}
+    data['inventory']['pockets'][0]['quantity']=5
+    data['inventory']['pockets'].extend([
+        {'name':'Тканные материалы','category':'crafting_material','quantity':1},
+        {'name':'Печь','category':'tool','quantity':1},
+    ])
+    workshop['actor_character'].data=data
+    template=ItemTemplate(name='Шлифовальные инструменты 50/50',category='tool',price=3000,
+        weight=2,volume=3,attributes={'uses':50})
+    db.session.add(template);db.session.commit()
+    started=call(client,workshop,auth_headers,'start',recipe_id='recipe-m31')
+    assert started.status_code==200,started.json
+    workshop['lobby'].game_day+=1;db.session.commit()
+    monkeypatch.setattr('app.services.crafting.resolve_creation',lambda quote:{'success':True,'roll':100,'automatic':False})
+    completed=call(client,workshop,auth_headers,'finish',job_id=started.json['result']['id'],chosen_loss=[0])
+    assert completed.status_code==200,completed.json
+    tool=next(i for i in completed.json['data']['inventory']['pockets'] if i.get('templateId')==template.id)
+    assert (tool['uses'],tool['maxUses'],tool['price'],tool['weight'],tool['volume'])==(20,50,3000,2,3)
+    repeated=call(client,workshop,auth_headers,'finish',job_id=started.json['result']['id'])
+    assert repeated.status_code==200 and repeated.json['result']['replayed']
+    assert sum(i.get('templateId')==template.id for i in repeated.json['data']['inventory']['pockets'])==1
+
+
 def test_approved_salvage_materials_and_craft_only_flamethrowers():
     from app.services.equipment_catalog import load_catalog
     from app.services.crafting_rules import catalog

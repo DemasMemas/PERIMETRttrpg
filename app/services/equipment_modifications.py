@@ -49,12 +49,12 @@ SPECIAL_ARMOR={
  'g35':({}, {'concussion_reduction':2}),'g36':({'ergonomics':3},{'hearing_advantage':True}),
  'g46':({'accuracy_penalty':-2},{}),'g47':({'charisma_penalty':-3},{}),
  'g48':({'movement_penalty':-1},{'filter_wear_reduction':.5}),'g58':({}, {'belt_weight_reduction':.5}),
- 'g78':({}, {'large_weapon_ergonomics':10})}
+ 'g77':({}, {'belt_reload_ap_reduction':1}),'g78':({}, {'large_weapon_ergonomics':10})}
 
 
 def supported(rule):
     if rule['kind']=='weapon':return True
-    if rule['kind']=='belt':return rule['id'] in {'armor-g58','armor-g78'}
+    if rule['kind']=='belt':return rule['id'] in {'armor-g58','armor-g77','armor-g78'}
     return rule['id'] in DIRECT_ARMOR or rule['id'].removeprefix('armor-') in SPECIAL_ARMOR
 
 
