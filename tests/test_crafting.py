@@ -86,6 +86,11 @@ def test_work_gloves_lower_creation_difficulty_only_while_worn(client,workshop,a
     workshop['actor_character'].data=data;db.session.commit()
     disabled=call(client,workshop,auth_headers,'quote',recipe_id='recipe-f4')
     assert disabled.json['result']['difficulty']==baseline.json['result']['difficulty']
+    data['equipment']['gloves']={'name':'Поддельные','category':'gloves','templateId':gloves.id,
+        'attributes':{'craft_difficulty_modifier':-100}}
+    workshop['actor_character'].data=data;db.session.commit()
+    forged=call(client,workshop,auth_headers,'quote',recipe_id='recipe-f4')
+    assert forged.json['result']['difficulty']==baseline.json['result']['difficulty']
 
 
 def test_approved_salvage_materials_and_craft_only_flamethrowers():

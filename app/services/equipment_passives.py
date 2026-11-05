@@ -25,8 +25,12 @@ def glove_protection(data):
 
 def craft_difficulty_modifier(data):
     from app.services.combat import CombatService
-    _, attrs = _worn(data, 'gloves')
-    return CombatService._coerce_float(attrs.get('craft_difficulty_modifier'), 0)
+    item = _item(data, 'gloves')
+    template = CombatService._equipment_template(item) if item else None
+    if not template or template.category != 'gloves' or str(item.get('name') or '').strip().casefold() != str(template.name).strip().casefold():
+        return 0
+    attrs = template.attributes if isinstance(template.attributes, dict) else {}
+    return max(-5, min(0, CombatService._coerce_float(attrs.get('craft_difficulty_modifier'), 0)))
 
 
 def flash_multiplier(data):
