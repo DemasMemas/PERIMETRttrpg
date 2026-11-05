@@ -184,6 +184,7 @@ ACTION_CATALOG = [
     {'key': 'change_facing', 'label': '\u0420\u0430\u0437\u0432\u043e\u0440\u043e\u0442', 'action_points': 0, 'free_actions': 0, 'movement_points': 0},
     {'key': 'attack', 'label': 'Атака', 'action_points': 3, 'free_actions': 0, 'movement_points': 0},
     {'key': 'explosive_attack', 'label': '\u0412\u0437\u0440\u044b\u0432\u0447\u0430\u0442\u043a\u0430', 'action_points': 2, 'free_actions': 0, 'movement_points': 0},
+    {'key': 'throw_item', 'label': 'Метнуть предмет', 'action_points': 2, 'free_actions': 0, 'movement_points': 0},
     {'key': 'aim', 'label': 'Прицеливание', 'action_points': 1, 'free_actions': 0, 'movement_points': 0},
     {'key': 'draw_weapon', 'label': 'Достать оружие', 'action_points': 0, 'free_actions': 0, 'movement_points': 0},
     {'key': 'stow_weapon', 'label': 'Освободить руки', 'action_points': 0, 'free_actions': 0, 'movement_points': 0},
@@ -7979,7 +7980,7 @@ class CombatService:
                 CombatService._virtual_melee_profile(attack_type, weapon, attacker_data)
                 or CombatService._weapon_damage_profile(weapon, attack_type)
             )
-            profile = dict(profile)
+            profile = dict(profile_override) if isinstance(profile_override, dict) else dict(profile)
             normalized_attack_type = str(attack_type or '').strip().casefold()
             if (
                 'затаптывание' in normalized_attack_type
@@ -9642,6 +9643,8 @@ class CombatService:
         character_data = loc_char.character.data if isinstance(loc_char.character.data, dict) else {}
         from app.services.equipment_care import advance as advance_care
         advance_care(character_data,elapsed_seconds)
+        from app.services.portable_lights import advance_glow
+        advance_glow(character_data,elapsed_seconds)
         health = character_data.get('health')
         if not isinstance(health, dict):
             return loc_char
@@ -12212,7 +12215,7 @@ class CombatService:
         )
         # Один снимок геометрии на сборку ответа, без кеша между действиями.
         scene_objects=LocationObject.query.filter_by(location_id=location.id).all()
-        from app.services.portable_lights import bindings
+        from app.services.portable_lights import bindings, ground_sources
         light_actors=[item for item in characters if item.character and bindings(item.character.data)]
 
         return {
@@ -12228,6 +12231,7 @@ class CombatService:
             },
             'pending_explosives': list(state.pending_explosives or []),
             'area_effects': list(state.area_effects or []),
+            'ground_lights': ground_sources(location.id,scene_objects),
             'current_character': CombatService._serialize_character(
                 current_character,
                 current_turn_id=state.current_location_character_id,
@@ -12678,6 +12682,8 @@ class CombatService:
             )
             for round_character in round_characters:
                 CombatService._advance_character_time(round_character, 6)
+            from app.services.portable_lights import advance_ground
+            advance_ground(location_id,6)
             state.round_number += 1
             from app.services.sniper_position import expire as expire_sniper_position
             expire_sniper_position(location_id,state)
@@ -13403,6 +13409,7 @@ class CombatService:
         narrative_roll_required=False,
         narrative_difficulty=None,
         item_path=None,
+        item_id=None,
         explosive_source=None,
         explosive_fire_mode=None,
         explosive_fuse_mode=None,
@@ -13598,6 +13605,7 @@ class CombatService:
         cover_details = None
         brace_details = None
         explosive_details = None
+        thrown_details = None
         explosive_item = None
         explosive_weapon = None
         explosive_module = None
@@ -13618,6 +13626,11 @@ class CombatService:
         order_plan=None
         reduction_plan=None
         if action_key=='evade':special_action_cost=2 if trait_count(data,'Уклонист') else 4
+        if action_key=='throw_item':
+            from app.services.thrown_items import prepare as prepare_throw
+            thrown_details=prepare_throw(location,character,data,item_path,item_id,target_x,target_y,
+                target_floor_level,attack_type)
+            special_action_cost=thrown_details['action_points']
         if action_key=='brigadier_order':
             from app.services.brigadier_order import prepare
             order_plan=prepare(character,target_character_id,attribute_choice)
@@ -16067,6 +16080,12 @@ class CombatService:
                 health=data.setdefault('health',{})
                 combat_meta=health.setdefault('combatMeta',{})
                 CombatService._clear_aim(character)
+            if action_key == 'throw_item':
+                from app.services.thrown_items import execute as execute_throw
+                thrown_details=execute_throw(location,character,data,thrown_details,current_round)
+                character.character.data=data
+                flag_modified(character.character,'data')
+                CombatService._clear_aim(character)
             if action_key != 'attack' and combat_meta.pop('mutantRageAccuracy', None) is not None:
                 character.character.data = data
                 flag_modified(character.character, 'data')
@@ -17449,6 +17468,7 @@ class CombatService:
             'action': action_key,
             'attack': attack_details,
             'explosive': explosive_details,
+            'thrown_item': thrown_details,
             'aim': aim_details,
             'posture_change': posture_details,
             'facing_change': facing_details,

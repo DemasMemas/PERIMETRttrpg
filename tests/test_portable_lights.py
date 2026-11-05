@@ -7,7 +7,7 @@ from sqlalchemy.orm.attributes import flag_modified
 from app.extensions import db
 from app.models import LocationCombatState,LocationObject
 from app.services.combat import CombatService
-from app.services.portable_lights import advance,bindings,covers,ergonomics,illumination,shooting,start_battle
+from app.services.portable_lights import advance,advance_ground,bindings,covers,ergonomics,ground_sources,illumination,ready_sources,shooting,start_battle
 from test_grenade_rules import grenade_game
 
 
@@ -147,3 +147,55 @@ def test_battery_underpayment_rolls_back_item_and_charge(client,grenade_game,aut
     assert response.status_code==400
     assert actor.action_points_current==2 and len(actor.character.data['inventory']['backpack'])==1
     assert actor.character.data['inventory']['pockets'][0]['lightPower']['uses_left']==0
+
+
+def test_glow_stick_split_ignite_throw_and_expire(client,grenade_game,auth_headers,monkeypatch):
+    actor=grenade_game['actor_location'];location=grenade_game['location']
+    data=deepcopy(actor.character.data)
+    data['inventory']['pockets']=[{'id':'glow-stack','name':'Светящаяся палочка',
+        'category':'misc','weight':.1,'quantity':2}]
+    data['weapons']=[{'id':'glow-pistol','name':'Пистолет','category':'firearm','weight':1}]
+    data['health'].setdefault('combatMeta',{})['weaponGripHands']=1
+    actor.character.data=data;actor.drawn_weapon_index=0
+    flag_modified(actor.character,'data');db.session.commit()
+    before=actor.action_points_current
+    response=client.post(f'/lobbies/characters/{actor.character_id}/portable-lights',
+        headers=auth_headers(grenade_game['actor_user']),json={
+            'operation':'ignite','path':['inventory','pockets',0],
+            'source_id':'glow-stack','character_revision':actor.character.revision})
+    assert response.status_code==200,response.json
+    sticks=actor.character.data['inventory']['pockets']
+    assert len(sticks)==2 and sticks[0]['quantity']==1
+    assert sticks[1]['glowState']=={'activated':True,'remaining_seconds':600}
+    assert actor.action_points_current==before-2
+    assert ready_sources(actor)[0]['radial'] and ready_sources(actor)[0]['range']==5
+    assert not CombatService._has_usable_free_hand(actor)
+    monkeypatch.setattr('app.services.brigadier_order.boost_roll',lambda data,rolls,**kwargs:([20],20,0))
+    result=CombatService.perform_action(location.id,grenade_game['lobby'].gm_id,actor.id,
+        'throw_item',item_path=['inventory','pockets',1],item_id=sticks[1]['id'],
+        target_x=4,target_y=5)
+    assert result['thrown_item']['success']
+    assert not bindings(actor.character.data)
+    assert len(ground_sources(location.id))==1
+    advance_ground(location.id,599)
+    assert ground_sources(location.id)[0]['range']==5
+    advance_ground(location.id,1)
+    assert not ground_sources(location.id)
+
+
+def test_glow_stick_can_be_placed_on_own_floor(client,grenade_game,auth_headers):
+    actor=grenade_game['actor_location'];actor.floor_level=1
+    stick={'id':'held-glow','name':'Светящаяся палочка','category':'misc','weight':.1,
+        'quantity':1,'glowState':{'activated':True,'remaining_seconds':600}}
+    data=deepcopy(actor.character.data)
+    data['inventory']['pockets']=[stick]
+    data['health'].setdefault('combatMeta',{})['portableLights']=[{'id':'held-glow','mount':'hand','on':True}]
+    actor.character.data=data;flag_modified(actor.character,'data');db.session.commit()
+    response=client.post(f"/lobbies/{grenade_game['lobby'].id}/locations/{actor.location_id}/drop-item",
+        headers=auth_headers(grenade_game['actor_user']),json={
+            'character_id':actor.character_id,'character_revision':actor.character.revision,
+            'item_path':['inventory','pockets',0],'expected_item':stick,'amount':1})
+    assert response.status_code==200,response.json
+    assert not bindings(actor.character.data)
+    assert len(ground_sources(actor.location_id))==1
+    assert ground_sources(actor.location_id)[0]['floor_level']==1

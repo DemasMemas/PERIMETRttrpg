@@ -6202,6 +6202,11 @@ async function renderWeapons(weapons, weaponTemplates, moduleTemplates, weaponMo
                     : `<button type="button" class="btn btn-sm btn-warning" ${combatActionDisabled || !swingPrepared ? 'disabled' : ''} title="${swingPrepared ? 'Выбрать часть тела' : 'Сначала выполните Замах'}" onclick="useMeleeAttack(${index}, '${attackType}', true)">Прицельный: ${attackType.toLowerCase()} · ${meleeCost} ОД</button>`;
                 return `<button type="button" class="btn btn-sm btn-primary" ${combatActionDisabled ? 'disabled' : ''} onclick="useMeleeAttack(${index}, '${attackType}')">${attackType} · ${meleeCost} ОД</button>${aimedButton}`;
             }).join('');
+            if (isCombatActive && isHeldWeaponIndex(activeWeaponIndex, index) && !naturalWeapon) {
+                attackButtonsHtml += allowedAttacks.filter(type=>!/(дроб|круг)/i.test(type)).map(type=>
+                    `<button type="button" class="btn btn-sm btn-secondary" ${combatActionDisabled?'disabled':''}
+                        onclick="throwMeleeWeapon(${index}, ${JSON.stringify(type).replaceAll('"','&quot;')})">Метнуть: ${escapeHtml(type)} · 2 ОД</button>`).join('');
+            }
         } else {
             attackButtonsHtml = renderRangedAttackButtons(weapon, template, index, combatActionDisabled);
         }
@@ -12387,6 +12392,31 @@ async function useGrenade(item, itemPath, options = {}) {
     return false;
 }
 
+async function queueItemThrow(item, itemPath, attackType=null) {
+    if (autoSaveTimer) await forceSyncCharacter();
+    if (!window.isLocationActive) {
+        showNotification('Метание доступно на подлокации', 'system');
+        return;
+    }
+    if (window.locationCombatState?.status !== 'active') {
+        const scene = await import('./locationScene.js');
+        await scene.requestCombatStartForAttack(currentCharacterId);
+        return;
+    }
+    const actorCharacterId = currentCharacterId;
+    closeCharacterSheet();
+    const scene = await import('./locationScene.js');
+    scene.queueCombatActionFromSheet({actorCharacterId, actionKey:'throw_item',
+        itemPath, itemId:item.id??null, attackType, targetType:'point', source:'sheet'});
+}
+
+window.throwMeleeWeapon = async function(index, attackType) {
+    const weapon = currentCharacterData?.weapons?.[index];
+    if (!weapon) return;
+    try { await queueItemThrow(weapon, ['weapons', index], attackType); }
+    catch (error) { showNotification(error.message || 'Не удалось подготовить метание', 'system'); }
+};
+
 export async function resumeDeferredConsumable(lobbyId, locationId, actionId) {
     if (medicalOperationInProgress) return false;
     const saved = await Server.prepareDeferredConsumable(lobbyId, locationId, actionId);
@@ -16152,6 +16182,23 @@ function renderBackpackItem(item, index, parentPath, parentContainer, allTemplat
             }
         };
         actionsDiv.appendChild(useBtn);
+    }
+
+    if (window.isLocationActive && item.category !== 'grenade' && item.category !== 'melee_weapon') {
+        const throwButton = document.createElement('button');
+        throwButton.type = 'button';
+        throwButton.className = 'btn btn-sm btn-secondary';
+        throwButton.textContent = '↗';
+        throwButton.title = 'Метнуть предмет';
+        throwButton.onclick = async event => {
+            event.stopPropagation();
+            const current = item.id ? findInventoryItemById(currentCharacterData, item.id)
+                : {item:getItemByPath(itemPath), path:itemPath};
+            if (!current?.item) return;
+            try { await queueItemThrow(current.item, current.path); }
+            catch (error) { showNotification(error.message || 'Не удалось подготовить метание', 'system'); }
+        };
+        actionsDiv.appendChild(throwButton);
     }
 
     row.appendChild(weightInput);

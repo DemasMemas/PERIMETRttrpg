@@ -4956,7 +4956,7 @@ def get_extinguishing_options(lobby_id, location_id, actor_id, lobby, participan
 @lobbies_bp.route('/characters/<int:character_id>/portable-lights', methods=['GET','POST'])
 @jwt_required()
 def portable_lights(character_id):
-    from app.services.portable_lights import operate,walk,bindings,definition,nvg_items,nvg_on
+    from app.services.portable_lights import operate,walk,bindings,definition,nvg_items,nvg_on,glow
     user_id=int(get_jwt_identity())
     character=db.session.get(LobbyCharacter,character_id)
     if not character:raise NotFoundError('Персонаж не найден')
@@ -4966,7 +4966,9 @@ def portable_lights(character_id):
         for path,item in walk(character.data or {}):
             binding=next((binding for binding in bindings(character.data) if binding.get('id')==item.get('id')),None)
             items.append({'path':path,'id':item.get('id'),'name':item.get('name'),'kind':definition(item),'binding':binding,
-                'uses_left':(item.get('lightPower') or {}).get('uses_left',10)})
+                'uses_left':(item.get('lightPower') or {}).get('uses_left',10),
+                'remaining_seconds':(item.get('glowState') or {}).get('remaining_seconds') if glow(item) else None,
+                'activated':bool((item.get('glowState') or {}).get('activated')) if glow(item) else None})
         for path,item in nvg_items(character.data or {}):
             if path[:3]!=['equipment','helmet','installedModules']:continue
             items.append({'path':path,'id':item.get('id'),'name':item.get('name') or 'ПНВ','kind':'nvg',
@@ -5099,6 +5101,7 @@ def perform_location_combat_action(lobby_id, location_id, lobby, participant):
         narrative_roll_required=data.get('narrative_roll_required') is True,
         narrative_difficulty=data.get('narrative_difficulty'),
         item_path=data.get('item_path'),
+        item_id=data.get('item_id'),
         explosive_source=data.get('explosive_source'),
         explosive_fire_mode=data.get('explosive_fire_mode'),
         explosive_fuse_mode=data.get('explosive_fuse_mode'),

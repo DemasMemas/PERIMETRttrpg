@@ -25,13 +25,15 @@ class ContainerTransferService:
         if not actor or actor.character.lobby_id != lobby_id:
             raise NotFoundError('Character is not in this location')
         CharacterService.check_access(actor.character, user_id, edit=True)
-        obj = LocationObject.query.filter_by(location_id=location_id, type='ground_item',
-                                             tile_x=actor.pos_x, tile_y=actor.pos_y).first()
+        obj = next((ground for ground in LocationObject.query.filter_by(
+            location_id=location_id, type='ground_item', tile_x=actor.pos_x, tile_y=actor.pos_y).all()
+            if (ground.properties or {}).get('floor_level', 0) == (actor.floor_level or 0)), None)
         created = obj is None
         if created:
             obj = LocationObject(location_id=location_id, name='Пол', type='ground_item', tile_x=actor.pos_x,
                                  tile_y=actor.pos_y, properties={'contents': [], 'is_ground_item': True,
-                                 'passable': True, 'interactions': ['open_container']})
+                                 'passable': True, 'floor_level': actor.floor_level or 0,
+                                 'interactions': ['open_container']})
             db.session.add(obj)
             db.session.flush()
         character, obj, _ = ContainerTransferService._transfer(lobby_id, obj.id, user_id, {
@@ -113,6 +115,9 @@ class ContainerTransferService:
             moved['durability'] = max(0, float(moved.get('durability', maximum)) - 3)
         if direction == 'to_container':
             contents.append(moved)
+            lights = data.setdefault('health', {}).setdefault('combatMeta', {}).get('portableLights')
+            if isinstance(lights, list):
+                lights[:] = [binding for binding in lights if binding.get('id') != moved.get('id')]
         else:
             backpack = data.setdefault('inventory', {}).setdefault('backpack', [])
             if not isinstance(backpack, list):

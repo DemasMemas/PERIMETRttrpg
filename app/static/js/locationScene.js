@@ -267,7 +267,13 @@ export function applyLocationWeather() { locationWeather?.apply(window.weatherSe
 function syncPortableLights() {
     if (!scene) return;
     if (!portableLightRenderer) portableLightRenderer=createPortableLightRenderer(THREE,scene);
-    portableLightRenderer.update(combatState?.characters || [],characterModels);
+    const ground=(currentLocationData?.objects||[]).filter(object=>object.type==='ground_item').flatMap(object=>
+        (object.properties?.contents||[]).filter(item=>item.name==='Светящаяся палочка'
+            && item.glowState?.remaining_seconds>0).map(item=>({
+                id:`ground-glow-${object.id}-${item.id}`,radial:true,x:object.tile_x+.5,z:object.tile_y+.5,
+                y:getTileHeight(object.tile_x,object.tile_y)+(object.properties?.floor_level||0)*STOREY_HEIGHT+.15,
+            })));
+    portableLightRenderer.update(combatState?.characters || [],characterModels,ground);
 }
 
 export function getLocationPortableLightDiagnostics() { return {lights:portableLightRenderer?.count || 0}; }
@@ -5225,6 +5231,7 @@ export function beginPendingCombatAction(action) {
         ? 'Использование предмета'
         : (action.actionKey === 'explosive_attack'
             ? 'Выбор точки взрыва'
+            : action.actionKey === 'throw_item' ? 'Метание предмета'
             : (action.actionKey === 'aim' ? 'Прицеливание' : 'Атака'));
     const targetHint = action.targetType === 'structure'
         ? 'выберите укрытие'
@@ -5502,7 +5509,7 @@ function selectAreaFireAnchor(clientX, clientY) {
     const actor = findCombatCharacterByCharacterId(action.actorCharacterId);
     const actorEntry = actor ? characterModels.get(actor.character_id) : null;
     if (!actorEntry) return false;
-    const point = ['explosive_attack','flamethrower_fire'].includes(action.actionKey)?localMapToolPoint(clientX,clientY):getPointerWorldPoint(clientX, clientY, actorEntry.model.position.y);
+    const point = ['explosive_attack','flamethrower_fire','throw_item'].includes(action.actionKey)?localMapToolPoint(clientX,clientY):getPointerWorldPoint(clientX, clientY, actorEntry.model.position.y);
     if (!point) return false;
     const x = Math.floor(point.x);
     const y = Math.floor(point.z);
@@ -5647,6 +5654,8 @@ async function resolveCombatPointSelection(clientX, clientY) {
             fire_mode: action.fireMode,
             shot_count: action.shotCount,
             item_path: action.itemPath,
+            item_id: action.itemId,
+            attack_type: action.attackType,
             explosive_source: action.explosiveSource,
             explosive_fire_mode: action.explosiveFireMode,
             explosive_fuse_mode: action.explosiveFuseMode,
@@ -5655,7 +5664,7 @@ async function resolveCombatPointSelection(clientX, clientY) {
             attribute_choice: action.attributeChoice,
             target_x: targetX,
             target_y: targetY,
-            target_floor_level: ['explosive_attack','flamethrower_fire'].includes(action.actionKey)?point.floor_level:undefined,
+            target_floor_level: ['explosive_attack','flamethrower_fire','throw_item'].includes(action.actionKey)?point.floor_level:undefined,
             pending_action_id: `combat-point-${action.actorLocationCharacterId}-${Date.now()}-${Math.random().toString(36).slice(2)}`,
         };
         const result = await Server.performLocationCombatAction(
@@ -5702,12 +5711,12 @@ async function resolveCombatPointSelection(clientX, clientY) {
             clearPendingCombatAction();
             return true;
         }
-        showNotification(
-            `${action.actionKey === 'explosive_attack'
+        const pointMessage=action.actionKey==='throw_item' && result.thrown_item
+            ? `${result.thrown_item.item_name}: ${result.thrown_item.success?'успешный бросок':'промах'}, клетка ${result.thrown_item.landing.x}, ${result.thrown_item.landing.y}`
+            : `${action.actionKey === 'explosive_attack'
                 ? 'Точка взрыва выбрана'
-                : (action.fireMode === 'suppression' ? 'Подавление' : 'Стрельба по площади')}: ${targetX}, ${targetY}`,
-            'success'
-        );
+                : (action.fireMode === 'suppression' ? 'Подавление' : 'Стрельба по площади')}: ${targetX}, ${targetY}`;
+        showNotification(pointMessage,'success');
         clearPendingCombatAction();
         return true;
     } catch (error) {
@@ -13997,6 +14006,7 @@ export function addLocationObject(object) {
     currentLocationData.objects = currentLocationData.objects || [];
     if (currentLocationData.objects.some(item => String(item.id) === String(object.id))) return;
     currentLocationData.objects.push(object);
+    if(object.type==='ground_item')syncPortableLights();
     if (objectEdit?.phase === 'preview') return;
     const fire = isObjectLightSource(object);
     addLocationObjectMesh(object, !fire);
@@ -14023,6 +14033,7 @@ export function removeLocationObject(objectId) {
     if (Number(containerInteractionState?.objectId) === Number(objectId)) closeContainerInteractionMenu();
     removeLocationObjectMesh(objectId, false);
     currentLocationData.objects = (currentLocationData.objects || []).filter(object => Number(object.id) !== Number(objectId));
+    if(removed?.type==='ground_item')syncPortableLights();
     locationBuildingViewsDirty = true;
     refreshLocationFloorMenu();
     if (removed?.type === 'floor') { refreshFloorRugHeights(); rebuildLocationGrid(); rebuildGrassDetailMesh(); rebuildLocationRoofs(); }
@@ -14047,6 +14058,7 @@ export function updateLocationObject(object) {
         && object.revision < previous.revision) return;
     if (index === -1) currentLocationData.objects.push(object);
     else currentLocationData.objects[index] = object;
+    if(object.type==='ground_item')syncPortableLights();
     if (objectEdit?.phase === 'preview') return;
     const fire = isObjectLightSource(object) || isObjectLightSource(previous);
     replaceLocationObjectMesh(object, !fire);
