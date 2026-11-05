@@ -50,6 +50,26 @@ def test_named_medicine_recipe_resolves_real_catalog_item(client,workshop,auth_h
     assert response.json['result']['output_id']==output.id
 
 
+def test_analgin_recipe_finishes_with_thirty_five_catalog_tablets_once(client,workshop,auth_headers,monkeypatch):
+    data=deepcopy(workshop['actor_character'].data)
+    data['skills']['other']['medicine']={'base':20}
+    data['inventory']['pockets'].extend({'name':name,'category':'crafting_material','quantity':1}
+        for name in ('Серная кислота','Натрий','Сахар','Смесительный Станок'))
+    workshop['actor_character'].data=data
+    db.session.add(ItemTemplate(name='Анальгин (Таблетка)',category='consumable',price=100))
+    db.session.commit()
+    started=call(client,workshop,auth_headers,'start',recipe_id='recipe-aa21')
+    assert started.status_code==200,started.json
+    workshop['lobby'].game_day+=1;db.session.commit()
+    monkeypatch.setattr('app.services.crafting.resolve_creation',lambda quote:{'success':True,'roll':100,'automatic':False})
+    completed=call(client,workshop,auth_headers,'finish',job_id=started.json['result']['id'])
+    assert completed.status_code==200,completed.json
+    assert units(completed.json['data'],'Анальгин (Таблетка)')==35
+    repeated=call(client,workshop,auth_headers,'finish',job_id=started.json['result']['id'])
+    assert repeated.status_code==200 and repeated.json['result']['replayed']
+    assert units(repeated.json['data'],'Анальгин (Таблетка)')==35
+
+
 def test_approved_salvage_materials_and_craft_only_flamethrowers():
     from app.services.equipment_catalog import load_catalog
     from app.services.crafting_rules import catalog
