@@ -430,6 +430,33 @@ def apply_general(client, pair, auth_headers, item, *, operation="general-1", de
     )
 
 
+@pytest.mark.parametrize('name,radiation,exhaustion', [
+    ('Болотная вода', 10, 2), ('Дождевая вода', 5, 1), ('Радиоактивная вода', 3, 0.5),
+])
+def test_new_water_can_be_drunk_through_game_action(client, pair, auth_headers, name, radiation, exhaustion):
+    from app.services.equipment_catalog import load_catalog
+    from app.services.character_starting_purchase import item_from_template
+
+    entry = next(row for row in load_catalog() if row['name'] == name)
+    template = ItemTemplate(**entry)
+    db.session.add(template)
+    db.session.flush()
+    item = item_from_template(template)
+    data = deepcopy(pair['actor_character'].data)
+    data['inventory']['backpack'] = [item]
+    data['health']['radiation'] = 0
+    data['health']['exhaustion'] = 0
+    pair['actor_character'].data = data
+    flag_modified(pair['actor_character'], 'data')
+    LocationCombatState.query.one().status = 'idle'
+    db.session.commit()
+    response = apply_general(client, pair, auth_headers, item)
+    assert response.status_code == 200, response.json
+    assert response.json['data']['health']['radiation'] == radiation
+    assert response.json['data']['health']['exhaustion'] == exhaustion
+    assert response.json['data']['inventory']['backpack'][0]['uses'] == 2
+
+
 def test_custom_lobby_consumable_uses_profile_after_rename(client, pair, auth_headers):
     LocationCombatState.query.one().status = "idle"
     profile = {
