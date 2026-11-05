@@ -31,6 +31,7 @@ DIRECT_ARMOR={'armor-'+key for key in ('a5','a6','a7','a9','a10','a18','a19','a2
     'd5','d6','d9','d15','d18','d19','d20','g5','g7','g29','g30','g31','g41','g42','g50','g51','g52')}
 
 SPECIAL_ARMOR={
+ 'a24':({'physical':5,'durability':5},{'incoming_trauma_disadvantage':True}),
  'a14':({}, {'stealth_hiding_bonus':4}),
  'd23':({}, {'anomaly_escape_reduction':3}),'a34':({}, {'fixed_reload_extra':1}),
  'd24':({'radiation':30,'anomaly':-10},{}),'g40':({'explosive_physical':20},{}),

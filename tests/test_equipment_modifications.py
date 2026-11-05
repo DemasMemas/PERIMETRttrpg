@@ -26,6 +26,17 @@ def test_exoskeleton_run_upgrade_changes_actual_movement(grenade_game):
     assert CombatService._serialize_character(moved)['exoskeleton_can_run']
 
 
+def test_reinforced_frame_adds_armor_and_durability_only_while_worn():
+    from app.services.equipment_modifications import install, worn_rule
+    armor={'name':'Броня','category':'armor','durability':50,'maxDurability':100}
+    install(armor,make_record('armor-a24'))
+    assert (armor['durability'],armor['maxDurability'])==(55,105)
+    assert stat(armor,'physical',10)==15
+    assert worn_rule({'equipment':{'armor':armor}},'incoming_trauma_disadvantage')
+    armor['protectionDisabled']=True
+    assert not worn_rule({'equipment':{'armor':armor}},'incoming_trauma_disadvantage')
+
+
 @pytest.fixture
 def gunsmith(workshop):
     data=deepcopy(workshop['actor_character'].data)

@@ -6317,9 +6317,13 @@ class CombatService:
         trauma = None
         traumas = []
         prepared_rolls = list(prepared_trauma_rolls or [])
+        from app.services.equipment_modifications import worn_rule
+        trauma_disadvantage = bool(worn_rule(data,'incoming_trauma_disadvantage'))
         if damage >= 11 or force_trauma and damage > 0:
             for trauma_index in range(max(0, CombatService._coerce_int(trauma_checks, 1))):
                 trauma_chance_roll = random.randint(1, 100)
+                if trauma_disadvantage:
+                    trauma_chance_roll = min(trauma_chance_roll, random.randint(1, 100))
                 threshold = {
                     'head': 0,
                     'chest': 50,

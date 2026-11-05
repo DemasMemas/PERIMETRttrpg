@@ -2382,6 +2382,23 @@ def _head_trauma_target():
     )
 
 
+def test_reinforced_frame_reduces_additional_trauma_chance(monkeypatch):
+    from app.services.equipment_modifications import make_record, supported, definition
+    assert supported(definition('armor-a24'))
+    record=make_record('armor-a24')
+    assert record['modifiers']=={'physical':5,'durability':5}
+    target=_head_trauma_target()
+    target.character.data['equipment']={'armor':{'name':'Броня',
+        'modifications':[record]}}
+    monkeypatch.setattr(combat_module,'flag_modified',lambda *args,**kwargs:None)
+    rolls=iter([90,10])
+    monkeypatch.setattr(combat_module.random,'randint',
+        lambda low,high:next(rolls) if high==100 else high)
+    health=CombatService._apply_attack_damage(target,20,'left_arm',{'bleeding':''},
+        allow_bleeding=False,round_number=1)
+    assert health['_attackOutcome']['additional_traumas']==[]
+
+
 def test_side_eye_behind_armor_disables_eye_but_not_head_or_brain(monkeypatch):
     monkeypatch.setattr(combat_module, "flag_modified", lambda *args, **kwargs: None)
     monkeypatch.setattr(combat_module.random, "randint", lambda start, end: end)
