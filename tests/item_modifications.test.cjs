@@ -74,6 +74,25 @@ test('система распределения веса экзоскелета 
     assert.equal(context.getMovementPenaltyBreakdown(data,5).weightPenalty,1);
 });
 
+test('фиксированный штраф экзоскелета равен трём с заряженной и разряженной батареей',async()=>{
+    const api=await rules(),source=fs.readFileSync(path.join(__dirname,'../app/static/js/characterSheet.js'),'utf8');
+    const begin=source.indexOf('function getExoskeletonPowerProfile('),end=source.indexOf('function applyModifier(',begin);
+    const context=vm.createContext({modificationRule:api.modificationRule,modificationStat:api.modificationStat,
+        wornModificationStat:()=>0,getWeightPerMovementPenalty:()=>5,getConsumableStatValue:()=>0,
+        passiveTraits:()=>({weightMultiplier:1,movementPenalty:0}),prostheticLimb:()=>null,
+        getIntoxicationProfile:()=>({movement:0})});
+    vm.runInContext(source.slice(begin,end),context);
+    const armor={name:'Экзоскелет',movementPenalty:5,
+        installedModules:[{slotType:'exoskeleton_battery',attributes:{remaining_days:1}}],
+        modifications:[{ruleId:'armor-d28',modifiers:{movement_penalty:'=3'}}]};
+    const data={equipment:{armor},inventory:{}};
+    assert.equal(context.getMovementPenaltyBreakdown(data,0).armorPenalty,3);
+    armor.installedModules[0].attributes.remaining_days=0;
+    assert.equal(context.getMovementPenaltyBreakdown(data,0).armorPenalty,3);
+    armor.modifications=[];
+    assert.equal(context.getMovementPenaltyBreakdown(data,0).armorPenalty,5);
+});
+
 test('модификация брони добавляет реальный патрон при зарядке, ограничиваясь местом',async()=>{
     const api=await rules(),source=fs.readFileSync(path.join(__dirname,'../app/static/js/characterSheet.js'),'utf8');
     const begin=source.indexOf('function fixedMagazineLoadingPlans('),end=source.indexOf('window.calculateInventoryAccess',begin);

@@ -54,6 +54,7 @@ SPECIAL_ARMOR={
  'g48':({'movement_penalty':-1},{'filter_wear_reduction':.5}),'g58':({}, {'belt_weight_reduction':.5}),
  'g77':({}, {'belt_reload_ap_reduction':1}),'g78':({}, {'large_weapon_ergonomics':10}),
  'd27':({}, {'unpowered_weight_penalty_suppression':True}),
+ 'd28':({'movement_penalty':'=3'},{}),
  'd32':({}, {'exoskeleton_run':True})}
 
 
@@ -151,7 +152,8 @@ def make_record(rule_id,*,gunsmith=False,installer_id=None):
         if any(phrase in text for phrase in ('до первого попадания','при использовании','прицельный выстрел')):stats={}
         flags['special_rule']=rule_id
     def amplified(key,value):
-        if isinstance(value,str) and value.startswith('='):return '='+str(float(value[1:])*factor)
+        if isinstance(value,str) and value.startswith('='):
+            return value if key=='movement_penalty' else '='+str(float(value[1:])*factor)
         reduction=key in {'min_strength','weight','movement_penalty','weight_penalty','accuracy_penalty','charisma_penalty'}
         beneficial=value<0 if reduction else value>0
         return value*(factor if beneficial else 1)

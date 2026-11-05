@@ -1538,7 +1538,8 @@ class CombatService:
         exoskeleton = CombatService._exoskeleton_power_profile(data)
         if exoskeleton['is_exoskeleton']:
             if exoskeleton['powered']:
-                armor_penalty = 5
+                armor_penalty = 3 if any(entry.get('ruleId')=='armor-d28'
+                    for entry in armor.get('modifications') or [] if isinstance(entry,dict)) else 5
                 weight_penalty = 0
             elif (exoskeleton['battery_present'] and not armor.get('protectionDisabled')
                   and modification_rule(armor, 'unpowered_weight_penalty_suppression')):

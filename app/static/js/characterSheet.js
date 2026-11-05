@@ -2146,7 +2146,7 @@ function getMovementPenaltyBreakdown(data, suppliedWeight = null) {
     const powered = exoskeleton.powered;
     if (isExoskeleton) armor.powered = powered;
     if (powered) {
-        armorPenalty = 5;
+        armorPenalty = (armor.modifications || []).some(entry => entry?.ruleId === 'armor-d28') ? 3 : 5;
         weightPenalty = 0;
     } else if (isExoskeleton && exoskeleton.batteryPresent && !armor.protectionDisabled
         && modificationRule(armor, 'unpowered_weight_penalty_suppression')) {

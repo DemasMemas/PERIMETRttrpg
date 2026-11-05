@@ -886,6 +886,23 @@ def test_powered_exoskeleton_sets_base_penalty_and_ignores_overload():
     assert CombatService._movement_penalty(location_character) == 8
 
 
+def test_exoskeleton_movement_upgrade_sets_penalty_to_three_with_or_without_power():
+    from app.services.equipment_modifications import definition, make_record, supported
+
+    assert supported(definition('armor-d28'))
+    for gunsmith in (False, True):
+        armor = {'name': 'Экзоскелет', 'movementPenalty': 5,
+                 'modifications': [make_record('armor-d28', gunsmith=gunsmith)],
+                 'installedModules': [{'slotType': 'exoskeleton_battery',
+                                       'attributes': {'remaining_days': 1}}]}
+        data = {'equipment': {'armor': armor}}
+        assert CombatService._movement_penalty_breakdown(data)['armor'] == 3
+        armor['installedModules'][0]['attributes']['remaining_days'] = 0
+        assert CombatService._movement_penalty_breakdown(data)['armor'] == 3
+        armor['modifications'] = []
+        assert CombatService._movement_penalty_breakdown(data)['armor'] == 5
+
+
 def test_exoskeleton_blocks_run_and_sprint_even_when_powered():
     data = {
         "equipment": {
