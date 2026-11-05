@@ -32,6 +32,24 @@ def call(client,workshop,auth_headers,operation,**payload):
 def units(data,name):return sum(_available_uses(i) for i in data['inventory']['pockets'] if i['name']==name)
 
 
+@pytest.mark.parametrize('recipe_id,catalog_name',[
+    ('recipe-aa21','Анальгин (Таблетка)'),
+    ('recipe-aa24','Пенициллин (Таблетка)'),
+    ('recipe-aa35','Хирургический набор "Крест"'),
+    ('recipe-aa39','Ибупрофен (Таблетка)'),
+    ('recipe-aa41','Жаропонижающее средство "Мороз"'),
+])
+def test_named_medicine_recipe_resolves_real_catalog_item(client,workshop,auth_headers,recipe_id,catalog_name):
+    output=ItemTemplate(name=catalog_name,category='consumable',price=100)
+    db.session.add(output);db.session.flush()
+    data=deepcopy(workshop['actor_character'].data)
+    data['skills']['other']['medicine']={'base':15}
+    workshop['actor_character'].data=data;db.session.commit()
+    response=call(client,workshop,auth_headers,'quote',recipe_id=recipe_id)
+    assert response.status_code==200,response.json
+    assert response.json['result']['output_id']==output.id
+
+
 def test_approved_salvage_materials_and_craft_only_flamethrowers():
     from app.services.equipment_catalog import load_catalog
     from app.services.crafting_rules import catalog

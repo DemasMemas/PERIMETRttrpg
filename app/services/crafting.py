@@ -53,6 +53,15 @@ def _template(name):
     templates=ItemTemplate.query.all();key=normalized(name)
     exact=next((t for t in templates if normalized(t.name)==key),None)
     if exact:return exact
+    aliases={
+        'анальгин':'Анальгин (Таблетка)',
+        'пенициллин':'Пенициллин (Таблетка)',
+        'ибупрофен':'Ибупрофен (Таблетка)',
+        'хирург набор крест':'Хирургический набор "Крест"',
+        'жаропонижающее мороз':'Жаропонижающее средство "Мороз"',
+    }
+    if key in aliases:
+        return next((t for t in templates if normalized(t.name)==normalized(aliases[key])),None)
     return next((t for t in templates if t.category=='grenade' and normalized(t.name).removeprefix('граната ')==key),None)
 
 
