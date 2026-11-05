@@ -6,7 +6,8 @@ import re
 
 
 def is_standard_nvg(item):
-    return re.sub(r'\s+','',str((item or {}).get('name') or '')).casefold() in {'пнв-1п','сидр-1г','supernova'}
+    name = re.sub(r'\s+', '', str((item or {}).get('name') or '')).casefold()
+    return name in {'пнв-1п', 'сидр-1г', 'supernova', 'очкипнв-1п', 'монокулярсидр-1г', 'пнвsupernova'}
 
 
 def parse_weapon_size(value):

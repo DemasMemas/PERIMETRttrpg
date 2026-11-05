@@ -173,6 +173,8 @@ for _profile_key, _noise in {'rgd5':15,'f1':15,'rgn':15,'rgo':15,'bang793':15,'v
     EXPLOSIVE_PROFILES[_profile_key]['noise']=_noise
 
 ACTION_CATALOG = [
+    {'key':'flamethrower_fire','label':'Залп огнемёта','action_points':3,'free_actions':0,'movement_points':0},
+    {'key':'flamethrower_service','label':'Перезарядка огнемёта','action_points':4,'free_actions':0,'movement_points':0},
     {'key':'brigadier_order','label':'Дать указание','action_points':2,'free_actions':0,'movement_points':0},
     {'key':'evade','label':'Уклонение','action_points':4,'free_actions':0,'movement_points':0},
     {'key':'extinguish_fire','label':'Тушить себя','action_points':3,'free_actions':0,'movement_points':0},
@@ -550,7 +552,7 @@ class CombatService:
         normalized_damage_type = str(damage_type or '').strip().lower()
         destructive = normalized_damage_type in {
             'explosive', 'blast', 'взрывной', 'взрыв',
-            'crushing', 'blunt', 'дробящий', 'дробление',
+            'crushing', 'blunt', 'дробящий', 'дробление', 'fire', 'огонь',
         }
         remaining_hp = max(0, profile['hp'] - damage)
         remaining_protection = min(
@@ -935,8 +937,9 @@ class CombatService:
             raw_base = (weapon.get('attributes') or {}).get('ergonomics')
         if raw_base is None:
             raw_base = template_attributes.get('ergonomics')
-        base_ergonomics = CombatService._coerce_int(raw_base, 0)
-        weapon_ergonomics = base_ergonomics
+        base_ergonomics = CombatService._coerce_float(raw_base, 0)
+        from app.services.equipment_modifications import stat as modification_stat,rule as modification_rule
+        weapon_ergonomics = modification_stat(weapon,'ergonomics',base_ergonomics)
         module_modifier = 0
         for module in weapon.get('installedModules') or []:
             if not isinstance(module, dict):
@@ -1018,6 +1021,14 @@ class CombatService:
         from app.services.portable_lights import ergonomics as light_ergonomics
         portable_light_modifier=light_ergonomics(loc_char,weapon)
         effective_value=max(0,effective_value+portable_light_modifier)
+        from app.services.equipment_modifications import worn_stat
+        effective_value=max(0,effective_value+worn_stat(data,'ergonomics'))
+        effective_value=math.floor(effective_value+.5)
+        from app.services.equipment_modifications import worn_rule
+        tiers=int(modification_rule(weapon,'ergonomics_tiers')+worn_rule(data,'ergonomics_tiers'))
+        thresholds=[0,11,21,31,41,51,71,81,91,100]
+        band=max(i for i,minimum in enumerate(thresholds) if effective_value>=minimum)
+        if tiers:effective_value=max(effective_value,thresholds[min(9,band+tiers)])
         effects = CombatService._ergonomics_effects(effective_value)
         effects['aimed_shot_action_points']=trait_action_cost(data,'attack',effects['aimed_shot_action_points'],
             weapon_type=CombatService._weapon_class(weapon),aimed=True)
@@ -1057,6 +1068,8 @@ class CombatService:
             0,
         )
         base_required = required
+        from app.services.equipment_modifications import stat as modification_stat
+        required=max(0,modification_stat(weapon,'min_strength',required))
         has_bipod = False
         for module in weapon.get('installedModules') or []:
             if not isinstance(module, dict):
@@ -1476,6 +1489,9 @@ class CombatService:
             if isinstance(helmet, dict) else 0
         )
 
+        from app.services.equipment_modifications import stat as modification_stat
+        armor_penalty=modification_stat(armor,'movement_penalty',CombatService._coerce_float(armor_penalty,0))
+        helmet_penalty=modification_stat(helmet,'movement_penalty',CombatService._coerce_float(helmet_penalty,0))
         weight_details = CombatService._inventory_weight_details(data)
         weight_penalty = weight_details['penalty']
         temporary_penalty = CombatService._consumable_stat_bonus(data, 'movement_points')
@@ -1605,6 +1621,8 @@ class CombatService:
             if prosthesis:base_weight=prosthesis['weight']
             from app.services.weapon_catalog import is_standard_nvg
             if is_standard_nvg(item):base_weight=1
+            from app.services.equipment_modifications import stat as modification_stat
+            base_weight=max(0,modification_stat(item,'weight',base_weight))
         except (TypeError, ValueError):
             base_weight = 0.0
 
@@ -1660,6 +1678,7 @@ class CombatService:
         equipment = equipment if isinstance(equipment, dict) else {}
 
         carried_items = []
+        carried_items.extend(entry['item'] for entry in ((character_data.get('crafting') or {}).get('current') or {}).get('escrow',[]))
         for key in ('backpack', 'pockets'):
             values = inventory.get(key)
             if isinstance(values, list):
@@ -1678,6 +1697,11 @@ class CombatService:
         carried_items.extend(item for parts in installed(character_data).values() for item in parts.values())
 
         total_weight = sum(CombatService._item_total_weight(item,character_data) for item in carried_items)
+        from app.services.equipment_modifications import rule as modification_rule
+        belt=equipment.get('belt') or {}
+        if isinstance(belt,dict) and not belt.get('protectionDisabled'):
+            belt_weight=sum(CombatService._item_total_weight(item,character_data) for pouch in belt.get('pouches') or [] if isinstance(pouch,dict) for item in pouch.get('contents') or [])
+            total_weight-=belt_weight*min(1,max(0,modification_rule(belt,'belt_weight_reduction')))
         strength = ((character_data.get('skills') or {}).get('physical') or {}).get('strength')
         effective_strength = (
             CombatService._skill_value(character_data, 'skills.physical.strength')
@@ -1699,7 +1723,8 @@ class CombatService:
                 CombatService._coerce_int(attributes.get('weight_reduction'), 0),
             )
         raw_penalty = math.floor(total_weight / weight_per_penalty)
-        temporary_modifier=CombatService._consumable_stat_value_bonus(character_data,'weight')
+        from app.services.equipment_modifications import worn_stat
+        temporary_modifier=CombatService._consumable_stat_value_bonus(character_data,'weight')+worn_stat(character_data,'weight_penalty')
         return {
             'penalty': max(0, math.floor(raw_penalty*character_passives(character_data)['weight_multiplier']) - backpack_reduction+temporary_modifier),
             'temporary_modifier':temporary_modifier,
@@ -1799,9 +1824,11 @@ class CombatService:
             if effect.get('remaining') is not None and CombatService._coerce_float(effect.get('remaining'), 0) <= 0:
                 continue
             modifiers = effect.get('modifiers') if isinstance(effect.get('modifiers'), dict) else {}
-            modifier -= CombatService._coerce_int(
-                effect.get('rollPenalty', effect.get('roll_penalty', effect.get('skillPenalty', 0))), 0
-            )
+            effect_penalty=CombatService._coerce_float(effect.get('rollPenalty',effect.get('roll_penalty',effect.get('skillPenalty',0))),0)
+            if effect.get('type')=='concussion':
+                from app.services.equipment_modifications import worn_rule
+                effect_penalty=max(0,effect_penalty-worn_rule(character_data,'concussion_reduction'))
+            modifier-=effect_penalty
             modifier -= CombatService._coerce_int(modifiers.get('all'), 0)
             modifier -= CombatService._coerce_int(modifiers.get(skill_path), 0)
             modifier -= CombatService._coerce_int(
@@ -1902,10 +1929,6 @@ class CombatService:
         health = character_data.get('health') if isinstance(character_data, dict) else {}
         if not isinstance(health, dict):
             health = {}
-        if darkness and not character_passives(character_data)['no_darkness_penalty'] and skill_path in {'skills.physical.awareness', 'skills.physical.shooting'}:
-            immunity = 'darkness_visual_immunity' if skill_path == 'skills.physical.awareness' else 'darkness_shooting_immunity'
-            if CombatService._consumable_stat_value_bonus(character_data, immunity) <= 0:
-                return True
         psy_state = CombatService._coerce_int(health.get('psyState', health.get('psy_state')), 0)
         threshold_disadvantage = (
             skill_path == 'skills.physical.shooting' and psy_state >= 30
@@ -2386,32 +2409,41 @@ class CombatService:
                 item = equipment.get(key)
                 if isinstance(item, dict):
                     attrs=item.get('attributes') or {}
-                    bonus=CombatService._coerce_int(item.get('charismaBonus',item.get('charisma_bonus',attrs.get('charisma_bonus'))),0)
-                    if key=='glasses' and trait_count(character_data,'Сварщик') and str(item.get('name','')).strip().casefold()=='очки сварщика':bonus=1
-                    equipment_modifier+=bonus
+                    bonus=CombatService._coerce_float(item.get('charismaBonus',item.get('charisma_bonus',attrs.get('charisma_bonus'))),0)
+                    if key=='glasses' and trait_count(character_data,'Сварщик') and (
+                        attrs.get('welding_glasses') or str(item.get('name','')).strip().casefold() in {'очки сварщика', 'сварочные защитные очки'}
+                    ):bonus=1
+                    from app.services.equipment_modifications import charisma_bonus
+                    equipment_modifier+=charisma_bonus(item,bonus)
         elif skill_path == 'skills.physical.awareness':
             headphones = equipment.get('headphones')
             if awareness_mode in {None, 'hearing'} and isinstance(headphones, dict):
+                attrs = CombatService._template_attributes(headphones)
                 equipment_modifier += CombatService._coerce_int(
-                    headphones.get('awarenessBonus', headphones.get('awareness_bonus')), 0
+                    headphones.get('awarenessBonus', headphones.get('awareness_bonus', attrs.get('awareness_bonus'))), 0
                 )
             if awareness_mode == 'visual':
                 equipment_modifier += CombatService._consumable_stat_value_bonus(
                     character_data, 'vision_awareness',
                 )
-                equipment_modifier += CombatService._consumable_stat_value_bonus(
-                    character_data, 'darkness_awareness' if darkness else 'light_awareness',
-                )
+                if not darkness:
+                    equipment_modifier += CombatService._consumable_stat_value_bonus(character_data,'light_awareness')
+        from app.services.weapon_modules import uses_nvg
+        from app.services.equipment_passives import darkness_modifier
+        nvg = uses_nvg(character_data)
+        if darkness and (awareness_mode == 'visual' or skill_path == 'skills.physical.shooting'):
+            equipment_modifier += darkness_modifier(character_data,
+                'awareness_penalty' if awareness_mode == 'visual' else 'accuracy_penalty')
         weather=weather or {}
         weather_modifier=weather.get('visual_awareness' if awareness_mode=='visual' else 'awareness',0) if skill_path=='skills.physical.awareness' else weather.get('accuracy',0) if skill_path=='skills.physical.shooting' else 0
         weather_disadvantage=weather.get('awareness_disadvantage',False) if skill_path=='skills.physical.awareness' else weather.get('accuracy_disadvantage',False) if skill_path=='skills.physical.shooting' else False
         status_modifier+=weather_modifier
         disadvantage = forced_disadvantage or weather_disadvantage or CombatService._has_roll_disadvantage(
-            character_data, skill_path, darkness=darkness and (awareness_mode == 'visual' or skill_path=='skills.physical.shooting'),
+            character_data, skill_path, darkness=darkness and not nvg and (awareness_mode == 'visual' or skill_path=='skills.physical.shooting'),
         )
-        advantage = bool(
-            advantage or CombatService._has_roll_advantage(character_data, skill_path, consume=True)
-        )
+        from app.services.equipment_modifications import worn_rule
+        advantage = bool(advantage or CombatService._has_roll_advantage(character_data,skill_path,consume=True)
+            or awareness_mode=='hearing' and worn_rule(character_data,'hearing_advantage'))
         deafness = (
             CombatService._deafness_level(character_data)
             if awareness_mode == 'hearing'
@@ -2533,11 +2565,11 @@ class CombatService:
     def _weapon_durability(weapon):
         weapon = weapon if isinstance(weapon, dict) else {}
         attributes = CombatService._template_attributes(weapon)
-        maximum = max(1, CombatService._coerce_int(
+        maximum = max(1, CombatService._coerce_float(
             weapon.get('maxDurability', weapon.get('max_durability', attributes.get('max_durability', 100))),
             100,
         ))
-        current = max(0, min(maximum, CombatService._coerce_int(
+        current = max(0, min(maximum, CombatService._coerce_float(
             weapon.get('durability', maximum), maximum
         )))
         weapon['maxDurability'] = maximum
@@ -2546,7 +2578,7 @@ class CombatService:
         remaining_jams = []
         for jam in jams:
             requirement = jam.get('repair_required')
-            if requirement == 'increase' and current > CombatService._coerce_int(
+            if requirement == 'increase' and current > CombatService._coerce_float(
                 jam.get('durability_after'), current
             ):
                 continue
@@ -2619,12 +2651,12 @@ class CombatService:
         current, maximum = CombatService._weapon_durability(weapon)
         loss = max(0, CombatService._coerce_int(amount, 0))
         weapon['durability'] = max(0, current - loss)
-        weapon['_combatDurabilityLoss']=max(0,CombatService._coerce_int(weapon.get('_combatDurabilityLoss'),0))+current-weapon['durability']
+        weapon['_combatDurabilityLoss']=max(0,CombatService._coerce_float(weapon.get('_combatDurabilityLoss'),0))+current-weapon['durability']
         return {'before': current, 'after': weapon['durability'], 'maximum': maximum, 'loss': loss}
 
     @staticmethod
     def _weapon_jam_profile(durability):
-        value = max(0, CombatService._coerce_int(durability, 0))
+        value = max(0, CombatService._coerce_float(durability, 0))
         if value <= 0:
             return 20, 12, 6
         if value <= 10:
@@ -2749,7 +2781,8 @@ class CombatService:
         )
         if raw_value in (None, ''):
             return None
-        value = CombatService._coerce_int(raw_value, 0)
+        from app.services.equipment_modifications import stat as modification_stat
+        value = modification_stat(weapon,'fire_rate',CombatService._coerce_int(raw_value, 0))
         return value if value > 0 else None
 
     @staticmethod
@@ -2808,6 +2841,9 @@ class CombatService:
             units += max(1, CombatService._coerce_int(volley_count, 1))
         elif CombatService._coerce_int(shot_count, 1) > 1:
             units += max(1, CombatService._coerce_int(shot_count, 1) // 2)
+        from app.services.equipment_modifications import rule as modification_rule
+        chance=modification_rule(weapon,'burst_no_wear')
+        if fire_mode=='burst' and chance and random.randint(1,100)<=chance*100:units=0
         return CombatService._apply_weapon_wear(weapon, units * multiplier)
 
     @staticmethod
@@ -2894,13 +2930,14 @@ class CombatService:
             return 0
         if weapon_class == 'shotgun':
             return 6
-        if weapon_class == 'submachine_gun':
-            return 2
-        return 4
+        from app.services.equipment_modifications import rule as modification_rule
+        base=2 if weapon_class=='submachine_gun' else 4
+        return max(0,base-modification_rule(weapon,'burst_accuracy_reduction'))
 
     @staticmethod
     def _burst_action_points(weapon):
-        return 2 if CombatService._weapon_class(weapon) == 'submachine_gun' else 3
+        from app.services.equipment_modifications import rule as modification_rule
+        return max(0,(2 if CombatService._weapon_class(weapon)=='submachine_gun' else 3)+modification_rule(weapon,'burst_ap_delta'))
 
     @staticmethod
     def _area_fire_accuracy_penalty(weapon):
@@ -2934,12 +2971,12 @@ class CombatService:
     def _area_fire_hit_count(roll, difficulty, shot_count, roll_modifier=0):
         margin = (
             CombatService._coerce_int(roll, 0)
-            + CombatService._coerce_int(roll_modifier, 0)
-            - CombatService._coerce_int(difficulty, 0)
+            + CombatService._coerce_float(roll_modifier, 0)
+            - CombatService._coerce_float(difficulty, 0)
         )
         return min(
             max(1, CombatService._coerce_int(shot_count, 1)),
-            1 + max(0, margin // 3),
+            1 + int(max(0, margin // 3)),
         )
 
     @staticmethod
@@ -3108,8 +3145,9 @@ class CombatService:
             strength_bonus = CombatService._skill_modifier(
                 character_data or {}, 'skills.physical.strength'
             )
+            from app.services.equipment_passives import unarmed_damage
             return {
-                'damage': max(10, 10 * strength_bonus),
+                'damage': unarmed_damage(character_data or {}, strength_bonus),
                 'armor_piercing': 0,
                 'bleeding': '',
                 'accuracy': 0,
@@ -3567,7 +3605,8 @@ class CombatService:
     @staticmethod
     def _rapid_fire_accuracy_penalty(weapon):
         ammo_profile, _ = CombatService._ranged_damage_profile(weapon)
-        return 0 if CombatService._is_buckshot_profile(ammo_profile) else 4
+        from app.services.equipment_modifications import rule as modification_rule
+        return 0 if CombatService._is_buckshot_profile(ammo_profile) else modification_rule(weapon,'rapid_penalty',4)
 
     @staticmethod
     def _is_12x70_slug_profile(profile):
@@ -5079,7 +5118,8 @@ class CombatService:
         armor = equipment.get('armor') if isinstance(equipment.get('armor'), dict) else {}
         integrated_profile = CombatService._integrated_helmet_profile(armor)
         if integrated_profile:
-            return integrated_profile['accuracy_penalty']
+            from app.services.equipment_modifications import gear_stat
+            return max(0,gear_stat(armor,'accuracy_penalty',integrated_profile['accuracy_penalty']))
 
         total = 0
         for slot in ('helmet', 'gasMask'):
@@ -5089,7 +5129,8 @@ class CombatService:
                 penalty = item.get('accuracy_penalty')
             if penalty is None:
                 penalty = (item.get('attributes') or {}).get('accuracy_penalty')
-            total += max(0, CombatService._coerce_int(penalty, 0))
+            from app.services.equipment_modifications import gear_stat
+            total += max(0,gear_stat(item,'accuracy_penalty',CombatService._coerce_float(penalty,0)))
         return total
 
     @staticmethod
@@ -5100,7 +5141,7 @@ class CombatService:
         return bool(state and state.status=='active' and target.id in (state.turn_order or []))
 
     @staticmethod
-    def _target_armor(target_data, zone, head_protection_zone=None,*,target=None,limb_hit=None):
+    def _target_armor(target_data, zone, head_protection_zone=None,*,target=None,limb_hit=None,explosive=False):
         if head_protection_zone is None and isinstance(target_data, dict):
             head_protection_zone = target_data.get('_headProtectionZone')
         equipment = target_data.get('equipment') if isinstance(target_data, dict) else {}
@@ -5150,10 +5191,14 @@ class CombatService:
                 continue
             value = protection.get(zone_group, protection.get('physical', 0))
             parsed = max(0.0, min(100.0, CombatService._protection_percent(value, 0)))
+            from app.services.equipment_modifications import stat as modification_stat,rule as modification_rule
+            parsed=max(0,min(100,modification_stat(item,'physical',parsed)))
+            if explosive:parsed=min(100,modification_stat(item,'explosive_physical',parsed))
+            if zone=='head' and head_protection_zone=='ears':parsed=min(100,parsed+modification_rule(item,'ear_protection'))
             if not is_gas_mask:
                 parsed = max(0.0, parsed - CombatService._armor_stage_penalty(item, 'physical'))
             # Armor protects covered limbs 10 percentage points worse than the body.
-            if slot == 'armor' and zone in {
+            if slot == 'armor' and not modification_rule(item,'full_limb_armor') and zone in {
                 'left_arm', 'right_arm', 'left_leg', 'right_leg',
             }:
                 parsed = max(0.0, parsed - 10)
@@ -5167,6 +5212,7 @@ class CombatService:
                     'attributes': attrs,
                     'protection': parsed,
                     'is_gas_mask': is_gas_mask,
+                    **({'wear_multiplier':max(0,1-modification_rule(item,'explosion_wear_reduction'))} if explosive else {}),
                 })
         mutant = target_data.get('mutant') if isinstance(target_data, dict) else None
         if isinstance(mutant, dict):
@@ -5221,6 +5267,9 @@ class CombatService:
                 'protection': artifact_protection,
                 'is_gas_mask': False,
             })
+        if zone == 'head' and head_protection_zone in {'eyes', 'eye'}:
+            from app.services.equipment_passives import eye_protection
+            total = max(total, eye_protection(target_data))
         if CombatService._combat_background_active(target,'Стойкий'):total=min(100,total+5)
         return total, details
 
@@ -5242,6 +5291,8 @@ class CombatService:
             if not isinstance(protection, dict):
                 protection = attributes.get('protection') if isinstance(attributes.get('protection'), dict) else {}
             parsed = CombatService._protection_percent(protection.get(damage_type), 0)
+            from app.services.equipment_modifications import stat as modification_stat
+            parsed=modification_stat(item,damage_type,parsed)+modification_stat(item,'anomaly',0)
             if not CombatService._uses_gas_mask_durability(slot, item, attributes):
                 parsed = max(
                     0,
@@ -5262,6 +5313,9 @@ class CombatService:
         if CombatService._combat_background_active(target,'Стойкий'):best+=5
         if damage_type == 'electric' and background_is(target_data, 'Радиолюбитель'):
             best -= 10
+        if damage_type in {'thermal', 'electric', 'chemical', 'radiation'}:
+            from app.services.equipment_passives import glove_protection
+            best += glove_protection(target_data)
         return max(0, min(100, best))
 
     @staticmethod
@@ -5295,6 +5349,10 @@ class CombatService:
                     else {}
                 )
             value = CombatService._protection_percent(protection.get('radiation'), 0)
+            from app.services.equipment_modifications import stat as modification_stat
+            value=modification_stat(item,'radiation',value)+modification_stat(item,'anomaly',0)
+            from app.services.equipment_modifications import rule as modification_rule
+            if CombatService._functioning_gas_protection(character_data):value+=modification_rule(item,'radiation_with_mask')
             if is_gas_mask:
                 from app.services.gas_mask_filters import is_gas_mask_filter, filter_charges
                 if not any(is_gas_mask_filter(module) and filter_charges(module) > 0
@@ -5308,6 +5366,8 @@ class CombatService:
             artifact_passive_profile(character_data)['protection']['radiation'],
         )
         if CombatService._combat_background_active(target,'Стойкий'):total+=5
+        from app.services.equipment_passives import glove_protection
+        total += glove_protection(character_data)
         return total
 
     @staticmethod
@@ -6585,7 +6645,8 @@ class CombatService:
         value = max(0, CombatService._coerce_float(points, 0) * facing_multiplier - 20 * distance)
         if uses_nvg(data):
             value *= .5
-        return round(value * character_passives(data)['blindness_multiplier'])
+        from app.services.equipment_passives import flash_multiplier
+        return round(value * flash_multiplier(data) * character_passives(data)['blindness_multiplier'])
 
     @staticmethod
     def _flash_round_profile(profile):
@@ -6784,7 +6845,7 @@ class CombatService:
         data=target.character.data or {}
         from app.services.prostheses import hit_part
         limb_hit=hit_part(data,zone)
-        armor,layers=CombatService._target_armor(data,zone,**({'limb_hit':limb_hit} if limb_hit else {}),**({'target':target} if background_is(data,'Стойкий') else {}))
+        armor,layers=CombatService._target_armor(data,zone,explosive=True,**({'limb_hit':limb_hit} if limb_hit else {}),**({'target':target} if background_is(data,'Стойкий') else {}))
         penetrated=penetration>=armor
         applied=(0 if additional and not penetrated else
                  round(incoming*CombatService._penetration_damage_multiplier(penetration,armor)))
@@ -6793,7 +6854,7 @@ class CombatService:
         if incoming>0:
             for layer in layers:
                 result=(CombatService._damage_gas_mask(layer['item'],'bullet') if layer.get('is_gas_mask') else
-                        CombatService._damage_armor_item(layer['item'],layer['attributes'],incoming))
+                        CombatService._damage_armor_item(layer['item'],layer['attributes'],incoming*layer.get('wear_multiplier',1)))
                 if result:wear.append(result)
         health=None
         if applied>0:
@@ -7088,20 +7149,21 @@ class CombatService:
 
             target_data = target.character.data if isinstance(target.character.data, dict) else {}
             blast_armor, blast_armor_layers = CombatService._target_armor(
-                target_data, 'chest',**({'target':target} if background_is(target_data,'Стойкий') else {}),
+                target_data, 'chest',explosive=True,**({'target':target} if background_is(target_data,'Стойкий') else {}),
             )
             armor_multiplier = max(0, 1 - blast_armor / 100)
             blast = max(
                 0,
                 profile['blast_base']*(1.5 if indoors else 1) - profile['blast_falloff'] * distance,
             )
-            blast = 0 if wave_blocked else round(blast * armor_multiplier)
+            # Дробная защита не должна превращать ровные 42,5 в 42,50000000001.
+            blast = 0 if wave_blocked else round(round(blast * armor_multiplier, 9))
             blast_armor_damage = []
             for layer in blast_armor_layers:
                 if layer.get('is_gas_mask'):
                     continue
                 damage_result = CombatService._damage_armor_item(
-                    layer['item'], layer['attributes'], blast,
+                    layer['item'], layer['attributes'], blast*layer.get('wear_multiplier',1),
                 )
                 if damage_result:
                     blast_armor_damage.append(damage_result)
@@ -7130,11 +7192,14 @@ class CombatService:
                 target.character.data = data
                 flag_modified(target.character, 'data')
 
-            blast_trauma=CombatService._apply_blast_trauma(target,blast,round_number=round_number)
-            if concussion and blast_trauma and blast_trauma.get('type')=='concussion':
+            trauma_checks=2 if profile.get('blast_trauma_checks')==2 else 1
+            blast_traumas=[CombatService._apply_blast_trauma(target,blast,round_number=round_number) for _ in range(trauma_checks)]
+            blast_trauma=blast_traumas[0]
+            concussion_rounds=max((t.get('rounds',0) for t in blast_traumas if t and t.get('type')=='concussion'),default=0)
+            if concussion and concussion_rounds:
                 for effect in target.character.data['health'].get('effects') or []:
                     if effect.get('type')=='concussion':
-                        effect['remaining']=5+blast_trauma['rounds']
+                        effect['remaining']=5+concussion_rounds
                         effect['tick']='round_end'
                 flag_modified(target.character,'data')
 
@@ -7183,6 +7248,7 @@ class CombatService:
                 'blast_armor_damage': blast_armor_damage,
                 'blast_damage': blast_result['damage'],
                 'blast_trauma': blast_trauma,
+                'blast_traumas': blast_traumas,
                 'fragment_zone': fragment_zone,
                 'fragment_damage': applied_fragment_damage,
                 'fragment_penetration': round(fragment['penetration'], 2),
@@ -7408,6 +7474,8 @@ class CombatService:
                 keep = age < max(1, CombatService._coerce_int(area.get('duration_rounds'), 1))
             if keep:
                 updated.append(area)
+        from app.services.burning import advance_object_fires
+        affected.extend(advance_object_fires(state.location_id))
         state.area_effects = updated
         return affected
 
@@ -8610,7 +8678,7 @@ class CombatService:
                 )
                 shot_details['hit_difficulty'] = max(
                     1,
-                    CombatService._coerce_int(
+                    CombatService._coerce_float(
                         attack_details.get('hit_difficulty_without_weapon_jam'),
                         attack_details.get('hit_difficulty', 1),
                     ) + shot_details['weapon_jam_accuracy_penalty'],
@@ -8636,7 +8704,7 @@ class CombatService:
             shot_details['burst_followup_accuracy_penalty'] = burst_followup_penalty
             shot_details['hit_difficulty'] = max(
                 1,
-                CombatService._coerce_int(shot_details.get('hit_difficulty'), 1)
+                CombatService._coerce_float(shot_details.get('hit_difficulty'), 1)
                 + machine_gun_penalty
                 + burst_followup_penalty,
             )
@@ -9147,8 +9215,9 @@ class CombatService:
                     f"\u0433\u043b\u0443\u0445\u043e\u0442\u0430 {target.get('deafness')}"
                 )
                 continue
-            trauma = target.get('blast_trauma') or {}
-            trauma_text = '' if trauma.get('type') in {None, 'none'} else f", \u0442\u0440\u0430\u0432\u043c\u0430: {trauma.get('type')}"
+            traumas=target.get('blast_traumas') or [target.get('blast_trauma')]
+            trauma_names=[t['type'] for t in traumas if t and t.get('type') not in {None,'none'}]
+            trauma_text=', травмы: '+', '.join(trauma_names) if trauma_names else ''
             target_lines.append(
                 f"{target.get('name')}: \u0432\u043e\u043b\u043d\u0430 {target.get('blast_damage')}, "
                 f"\u043e\u0441\u043a\u043e\u043b\u043a\u0438 {target.get('fragment_damage')} \u0432 {target.get('fragment_zone')}, "
@@ -9268,6 +9337,9 @@ class CombatService:
     def _consumable_stat_value_bonus(character_data, stat_name):
         if not isinstance(character_data, dict):
             return 0
+        if stat_name.startswith('darkness_'):
+            from app.services.consumable_effects import normalize_owl_modifiers
+            normalize_owl_modifiers(character_data)
         if stat_name=='movement_points':
             from app.services.consumable_effects import remove_stale_movement_modifiers
             remove_stale_movement_modifiers(character_data)
@@ -9563,6 +9635,8 @@ class CombatService:
         if not loc_char or not getattr(loc_char, 'character', None):
             return loc_char
         character_data = loc_char.character.data if isinstance(loc_char.character.data, dict) else {}
+        from app.services.equipment_care import advance as advance_care
+        advance_care(character_data,elapsed_seconds)
         health = character_data.get('health')
         if not isinstance(health, dict):
             return loc_char
@@ -10384,8 +10458,9 @@ class CombatService:
             if CombatService._uses_gas_mask_durability(slot, item, attributes):
                 result = CombatService._damage_gas_mask(item, 'anomaly')
             elif armor_multiplier > 1:
+                from app.services.equipment_modifications import rule as modification_rule
                 result = CombatService._damage_armor_item(
-                    item, attributes, damage * armor_multiplier,
+                    item, attributes, damage * armor_multiplier*max(0,1-modification_rule(item,'anomaly_wear_reduction')),
                 )
             else:
                 result = None
@@ -11887,6 +11962,9 @@ class CombatService:
                 raise ValidationError('The integrated helmet is removed together with the armor')
         template = CombatService._equipment_template(item)
         if operation == 'equip':
+            from app.services.equipment_passives import validate_glasses
+            proposed = {**character_data, 'equipment': {**equipment, slot: item}}
+            validate_glasses(proposed)
             if slot == 'armor' and CombatService._integrated_helmet_from_armor(item, template):
                 current_helmet = equipment.get('helmet')
                 if isinstance(current_helmet, dict) and current_helmet.get('templateId'):
@@ -13422,6 +13500,13 @@ class CombatService:
             db.session.commit()
             return {'character':CombatService._serialize_character(character),
                     'state':CombatService.get_state(location_id,user_id),'action':action_key,'jump':details}
+        if (not state or state.status!='active') and action_key=='flamethrower_service':
+            if not CombatService._can_end_turn_for_character(character,user_id,is_gm=is_gm):raise PermissionDenied('Вы не управляете персонажем')
+            CombatService.ensure_character_can_act(character)
+            from app.services.flamethrower import service_plan,service
+            details=service(character,service_plan(character,weapon_index,item_path,equipment_slot,equipment_operation))
+            details['action_points']=0;db.session.commit()
+            return {'action':action_key,'narrative_action':details,'character':CombatService._serialize_character(character),'state':CombatService.get_state(location_id,user_id)}
         if not state or state.status != 'active':
             raise ValidationError("Combat is not active")
 
@@ -13520,6 +13605,7 @@ class CombatService:
         mutant_action_details = None
         jump_details = None
         special_action_cost = None
+        flame_details = None
         resolved_hits = []
         single_fire = False
         prepared_attacks = None
@@ -13868,6 +13954,8 @@ class CombatService:
             difficulty = max(1, CombatService._coerce_int(
                 profile.get(difficulty_key), active_anomaly.get('dc', 10),
             ))
+            from app.services.equipment_modifications import worn_rule
+            difficulty=max(1,difficulty-worn_rule(data,'anomaly_escape_reduction'))
             margin = difficulty - check['total']
             success = check['roll'] == 20 or (check['roll'] != 1 and margin <= 0)
             if success:
@@ -13947,6 +14035,14 @@ class CombatService:
                 'weapon_difficulty_modifier': weapon_modifier,
                 'action_points': special_action_cost,
             }
+        elif action_key in {'flamethrower_fire','flamethrower_service'}:
+            from app.services.flamethrower import prepare,service_plan
+            flame_details=(prepare(character,weapon_index,fire_mode,target_x,target_y,target_character_id,floor_level=target_floor_level,is_gm=is_gm)
+                if action_key=='flamethrower_fire' else service_plan(character,weapon_index,item_path,equipment_slot,equipment_operation))
+            special_action_cost=flame_details['action_points']
+            if action_key=='flamethrower_fire':
+                from app.services.sniper_position import require_reposition
+                require_reposition(character,state)
         elif action_key == 'explosive_attack':
             source = str(explosive_source or '').strip().lower()
             mode = str(explosive_fire_mode or 'unaimed').strip().lower()
@@ -14073,6 +14169,10 @@ class CombatService:
                         explosive_weapon.get('accuracy', weapon_attributes.get('accuracy')), 0,
                     )
                 special_action_cost = 2 if mode == 'unaimed' else 4
+                from app.services.weapon_modules import weapon_stat
+                from app.services.equipment_modifications import rule as modification_rule
+                weapon_accuracy=weapon_stat(explosive_weapon,'accuracy',weapon_accuracy)
+                if mode=='aimed':weapon_accuracy+=modification_rule(explosive_weapon,'aimed_accuracy')
                 if source == 'weapon':
                     explosive_fire_rate_state = CombatService._validate_weapon_fire_rate(
                         combat_meta, current_round, weapon_index, explosive_weapon, 1,
@@ -14081,6 +14181,9 @@ class CombatService:
             explosive_profile = CombatService._explosive_profile(explosive_item)
             if not explosive_profile:
                 raise ValidationError("This explosive does not have a damage profile yet")
+            if source=='weapon':
+                from app.services.equipment_modifications import explosive_profile as modified_explosive_profile
+                explosive_profile=modified_explosive_profile(explosive_weapon,explosive_profile)
             explosive_profile['radius']=explosive_profile.get('radius',0)+character_passives(data)['grenade_radius_bonus']
             if source!='hand' and background_is(data,'Гренадир'):
                 weapon_range+=5
@@ -14134,6 +14237,8 @@ class CombatService:
                 )
                 if any(e.get('source')=='background_aggressor' and e.get('active',True) and (e.get('remaining') or 0)>0
                        for e in normalize_effect_list((data.get('health') or {}).get('effects') or [])):throwing_bonus+=3
+                from app.services.equipment_modifications import worn_rule
+                throwing_bonus+=worn_rule(data,'throwing_bonus')
                 posture_penalty = {'standing': 0, 'sitting': 3, 'prone': 5}.get(
                     CombatService._posture_key(character), 0,
                 )
@@ -14160,6 +14265,10 @@ class CombatService:
                 )
                 difficulty = 12 - shooting_bonus - weapon_accuracy - condition_modifier
                 difficulty += CombatService._equipment_accuracy_penalty(data)
+                from app.services.weapon_modules import uses_nvg
+                from app.services.equipment_passives import darkness_modifier
+                if CombatService._is_dark_at_position(location, impact_x, impact_y):
+                    difficulty -= darkness_modifier(data, 'accuracy_penalty')
                 difficulty += launcher_strength['accuracy_penalty']
                 difficulty += CombatService._coerce_int(
                     launcher_jam.get('accuracy_penalty') if launcher_jam else 0,
@@ -14176,7 +14285,7 @@ class CombatService:
                     or launcher_movement['disadvantage']
                     or CombatService._has_roll_disadvantage(
                         data, 'skills.physical.shooting',
-                        darkness=CombatService._is_dark_at_position(location, impact_x, impact_y),
+                        darkness=not uses_nvg(data) and CombatService._is_dark_at_position(location, impact_x, impact_y),
                     )
                     or (launcher_jam and launcher_jam.get('shooting_disadvantage'))
                 )
@@ -15011,9 +15120,10 @@ class CombatService:
                 0,
                 CombatService._coerce_int(magazine_attributes.get('reload_time_od'), 0),
             )
+            from app.services.equipment_modifications import rule as modification_rule
             reload_cost = max(
                 0,
-                base_reload_cost + ergonomics_profile['reload_action_points_modifier'],
+                base_reload_cost + ergonomics_profile['reload_action_points_modifier']+modification_rule(weapons[weapon_index],'reload_ap_delta'),
             )
             access = calculate_inventory_access(data, item_path)
             retrieval_cost = int(access['retrieval_action_points'])
@@ -15353,6 +15463,8 @@ class CombatService:
                 template = db.session.get(ItemTemplate, weapon.get('templateId'))
                 profile = (template.attributes or {}).get('fire_modes') if template else None
             profile = profile or {}
+            from app.services.equipment_modifications import fire_profile as modified_fire_profile,rule as modification_rule
+            profile=modified_fire_profile(weapon,profile,CombatService._weapon_fire_rate(weapon))
             ergonomics_profile = CombatService._weapon_ergonomics_profile(
                 character,
                 weapon,
@@ -15687,6 +15799,10 @@ class CombatService:
             module_accuracy=conditional_accuracy(weapon,fire_mode=fire_mode,distance=target_distance,
                                                  posture=CombatService._posture_key(character),nvg=uses_nvg(data))
             weapon_accuracy=weapon_stat(weapon,'accuracy',weapon_accuracy)+module_accuracy
+            if fire_mode=='aimed':weapon_accuracy+=modification_rule(weapon,'aimed_accuracy')
+            if attack_details.get('weapon_braced') or strength_profile.get('ignored_by_bipod') or attack_details.get('aim_accuracy_bonus'):
+                from app.services.equipment_modifications import worn_rule
+                weapon_accuracy+=worn_rule(data,'supported_accuracy')
             attack_details['weapon_accuracy']=weapon_accuracy
             attack_details['module_conditional_accuracy']=module_accuracy
             hit_difficulty = 12 - shooting_bonus - weapon_accuracy
@@ -15701,6 +15817,10 @@ class CombatService:
             attack_details['portable_light']=portable_profile
             hit_difficulty -= weapon_accuracy_bonus(data,weapon)
             hit_difficulty += CombatService._equipment_accuracy_penalty(data)
+            if not portable_profile['lit'] and CombatService._is_dark_at_position(location, facing_target_x, facing_target_y):
+                from app.services.equipment_passives import darkness_modifier
+                if not (fire_mode=='aimed' and installed(weapon,'night_scope') and not uses_nvg(data)):
+                    hit_difficulty -= darkness_modifier(data, 'accuracy_penalty')
             hit_difficulty += strength_profile['accuracy_penalty']
             from app.services.weapon_grip import firearm_penalty
             pair_penalty=firearm_penalty(character,weapon)
@@ -15729,6 +15849,9 @@ class CombatService:
                     if range_target.character and isinstance(range_target.character.data, dict)
                     else {}
                 )
+                if target_zone=='head' and fire_mode in {'aimed','rapid'}:
+                    from app.services.equipment_modifications import worn_rule
+                    hit_difficulty+=worn_rule(range_target_data,'aimed_head_difficulty')
                 if CombatService._mutant_camouflage_active(
                     range_target_data, current_round,
                 ):
@@ -15800,6 +15923,8 @@ class CombatService:
                 for index in indices:
                     item=(data.get('weapons') or [])[index]
                     fire_profile=item.get('fireModes') or CombatService._template_attributes(item).get('fire_modes') or {}
+                    from app.services.equipment_modifications import fire_profile as modified_fire_profile
+                    fire_profile=modified_fire_profile(item,fire_profile,CombatService._weapon_fire_rate(item))
                     paired_shots=shot_count
                     if fire_mode in {'burst','suppression','area'} and not fire_profile.get('machine_gun_burst'):
                         paired_shots=CombatService._coerce_int(fire_profile.get('burst_size'),0)*CombatService._coerce_int(volley_count,1)
@@ -16611,10 +16736,14 @@ class CombatService:
             else:
                 CombatService._clear_aim(character)
 
-        if action_key in {'attack','explosive_attack'}:
+        if action_key in {'attack','explosive_attack','flamethrower_fire'}:
             from app.services.character_rules import harm_check
             ids=set((attack_details or {}).get('target_character_ids') or [])
             if target_character_id:ids.add(target_character_id)
+            if flame_details and background_is(data,'Истинный пацифист'):
+                ids.update(person.character_id for person in LocationCharacter.query.filter_by(location_id=location_id).all()
+                    if person.id!=character.id and person.floor_level==character.floor_level
+                    and math.hypot(person.pos_x-flame_details['x'],person.pos_y-flame_details['y'])<=13)
             if explosive_details and background_is(data,'Истинный пацифист'):
                 from app.services.explosion_geometry import distance as blast_distance
                 blast_objects=LocationObject.query.filter_by(location_id=location_id).all()
@@ -16633,6 +16762,9 @@ class CombatService:
                 return {'action':action_key,'attack':None,'explosive':None,'character':CombatService._serialize_character(character),
                     'state':CombatService._serialize_state(location,state),'narrative_action':{'name':'Воля перед нанесением вреда','roll_required':True,'checks':checks,'blocked_by_will':True}}
 
+        if action_key in {'flamethrower_fire','flamethrower_service'}:
+            from app.services.flamethrower import fire,service
+            narrative_action_details=fire(character,state,flame_details) if action_key=='flamethrower_fire' else service(character,flame_details)
         if action_key=='prepare_water':
             from app.services.burning import water_item
             water,litres=water_item(data,item_path)
@@ -16895,7 +17027,7 @@ class CombatService:
                             shot_details = dict(attack_details)
                             shot_details['continuation_hit_difficulty'] = max(
                                 1,
-                                CombatService._coerce_int(
+                                CombatService._coerce_float(
                                     attack_details.get(
                                         'continuation_hit_difficulty_without_weapon_jam'
                                     ),
@@ -16953,7 +17085,16 @@ class CombatService:
                 if attack_details.get('direct_cover_attack'):
                     pass
                 elif fire_mode == 'area':
-                    primary = targets[0] if targets else None
+                    from app.services.equipment_modifications import rule as modification_rule
+                    area_weapon=data['weapons'][attack_details['weapon_index']]
+                    area_ammo,_=CombatService._ranged_damage_profile(area_weapon)
+                    independent=modification_rule(area_weapon,'buckshot_all_targets') and CombatService._is_buckshot_profile(area_ammo)
+                    if independent:
+                        for area_target in targets:
+                            resolved_hits.append(CombatService._resolve_attack(area_target,character,attack_details,aimed_zone=target_zone))
+                        attack_details['area_hit_count']=sum(bool(hit.get('hit')) for hit in resolved_hits)
+                        attack_details['independent_area_checks']=True
+                    primary = targets[0] if targets and not independent else None
                     if primary:
                         first = CombatService._resolve_attack(
                             primary, character, {**attack_details,'post_bonus_available':background_is(data,'Пост принял')}, aimed_zone=target_zone

@@ -14,8 +14,11 @@ from app.services.equipment_importer import parse_equipment_templates
 from app.services.consumable_importer import parse_consumable_templates_v2
 
 
-REPORT = Path(__file__).resolve().parents[1] / '.private-testing/reports/catalog-sweep-2026-11-04'
-SOURCE = Path.home() / 'Downloads/Снаряжение (3).xlsx'
+ROOT = Path(__file__).resolve().parents[1]
+REPORT = ROOT / '.private-testing/reports/catalog-sweep-2026-11-05'
+SOURCE = ROOT / '.private-testing/Снаряжение (4).xlsx'
+if not SOURCE.is_file():
+    SOURCE = Path.home() / 'Downloads/Снаряжение (3).xlsx'
 # Книга автора — локальный источник, не зависимость обычного CI проекта.
 pytestmark = pytest.mark.skipif(not SOURCE.is_file(), reason='Локальная книга каталога недоступна для расширенного аудита')
 
@@ -51,7 +54,7 @@ def test_every_catalog_ammunition_against_every_armor_and_helmet(app, client, cr
     assert app.testing and str(app.config['SQLALCHEMY_DATABASE_URI']) in {'sqlite://', 'sqlite:///:memory:'}
     # Сначала сохраняется полный источник; варианты строятся кодом реального листа.
     test_catalog_sweep_source_inventory(app)
-    subprocess.run(['node', str(Path(__file__).parent/'helpers/catalog_ammo_variants.cjs')], check=True,
+    subprocess.run(['node', str(Path(__file__).parent/'helpers/catalog_ammo_variants.cjs'), str(REPORT)], check=True,
                    cwd=Path(__file__).parents[1], capture_output=True, text=True, timeout=30)
     variants=json.loads((REPORT/'ammo-variants.json').read_text(encoding='utf-8'))
     equipment,_=source_catalog()

@@ -972,6 +972,41 @@ def test_sprinter_does_not_bypass_exoskeleton_running_restriction(app):
     assert CombatService._movement_distance_limit('walk','standing',False,0,data)==10
 
 
+def test_fractional_cosmetic_charisma_bonuses_are_not_truncated(app):
+    data = {'equipment': {'gloves': {'charismaBonus': .5}, 'ring': {'charismaBonus': .25},
+                          'bracelet1': {'charismaBonus': .25}}, 'health': {'effects': []}}
+    result = CombatService._narrative_skill_check(data, 'skills.social.charisma')
+    assert result['equipment_modifier'] == 1
+
+
+def test_welder_recognizes_new_catalog_name_of_welding_glasses(app):
+    data = {'features': {'specialTraits': [{'name':'Сварщик'}]},
+            'equipment': {'glasses': {'name':'Сварочные защитные очки', 'charismaBonus':-1}},
+            'health': {'effects': []}}
+    assert CombatService._narrative_skill_check(data, 'skills.social.charisma')['equipment_modifier'] == 1
+
+
+def test_military_gloves_protect_only_when_worn_and_do_not_add_physical_armor(app):
+    gloves = {'name': 'Военные', 'attributes': {'anomaly_protection_bonus': 3}}
+    data = {'equipment': {'gloves': gloves}, 'inventory': {'pockets': []}}
+    for damage_type in ('thermal', 'electric', 'chemical', 'radiation'):
+        assert CombatService._target_elemental_protection(data, damage_type) == 3
+    assert CombatService._equipped_radiation_protection(data) == 3
+    assert CombatService._target_elemental_protection(data, 'physical') == 0
+    data['equipment'].pop('gloves')
+    data['inventory']['pockets'].append(gloves)
+    assert CombatService._target_elemental_protection(data, 'electric') == 0
+
+
+def test_glasses_blinding_coefficient_applies_to_actual_flash_points(app):
+    assert CombatService._received_flash({}, 250, 0, 1) == 250
+    data = {'equipment': {'glasses': {'flashProtection': .25}}}
+    assert CombatService._received_flash(data, 250, 0, 1) == 62
+    assert CombatService._received_flash(data, 250, 5, .5) == 6
+    data['equipment']['glasses']['protectionDisabled'] = True
+    assert CombatService._received_flash(data, 250, 0, 1) == 250
+
+
 def test_trauma_choice_does_not_lock_battle_if_gm_removed_target(grenade_game):
     from app.services.sniper_trauma import enqueue,choices,decide,require_resolved
     actor,target=grenade_game['actor_location'],grenade_game['target_location']

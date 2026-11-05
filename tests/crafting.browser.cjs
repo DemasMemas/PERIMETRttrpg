@@ -1,0 +1,47 @@
+const assert=require('node:assert/strict');
+module.exports=async({peer,page,request,recipient,token,api,read})=>{
+    await peer.evaluate('window.closeCharacterSheet?.();true');
+    const templates=await request(api+'/templates',null,token,'GET');
+    const all=Array.isArray(templates)?templates:[...(templates.global||[]),...(templates.local||[])];
+    const data=(await read()).data;
+    data.skills.other={...(data.skills.other||{}),engineering:{base:20,bonus:0}};
+    for(const name of ['Металлические детали','Электронные материалы','КПК']){
+        const template=all.find(t=>t.name===name);assert.ok(template,'Шаблон '+name);
+        data.inventory.pockets.push({id:'craft-'+template.id,name,templateId:template.id,category:template.category,attributes:template.attributes,quantity:1,weight:template.weight,volume:template.volume});
+    }
+    data.inventory.pockets.push({id:'craft-hammer',name:'Молоток',category:'tool',quantity:1});
+    await request('/lobbies/characters/'+recipient.id,{data},token,'PUT');
+    await peer.evaluate(`window.openCharacterSheet(${recipient.id},'equipment').then(()=>true)`);
+    await peer.evaluate("document.querySelector('#character-crafting-open').click();true");
+    await peer.until("document.querySelector('#crafting-modal select[aria-label=Рецепт]')",'Открыты реальные рецепты');
+    await peer.evaluate("(()=>{const s=document.querySelector('#crafting-modal select[aria-label=Рецепт]');s.value='recipe-f4';s.dispatchEvent(new Event('change'));return true})()");
+    await peer.until("[...document.querySelectorAll('#crafting-modal button')].some(b=>b.textContent==='Начать создание'&&!b.disabled)",'Рецепт доступен и компоненты найдены');
+    await peer.evaluate("[...document.querySelectorAll('#crafting-modal button')].find(b=>b.textContent==='Начать создание').click();true");
+    await peer.until("document.querySelector('#crafting-modal')?.innerText.includes('Работа идёт')",'Создание зарезервировало материалы');
+    let saved=(await read()).data;assert.equal(saved.crafting.current.escrow.length,3);
+    assert.ok(!saved.inventory.pockets.some(item=>item.name==='КПК'));
+    await request(api+'/time',{game_day:1,game_time_minutes:30},token,'PATCH');
+    await peer.evaluate("[...document.querySelectorAll('#crafting-modal button')].find(b=>b.textContent==='Обновить').click();true");
+    await peer.until("[...document.querySelectorAll('#crafting-modal button')].some(b=>b.textContent==='Завершить · к100'&&!b.disabled)",'Прошли двадцать игровых минут');
+    await peer.evaluate("[...document.querySelectorAll('#crafting-modal button')].find(b=>b.textContent==='Завершить · к100').click();true");
+    await peer.until(`(async()=>{const {Server}=await import('/static/js/api.js');const c=await Server.getCharacter(${recipient.id});return !c.data.crafting.current&&c.data.inventory.pockets.some(i=>i.name==='Фонарик')})()`,'Фонарик действительно получен один раз');
+    await peer.until("document.querySelector('#crafting-modal select[aria-label=\"Дополнительный инструмент\"]')",'Вернулся выбор дополнительного инструмента');
+    await peer.evaluate("(()=>{const s=document.querySelector('#crafting-modal select[aria-label=\"Дополнительный инструмент\"]');s.value=[...s.options].find(o=>o.textContent==='Молоток').value;s.dispatchEvent(new Event('change'));[...document.querySelectorAll('#crafting-modal button')].find(b=>b.textContent==='Запросить одобрение ГМа').click();return true})()");
+    await peer.until("document.querySelector('#crafting-modal')?.innerText.includes('ожидает ГМа')",'Игрок отправил заявку ГМу');
+    await page.evaluate(`window.openCharacterSheet(${recipient.id},'equipment').then(()=>true)`);
+    await page.until("document.querySelector('#character-crafting-open')",'Открыт лист для действий ГМа');
+    await page.evaluate("document.querySelector('#character-crafting-open').click();true");
+    await page.until("[...document.querySelectorAll('#crafting-modal button')].some(b=>b.textContent==='Заявки на инструменты')",'ГМ видит заявки');
+    await page.evaluate("[...document.querySelectorAll('#crafting-modal button')].find(b=>b.textContent==='Заявки на инструменты').click();true");
+    await page.until("document.querySelector('#crafting-modal select[aria-label=\"Снижение СЛ\"]')",'Заявка открыта ГМу');
+    await page.evaluate("(()=>{const s=document.querySelector('#crafting-modal select[aria-label=\"Снижение СЛ\"]');s.value='-10';[...document.querySelectorAll('#crafting-modal button')].find(b=>b.textContent==='Одобрить').click();return true})()");
+    await page.until("document.querySelector('#crafting-modal')?.innerText.includes('Ожидающих заявок нет')",'ГМ одобрил инструмент');
+    await peer.evaluate("[...document.querySelectorAll('#crafting-modal button')].find(b=>b.textContent==='Обновить').click();true");
+    await peer.until("document.querySelector('#crafting-modal')?.innerText.includes('ГМ одобрил: Молоток · СЛ -10')",'Игрок получил серверное одобрение');
+    saved=(await read()).data;
+    assert.equal(saved.crafting.history.at(-1).success,true);
+    assert.equal(saved.inventory.pockets.filter(i=>i.name==='Фонарик').length,1);
+    console.log(JSON.stringify({crafting_ui:true,normal_player:true,materials_reserved:true,game_time_wait:true,one_output:true,gm_tool_request:true,gm_discount:-10}));
+    await peer.evaluate("document.querySelector('#crafting-modal .block-header button').click();true");
+    await page.evaluate("document.querySelector('#crafting-modal .block-header button').click();window.closeCharacterSheet?.();true");
+};

@@ -1,0 +1,383 @@
+"""Установка и замена улучшений, Оружейник, слоты и серверные эффекты."""
+from copy import deepcopy
+import pytest
+from app.extensions import db
+from app.services.combat import CombatService
+from app.services.crafting_rules import catalog
+from app.services.equipment_modifications import make_record,stat,rule,fire_profile
+from test_crafting import workshop,call
+from test_quick_skill_checks import checks
+from test_grenade_rules import grenade_game
+from test_flamethrower import flame_game
+
+
+@pytest.fixture
+def gunsmith(workshop):
+    data=deepcopy(workshop['actor_character'].data)
+    data['basic']={'background':{'name':'Оружейник'}}
+    data['skills']['other'].update(engineering={'base':20},tactics={'base':10})
+    data['weapons']=[{'id':'upgrade-gun','name':'Пистолет','category':'weapon','subcategory':'Пистолеты','itemClass':'1',
+        'ergonomics':20,'accuracy':0,'fireRate':5,'durability':100,'maxDurability':100,'modifications':[]}]
+    data['inventory']['money']=5000
+    data['inventory']['pockets'].append({'id':'upgrade-tools','name':'Набор инструментов Оружейника (Расширенные)',
+        'category':'tool','quantity':1,'uses':50,'maxUses':50})
+    data['crafting']={'library':[{'book_kind':'equipment','book_subject':'Пистолеты','name':'Книга'}]}
+    workshop['actor_character'].data=data;db.session.commit()
+    return workshop
+
+
+def modify(client,gunsmith,auth_headers,rule_id='weapon-c23',**extra):
+    return call(client,gunsmith,auth_headers,'modify',rule_id=rule_id,target_path=['weapons',0],tool_path=['inventory','pockets',4],**extra)
+
+
+def finish(client,gunsmith,auth_headers,job,**extra):
+    gunsmith['lobby'].game_time_minutes+=60;db.session.commit()
+    return call(client,gunsmith,auth_headers,'finish',job_id=job['id'],**extra)
+
+
+def test_every_weapon_definition_has_typed_effects():
+    for definition in catalog()['modifications']:
+        if definition['kind']=='weapon':
+            record=make_record(definition['id'],gunsmith=True)
+            assert record['modifiers'] or record['rules']
+    assert make_record('weapon-b29',gunsmith=True)['modifiers']['ergonomics']=='=75.0'
+    assert rule({'modifications':[make_record('weapon-b38',gunsmith=True)]},'burst_ap_delta')==-1
+    helmet=make_record('armor-g52',gunsmith=True)
+    assert helmet['modifiers']['movement_penalty']==1 and helmet['modifiers']['ergonomics']==-5
+    assert helmet['modifiers']['physical']==7.5
+
+
+def test_gunsmith_install_waits_spends_tools_and_rounds_final_ergonomics(client,gunsmith,auth_headers,monkeypatch):
+    started=modify(client,gunsmith,auth_headers)
+    assert started.status_code==200,started.json
+    assert started.json['data']['inventory']['pockets'][4]['uses']==40
+    assert started.json['data']['weapons'][0]['modifications']==[]
+    monkeypatch.setattr('app.services.crafting.resolve_creation',lambda q:{'success':True,'roll':100})
+    response=finish(client,gunsmith,auth_headers,started.json['result'])
+    assert response.status_code==200,response.json
+    weapon=response.json['data']['weapons'][0]
+    assert stat(weapon,'ergonomics',20)==27.5
+    # Оружейник не получает Тактику к эргономике: 20 +7,5 +10 Стрельбы =37,5 →38.
+    assert CombatService._weapon_ergonomics_profile(gunsmith['actor_location'],weapon,0)['value']==38
+
+
+def test_same_level_replacement_removes_old_effect_without_gaining_an_extra_slot(client,gunsmith,auth_headers,monkeypatch):
+    monkeypatch.setattr('app.services.crafting.resolve_creation',lambda q:{'success':True,'roll':100})
+    started=modify(client,gunsmith,auth_headers);assert started.status_code==200,started.json
+    assert finish(client,gunsmith,auth_headers,started.json['result']).status_code==200
+    replacement=modify(client,gunsmith,auth_headers,'weapon-b23',replace_rule_id='weapon-c23',operation_id='replace-start')
+    assert replacement.status_code==200,replacement.json
+    response=finish(client,gunsmith,auth_headers,replacement.json['result'],operation_id='replace-finish')
+    assert response.status_code==200,response.json
+    weapon=response.json['data']['weapons'][0]
+    assert len(weapon['modifications'])==1 and stat(weapon,'ergonomics',20)==20
+    assert weapon['maxDurability']==115 and weapon['durability']==115
+
+
+def test_unlock_is_paid_once_and_cannot_exceed_maximum(client,gunsmith,auth_headers):
+    response=call(client,gunsmith,auth_headers,'unlock_slot',target_path=['weapons',0])
+    assert response.status_code==200,response.json
+    assert response.json['result']['slots']['available']==2 and response.json['data']['inventory']['money']==2500
+    repeated=call(client,gunsmith,auth_headers,'unlock_slot',target_path=['weapons',0],character_revision=0)
+    assert repeated.status_code==200 and repeated.json['data']['inventory']['money']==2500
+
+
+def test_belt_uses_class_one_armor_rules_and_own_service_price(client,gunsmith,auth_headers,monkeypatch):
+    data=deepcopy(gunsmith['actor_character'].data)
+    data['inventory']['pockets'].extend([
+        {'id':'belt-one','name':'Пояс','category':'belt','quantity':1,'modifications':[]},
+        {'id':'belt-tools','name':'Набор инструментов Бронника (Упрощенные)','category':'tool','quantity':1,'uses':30,'maxUses':30},
+    ])
+    gunsmith['actor_character'].data=data;db.session.commit()
+    args={'rule_id':'armor-g58','target_path':['inventory','pockets',5],'tool_path':['inventory','pockets',6]}
+    quote=call(client,gunsmith,auth_headers,'quote_modification',**args)
+    assert quote.status_code==200,quote.json
+    assert quote.json['result']['slots']['factor']==1
+    assert quote.json['result']['required_engineering']==11
+    assert quote.json['result']['professional_price']==1000
+    monkeypatch.setattr('app.services.crafting.resolve_creation',lambda q:{'success':True,'roll':100})
+    started=call(client,gunsmith,auth_headers,'modify',**args)
+    assert started.status_code==200,started.json
+    assert started.json['data']['inventory']['pockets'][6]['uses']==20
+    completed=finish(client,gunsmith,auth_headers,started.json['result'])
+    assert completed.status_code==200,completed.json
+    assert rule(completed.json['data']['inventory']['pockets'][5],'belt_weight_reduction')==.75
+
+
+def test_missing_book_or_insufficient_tool_grade_does_not_spend_charges(client,gunsmith,auth_headers):
+    data=deepcopy(gunsmith['actor_character'].data);data['crafting']['library']=[]
+    gunsmith['actor_character'].data=data;db.session.commit()
+    response=modify(client,gunsmith,auth_headers)
+    assert response.status_code==400,response.json
+    assert gunsmith['actor_character'].data['inventory']['pockets'][4]['uses']==50
+
+
+def test_sheet_cannot_forge_rule_records(client,gunsmith,auth_headers):
+    character=gunsmith['actor_character'];data=character.data_snapshot()
+    data['weapons'][0]['modifications']=[make_record('weapon-c42',gunsmith=True)]
+    response=client.put(f'/lobbies/characters/{character.id}',headers=auth_headers(gunsmith['actor_user']),json={'data':data})
+    assert response.status_code==200,response.json
+    assert not character.data['weapons'][0]['modifications']
+
+
+def test_numeric_armor_protection_and_pistol_burst_use_installed_profile(app):
+    armor={'name':'Костюм','category':'armor','protection':{'physical':20},'durability':100,'stage':1,
+        'modifications':[make_record('armor-a5',gunsmith=True)]}
+    total,_=CombatService._target_armor({'equipment':{'armor':armor}},'chest')
+    assert total==35
+    weapon={'modifications':[make_record('weapon-c24',gunsmith=True)]}
+    assert fire_profile(weapon,{},6)['burst_size']==6
+
+
+def test_launcher_upgrade_preserves_profile_and_makes_two_independent_wave_checks(grenade_game,monkeypatch):
+    from app.services.equipment_modifications import explosive_profile
+    from test_grenade_rules import profile
+    actor=grenade_game['actor_location']
+    base=profile(blast_base=100)
+    upgraded=explosive_profile({'modifications':[make_record('weapon-c46',gunsmith=True)]},base)
+    assert 'blast_trauma_checks' not in base and upgraded['blast_trauma_checks']==2
+    calls=[]
+    def trauma(target,damage,**kwargs):
+        calls.append(target.character_id)
+        return {'type':'hearing_damage' if len(calls)%2 else 'bleeding','roll':len(calls)}
+    monkeypatch.setattr(CombatService,'_apply_blast_trauma',trauma)
+    result=CombatService.resolve_explosion(actor.location_id,actor.pos_x-1,actor.pos_y,upgraded)
+    entry=next(t for t in result['targets'] if t['character_id']==actor.character_id)
+    assert len(entry['blast_traumas'])==2 and calls.count(actor.character_id)==2
+    assert entry['blast_traumas'][0]['roll']!=entry['blast_traumas'][1]['roll']
+
+
+def test_gunsmith_fractional_durability_survives_wear(app):
+    from app.services.equipment_modifications import install
+    weapon={'durability':100,'maxDurability':100}
+    install(weapon,make_record('weapon-b44',gunsmith=True))
+    assert CombatService._weapon_durability(weapon)==(122.5,122.5)
+    CombatService._apply_weapon_wear(weapon,1)
+    assert weapon['durability']==121.5 and weapon['maxDurability']==122.5
+    assert weapon['_combatDurabilityLoss']==1
+
+
+def test_extra_pockets_and_full_limb_armor_are_conditional_on_wearing(app):
+    from app.services.character_traits import sync_pocket_capacity
+    armor={'category':'armor','protection':{'physical':20},'durability':100,'stage':1,
+        'modifications':[make_record('armor-a30',gunsmith=True),make_record('armor-a41')]}
+    data={'equipment':{'armor':armor}}
+    sync_pocket_capacity({},data);assert data['inventory']['pocketMaxVolume']==25
+    assert CombatService._target_armor(data,'left_arm')[0]==25
+    armor['protectionDisabled']=True
+    sync_pocket_capacity({},data);assert data['inventory']['pocketMaxVolume']==10
+    assert CombatService._target_armor(data,'left_arm')[0]==0
+
+
+def test_gas_mask_mods_reduce_actual_accuracy_charisma_and_filter_consumption(app):
+    from app.services.equipment_modifications import charisma_bonus
+    from app.services.gas_mask_filters import consume_equipped_filter_charges
+    mask={'category':'gas_mask','accuracyPenalty':3,'charismaBonus':-4,
+        'modifications':[make_record('armor-g12'),make_record('armor-g11'),make_record('armor-g13')],
+        'installedModules':[{'attributes':{'filter_charges':10},'durability':10}]}
+    data={'equipment':{'gasMask':mask}}
+    assert CombatService._equipment_accuracy_penalty(data)==0
+    assert charisma_bonus(mask,-4)==0
+    result=consume_equipped_filter_charges(data,1)
+    assert result['consumed']==.5 and mask['installedModules'][0]['durability']==9.5
+
+
+def test_tinted_lenses_and_ear_protection_do_not_protect_whole_head(app):
+    from app.services.equipment_passives import flash_multiplier
+    helmet={'category':'helmet','protection':{'physical':0},'stage':1,'durability':100,
+        'modifications':[make_record('armor-g6'),make_record('armor-g14')]}
+    data={'equipment':{'helmet':helmet}}
+    assert CombatService._target_armor(data,'head',head_protection_zone='ears')[0]==15
+    assert CombatService._target_armor(data,'head',head_protection_zone='eyes')[0]==0
+    assert flash_multiplier(data)==.5
+    assert CombatService._equipment_accuracy_penalty(data)==1
+
+
+def test_hearing_advantage_does_not_apply_to_visual_checks(checks):
+    data=deepcopy(checks['actor_character'].data)
+    data['equipment']['helmet']['modifications']=[make_record('armor-g26')]
+    hearing=CombatService._narrative_skill_check(data,'skills.physical.awareness.hearing')
+    visual=CombatService._narrative_skill_check(data,'skills.physical.awareness.visual')
+    assert hearing['advantage'] and len(hearing['rolls'])==2
+    assert not visual['advantage'] and len(visual['rolls'])==1
+
+
+@pytest.mark.parametrize('gunsmith,penalty',[(False,-1),(True,0)])
+def test_helmet_reduces_concussion_without_removing_effect(checks,gunsmith,penalty):
+    data=deepcopy(checks['actor_character'].data);data['health']['effects']=[{'type':'concussion','remaining':3,'active':True}]
+    data['equipment']['helmet']['modifications']=[make_record('armor-g35',gunsmith=gunsmith)]
+    assert CombatService._health_roll_modifier(data,'skills.other.engineering')==penalty
+    assert data['health']['effects'][0]['remaining']==3
+
+
+def test_extra_container_slots_are_real_and_cannot_delete_a_filled_slot(app):
+    from app.services.equipment_modifications import install
+    from app.services.exceptions import ValidationError
+    armor={'containers':[{'item':{'id':'original-artifact'}}],'modifications':[]}
+    install(armor,make_record('armor-a11'))
+    assert len(armor['containers'])==2 and armor['containers'][0]['item']['id']=='original-artifact'
+    armor['containers'][1]['item']={'id':'extra-artifact'};before=deepcopy(armor)
+    with pytest.raises(ValidationError,match='освободите'):install(armor,make_record('armor-a7'),replacing='armor-a11')
+    assert armor==before
+    armor['containers'][1]['item']=None
+    install(armor,make_record('armor-a7'),replacing='armor-a11')
+    assert len(armor['containers'])==1 and armor['containers'][0]['item']['id']=='original-artifact'
+
+
+@pytest.mark.parametrize('gunsmith,expected',[(False,5),(True,2.5)])
+def test_belt_discount_applies_only_to_items_on_that_belt(app,gunsmith,expected):
+    data={'inventory':{'pockets':[{'weight':3,'quantity':1}]},'equipment':{'belt':{
+        'modifications':[make_record('armor-g58',gunsmith=gunsmith)],'pouches':[{'contents':[{'weight':10,'quantity':1}]}]}}}
+    assert CombatService._inventory_weight_details(data)['total_weight']==3+expected
+
+
+def test_fractional_accuracy_is_not_rounded_between_shots(app,monkeypatch):
+    from types import SimpleNamespace
+    attacker=SimpleNamespace(character=SimpleNamespace(data={'weapons':[{'durability':100,'maxDurability':100}]}))
+    seen=[]
+    def hit(target,actor,details,**kwargs):
+        seen.append(details['hit_difficulty']);return {'roll':10,'hit':False}
+    monkeypatch.setattr(CombatService,'_resolve_attack',hit)
+    monkeypatch.setattr(CombatService,'_roll_character_weapon_jam',lambda *a:{'triggered':False})
+    details={'weapon_index':0,'hit_difficulty':10.5,'hit_difficulty_without_weapon_jam':10.5,'shot_count':1,'fire_mode':'unaimed'}
+    CombatService._resolve_shot_sequence([SimpleNamespace()],attacker,details)
+    assert seen==[10.5]
+    assert CombatService._area_fire_hit_count(13,10.5,4)==1
+
+
+def test_armor_material_discount_uses_catalog_price_and_spends_materials_at_start(client,gunsmith,auth_headers):
+    from app.models.templates import ItemTemplate
+    from app.services.character_starting_purchase import item_from_template
+    material=ItemTemplate(name='Проверочные металлические детали',category='crafting_material',price=150,weight=.5,volume=1,attributes={})
+    db.session.add(material);db.session.flush()
+    data=deepcopy(gunsmith['actor_character'].data)
+    data['equipment']['armor']={'name':'Костюм','category':'armor','itemClass':'1','attributes':{'modification_category':'Лёгкая'},
+        'durability':100,'maxDurability':100,'modifications':[]}
+    data['crafting']['library'].append({'book_kind':'equipment','book_subject':'Лёгкая броня'})
+    data['inventory']['pockets'][4]['name']='Набор инструментов Бронника (Расширенные)'
+    data['inventory']['pockets'][0]=item_from_template(material,2);data['inventory']['pockets'][0]['price']=999999
+    gunsmith['actor_character'].data=data;db.session.commit()
+    payload={'rule_id':'armor-a5','target_path':['equipment','armor'],'tool_path':['inventory','pockets',4],
+        'material_contributions':[{'path':['inventory','pockets',0],'quantity':2}]}
+    quote=call(client,gunsmith,auth_headers,'quote_modification',**payload)
+    assert quote.status_code==200,quote.json
+    assert quote.json['result']['material_value']==300 and quote.json['result']['difficulty']==18
+    started=call(client,gunsmith,auth_headers,'modify',**payload)
+    assert started.status_code==200,started.json
+    assert not any(i.get('templateId')==material.id for i in started.json['data']['inventory']['pockets'])
+    cancelled=call(client,gunsmith,auth_headers,'cancel',job_id=started.json['result']['id'])
+    assert cancelled.status_code==200,cancelled.json
+    assert not any(i.get('templateId')==material.id for i in cancelled.json['data']['inventory']['pockets'])
+    assert next(i for i in cancelled.json['data']['inventory']['pockets'] if i.get('id')=='upgrade-tools')['uses']==40
+
+
+@pytest.mark.parametrize('gunsmith,protection,wear',[(False,45,50),(True,57.5,25)])
+def test_explosion_upgrade_protects_fragments_and_reduces_real_armor_wear(grenade_game,gunsmith,protection,wear):
+    target=grenade_game['actor_location'];data=deepcopy(target.character.data)
+    armor={'category':'armor','protection':{'physical':20},'durability':100,'stage':1,
+        'stageDurability':1000,'currentStageDurability':1000,'modifications':[make_record('armor-a20',gunsmith=gunsmith)]}
+    data['equipment']={'armor':armor};target.character.data=data
+    assert CombatService._target_armor(data,'chest')[0]==20
+    result=CombatService._explosion_fragment_hit(target,100,100,'chest',{'protection':0},1)
+    assert result['armor']==protection and result['damage']==100
+    assert result['armor_damage'][0]['damage']==wear
+    assert armor['currentStageDurability']==1000-wear
+
+
+@pytest.mark.parametrize('gunsmith,wear',[(False,100),(True,50)])
+def test_anomaly_upgrade_halves_actual_equipment_wear(app,gunsmith,wear):
+    armor={'category':'armor','durability':100,'stage':1,'stageDurability':1000,'currentStageDurability':1000,
+        'modifications':[make_record('armor-d10',gunsmith=gunsmith)]}
+    result=CombatService._apply_anomaly_equipment_damage({'equipment':{'armor':armor}},100,{'armor_damage_multiplier':2})
+    assert result[0]['damage']==wear and armor['currentStageDurability']==1000-wear
+
+
+def shotgun(case):
+    data=deepcopy(case['actor_character'].data)
+    data['weapons']=[{'id':'mod-shotgun','name':'Проверочный дробовик','category':'weapon','subcategory':'Дробовики',
+        'accuracy':0,'range':20,'ergonomics':50,'minStrength':0,'durability':100,'maxDurability':100,'fireRate':10,
+        'fireModes':{'supports_burst':True,'supports_area_fire':True,'burst_size':2},
+        'installedMagazine':{'ammo':[{'name':'12х70 Картечь','quantity':4,
+            'attributes':{'caliber':'12x70','ammo_variant':'buckshot','damage':30,'armor_piercing':0}}]},
+        'modifications':[make_record('weapon-c29')]}]
+    data['equipment']={};case['actor_character'].data=data;db.session.commit()
+
+
+def test_buckshot_upgrade_checks_each_target_even_when_first_misses(client,flame_game,auth_headers,monkeypatch):
+    from app.models import LobbyCharacter,LocationCharacter
+    shotgun(flame_game);case=flame_game;actor=case['actor_location']
+    other=LobbyCharacter(lobby_id=case['lobby'].id,owner_id=case['target_user']['id'],name='Вторая цель',data=deepcopy(case['target_character'].data))
+    db.session.add(other);db.session.flush()
+    db.session.add(LocationCharacter(location_id=actor.location_id,character_id=other.id,pos_x=8,pos_y=5));db.session.commit()
+    original=CombatService._resolve_attack;checks=[]
+    def resolve(target,attacker,details,**kwargs):
+        kwargs['forced_roll']=2 if not checks else 20
+        result=original(target,attacker,{**details,'hit_difficulty':12},**kwargs)
+        checks.append((target.character_id,result['hit']));return result
+    monkeypatch.setattr(CombatService,'_resolve_attack',resolve)
+    response=client.post(f'/lobbies/{case["lobby"].id}/locations/{actor.location_id}/combat/action',headers=auth_headers(case['actor_user']),json={
+        'location_character_id':actor.id,'action_key':'attack','weapon_index':0,'fire_mode':'area',
+        'target_character_ids':[case['target_character'].id,other.id],'area_center_x':7,'area_center_y':5,
+        'shot_count':4,'volley_count':2,'action_points':5})
+    assert response.status_code==200,response.json
+    assert checks==[(case['target_character'].id,False),(other.id,True)]
+    assert actor.action_points_current==15
+    assert not actor.character.data['weapons'][0]['installedMagazine']['ammo']
+
+
+@pytest.mark.parametrize('braced,bonus',[(False,0),(True,2)])
+def test_supported_armor_accuracy_requires_actual_support(client,flame_game,auth_headers,monkeypatch,braced,bonus):
+    shotgun(flame_game);case=flame_game;actor=case['actor_location']
+    data=deepcopy(actor.character.data)
+    data['equipment']['armor']={'category':'armor','modifications':[make_record('armor-a48')]}
+    actor.character.data=data;actor.weapon_braced=braced;actor.braced_weapon_index=0 if braced else None;db.session.commit()
+    original=CombatService._resolve_attack;seen=[]
+    def resolve(target,attacker,details,**kwargs):
+        seen.append(details['weapon_accuracy']);return original(target,attacker,details,**kwargs)
+    monkeypatch.setattr(CombatService,'_resolve_attack',resolve)
+    response=client.post(f'/lobbies/{case["lobby"].id}/locations/{actor.location_id}/combat/action',headers=auth_headers(case['actor_user']),json={
+        'location_character_id':actor.id,'action_key':'attack','weapon_index':0,'fire_mode':'unaimed',
+        'target_character_id':case['target_character'].id,'shot_count':1,'action_points':2})
+    assert response.status_code==200,response.json
+    assert seen==[bonus]
+
+
+def test_helmet_explosion_upgrade_and_combined_anomaly_tradeoff(app):
+    helmet={'category':'helmet','durability':100,'protection':{'physical':30},'modifications':[make_record('armor-g40')]}
+    data={'equipment':{'helmet':helmet}}
+    assert CombatService._target_armor(data,'head')[0]==30
+    assert CombatService._target_armor(data,'head',explosive=True)[0]==50
+    armor={'category':'armor','protection':{'radiation':10,'thermal':30},'modifications':[make_record('armor-d24',gunsmith=True)]}
+    data={'equipment':{'armor':armor}}
+    assert CombatService._equipped_radiation_protection(data)==45
+    assert CombatService._target_elemental_protection(data,'thermal')==20
+
+
+@pytest.mark.parametrize('gunsmith,expected_blast,expected_wear',[(False,55,27.5),(True,42,10.5)])
+def test_explosion_upgrade_changes_wave_damage_and_real_wear(grenade_game,monkeypatch,gunsmith,expected_blast,expected_wear):
+    from test_grenade_rules import profile
+    target=grenade_game['actor_location'];data=deepcopy(target.character.data)
+    data['equipment']={'armor':{'category':'armor','protection':{'physical':20},'durability':100,
+        'stageDurability':1000,'currentStageDurability':1000,'modifications':[make_record('armor-a20',gunsmith=gunsmith)]}}
+    target.character.data=data;db.session.commit()
+    monkeypatch.setattr(CombatService,'_explosion_is_indoors',lambda *a:False)
+    result=CombatService.resolve_explosion(target.location_id,target.pos_x,target.pos_y,
+        profile(fragment=0,blast_base=100,blast_falloff=0),target_ids=[target.id])
+    entry=result['targets'][0]
+    assert entry['blast_damage']==expected_blast
+    assert entry['blast_armor_damage'][0]['damage']==expected_wear
+
+
+@pytest.mark.parametrize('gunsmith,reduction',[(False,3),(True,4.5)])
+def test_anomaly_exit_upgrade_changes_real_check_difficulty(app,monkeypatch,gunsmith,reduction):
+    from test_combat_anomalies import _combat_with_anomaly
+    from app.services.anomaly_profiles import anomaly_profile
+    user,location,actor,placed,_=_combat_with_anomaly()
+    placed.pos_x=placed.pos_y=2
+    CombatService._enter_anomaly(placed,CombatService._anomalies_at_tile(location,2,2)[0],1)
+    data=deepcopy(actor.data);data['equipment']={'armor':{'modifications':[make_record('armor-d23',gunsmith=gunsmith)]}}
+    actor.data=data;db.session.commit()
+    monkeypatch.setattr('app.services.combat.random.randint',lambda *a:20)
+    result=CombatService.perform_action(location.id,user.id,placed.id,'escape_anomaly',target_x=1,target_y=2)
+    assert result['anomaly']['check']['difficulty']==max(1,anomaly_profile('otboynik')['dc']-reduction)
+    assert (placed.pos_x,placed.pos_y)==(1,2) and placed.action_points_current==2

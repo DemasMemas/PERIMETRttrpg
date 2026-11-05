@@ -100,6 +100,23 @@ def test_nvg_in_inventory_is_not_in_use():
     data={'equipment':{'helmet':{'installedModules':[item]}}}
     assert uses_nvg(data)
     item['enabled']=False;assert not uses_nvg(data)
+    assert not uses_nvg({'equipment':{'helmet':'Старое название шлема'}})
+    assert not uses_nvg({'equipment':{'helmet':{'installedModules':{}}}})
+
+
+@pytest.mark.parametrize('penalty', [-2, -1, 0])
+def test_nvg_applies_its_numeric_penalty_without_darkness_disadvantage(app, monkeypatch, penalty):
+    module={'slotType':'nvg','attributes':{'night_vision':True,'accuracy_penalty':penalty,'awareness_penalty':penalty}}
+    data={'equipment':{'helmet':{'installedModules':[module]}},'health':{'effects':[]}}
+    monkeypatch.setattr('app.services.combat.random.randint',lambda a,b:10)
+    for path in ('skills.physical.awareness.visual','skills.physical.shooting'):
+        result=CombatService._narrative_skill_check(data,path,darkness=True)
+        assert result['equipment_modifier']==penalty and not result['disadvantage']
+        assert CombatService._narrative_skill_check(data,path,darkness=False)['equipment_modifier']==0
+    assert CombatService._narrative_skill_check(data,'skills.physical.awareness.hearing',darkness=True)['equipment_modifier']==0
+    module['raised']=True
+    result=CombatService._narrative_skill_check(data,'skills.physical.awareness.visual',darkness=True)
+    assert result['equipment_modifier']==-5 and not result['disadvantage']
 
 
 def prepare_gun(case,keys):
@@ -132,14 +149,29 @@ def test_real_shot_uses_suppressor_range_and_accuracy(grenade_game,monkeypatch):
     assert CombatService._deafness_level(actor.character.data)==1
 
 
-def test_night_scope_only_removes_darkness_for_aimed_shot(grenade_game,monkeypatch):
+def test_night_scope_only_removes_numeric_darkness_for_aimed_shot(grenade_game,monkeypatch):
     actor,target=prepare_gun(grenade_game,['night_scope'])
     monkeypatch.setattr(CombatService,'_is_dark_at_position',staticmethod(lambda *args,**kwargs:True))
     monkeypatch.setattr('app.services.combat.random.randint',lambda a,b:a)
     result=shoot(grenade_game,actor,target,'aimed')
     assert not result['base_shooting_disadvantage']
     result=shoot(grenade_game,actor,target,'unaimed')
-    assert result['base_shooting_disadvantage']
+    assert not result['base_shooting_disadvantage']
+
+
+def test_real_firearm_shot_pays_numeric_nvg_penalty(grenade_game, monkeypatch):
+    actor,target=prepare_gun(grenade_game,[])
+    data=deepcopy(actor.character.data)
+    data.setdefault('equipment',{})['helmet']={'installedModules':[{'slotType':'nvg','attributes':{'night_vision':True,'accuracy_penalty':0}}]}
+    actor.character.data=data;db.session.commit()
+    monkeypatch.setattr(CombatService,'_is_dark_at_position',staticmethod(lambda *args,**kwargs:True))
+    monkeypatch.setattr('app.services.combat.random.randint',lambda a,b:10 if b==20 else b)
+    baseline=shoot(grenade_game,actor,target)
+    data=deepcopy(actor.character.data);data['equipment']['helmet']['installedModules'][0]['attributes']['accuracy_penalty']=-2
+    actor.character.data=data;db.session.commit()
+    result=shoot(grenade_game,actor,target)
+    assert not result['base_shooting_disadvantage']
+    assert result['hit_difficulty']==baseline['hit_difficulty']+2
 
 
 def test_bayonet_uses_melee_catalog_piercing_profile_and_two_ap(grenade_game,monkeypatch):
@@ -189,3 +221,17 @@ def test_underbarrels_reload_and_fire_canonical_ammunition(grenade_game,monkeypa
     assert result['explosive']['source']=='underbarrel'
     assert not actor.character.data['weapons'][0]['installedModules'][0]['loadedGrenade']
     assert actor.character.data['weapons'][0]['ammo']==10
+
+
+def test_underbarrel_nvg_removes_only_darkness_disadvantage(grenade_game,monkeypatch):
+    actor,target=prepare_gun(grenade_game,['gp25'])
+    data=deepcopy(actor.character.data)
+    data.setdefault('equipment',{})['helmet']={'installedModules':[{'slotType':'nvg','attributes':{'night_vision':True,'accuracy_penalty':-2}}]}
+    data['weapons'][0]['installedModules'][0]['loadedGrenade']={'name':'ВОГ-25','category':'grenade','quantity':1,'attributes':{'caliber':'ВОГ-25'}}
+    actor.character.data=data;db.session.commit()
+    monkeypatch.setattr(CombatService,'_is_dark_at_position',staticmethod(lambda *args,**kwargs:True))
+    monkeypatch.setattr('app.services.combat.random.randint',lambda a,b:20 if b==20 else b)
+    result=CombatService.perform_action(actor.location_id,grenade_game['lobby'].gm_id,actor.id,'explosive_attack',
+        weapon_index=0,explosive_source='underbarrel',target_x=12,target_y=5.2)
+    assert not result['explosive']['disadvantage']
+    assert result['explosive']['roll_kind']=='shooting'

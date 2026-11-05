@@ -9,6 +9,14 @@ from app.services.exceptions import ValidationError,NotFoundError,ConflictError,
 from app.services.effects import apply_effect_to_health
 
 
+def preserve(current,incoming):
+    previous=((current or {}).get('health') or {}).get('combatMeta') or {}
+    meta=incoming.setdefault('health',{}).setdefault('combatMeta',{})
+    for key in ('socialCheckReceipts','socialMemory','diplomatRetry'):
+        if key in previous:meta[key]=deepcopy(previous[key])
+        else:meta.pop(key,None)
+
+
 def context_modifiers(data,target_data,path,*,face_visible=False,weapon=None,has_target=True):
     from app.services.combat import CombatService
     tags=(target_data.get('basic') or {}).get('tags') or []
@@ -36,7 +44,7 @@ def context_modifiers(data,target_data,path,*,face_visible=False,weapon=None,has
 def run(character_id,user_id,payload):
     from app.services.character import CharacterService
     from app.services.combat import CombatService
-    if not isinstance(payload,dict) or set(payload)-{'target_character_id','skill_path','difficulty','face_visible','operation_id','retry','vegetation','related_favored'}:
+    if not isinstance(payload,dict) or set(payload)-{'target_character_id','skill_path','difficulty','face_visible','operation_id','retry','vegetation','related_favored','location_id'}:
         raise ValidationError('Некорректные параметры социальной проверки')
     actor=CharacterService.get_character(character_id,user_id);CharacterService.check_access(actor,user_id,edit=True)
     operation=payload.get('operation_id')
@@ -62,8 +70,11 @@ def run(character_id,user_id,payload):
                 if other and not other.gm_hidden and CombatService._can_see_location_character(source,other):visible=True;break
             if not visible:raise
     path=payload.get('skill_path');difficulty=payload.get('difficulty')
-    if path not in CombatService.NARRATIVE_SKILLS or type(difficulty) is not int or not 1<=difficulty<=40:
+    quick = difficulty is None and isinstance(path,str) and path in {'skills.physical.shooting','skills.physical.awareness.visual','skills.physical.awareness.hearing'}
+    if not isinstance(path,str) or path not in CombatService.NARRATIVE_SKILLS or not quick and (type(difficulty) is not int or not 1<=difficulty<=40):
         raise ValidationError('Выберите навык и СЛ от 1 до 40')
+    if quick and (target is not None or retry or payload.get('vegetation') or payload.get('related_favored')):
+        raise ValidationError('Для проверки с дополнительным контекстом укажите СЛ')
     if type(payload.get('face_visible',False)) is not bool:raise ValidationError('Укажите, видит ли собеседник лицо')
     vegetation=payload.get('vegetation',False)
     if type(vegetation) is not bool or vegetation and path!='skills.other.stealth':raise ValidationError('Растительное укрытие применимо только к Скрытности')
@@ -77,7 +88,13 @@ def run(character_id,user_id,payload):
     memory=meta.setdefault('socialMemory',{}).setdefault(str(target.id),{'skills':{}}) if target and social else {'skills':{}}
     if now-float(memory.get('last_dialog',now))>=1440:memory['skills']={}
     memory['last_dialog']=now
-    active=LocationCharacter.query.filter_by(character_id=actor.id).order_by(LocationCharacter.last_action.desc().nullslast(),LocationCharacter.id.desc()).first()
+    location_id=payload.get('location_id')
+    if location_id is not None:
+        if type(location_id) is not int:raise ValidationError('Некорректная локация проверки')
+        active=LocationCharacter.query.filter_by(character_id=actor.id,location_id=location_id).first()
+        if not active or active.location.lobby_id!=actor.lobby_id:raise NotFoundError('Персонаж не находится в этой локации')
+    else:
+        active=LocationCharacter.query.filter_by(character_id=actor.id).order_by(LocationCharacter.last_action.desc().nullslast(),LocationCharacter.id.desc()).first()
     index=active.drawn_weapon_index if active else data.get('activeWeaponIndex')
     weapons=data.get('weapons') or [];weapon=weapons[index] if type(index) is int and 0<=index<len(weapons) else None
     target_data=target.data or {} if target else {}
@@ -107,15 +124,27 @@ def run(character_id,user_id,payload):
         from app.services.weather_rules import at_character,profile as weather_profile
         weather=at_character(active.location,active) if active else weather_profile(actor.lobby.weather_settings)
         darkness=CombatService._is_dark_at_character(active.location,active) if active and path in {'skills.physical.awareness.visual','skills.physical.shooting','skills.other.stealth'} else world_is_dark(actor.lobby.game_time_minutes)
+        light_modifier=0
+        if active and path in {'skills.physical.awareness.visual','skills.physical.shooting'}:
+            from app.services.portable_lights import illumination
+            from app.services.weapon_modules import uses_nvg
+            light=illumination(active)
+            if light['lit']:
+                darkness=False
+                if light['base_dark'] and not uses_nvg(data):
+                    light_modifier=-(light['penalty'] or 0)
+                    roll_bonus+=light_modifier
+        if light_modifier:modifiers['rules'].append(f'Переносной свет: {light_modifier:+d}')
         check=CombatService._narrative_skill_check(data,path,advantage=modifiers['advantage'],forced_disadvantage=modifiers['disadvantage'],
             charisma_level_delta=modifiers['charisma_level'],roll_bonus=roll_bonus,darkness=darkness,weather=weather)
+        check['illumination_modifier']=light_modifier
         if check.get('weather_modifier'):modifiers['rules'].append(f"Погода на улице: {check['weather_modifier']:+d}")
         if check.get('weather_disadvantage'):modifiers['rules'].append('Ливень: Помеха')
-        check.update(difficulty=difficulty,success=not check.get('automatic_failure') and check['total']>=difficulty,rules=modifiers['rules'])
+        check.update(difficulty=difficulty,success=None if quick else not check.get('automatic_failure') and check['total']>=difficulty,rules=modifiers['rules'])
         if lie_check:check['will_check']=lie_check
         if path=='skills.social.deception':memory['firstLieUsed']=True
         if target and social and background_is(data,'Балабол'):memory['skills'][path]=max(-4,min(4,int(memory['skills'].get(path,0))+(1 if check['success'] else -1)))
-        CombatService._apply_stress_check_consequences(data,path,check['success'])
+        if not quick:CombatService._apply_stress_check_consequences(data,path,check['success'])
     if retry:
         meta.pop('diplomatRetry',None)
         if not check['success']:
@@ -131,7 +160,7 @@ def run(character_id,user_id,payload):
     elif background_is(data,'Дипломат') and path=='skills.social.persuasion' and not check['success']:
         meta['diplomatRetry']={key:payload.get(key) for key in ('target_character_id','skill_path','difficulty')}
         meta['diplomatRetry']['face_visible']=payload.get('face_visible',False)
-    else:meta.pop('diplomatRetry',None)
+    elif not quick:meta.pop('diplomatRetry',None)
     result={'check':check,'target_name':target.name if target else 'Обычная проверка','diplomat_retry_available':bool(meta.get('diplomatRetry'))}
     meta.setdefault('socialCheckReceipts',[]).append({'id':operation,'result':deepcopy(result)})
     meta['socialCheckReceipts']=meta['socialCheckReceipts'][-30:]

@@ -30,6 +30,25 @@ test('надевание одного пустого рюкзака из сто�
     assert.equal(data.inventory.backpack[0].quantity,1);
     assert.equal(data.inventory.backpack[1].quantity,20);
 });
+
+test('надевание перчаток из стопки сохраняет остальные пары и срок использованной пары',async()=>{
+    const data={equipment:{},inventory:{pockets:[{id:'glove-stack',category:'gloves',templateId:12,
+        quantity:3,name:'Медицинские',sterility:{remaining_seconds:700}}]}};
+    const start=source.indexOf('window.equipGlovesFromInventory ='),end=source.indexOf('window.unequipGloves =',start);
+    const context=vm.createContext({window:{},currentCharacterData:data,structuredClone,
+        getItemByPath:keys=>keys.reduce((value,key)=>value[key],data),
+        loadTemplatesForLobby:async()=>[{id:12,name:'Медицинские',attributes:{sterile_duration_seconds:3600}}],
+        generateItemId:()=> 'unused-gloves',showNotification(){},renderEquipmentTab:async()=>{},renderInventoryTab:async()=>{},
+        scheduleAutoSave(){},forceSyncCharacter(){},removeItemByPath(){throw Error('Нельзя удалять целую стопку');}});
+    vm.runInContext(source.slice(start,end),context);
+    await context.window.equipGlovesFromInventory(['inventory','pockets',0]);
+    assert.equal(data.equipment.gloves.quantity,1);
+    assert.equal(data.equipment.gloves.id,'glove-stack');
+    assert.equal(data.equipment.gloves.sterility.remaining_seconds,700);
+    assert.equal(data.inventory.pockets[0].quantity,2);
+    assert.equal(data.inventory.pockets[0].id,'unused-gloves');
+    assert.equal(data.inventory.pockets[0].sterility,undefined);
+});
 test('перенос в пустые карманы учитывает вместимость после перерисовки',async()=>{
     const data={inventory:{pockets:[],backpack:[{id:'ammo',volume:2,quantity:2}]}};
     const handlers={},notices=[];
@@ -52,4 +71,32 @@ test('перенос в пустые карманы учитывает вмес�
     assert.equal(data.inventory.backpack[0].id,'large');
     assert.equal(data.inventory.pockets.length,1);
     assert.equal(notices.at(-1),'Недостаточно места в контейнере');
+});
+
+test('надевание разгрузки из стопки и снятие сохраняют отдельный экземпляр, свойства и подсумки',async()=>{
+    const template={id:22,name:'Модульная',category:'vest',weight:0,volume:2,
+        attributes:{modular:true,total_capacity:8,pouches:[]}};
+    const item={id:'vest-stack',templateId:22,category:'vest',quantity:2,attributes:structuredClone(template.attributes),
+        pouches:[{type:3,capacity:2,contents:[]}]};
+    const data={equipment:{},inventory:{backpack:[item]}};
+    const context=vm.createContext({window:{},currentCharacterData:data,structuredClone,
+        getItemByPath:keys=>keys.reduce((value,key)=>value[key],data),
+        removeItemByPath:keys=>{keys.slice(0,-1).reduce((value,key)=>value[key],data).splice(keys.at(-1),1);return true;},
+        loadTemplatesForLobby:async()=>[template],generateItemId:()=> 'one-vest',
+        createItemFromTemplate:()=>({id:'new-vest',attributes:structuredClone(template.attributes)}),
+        showNotification(){},renderEquipmentTab(){},renderInventoryTab(){},scheduleAutoSave(){},forceSyncCharacter(){},
+    });
+    const equipStart=source.indexOf('window.equipVestFromInventory =');
+    vm.runInContext(source.slice(equipStart,source.indexOf('\nwindow.equipBackpackFromInventory =',equipStart)),context);
+    await context.window.equipVestFromInventory(['inventory','backpack',0]);
+    assert.equal(data.inventory.backpack[0].quantity,1);assert.equal(data.equipment.vest.id,'one-vest');
+    assert.equal(data.equipment.vest.quantity,1);assert.equal(data.equipment.vest.attributes.modular,true);
+    data.equipment.vest.pouches[0].contents.push({id:'bandage',quantity:4});
+    assert.equal(item.pouches[0].contents.length,0);
+    const removeStart=source.indexOf('window.unequipVest =');
+    vm.runInContext(source.slice(removeStart,source.indexOf('\n};',removeStart)+4),context);
+    await context.window.unequipVest();
+    assert.equal(data.equipment.vest,undefined);
+    assert.equal(data.inventory.backpack[1].id,'one-vest');
+    assert.equal(data.inventory.backpack[1].pouches[0].contents[0].quantity,4);
 });

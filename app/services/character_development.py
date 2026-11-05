@@ -45,7 +45,13 @@ def award_session(data,payload,*,rng=None):
         if risk:
             roll=rng.randint(1,100);rolls.append(roll)
             if roll>50:training=0
-        if training:add_skill_experience(data,skill,training)
+        if training:
+            add_skill_experience(data,skill,training)
+            group,key=skill.split('.')
+            learned=(data.get('crafting') or {}).get('library',[])
+            if data['skills'][group][key]['base']<16 and any(book.get('book_kind')=='skill' and book.get('skill_path')==skill for book in learned):
+                add_skill_experience(data,skill,1,apply_multiplier=False,maximum_level=16)
+                training+=1
     data.setdefault('skills',{})['skillPoints']=int(data.get('skills',{}).get('skillPoints',0))+free
     result={'operationId':operation,'freePoints':free,'trainingSkill':skill,'trainingPoints':training,'rolls':rolls,
             'reasons':{k:payload.get(k,False) for k in ('roleplay','heroism','contribution','gmBonus')}}

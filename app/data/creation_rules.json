@@ -1,0 +1,6336 @@
+{
+  "version": 1,
+  "recipes": [
+    {
+      "id": "recipe-f4",
+      "name": "Фонарик",
+      "skill": "other.engineering",
+      "group": "Электроника",
+      "output_name": "Фонарик",
+      "output_count": 1,
+      "components": [
+        {
+          "name": "Металлические детали",
+          "quantity": 1,
+          "source_text": "Металлические детали"
+        },
+        {
+          "name": "Электронные материалы",
+          "quantity": 1,
+          "source_text": "Электронные материалы"
+        },
+        {
+          "name": "КПК",
+          "quantity": 1,
+          "source_text": "КПК"
+        }
+      ],
+      "components_text": "Металлические детали, Электронные материалы, КПК",
+      "difficulty_options": [
+        25.0
+      ],
+      "automatic": false,
+      "tools_text": "Не обязателен",
+      "duration_text": "20 минут",
+      "duration_seconds": 1200
+    },
+    {
+      "id": "recipe-m4",
+      "name": "Кустарный капкан",
+      "skill": "other.survival",
+      "group": "Ловушки",
+      "output_name": "Кустарный капкан",
+      "output_count": 1,
+      "components": [
+        {
+          "name": "Металлические детали",
+          "quantity": 8,
+          "source_text": "Металлические детали (8)"
+        }
+      ],
+      "components_text": "Металлические детали (8)",
+      "difficulty_options": [
+        40.0
+      ],
+      "automatic": false,
+      "tools_text": "Не нужна",
+      "duration_text": "20 минут",
+      "duration_seconds": 1200,
+      "result_text": "Кровот. Средн. + Боль 3 ур. + 75"
+    },
+    {
+      "id": "recipe-v4",
+      "name": "РГД-5",
+      "skill": "other.engineering",
+      "group": "Боеприпасы",
+      "output_name": "РГД-5",
+      "output_count": 1,
+      "components": [
+        {
+          "name": "Форма гранаты",
+          "quantity": 1,
+          "source_text": "Форма гранаты"
+        },
+        {
+          "name": "Порох",
+          "quantity": 2,
+          "source_text": "Порох(2)"
+        },
+        {
+          "name": "Нитроглицерин",
+          "quantity": 2,
+          "source_text": "Нитроглицерин(2)"
+        }
+      ],
+      "components_text": "Форма гранаты, Порох(2), Нитроглицерин(2)",
+      "difficulty_options": [
+        30.0
+      ],
+      "automatic": false,
+      "tools_text": "Смесительный станок",
+      "duration_text": "30 минут",
+      "duration_seconds": 1800
+    },
+    {
+      "id": "recipe-aa4",
+      "name": "Сухой паек",
+      "skill": "other.survival",
+      "group": "Продукты",
+      "output_name": "Сухой паек",
+      "output_count": 1,
+      "components": [
+        {
+          "name": "Консервы",
+          "quantity": 2,
+          "source_text": "Консервы(2)"
+        },
+        {
+          "name": "Хлеб",
+          "quantity": 1,
+          "source_text": "Хлеб"
+        },
+        {
+          "name": "Спички",
+          "quantity": 10,
+          "source_text": "Спички(10)"
+        },
+        {
+          "name": "Бумага",
+          "quantity": 1,
+          "source_text": "Бумага"
+        }
+      ],
+      "components_text": "Консервы(2), Хлеб, Спички(10), Бумага",
+      "difficulty_options": [
+        15.0
+      ],
+      "automatic": false,
+      "tools_text": "Не нужен",
+      "duration_text": "5 минут",
+      "duration_seconds": 300
+    },
+    {
+      "id": "recipe-f5",
+      "name": "Улучшенный фонарик",
+      "skill": "other.engineering",
+      "group": "Электроника",
+      "output_name": "Улучшенный фонарик",
+      "output_count": 1,
+      "components": [
+        {
+          "name": "Фонарик",
+          "quantity": 1,
+          "source_text": "Фонарик"
+        },
+        {
+          "name": "Электронные материалы",
+          "quantity": 2,
+          "source_text": "Электронные материалы(2)"
+        },
+        {
+          "name": "Фольга",
+          "quantity": 1,
+          "source_text": "Фольга"
+        }
+      ],
+      "components_text": "Фонарик, Электронные материалы(2), Фольга",
+      "difficulty_options": [
+        40.0
+      ],
+      "automatic": false,
+      "tools_text": "Обязателен",
+      "duration_text": "20 минут",
+      "duration_seconds": 1200
+    },
+    {
+      "id": "recipe-m5",
+      "name": "Сеть",
+      "skill": "other.survival",
+      "group": "Ловушки",
+      "output_name": "Сеть",
+      "output_count": 1,
+      "components": [
+        {
+          "name": "Тканные материалы",
+          "quantity": 1,
+          "source_text": "Тканные материалы"
+        },
+        {
+          "name": "Веревка",
+          "quantity": 2,
+          "source_text": "Веревка(2)"
+        }
+      ],
+      "components_text": "Тканные материалы, Веревка(2)",
+      "difficulty_options": [
+        25.0
+      ],
+      "automatic": false,
+      "tools_text": "Не нужна",
+      "duration_text": "30 минут",
+      "duration_seconds": 1800,
+      "result_text": "Да"
+    },
+    {
+      "id": "recipe-v5",
+      "name": "РГО",
+      "skill": "other.engineering",
+      "group": "Боеприпасы",
+      "output_name": "РГО",
+      "output_count": 1,
+      "components": [
+        {
+          "name": "Ф-1",
+          "quantity": 1,
+          "source_text": "Ф-1"
+        },
+        {
+          "name": "Порох",
+          "quantity": 1,
+          "source_text": "Порох"
+        },
+        {
+          "name": "Металлические детали",
+          "quantity": 3,
+          "source_text": "Металлические детали(3)"
+        }
+      ],
+      "components_text": "Ф-1, Порох, Металлические детали(3)",
+      "difficulty_options": [
+        75.0
+      ],
+      "automatic": false,
+      "tools_text": "Смесительный станок",
+      "duration_text": "30 минут",
+      "duration_seconds": 1800
+    },
+    {
+      "id": "recipe-aa5",
+      "name": "Энергетик(8)",
+      "skill": "other.survival",
+      "group": "Продукты",
+      "output_name": "Энергетик",
+      "output_count": 8,
+      "components": [
+        {
+          "name": "Вода",
+          "quantity": 3,
+          "source_text": "Вода(3)"
+        },
+        {
+          "name": "Кофе",
+          "quantity": 1,
+          "source_text": "Кофе"
+        },
+        {
+          "name": "Сахар",
+          "quantity": 1,
+          "source_text": "Сахар"
+        }
+      ],
+      "components_text": "Вода(3), Кофе, Сахар",
+      "difficulty_options": [
+        25.0
+      ],
+      "automatic": false,
+      "tools_text": "Не нужен",
+      "duration_text": "20 минут",
+      "duration_seconds": 1200
+    },
+    {
+      "id": "recipe-f6",
+      "name": "Дистанционный взрыватель(2)",
+      "skill": "other.engineering",
+      "group": "Электроника",
+      "output_name": "Дистанционный взрыватель",
+      "output_count": 2,
+      "components": [
+        {
+          "name": "Взрыватель",
+          "quantity": 1,
+          "source_text": "Взрыватель"
+        },
+        {
+          "name": "Электронные материалы",
+          "quantity": 2,
+          "source_text": "Электронные материалы(2)"
+        },
+        {
+          "name": "КПК",
+          "quantity": 1,
+          "source_text": "КПК"
+        }
+      ],
+      "components_text": "Взрыватель, Электронные материалы(2), КПК",
+      "difficulty_options": [
+        50.0
+      ],
+      "automatic": false,
+      "tools_text": "Обязателен",
+      "duration_text": "20 минут",
+      "duration_seconds": 1200
+    },
+    {
+      "id": "recipe-m6",
+      "name": "Взрыватель (Инженерия)",
+      "skill": "other.engineering",
+      "group": "Ловушки",
+      "output_name": "Взрыватель",
+      "output_count": 1,
+      "components": [
+        {
+          "name": "Металлические детали",
+          "quantity": 5,
+          "source_text": "Металлические детали(5)"
+        },
+        {
+          "name": "Электронные материалы",
+          "quantity": 1,
+          "source_text": "Электронные материалы"
+        }
+      ],
+      "components_text": "Металлические детали(5), Электронные материалы",
+      "difficulty_options": [
+        30.0
+      ],
+      "automatic": false,
+      "tools_text": "Не нужна",
+      "duration_text": "60 минут",
+      "duration_seconds": 3600,
+      "result_text": "---"
+    },
+    {
+      "id": "recipe-v6",
+      "name": "РГН",
+      "skill": "other.engineering",
+      "group": "Боеприпасы",
+      "output_name": "РГН",
+      "output_count": 1,
+      "components": [
+        {
+          "name": "РГД-5",
+          "quantity": 1,
+          "source_text": "РГД-5"
+        },
+        {
+          "name": "Порох",
+          "quantity": 1,
+          "source_text": "Порох"
+        },
+        {
+          "name": "Металлические детали",
+          "quantity": 1,
+          "source_text": "Металлические детали"
+        }
+      ],
+      "components_text": "РГД-5, Порох, Металлические детали",
+      "difficulty_options": [
+        65.0
+      ],
+      "automatic": false,
+      "tools_text": "Смесительный станок",
+      "duration_text": "30 минут",
+      "duration_seconds": 1800
+    },
+    {
+      "id": "recipe-aa6",
+      "name": "Самокрутка(30)",
+      "skill": "other.survival",
+      "group": "Продукты",
+      "output_name": "Самокрутка",
+      "output_count": 30,
+      "components": [
+        {
+          "name": "Бумага",
+          "quantity": 2,
+          "source_text": "Бумага(2)"
+        },
+        {
+          "name": "Химические материалы",
+          "quantity": 1,
+          "source_text": "Химические материалы"
+        }
+      ],
+      "components_text": "Бумага(2), Химические материалы",
+      "difficulty_options": [
+        20.0
+      ],
+      "automatic": false,
+      "tools_text": "Не нужен",
+      "duration_text": "30 минут",
+      "duration_seconds": 1800
+    },
+    {
+      "id": "recipe-f7",
+      "name": "КПК",
+      "skill": "other.engineering",
+      "group": "Электроника",
+      "output_name": "КПК",
+      "output_count": 1,
+      "components": [
+        {
+          "name": "Плата",
+          "quantity": 1,
+          "source_text": "Плата"
+        },
+        {
+          "name": "Электронные материалы",
+          "quantity": 2,
+          "source_text": "Электронные материалы(2)"
+        },
+        {
+          "name": "Металлические детали",
+          "quantity": 1,
+          "source_text": "Металлические детали"
+        }
+      ],
+      "components_text": "Плата, Электронные материалы(2), Металлические детали",
+      "difficulty_options": [
+        40.0
+      ],
+      "automatic": false,
+      "tools_text": "Обязателен",
+      "duration_text": "20 минут",
+      "duration_seconds": 1200
+    },
+    {
+      "id": "recipe-m7",
+      "name": "Мина (Инженерия)",
+      "skill": "other.engineering",
+      "group": "Ловушки",
+      "output_name": "Мина",
+      "output_count": 1,
+      "components": [
+        {
+          "name": "Металлические детали",
+          "quantity": 5,
+          "source_text": "Металлические детали (5)"
+        },
+        {
+          "name": "Взрыватель",
+          "quantity": 1,
+          "source_text": "Взрыватель"
+        },
+        {
+          "name": "Порох",
+          "quantity": 3,
+          "source_text": "Порох(3)"
+        }
+      ],
+      "components_text": "Металлические детали (5), Взрыватель, Порох(3)",
+      "difficulty_options": [
+        40.0
+      ],
+      "automatic": false,
+      "tools_text": "Нужна",
+      "duration_text": "60 минут",
+      "duration_seconds": 3600,
+      "result_text": "Урон мины"
+    },
+    {
+      "id": "recipe-v7",
+      "name": "Ф-1",
+      "skill": "other.engineering",
+      "group": "Боеприпасы",
+      "output_name": "Ф-1",
+      "output_count": 1,
+      "components": [
+        {
+          "name": "Форма гранаты",
+          "quantity": 1,
+          "source_text": "Форма гранаты"
+        },
+        {
+          "name": "Порох",
+          "quantity": 2,
+          "source_text": "Порох(2)"
+        },
+        {
+          "name": "Нитроглицерин",
+          "quantity": 1,
+          "source_text": "Нитроглицерин"
+        },
+        {
+          "name": "Металлические детали",
+          "quantity": 2,
+          "source_text": "Металлические детали(2)"
+        }
+      ],
+      "components_text": "Форма гранаты, Порох(2), Нитроглицерин, Металлические детали(2)",
+      "difficulty_options": [
+        45.0
+      ],
+      "automatic": false,
+      "tools_text": "Смесительный станок",
+      "duration_text": "30 минут",
+      "duration_seconds": 1800
+    },
+    {
+      "id": "recipe-aa7",
+      "name": "Спирт(3)",
+      "skill": "other.survival",
+      "group": "Продукты",
+      "output_name": "Спирт",
+      "output_count": 3,
+      "components": [
+        {
+          "name": "Вода",
+          "quantity": 5,
+          "source_text": "Вода(5)"
+        },
+        {
+          "name": "Пиво(Любое)",
+          "quantity": 1,
+          "source_text": "Пиво(Любое)"
+        },
+        {
+          "name": "Хлеб",
+          "quantity": 2,
+          "source_text": "Хлеб(2)"
+        }
+      ],
+      "components_text": "Вода(5), Пиво(Любое), Хлеб(2)",
+      "difficulty_options": [
+        50.0
+      ],
+      "automatic": false,
+      "tools_text": "Самогонный апарат",
+      "duration_text": "1 сутки, для старта создания требуется 10 минут",
+      "duration_seconds": 86400,
+      "active_seconds": 600
+    },
+    {
+      "id": "recipe-f8",
+      "name": "Плата(2)",
+      "skill": "other.engineering",
+      "group": "Электроника",
+      "output_name": "Плата",
+      "output_count": 2,
+      "components": [
+        {
+          "name": "Металлические детали",
+          "quantity": 1,
+          "source_text": "Металлические детали"
+        },
+        {
+          "name": "Электронные материалы",
+          "quantity": 1,
+          "source_text": "Электронные материалы"
+        },
+        {
+          "name": "КПК",
+          "quantity": 1,
+          "source_text": "КПК"
+        }
+      ],
+      "components_text": "Металлические детали, Электронные материалы, КПК",
+      "difficulty_options": [
+        30.0
+      ],
+      "automatic": false,
+      "tools_text": "Обязателен",
+      "duration_text": "20 минут",
+      "duration_seconds": 1200
+    },
+    {
+      "id": "recipe-m8",
+      "name": "Растяжка",
+      "skill": "other.survival",
+      "group": "Ловушки",
+      "output_name": "Растяжка",
+      "output_count": 1,
+      "components": [
+        {
+          "name": "Граната",
+          "quantity": 1,
+          "source_text": "Граната"
+        },
+        {
+          "name": "Электронные материалы/Тканные материалы",
+          "quantity": 1,
+          "source_text": "Электронные материалы/Тканные материалы"
+        }
+      ],
+      "components_text": "Граната, Электронные материалы/Тканные материалы",
+      "difficulty_options": [
+        20.0
+      ],
+      "automatic": false,
+      "tools_text": "Не нужна",
+      "duration_text": "30 секунд",
+      "duration_seconds": 30,
+      "result_text": "Урон Гранаты"
+    },
+    {
+      "id": "recipe-v8",
+      "name": "Bang-79-3",
+      "skill": "other.engineering",
+      "group": "Боеприпасы",
+      "output_name": "Bang-79-3",
+      "output_count": 1,
+      "components": [
+        {
+          "name": "Форма гранаты",
+          "quantity": 1,
+          "source_text": "Форма гранаты"
+        },
+        {
+          "name": "Порох",
+          "quantity": 1,
+          "source_text": "Порох"
+        },
+        {
+          "name": "Нитроглицерин",
+          "quantity": 3,
+          "source_text": "Нитроглицерин(3)"
+        }
+      ],
+      "components_text": "Форма гранаты, Порох, Нитроглицерин(3)",
+      "difficulty_options": [
+        35.0
+      ],
+      "automatic": false,
+      "tools_text": "Смесительный станок",
+      "duration_text": "30 минут",
+      "duration_seconds": 1800
+    },
+    {
+      "id": "recipe-aa8",
+      "name": "Колбаса(5)",
+      "skill": "other.survival",
+      "group": "Продукты",
+      "output_name": "Колбаса",
+      "output_count": 5,
+      "components": [
+        {
+          "name": "Мясо(вареное)",
+          "quantity": 2,
+          "source_text": "Мясо(вареное)(2)"
+        },
+        {
+          "name": "Хлеб",
+          "quantity": 1,
+          "source_text": "Хлеб"
+        },
+        {
+          "name": "Бумага",
+          "quantity": 1,
+          "source_text": "Бумага"
+        }
+      ],
+      "components_text": "Мясо(вареное)(2), Хлеб, Бумага",
+      "difficulty_options": [
+        40.0
+      ],
+      "automatic": false,
+      "tools_text": "Не нужен",
+      "duration_text": "60 минут",
+      "duration_seconds": 3600
+    },
+    {
+      "id": "recipe-f9",
+      "name": "Кустарный генератор артефактов",
+      "skill": "other.engineering",
+      "group": "Электроника",
+      "output_name": "Кустарный генератор артефактов",
+      "output_count": 1,
+      "components": [
+        {
+          "name": "Металлические детали",
+          "quantity": 3,
+          "source_text": "Металлические детали(3)"
+        },
+        {
+          "name": "Плата",
+          "quantity": 1,
+          "source_text": "Плата"
+        },
+        {
+          "name": "Электронные материалы",
+          "quantity": 1,
+          "source_text": "Электронные материалы"
+        }
+      ],
+      "components_text": "Металлические детали(3), Плата, Электронные материалы",
+      "difficulty_options": [
+        50.0
+      ],
+      "automatic": false,
+      "tools_text": "Обязателен",
+      "duration_text": "20 минут",
+      "duration_seconds": 1200
+    },
+    {
+      "id": "recipe-m9",
+      "name": "Растяжка двойная",
+      "skill": "other.survival",
+      "group": "Ловушки",
+      "output_name": "Растяжка двойная",
+      "output_count": 1,
+      "components": [
+        {
+          "name": "Граната",
+          "quantity": 2,
+          "source_text": "Граната(2)"
+        },
+        {
+          "name": "Электронные материалы(2)/Тканные материалы",
+          "quantity": 2,
+          "source_text": "Электронные материалы(2)/Тканные материалы(2)"
+        }
+      ],
+      "components_text": "Граната(2), Электронные материалы(2)/Тканные материалы(2)",
+      "difficulty_options": [
+        60.0
+      ],
+      "automatic": false,
+      "tools_text": "Не нужна",
+      "duration_text": "5 минут",
+      "duration_seconds": 300,
+      "result_text": "Урон Гранат"
+    },
+    {
+      "id": "recipe-v9",
+      "name": "РДГ-6(3)",
+      "skill": "other.engineering",
+      "group": "Боеприпасы",
+      "output_name": "РДГ-6",
+      "output_count": 3,
+      "components": [
+        {
+          "name": "Порох",
+          "quantity": 2,
+          "source_text": "Порох(2)"
+        },
+        {
+          "name": "Смесь Дымовая",
+          "quantity": 1,
+          "source_text": "Смесь Дымовая"
+        },
+        {
+          "name": "Тканные материалы",
+          "quantity": 1,
+          "source_text": "Тканные материалы"
+        }
+      ],
+      "components_text": "Порох(2), Смесь Дымовая, Тканные материалы",
+      "difficulty_options": [
+        50.0
+      ],
+      "automatic": false,
+      "tools_text": "Смесительный станок",
+      "duration_text": "30 минут",
+      "duration_seconds": 1800
+    },
+    {
+      "id": "recipe-aa9",
+      "name": "Клей",
+      "skill": "other.survival",
+      "group": "Продукты",
+      "output_name": "Клей",
+      "output_count": 1,
+      "components": [
+        {
+          "name": "Жир(3)/Кости с одного мутанта",
+          "quantity": 1,
+          "source_text": "Жир(3)/Кости с одного мутанта"
+        }
+      ],
+      "components_text": "Жир(3)/Кости с одного мутанта",
+      "difficulty_options": [
+        30.0
+      ],
+      "automatic": false,
+      "tools_text": "Костер, котелок/кастрюля",
+      "duration_text": "60 минут",
+      "duration_seconds": 3600
+    },
+    {
+      "id": "recipe-f10",
+      "name": "Дозиметр",
+      "skill": "other.engineering",
+      "group": "Электроника",
+      "output_name": "Дозиметр",
+      "output_count": 1,
+      "components": [
+        {
+          "name": "Металлические детали",
+          "quantity": 1,
+          "source_text": "Металлические детали"
+        },
+        {
+          "name": "Плата",
+          "quantity": 1,
+          "source_text": "Плата"
+        },
+        {
+          "name": "Электронные материалы",
+          "quantity": 1,
+          "source_text": "Электронные материалы"
+        }
+      ],
+      "components_text": "Металлические детали, Плата, Электронные материалы",
+      "difficulty_options": [
+        55.0
+      ],
+      "automatic": false,
+      "tools_text": "Не обязателен",
+      "duration_text": "20 минут",
+      "duration_seconds": 1200
+    },
+    {
+      "id": "recipe-m10",
+      "name": "Мина усиленная (Инженерия)",
+      "skill": "other.engineering",
+      "group": "Ловушки",
+      "output_name": "Мина усиленная",
+      "output_count": 1,
+      "components": [
+        {
+          "name": "Мина",
+          "quantity": 1,
+          "source_text": "Мина"
+        },
+        {
+          "name": "Порох",
+          "quantity": 2,
+          "source_text": "Порох(2)"
+        },
+        {
+          "name": "Металлические детали",
+          "quantity": 3,
+          "source_text": "Металлические детали(3)"
+        },
+        {
+          "name": "Электронные материалы",
+          "quantity": 3,
+          "source_text": "Электронные материалы(3)"
+        }
+      ],
+      "components_text": "Мина, Порох(2), Металлические детали(3), Электронные материалы(3)",
+      "difficulty_options": [
+        55.0
+      ],
+      "automatic": false,
+      "tools_text": "Нужна",
+      "duration_text": "120 минут",
+      "duration_seconds": 7200,
+      "result_text": "Урон мины усиленной"
+    },
+    {
+      "id": "recipe-v10",
+      "name": "Дымовая граната Screen(3)",
+      "skill": "other.engineering",
+      "group": "Боеприпасы",
+      "output_name": "Дымовая граната Screen",
+      "output_count": 3,
+      "components": [
+        {
+          "name": "Порох",
+          "quantity": 3,
+          "source_text": "Порох(3)"
+        },
+        {
+          "name": "Смесь Дымовая",
+          "quantity": 2,
+          "source_text": "Смесь Дымовая(2)"
+        },
+        {
+          "name": "Форма гранаты",
+          "quantity": 1,
+          "source_text": "Форма гранаты"
+        }
+      ],
+      "components_text": "Порох(3), Смесь Дымовая(2), Форма гранаты",
+      "difficulty_options": [
+        60.0
+      ],
+      "automatic": false,
+      "tools_text": "Смесительный станок",
+      "duration_text": "30 минут",
+      "duration_seconds": 1800
+    },
+    {
+      "id": "recipe-aa10",
+      "name": "Радиоактивная вода",
+      "skill": "other.survival",
+      "group": "Продукты",
+      "output_name": "Радиоактивная вода",
+      "output_count": 1,
+      "components": [
+        {
+          "name": "Дождевая вода(2)/Болотная вода",
+          "quantity": 2,
+          "source_text": "Дождевая вода(2)/Болотная вода(2)"
+        },
+        {
+          "name": "Хлорные таблетки",
+          "quantity": 1,
+          "source_text": "Хлорные таблетки"
+        }
+      ],
+      "components_text": "Дождевая вода(2)/Болотная вода(2), Хлорные таблетки",
+      "difficulty_options": [],
+      "automatic": true,
+      "tools_text": "Не нужен",
+      "duration_text": "1 минута",
+      "duration_seconds": 60
+    },
+    {
+      "id": "recipe-f11",
+      "name": "Кустарный контейнер для артефактов",
+      "skill": "other.engineering",
+      "group": "Электроника",
+      "output_name": "Кустарный контейнер для артефактов",
+      "output_count": 1,
+      "components": [
+        {
+          "name": "Металлические детали",
+          "quantity": 3,
+          "source_text": "Металлические детали(3)"
+        },
+        {
+          "name": "Фольга",
+          "quantity": 1,
+          "source_text": "Фольга"
+        }
+      ],
+      "components_text": "Металлические детали(3), Фольга",
+      "difficulty_options": [
+        25.0
+      ],
+      "automatic": false,
+      "tools_text": "Не обязателен",
+      "duration_text": "20 минут",
+      "duration_seconds": 1200
+    },
+    {
+      "id": "recipe-m11",
+      "name": "Звуковая ловушка",
+      "skill": "other.survival",
+      "group": "Ловушки",
+      "output_name": "Звуковая ловушка",
+      "output_count": 1,
+      "components": [
+        {
+          "name": "Веревка",
+          "quantity": 1,
+          "source_text": "Веревка"
+        },
+        {
+          "name": "Металлические детали",
+          "quantity": 1,
+          "source_text": "Металлические детали"
+        }
+      ],
+      "components_text": "Веревка, Металлические детали",
+      "difficulty_options": [
+        40.0
+      ],
+      "automatic": false,
+      "tools_text": "Не нужна",
+      "duration_text": "10 минут",
+      "duration_seconds": 600,
+      "result_text": "Шум 20"
+    },
+    {
+      "id": "recipe-v11",
+      "name": "Коктейль молотова",
+      "skill": "other.engineering",
+      "group": "Боеприпасы",
+      "output_name": "Коктейль молотова",
+      "output_count": 1,
+      "components": [
+        {
+          "name": "Спирт(3)/Топливо(0.5л)",
+          "quantity": 1,
+          "source_text": "Спирт(3)/Топливо(0.5л)"
+        },
+        {
+          "name": "Стеклянная бутылка",
+          "quantity": 1,
+          "source_text": "Стеклянная бутылка"
+        },
+        {
+          "name": "Тканные материалы. Станок не нужен",
+          "quantity": 1,
+          "source_text": "Тканные материалы. Станок не нужен"
+        }
+      ],
+      "components_text": "Спирт(3)/Топливо(0.5л), Стеклянная бутылка, Тканные материалы. Станок не нужен",
+      "difficulty_options": [
+        20.0
+      ],
+      "automatic": false,
+      "tools_text": "Смесительный станок",
+      "duration_text": "30 минут",
+      "duration_seconds": 1800
+    },
+    {
+      "id": "recipe-aa11",
+      "name": "Радиоактивная вода",
+      "skill": "other.survival",
+      "group": "Продукты",
+      "output_name": "Радиоактивная вода",
+      "output_count": 1,
+      "components": [
+        {
+          "name": "Дождевая вода(3)/Болотная вода",
+          "quantity": 3,
+          "source_text": "Дождевая вода(3)/Болотная вода(3)"
+        }
+      ],
+      "components_text": "Дождевая вода(3)/Болотная вода(3)",
+      "difficulty_options": [],
+      "automatic": true,
+      "tools_text": "Костер, котелок/кастрюля",
+      "duration_text": "10 минут",
+      "duration_seconds": 600
+    },
+    {
+      "id": "recipe-f12",
+      "name": "Таймер",
+      "skill": "other.engineering",
+      "group": "Электроника",
+      "output_name": "Таймер",
+      "output_count": 1,
+      "components": [
+        {
+          "name": "Металлические детали",
+          "quantity": 4,
+          "source_text": "Металлические детали(4)"
+        },
+        {
+          "name": "Плата",
+          "quantity": 1,
+          "source_text": "Плата"
+        }
+      ],
+      "components_text": "Металлические детали(4), Плата",
+      "difficulty_options": [
+        35.0
+      ],
+      "automatic": false,
+      "tools_text": "Не обязателен",
+      "duration_text": "20 минут",
+      "duration_seconds": 1200
+    },
+    {
+      "id": "recipe-m12",
+      "name": "Игольные ежи",
+      "skill": "other.survival",
+      "group": "Ловушки",
+      "output_name": "Игольные ежи",
+      "output_count": 1,
+      "components": [
+        {
+          "name": "Металлические детали",
+          "quantity": 3,
+          "source_text": "Металлические детали(3)"
+        }
+      ],
+      "components_text": "Металлические детали(3)",
+      "difficulty_options": [
+        25.0
+      ],
+      "automatic": false,
+      "tools_text": "Нужна",
+      "duration_text": "50 минут",
+      "duration_seconds": 3000,
+      "result_text": "Кровот. Средн. + Боль 3ур. + 25"
+    },
+    {
+      "id": "recipe-v12",
+      "name": "Napalm-AN(2)",
+      "skill": "other.engineering",
+      "group": "Боеприпасы",
+      "output_name": "Napalm-AN",
+      "output_count": 2,
+      "components": [
+        {
+          "name": "Форма гранаты",
+          "quantity": 2,
+          "source_text": "Форма гранаты(2)"
+        },
+        {
+          "name": "Порох",
+          "quantity": 2,
+          "source_text": "Порох(2)"
+        },
+        {
+          "name": "Нитроглицерин",
+          "quantity": 1,
+          "source_text": "Нитроглицерин"
+        },
+        {
+          "name": "Химические материалы",
+          "quantity": 4,
+          "source_text": "Химические материалы (4)"
+        },
+        {
+          "name": "Топливо(3л)",
+          "quantity": 1,
+          "source_text": "Топливо(3л)"
+        }
+      ],
+      "components_text": "Форма гранаты(2), Порох(2), Нитроглицерин, Химические материалы (4), Топливо(3л)",
+      "difficulty_options": [
+        30.0
+      ],
+      "automatic": false,
+      "tools_text": "Смесительный станок",
+      "duration_text": "30 минут",
+      "duration_seconds": 1800
+    },
+    {
+      "id": "recipe-aa12",
+      "name": "Вода(8)",
+      "skill": "other.survival",
+      "group": "Продукты",
+      "output_name": "Вода",
+      "output_count": 8,
+      "components": [
+        {
+          "name": "Радиоактивная вода",
+          "quantity": 10,
+          "source_text": "Радиоактивная вода(10)"
+        },
+        {
+          "name": "Фильтр для противогаза(10 зарядов)",
+          "quantity": 1,
+          "source_text": "Фильтр для противогаза(10 зарядов)"
+        }
+      ],
+      "components_text": "Радиоактивная вода(10), Фильтр для противогаза(10 зарядов)",
+      "difficulty_options": [
+        30.0
+      ],
+      "automatic": false,
+      "tools_text": "Установка для Аэрации воды",
+      "duration_text": "30 минут",
+      "duration_seconds": 1800
+    },
+    {
+      "id": "recipe-f13",
+      "name": "Датчик",
+      "skill": "other.engineering",
+      "group": "Электроника",
+      "output_name": "Датчик",
+      "output_count": 1,
+      "components": [
+        {
+          "name": "Электронные материалы",
+          "quantity": 1,
+          "source_text": "Электронные материалы"
+        }
+      ],
+      "components_text": "Электронные материалы",
+      "difficulty_options": [
+        30.0
+      ],
+      "automatic": false,
+      "tools_text": "Не обязателен",
+      "duration_text": "20 минут",
+      "duration_seconds": 1200
+    },
+    {
+      "id": "recipe-m13",
+      "name": "Капкан",
+      "skill": "other.survival",
+      "group": "Ловушки",
+      "output_name": "Капкан",
+      "output_count": 1,
+      "components": [
+        {
+          "name": "Металлические детали",
+          "quantity": 12,
+          "source_text": "Металлические детали(12)"
+        },
+        {
+          "name": "Тканные материалы",
+          "quantity": 3,
+          "source_text": "Тканные материалы(3)"
+        }
+      ],
+      "components_text": "Металлические детали(12), Тканные материалы(3)",
+      "difficulty_options": [
+        65.0
+      ],
+      "automatic": false,
+      "tools_text": "Нужна",
+      "duration_text": "60 минут",
+      "duration_seconds": 3600,
+      "result_text": "Кровот. Сильн. + Боль 8ур. + 120"
+    },
+    {
+      "id": "recipe-v13",
+      "name": "РГ-60ТБ(2)",
+      "skill": "other.engineering",
+      "group": "Боеприпасы",
+      "output_name": "РГ-60ТБ",
+      "output_count": 2,
+      "components": [
+        {
+          "name": "Пластиковая бутылка",
+          "quantity": 4,
+          "source_text": "Пластиковая бутылка(4)"
+        },
+        {
+          "name": "Порох",
+          "quantity": 1,
+          "source_text": "Порох"
+        },
+        {
+          "name": "Нитроглицерин",
+          "quantity": 1,
+          "source_text": "Нитроглицерин"
+        },
+        {
+          "name": "Химические материалы",
+          "quantity": 4,
+          "source_text": "Химические материалы (4)"
+        },
+        {
+          "name": "Топливо (1л)",
+          "quantity": 1,
+          "source_text": "Топливо (1л)"
+        }
+      ],
+      "components_text": "Пластиковая бутылка(4), Порох, Нитроглицерин, Химические материалы (4), Топливо (1л)",
+      "difficulty_options": [
+        65.0
+      ],
+      "automatic": false,
+      "tools_text": "Смесительный станок",
+      "duration_text": "30 минут",
+      "duration_seconds": 1800
+    },
+    {
+      "id": "recipe-aa13",
+      "name": "Банка пива(8)",
+      "skill": "other.survival",
+      "group": "Продукты",
+      "output_name": "Банка пива",
+      "output_count": 8,
+      "components": [
+        {
+          "name": "Вода",
+          "quantity": 3,
+          "source_text": "Вода(3)"
+        },
+        {
+          "name": "Хлеб",
+          "quantity": 1,
+          "source_text": "Хлеб"
+        },
+        {
+          "name": "Сахар",
+          "quantity": 1,
+          "source_text": "Сахар"
+        },
+        {
+          "name": "Металлические детали",
+          "quantity": 2,
+          "source_text": "Металлические детали(2)"
+        }
+      ],
+      "components_text": "Вода(3), Хлеб, Сахар, Металлические детали(2)",
+      "difficulty_options": [
+        40.0
+      ],
+      "automatic": false,
+      "tools_text": "Самогонный апарат",
+      "duration_text": "2 суток, для старта создания требуется 30 минут",
+      "duration_seconds": 172800,
+      "active_seconds": 1800
+    },
+    {
+      "id": "recipe-aa14",
+      "name": "Жир(3)",
+      "skill": "other.survival",
+      "group": "Продукты",
+      "output_name": "Жир",
+      "output_count": 3,
+      "components": [
+        {
+          "name": "Мясо туши",
+          "quantity": 2,
+          "source_text": "Мясо туши(2)"
+        }
+      ],
+      "components_text": "Мясо туши(2)",
+      "difficulty_options": [
+        50.0,
+        65.0
+      ],
+      "automatic": false,
+      "tools_text": "Костер, сковорода/лопата",
+      "duration_text": "5 минут",
+      "duration_seconds": 300
+    },
+    {
+      "id": "recipe-v15",
+      "name": "Подствольная граната Вог-25(2)",
+      "skill": "other.engineering",
+      "group": "Боеприпасы",
+      "output_name": "Подствольная граната Вог-25",
+      "output_count": 2,
+      "components": [
+        {
+          "name": "Форма гранаты",
+          "quantity": 2,
+          "source_text": "Форма гранаты(2)"
+        },
+        {
+          "name": "Порох",
+          "quantity": 2,
+          "source_text": "Порох(2)"
+        },
+        {
+          "name": "Нитроглицерин",
+          "quantity": 1,
+          "source_text": "Нитроглицерин"
+        },
+        {
+          "name": "Металлические детали",
+          "quantity": 2,
+          "source_text": "Металлические детали(2)"
+        }
+      ],
+      "components_text": "Форма гранаты(2), Порох(2), Нитроглицерин, Металлические детали(2)",
+      "difficulty_options": [
+        65.0
+      ],
+      "automatic": false,
+      "tools_text": "Смесительный станок",
+      "duration_text": "30 минут",
+      "duration_seconds": 1800
+    },
+    {
+      "id": "recipe-aa15",
+      "name": "Мясо(жареное) (3 использования)",
+      "skill": "other.survival",
+      "group": "Продукты",
+      "output_name": "Мясо(жареное) (3 использования)",
+      "output_count": 1,
+      "components": [
+        {
+          "name": "Мясо(1-3)",
+          "quantity": 1,
+          "source_text": "Мясо(1-3)"
+        },
+        {
+          "name": "Жир",
+          "quantity": 1,
+          "source_text": "Жир"
+        }
+      ],
+      "components_text": "Мясо(1-3), Жир",
+      "difficulty_options": [
+        45.0,
+        35.0,
+        35.0
+      ],
+      "automatic": false,
+      "tools_text": "Костер, котелок/кастрюля/сковорода",
+      "duration_text": "15 минут",
+      "duration_seconds": 900
+    },
+    {
+      "id": "recipe-v16",
+      "name": "Подствольная граната N-101-2(2)",
+      "skill": "other.engineering",
+      "group": "Боеприпасы",
+      "output_name": "Подствольная граната N-101-2",
+      "output_count": 2,
+      "components": [
+        {
+          "name": "Форма гранаты",
+          "quantity": 2,
+          "source_text": "Форма гранаты(2)"
+        },
+        {
+          "name": "Порох",
+          "quantity": 2,
+          "source_text": "Порох(2)"
+        },
+        {
+          "name": "Нитроглицерин",
+          "quantity": 1,
+          "source_text": "Нитроглицерин"
+        },
+        {
+          "name": "Металлические детали",
+          "quantity": 2,
+          "source_text": "Металлические детали(2)"
+        }
+      ],
+      "components_text": "Форма гранаты(2), Порох(2), Нитроглицерин, Металлические детали(2)",
+      "difficulty_options": [
+        65.0
+      ],
+      "automatic": false,
+      "tools_text": "Смесительный станок",
+      "duration_text": "30 минут",
+      "duration_seconds": 1800
+    },
+    {
+      "id": "recipe-aa16",
+      "name": "Мясо(вареное) (3 использования)",
+      "skill": "other.survival",
+      "group": "Продукты",
+      "output_name": "Мясо(вареное) (3 использования)",
+      "output_count": 1,
+      "components": [
+        {
+          "name": "Мясо(1-5) или Мясо вареное (1-5)",
+          "quantity": 1,
+          "source_text": "Мясо(1-5) или Мясо вареное (1-5)"
+        },
+        {
+          "name": "Вода",
+          "quantity": 2,
+          "source_text": "Вода(2)"
+        }
+      ],
+      "components_text": "Мясо(1-5) или Мясо вареное (1-5), Вода(2)",
+      "difficulty_options": [
+        45.0
+      ],
+      "automatic": false,
+      "tools_text": "Костер, котелок/кастрюля",
+      "duration_text": "30 минут",
+      "duration_seconds": 1800
+    },
+    {
+      "id": "recipe-v17",
+      "name": "Подствольный газовый",
+      "skill": "other.engineering",
+      "group": "Боеприпасы",
+      "output_name": "Подствольный газовый",
+      "output_count": 1,
+      "components": [
+        {
+          "name": "Форма гранаты",
+          "quantity": 1,
+          "source_text": "Форма гранаты"
+        },
+        {
+          "name": "Химические материалы",
+          "quantity": 1,
+          "source_text": "Химические материалы"
+        }
+      ],
+      "components_text": "Форма гранаты, Химические материалы",
+      "difficulty_options": [
+        60.0
+      ],
+      "automatic": false,
+      "tools_text": "Смесительный станок",
+      "duration_text": "30 минут",
+      "duration_seconds": 1800
+    },
+    {
+      "id": "recipe-m18",
+      "name": "Занавеска",
+      "skill": "other.survival",
+      "group": "Укрепления",
+      "output_name": "Занавеска",
+      "output_count": 1,
+      "components": [
+        {
+          "name": "Бумага",
+          "quantity": 2,
+          "source_text": "Бумага(2)"
+        },
+        {
+          "name": "Марля",
+          "quantity": 1,
+          "source_text": "Марля"
+        }
+      ],
+      "components_text": "Бумага(2), Марля",
+      "difficulty_options": [
+        30.0
+      ],
+      "automatic": false,
+      "tools_text": "",
+      "duration_text": "5 Минут",
+      "duration_seconds": 300,
+      "result_text": "Условное. 200 Прочности"
+    },
+    {
+      "id": "recipe-v18",
+      "name": "Подствольный дымовой(2)",
+      "skill": "other.engineering",
+      "group": "Боеприпасы",
+      "output_name": "Подствольный дымовой",
+      "output_count": 2,
+      "components": [
+        {
+          "name": "Форма гранаты",
+          "quantity": 1,
+          "source_text": "Форма гранаты"
+        },
+        {
+          "name": "Химические материалы",
+          "quantity": 1,
+          "source_text": "Химические материалы"
+        }
+      ],
+      "components_text": "Форма гранаты, Химические материалы",
+      "difficulty_options": [
+        60.0
+      ],
+      "automatic": false,
+      "tools_text": "Смесительный станок",
+      "duration_text": "30 минут",
+      "duration_seconds": 1800
+    },
+    {
+      "id": "recipe-m19",
+      "name": "Деревянная баррикада",
+      "skill": "other.survival",
+      "group": "Укрепления",
+      "output_name": "Деревянная баррикада",
+      "output_count": 1,
+      "components": [
+        {
+          "name": "В округе должна быть мебель из дерева или готовые доски",
+          "quantity": 1,
+          "source_text": "В округе должна быть мебель из дерева или готовые доски"
+        }
+      ],
+      "components_text": "В округе должна быть мебель из дерева или готовые доски",
+      "difficulty_options": [
+        50.0
+      ],
+      "automatic": false,
+      "tools_text": "",
+      "duration_text": "10 Минут",
+      "duration_seconds": 600,
+      "result_text": "Хлюпенькое. 1000 Прочности"
+    },
+    {
+      "id": "recipe-v19",
+      "name": "Подствольный светошумовой",
+      "skill": "other.engineering",
+      "group": "Боеприпасы",
+      "output_name": "Подствольный светошумовой",
+      "output_count": 1,
+      "components": [
+        {
+          "name": "Форма гранаты",
+          "quantity": 1,
+          "source_text": "Форма гранаты"
+        },
+        {
+          "name": "Химические материалы",
+          "quantity": 1,
+          "source_text": "Химические материалы"
+        }
+      ],
+      "components_text": "Форма гранаты, Химические материалы",
+      "difficulty_options": [
+        60.0
+      ],
+      "automatic": false,
+      "tools_text": "Смесительный станок",
+      "duration_text": "30 минут",
+      "duration_seconds": 1800
+    },
+    {
+      "id": "recipe-aa19",
+      "name": "Бинт(5)",
+      "skill": "other.medicine",
+      "group": "Медицина",
+      "output_name": "Бинт",
+      "output_count": 5,
+      "components": [
+        {
+          "name": "Марля",
+          "quantity": 1,
+          "source_text": "Марля"
+        }
+      ],
+      "components_text": "Марля",
+      "difficulty_options": [
+        30.0
+      ],
+      "automatic": false,
+      "tools_text": "Не нужен",
+      "duration_text": "10 минут",
+      "duration_seconds": 600
+    },
+    {
+      "id": "recipe-m20",
+      "name": "Металлический лист",
+      "skill": "other.survival",
+      "group": "Укрепления",
+      "output_name": "Металлический лист",
+      "output_count": 1,
+      "components": [
+        {
+          "name": "Металлические детали",
+          "quantity": 12,
+          "source_text": "Металлические детали(12)"
+        }
+      ],
+      "components_text": "Металлические детали(12)",
+      "difficulty_options": [
+        60.0
+      ],
+      "automatic": false,
+      "tools_text": "",
+      "duration_text": "3 Часа",
+      "duration_seconds": 10800,
+      "result_text": "Прочные. 5000 Прочности"
+    },
+    {
+      "id": "recipe-v20",
+      "name": "Кустарная бомба",
+      "skill": "other.engineering",
+      "group": "Боеприпасы",
+      "output_name": "Кустарная бомба",
+      "output_count": 1,
+      "components": [
+        {
+          "name": "Металлические детали",
+          "quantity": 5,
+          "source_text": "Металлические детали (5)"
+        },
+        {
+          "name": "Химические материалы",
+          "quantity": 2,
+          "source_text": "Химические материалы (2)"
+        },
+        {
+          "name": "Вода",
+          "quantity": 1,
+          "source_text": "Вода (1)"
+        }
+      ],
+      "components_text": "Металлические детали (5), Химические материалы (2), Вода (1)",
+      "difficulty_options": [
+        70.0
+      ],
+      "automatic": false,
+      "tools_text": "Смесительный станок",
+      "duration_text": "30 минут",
+      "duration_seconds": 1800
+    },
+    {
+      "id": "recipe-aa20",
+      "name": "Шина(2)",
+      "skill": "other.medicine",
+      "group": "Медицина",
+      "output_name": "Шина",
+      "output_count": 2,
+      "components": [
+        {
+          "name": "Металлические детали",
+          "quantity": 1,
+          "source_text": "Металлические детали"
+        },
+        {
+          "name": "Марля/Тканные материалы",
+          "quantity": 1,
+          "source_text": "Марля/Тканные материалы"
+        }
+      ],
+      "components_text": "Металлические детали, Марля/Тканные материалы",
+      "difficulty_options": [
+        45.0
+      ],
+      "automatic": false,
+      "tools_text": "Не нужен",
+      "duration_text": "1 минута",
+      "duration_seconds": 60
+    },
+    {
+      "id": "recipe-m21",
+      "name": "Прочная металлическая баррикада",
+      "skill": "other.survival",
+      "group": "Укрепления",
+      "output_name": "Прочная металлическая баррикада",
+      "output_count": 1,
+      "components": [
+        {
+          "name": "Металлические детали",
+          "quantity": 18,
+          "source_text": "Металлические детали(18)"
+        }
+      ],
+      "components_text": "Металлические детали(18)",
+      "difficulty_options": [
+        70.0
+      ],
+      "automatic": false,
+      "tools_text": "",
+      "duration_text": "6 Часов",
+      "duration_seconds": 21600,
+      "result_text": "Очень прочные. 8500 Прочности"
+    },
+    {
+      "id": "recipe-aa21",
+      "name": "Анальгин(35)",
+      "skill": "other.medicine",
+      "group": "Медицина",
+      "output_name": "Анальгин",
+      "output_count": 35,
+      "components": [
+        {
+          "name": "Серная кислота",
+          "quantity": 1,
+          "source_text": "Серная кислота"
+        },
+        {
+          "name": "Натрий",
+          "quantity": 1,
+          "source_text": "Натрий"
+        },
+        {
+          "name": "Сахар",
+          "quantity": 1,
+          "source_text": "Сахар"
+        }
+      ],
+      "components_text": "Серная кислота, Натрий, Сахар",
+      "difficulty_options": [
+        45.0
+      ],
+      "automatic": false,
+      "tools_text": "Смесительный Станок",
+      "duration_text": "1 сутки, для старта создания требуется 20 минут",
+      "duration_seconds": 86400,
+      "active_seconds": 1200
+    },
+    {
+      "id": "recipe-m22",
+      "name": "Пешок с меском",
+      "skill": "other.survival",
+      "group": "Укрепления",
+      "output_name": "Пешок с меском",
+      "output_count": 1,
+      "components": [
+        {
+          "name": "Тканные материалы",
+          "quantity": 4,
+          "source_text": "Тканные материалы(4)"
+        }
+      ],
+      "components_text": "Тканные материалы(4)",
+      "difficulty_options": [
+        50.0
+      ],
+      "automatic": false,
+      "tools_text": "",
+      "duration_text": "1 час",
+      "duration_seconds": 3600,
+      "result_text": "Прочные. 2500 Прочности"
+    },
+    {
+      "id": "recipe-v22",
+      "name": "Патроны 1 категории-(40)",
+      "skill": "other.engineering",
+      "group": "Боеприпасы",
+      "output_name": "Патроны 1 категории-",
+      "output_count": 40,
+      "components": [
+        {
+          "name": "Форма для патронов",
+          "quantity": 1,
+          "source_text": "Форма для патронов"
+        },
+        {
+          "name": "Металлические детали",
+          "quantity": 1,
+          "source_text": "Металлические детали"
+        },
+        {
+          "name": "Порох",
+          "quantity": 1,
+          "source_text": "Порох"
+        }
+      ],
+      "components_text": "Форма для патронов, Металлические детали, Порох",
+      "difficulty_options": [
+        30.0
+      ],
+      "automatic": false,
+      "tools_text": "Смесительный станок",
+      "duration_text": "30 минут",
+      "duration_seconds": 1800
+    },
+    {
+      "id": "recipe-aa22",
+      "name": "Жгут(5)",
+      "skill": "other.medicine",
+      "group": "Медицина",
+      "output_name": "Жгут",
+      "output_count": 5,
+      "components": [
+        {
+          "name": "Резина",
+          "quantity": 1,
+          "source_text": "Резина"
+        }
+      ],
+      "components_text": "Резина",
+      "difficulty_options": [
+        15.0
+      ],
+      "automatic": false,
+      "tools_text": "Не нужен",
+      "duration_text": "30 минут",
+      "duration_seconds": 1800
+    },
+    {
+      "id": "recipe-m23",
+      "name": "Кирпичная баррикада",
+      "skill": "other.survival",
+      "group": "Укрепления",
+      "output_name": "Кирпичная баррикада",
+      "output_count": 1,
+      "components": [
+        {
+          "name": "Кирпич",
+          "quantity": 20,
+          "source_text": "Кирпич(20)"
+        },
+        {
+          "name": "Клей",
+          "quantity": 2,
+          "source_text": "Клей(2)"
+        }
+      ],
+      "components_text": "Кирпич(20), Клей(2)",
+      "difficulty_options": [
+        30.0
+      ],
+      "automatic": false,
+      "tools_text": "",
+      "duration_text": "10 Минут",
+      "duration_seconds": 600,
+      "result_text": "Прочные. 500 Прочности"
+    },
+    {
+      "id": "recipe-v23",
+      "name": "Патроны 2 категории-(20)",
+      "skill": "other.engineering",
+      "group": "Боеприпасы",
+      "output_name": "Патроны 2 категории-",
+      "output_count": 20,
+      "components": [
+        {
+          "name": "Форма для патронов",
+          "quantity": 1,
+          "source_text": "Форма для патронов"
+        },
+        {
+          "name": "Металлические детали",
+          "quantity": 2,
+          "source_text": "Металлические детали(2)"
+        },
+        {
+          "name": "Порох",
+          "quantity": 1,
+          "source_text": "Порох"
+        }
+      ],
+      "components_text": "Форма для патронов, Металлические детали(2), Порох",
+      "difficulty_options": [
+        45.0
+      ],
+      "automatic": false,
+      "tools_text": "Смесительный станок",
+      "duration_text": "30 минут",
+      "duration_seconds": 1800
+    },
+    {
+      "id": "recipe-aa23",
+      "name": "Медицинские материалы",
+      "skill": "other.medicine",
+      "group": "Медицина",
+      "output_name": "Медицинские материалы",
+      "output_count": 1,
+      "components": [
+        {
+          "name": "Анальгин(3)/Бинт(3)/Шина(2)/Жгут",
+          "quantity": 2,
+          "source_text": "Анальгин(3)/Бинт(3)/Шина(2)/Жгут(2)"
+        }
+      ],
+      "components_text": "Анальгин(3)/Бинт(3)/Шина(2)/Жгут(2)",
+      "difficulty_options": [
+        25.0
+      ],
+      "automatic": false,
+      "tools_text": "Не обязателен",
+      "duration_text": "10 минут",
+      "duration_seconds": 600
+    },
+    {
+      "id": "recipe-v24",
+      "name": "Патроны 3 категории-(10)",
+      "skill": "other.engineering",
+      "group": "Боеприпасы",
+      "output_name": "Патроны 3 категории-",
+      "output_count": 10,
+      "components": [
+        {
+          "name": "Форма для патронов",
+          "quantity": 1,
+          "source_text": "Форма для патронов"
+        },
+        {
+          "name": "Металлические детали",
+          "quantity": 2,
+          "source_text": "Металлические детали(2)"
+        },
+        {
+          "name": "Порох",
+          "quantity": 2,
+          "source_text": "Порох(2)"
+        }
+      ],
+      "components_text": "Форма для патронов, Металлические детали(2), Порох(2)",
+      "difficulty_options": [
+        60.0
+      ],
+      "automatic": false,
+      "tools_text": "Смесительный станок",
+      "duration_text": "30 минут",
+      "duration_seconds": 1800
+    },
+    {
+      "id": "recipe-aa24",
+      "name": "Пенициллин(10)",
+      "skill": "other.medicine",
+      "group": "Медицина",
+      "output_name": "Пенициллин",
+      "output_count": 10,
+      "components": [
+        {
+          "name": "Хлеб",
+          "quantity": 1,
+          "source_text": "Хлеб"
+        },
+        {
+          "name": "Вода",
+          "quantity": 1,
+          "source_text": "Вода"
+        },
+        {
+          "name": "Бинт",
+          "quantity": 1,
+          "source_text": "Бинт"
+        }
+      ],
+      "components_text": "Хлеб, Вода, Бинт",
+      "difficulty_options": [
+        15.0
+      ],
+      "automatic": false,
+      "tools_text": "Не нужен",
+      "duration_text": "1 сутки, для старта создания требуется 10 минут",
+      "duration_seconds": 86400,
+      "active_seconds": 600
+    },
+    {
+      "id": "recipe-v25",
+      "name": "Патроны 1 категории(40)",
+      "skill": "other.engineering",
+      "group": "Боеприпасы",
+      "output_name": "Патроны 1 категории",
+      "output_count": 40,
+      "components": [
+        {
+          "name": "Форма для патронов",
+          "quantity": 1,
+          "source_text": "Форма для патронов"
+        },
+        {
+          "name": "Металлические детали",
+          "quantity": 1,
+          "source_text": "Металлические детали"
+        },
+        {
+          "name": "Порох",
+          "quantity": 2,
+          "source_text": "Порох(2)"
+        }
+      ],
+      "components_text": "Форма для патронов, Металлические детали, Порох(2)",
+      "difficulty_options": [
+        45.0
+      ],
+      "automatic": false,
+      "tools_text": "Смесительный станок",
+      "duration_text": "30 минут",
+      "duration_seconds": 1800
+    },
+    {
+      "id": "recipe-aa25",
+      "name": "Борщевик",
+      "skill": "other.medicine",
+      "group": "Медицина",
+      "output_name": "Борщевик",
+      "output_count": 1,
+      "components": [
+        {
+          "name": "Анальгин",
+          "quantity": 1,
+          "source_text": "Анальгин"
+        },
+        {
+          "name": "Спирт",
+          "quantity": 5,
+          "source_text": "Спирт(5)"
+        },
+        {
+          "name": "Трава",
+          "quantity": 1,
+          "source_text": "Трава"
+        },
+        {
+          "name": "Медицинские материалы",
+          "quantity": 1,
+          "source_text": "Медицинские материалы"
+        }
+      ],
+      "components_text": "Анальгин, Спирт(5), Трава, Медицинские материалы",
+      "difficulty_options": [
+        50.0
+      ],
+      "automatic": false,
+      "tools_text": "Смесительный Станок",
+      "duration_text": "80 минут",
+      "duration_seconds": 4800
+    },
+    {
+      "id": "recipe-v26",
+      "name": "Патроны 2 категории(20)",
+      "skill": "other.engineering",
+      "group": "Боеприпасы",
+      "output_name": "Патроны 2 категории",
+      "output_count": 20,
+      "components": [
+        {
+          "name": "Форма для патронов",
+          "quantity": 1,
+          "source_text": "Форма для патронов"
+        },
+        {
+          "name": "Металлические детали",
+          "quantity": 2,
+          "source_text": "Металлические детали(2)"
+        },
+        {
+          "name": "Порох",
+          "quantity": 2,
+          "source_text": "Порох(2)"
+        }
+      ],
+      "components_text": "Форма для патронов, Металлические детали(2), Порох(2)",
+      "difficulty_options": [
+        60.0
+      ],
+      "automatic": false,
+      "tools_text": "Смесительный станок",
+      "duration_text": "30 минут",
+      "duration_seconds": 1800
+    },
+    {
+      "id": "recipe-aa26",
+      "name": "Миколий(2)",
+      "skill": "other.medicine",
+      "group": "Медицина",
+      "output_name": "Миколий",
+      "output_count": 2,
+      "components": [
+        {
+          "name": "Спирт",
+          "quantity": 5,
+          "source_text": "Спирт(5)"
+        },
+        {
+          "name": "Медицинские материалы",
+          "quantity": 2,
+          "source_text": "Медицинские материалы(2)"
+        }
+      ],
+      "components_text": "Спирт(5), Медицинские материалы(2)",
+      "difficulty_options": [
+        60.0
+      ],
+      "automatic": false,
+      "tools_text": "Смесительный Станок",
+      "duration_text": "20 минут",
+      "duration_seconds": 1200
+    },
+    {
+      "id": "recipe-m27",
+      "name": "Отмычка 2шт",
+      "skill": "other.engineering",
+      "group": "Инструменты",
+      "output_name": "Отмычка 2шт",
+      "output_count": 1,
+      "components": [
+        {
+          "name": "Металлические детали",
+          "quantity": 1,
+          "source_text": "Металлические детали"
+        }
+      ],
+      "components_text": "Металлические детали",
+      "difficulty_options": [
+        30.0
+      ],
+      "automatic": false,
+      "tools_text": "Печь",
+      "duration_text": "40 минут",
+      "duration_seconds": 2400,
+      "requires_tool_crafting": true
+    },
+    {
+      "id": "recipe-v27",
+      "name": "Патроны 3 категории(10)",
+      "skill": "other.engineering",
+      "group": "Боеприпасы",
+      "output_name": "Патроны 3 категории",
+      "output_count": 10,
+      "components": [
+        {
+          "name": "Форма для патронов",
+          "quantity": 1,
+          "source_text": "Форма для патронов"
+        },
+        {
+          "name": "Металлические детали",
+          "quantity": 2,
+          "source_text": "Металлические детали(2)"
+        },
+        {
+          "name": "Порох",
+          "quantity": 4,
+          "source_text": "Порох(4)"
+        }
+      ],
+      "components_text": "Форма для патронов, Металлические детали(2), Порох(4)",
+      "difficulty_options": [
+        75.0
+      ],
+      "automatic": false,
+      "tools_text": "Смесительный станок",
+      "duration_text": "30 минут",
+      "duration_seconds": 1800
+    },
+    {
+      "id": "recipe-aa27",
+      "name": "Самопальный стимпак(5)",
+      "skill": "other.medicine",
+      "group": "Медицина",
+      "output_name": "Самопальный стимпак",
+      "output_count": 5,
+      "components": [
+        {
+          "name": "Медицинские материалы",
+          "quantity": 2,
+          "source_text": "Медицинские материалы(2)"
+        },
+        {
+          "name": "Борщевик",
+          "quantity": 2,
+          "source_text": "Борщевик(2)"
+        },
+        {
+          "name": "Миколий",
+          "quantity": 2,
+          "source_text": "Миколий(2)"
+        }
+      ],
+      "components_text": "Медицинские материалы(2), Борщевик(2), Миколий(2)",
+      "difficulty_options": [
+        60.0
+      ],
+      "automatic": false,
+      "tools_text": "Смесительный Станок",
+      "duration_text": "40 минут",
+      "duration_seconds": 2400
+    },
+    {
+      "id": "recipe-m28",
+      "name": "Грузик",
+      "skill": "other.engineering",
+      "group": "Инструменты",
+      "output_name": "Грузик",
+      "output_count": 1,
+      "components": [
+        {
+          "name": "Металлические детали",
+          "quantity": 2,
+          "source_text": "Металлические детали (2)"
+        }
+      ],
+      "components_text": "Металлические детали (2)",
+      "difficulty_options": [
+        20.0
+      ],
+      "automatic": false,
+      "tools_text": "Печь",
+      "duration_text": "10 минут",
+      "duration_seconds": 600,
+      "requires_tool_crafting": true
+    },
+    {
+      "id": "recipe-v28",
+      "name": "Патроны 1 категории+(40)",
+      "skill": "other.engineering",
+      "group": "Боеприпасы",
+      "output_name": "Патроны 1 категории+",
+      "output_count": 40,
+      "components": [
+        {
+          "name": "Форма для патронов",
+          "quantity": 1,
+          "source_text": "Форма для патронов"
+        },
+        {
+          "name": "Металлические детали",
+          "quantity": 2,
+          "source_text": "Металлические детали(2)"
+        },
+        {
+          "name": "Порох",
+          "quantity": 3,
+          "source_text": "Порох(3)"
+        }
+      ],
+      "components_text": "Форма для патронов, Металлические детали(2), Порох(3)",
+      "difficulty_options": [
+        60.0
+      ],
+      "automatic": false,
+      "tools_text": "Смесительный станок",
+      "duration_text": "30 минут",
+      "duration_seconds": 1800
+    },
+    {
+      "id": "recipe-aa28",
+      "name": "Хирург. Набор Айболит",
+      "skill": "other.medicine",
+      "group": "Медицина",
+      "output_name": "Хирург. Набор Айболит",
+      "output_count": 1,
+      "components": [
+        {
+          "name": "Ножницы",
+          "quantity": 1,
+          "source_text": "Ножницы"
+        },
+        {
+          "name": "Тканные материалы",
+          "quantity": 1,
+          "source_text": "Тканные материалы"
+        },
+        {
+          "name": "Молоток",
+          "quantity": 1,
+          "source_text": "Молоток"
+        },
+        {
+          "name": "Напильник",
+          "quantity": 1,
+          "source_text": "Напильник"
+        }
+      ],
+      "components_text": "Ножницы, Тканные материалы, Молоток, Напильник",
+      "difficulty_options": [
+        15.0
+      ],
+      "automatic": false,
+      "tools_text": "Не нужен",
+      "duration_text": "1 минута",
+      "duration_seconds": 60
+    },
+    {
+      "id": "recipe-m29",
+      "name": "Кустарная Отвертка",
+      "skill": "other.engineering",
+      "group": "Инструменты",
+      "output_name": "Кустарная Отвертка",
+      "output_count": 1,
+      "components": [
+        {
+          "name": "Металлические детали",
+          "quantity": 3,
+          "source_text": "Металлические детали (3)"
+        },
+        {
+          "name": "Верёвка",
+          "quantity": 1,
+          "source_text": "Верёвка"
+        }
+      ],
+      "components_text": "Металлические детали (3), Верёвка",
+      "difficulty_options": [
+        25.0
+      ],
+      "automatic": false,
+      "tools_text": "Печь",
+      "duration_text": "20 минут",
+      "duration_seconds": 1200,
+      "requires_tool_crafting": true
+    },
+    {
+      "id": "recipe-v29",
+      "name": "Патроны 2 категории+(20)",
+      "skill": "other.engineering",
+      "group": "Боеприпасы",
+      "output_name": "Патроны 2 категории+",
+      "output_count": 20,
+      "components": [
+        {
+          "name": "Форма для патронов",
+          "quantity": 1,
+          "source_text": "Форма для патронов"
+        },
+        {
+          "name": "Металлические детали",
+          "quantity": 4,
+          "source_text": "Металлические детали(4)"
+        },
+        {
+          "name": "Порох",
+          "quantity": 4,
+          "source_text": "Порох(4)"
+        }
+      ],
+      "components_text": "Форма для патронов, Металлические детали(4), Порох(4)",
+      "difficulty_options": [
+        75.0
+      ],
+      "automatic": false,
+      "tools_text": "Смесительный станок",
+      "duration_text": "30 минут",
+      "duration_seconds": 1800
+    },
+    {
+      "id": "recipe-aa29",
+      "name": "Настойка подорожника(3)",
+      "skill": "other.medicine",
+      "group": "Медицина",
+      "output_name": "Настойка подорожника",
+      "output_count": 3,
+      "components": [
+        {
+          "name": "Вода",
+          "quantity": 2,
+          "source_text": "Вода(2)"
+        },
+        {
+          "name": "Доступ к траве",
+          "quantity": 1,
+          "source_text": "Доступ к траве"
+        }
+      ],
+      "components_text": "Вода(2), Доступ к траве",
+      "difficulty_options": [
+        40.0
+      ],
+      "automatic": false,
+      "tools_text": "Самогонный апарат",
+      "duration_text": "50 минут",
+      "duration_seconds": 3000
+    },
+    {
+      "id": "recipe-m30",
+      "name": "Кустарные Кусачки",
+      "skill": "other.engineering",
+      "group": "Инструменты",
+      "output_name": "Кустарные Кусачки",
+      "output_count": 1,
+      "components": [
+        {
+          "name": "Металические детали",
+          "quantity": 4,
+          "source_text": "Металические детали (4)"
+        },
+        {
+          "name": "Резина",
+          "quantity": 1,
+          "source_text": "Резина"
+        }
+      ],
+      "components_text": "Металические детали (4), Резина",
+      "difficulty_options": [
+        30.0
+      ],
+      "automatic": false,
+      "tools_text": "Печь",
+      "duration_text": "20 минут",
+      "duration_seconds": 1200,
+      "requires_tool_crafting": true
+    },
+    {
+      "id": "recipe-v30",
+      "name": "Патроны 3 категории+(10)",
+      "skill": "other.engineering",
+      "group": "Боеприпасы",
+      "output_name": "Патроны 3 категории+",
+      "output_count": 10,
+      "components": [
+        {
+          "name": "Форма для патронов",
+          "quantity": 1,
+          "source_text": "Форма для патронов"
+        },
+        {
+          "name": "Металлические детали",
+          "quantity": 6,
+          "source_text": "Металлические детали(6)"
+        },
+        {
+          "name": "Порох",
+          "quantity": 6,
+          "source_text": "Порох(6)"
+        }
+      ],
+      "components_text": "Форма для патронов, Металлические детали(6), Порох(6)",
+      "difficulty_options": [
+        90.0
+      ],
+      "automatic": false,
+      "tools_text": "Смесительный станок",
+      "duration_text": "30 минут",
+      "duration_seconds": 1800
+    },
+    {
+      "id": "recipe-aa30",
+      "name": "Очищенная настойка коры",
+      "skill": "other.medicine",
+      "group": "Медицина",
+      "output_name": "Очищенная настойка коры",
+      "output_count": 1,
+      "components": [
+        {
+          "name": "Вода",
+          "quantity": 1,
+          "source_text": "Вода"
+        },
+        {
+          "name": "Активированный уголь",
+          "quantity": 1,
+          "source_text": "Активированный уголь"
+        }
+      ],
+      "components_text": "Вода, Активированный уголь",
+      "difficulty_options": [
+        15.0
+      ],
+      "automatic": false,
+      "tools_text": "Не нужен",
+      "duration_text": "5 минут",
+      "duration_seconds": 300
+    },
+    {
+      "id": "recipe-m31",
+      "name": "Шлифовальные инструменты 20/20",
+      "skill": "other.engineering",
+      "group": "Инструменты",
+      "output_name": "Шлифовальные инструменты 20/20",
+      "output_count": 1,
+      "components": [
+        {
+          "name": "Тканные материалы",
+          "quantity": 1,
+          "source_text": "Тканные материалы"
+        },
+        {
+          "name": "Металические детали",
+          "quantity": 5,
+          "source_text": "Металические детали (5)"
+        }
+      ],
+      "components_text": "Тканные материалы, Металические детали (5)",
+      "difficulty_options": [
+        55.0
+      ],
+      "automatic": false,
+      "tools_text": "Печь",
+      "duration_text": "120 минут",
+      "duration_seconds": 7200,
+      "requires_tool_crafting": true
+    },
+    {
+      "id": "recipe-aa31",
+      "name": "Кустарный фильтр для противогаза",
+      "skill": "other.medicine",
+      "group": "Медицина",
+      "output_name": "Кустарный фильтр для противогаза",
+      "output_count": 1,
+      "components": [
+        {
+          "name": "Консервная банка",
+          "quantity": 1,
+          "source_text": "Консервная банка"
+        },
+        {
+          "name": "Марля",
+          "quantity": 1,
+          "source_text": "Марля"
+        },
+        {
+          "name": "Бумага",
+          "quantity": 1,
+          "source_text": "Бумага"
+        }
+      ],
+      "components_text": "Консервная банка, Марля, Бумага",
+      "difficulty_options": [
+        40.0
+      ],
+      "automatic": false,
+      "tools_text": "Не нужен",
+      "duration_text": "20 минут",
+      "duration_seconds": 1200
+    },
+    {
+      "id": "recipe-m32",
+      "name": "Паяльные инструменты 10/10",
+      "skill": "other.engineering",
+      "group": "Инструменты",
+      "output_name": "Паяльные инструменты 10/10",
+      "output_count": 1,
+      "components": [
+        {
+          "name": "Электронные материалы",
+          "quantity": 10,
+          "source_text": "Электронные материалы (10)"
+        }
+      ],
+      "components_text": "Электронные материалы (10)",
+      "difficulty_options": [
+        70.0
+      ],
+      "automatic": false,
+      "tools_text": "Печь",
+      "duration_text": "240 минут",
+      "duration_seconds": 14400,
+      "requires_tool_crafting": true
+    },
+    {
+      "id": "recipe-m33",
+      "name": "Смесительные инструменты 30/30",
+      "skill": "other.engineering",
+      "group": "Инструменты",
+      "output_name": "Смесительные инструменты 30/30",
+      "output_count": 1,
+      "components": [
+        {
+          "name": "Металлические детали",
+          "quantity": 8,
+          "source_text": "Металлические детали (8)"
+        },
+        {
+          "name": "Резина",
+          "quantity": 1,
+          "source_text": "Резина"
+        },
+        {
+          "name": "Стеклянная бутылка",
+          "quantity": 3,
+          "source_text": "Стеклянная бутылка(3)"
+        }
+      ],
+      "components_text": "Металлические детали (8), Резина, Стеклянная бутылка(3)",
+      "difficulty_options": [
+        65.0
+      ],
+      "automatic": false,
+      "tools_text": "Печь",
+      "duration_text": "180 минут",
+      "duration_seconds": 10800,
+      "requires_tool_crafting": true
+    },
+    {
+      "id": "recipe-m34",
+      "name": "Аэрационная установка",
+      "skill": "other.engineering",
+      "group": "Инструменты",
+      "output_name": "Аэрационная установка",
+      "output_count": 1,
+      "components": [
+        {
+          "name": "Металлические детали",
+          "quantity": 12,
+          "source_text": "Металлические детали (12)"
+        },
+        {
+          "name": "Резина",
+          "quantity": 5,
+          "source_text": "Резина (5)"
+        },
+        {
+          "name": "Пластиковая бутылка",
+          "quantity": 8,
+          "source_text": "Пластиковая бутылка(8)"
+        }
+      ],
+      "components_text": "Металлические детали (12), Резина (5), Пластиковая бутылка(8)",
+      "difficulty_options": [
+        50.0
+      ],
+      "automatic": false,
+      "tools_text": "Печь",
+      "duration_text": "120 минут",
+      "duration_seconds": 7200,
+      "requires_tool_crafting": true
+    },
+    {
+      "id": "recipe-m35",
+      "name": "Набор инструментов Оружейника (Упрощёные) 5/5",
+      "skill": "other.engineering",
+      "group": "Инструменты",
+      "output_name": "Набор инструментов Оружейника (Упрощёные) 5/5",
+      "output_count": 1,
+      "components": [
+        {
+          "name": "Металлические детали",
+          "quantity": 8,
+          "source_text": "Металлические детали(8)"
+        },
+        {
+          "name": "Напильник",
+          "quantity": 1,
+          "source_text": "Напильник"
+        },
+        {
+          "name": "Отвертка",
+          "quantity": 1,
+          "source_text": "Отвертка"
+        },
+        {
+          "name": "Клей",
+          "quantity": 1,
+          "source_text": "Клей"
+        },
+        {
+          "name": "Марля",
+          "quantity": 3,
+          "source_text": "Марля(3)"
+        }
+      ],
+      "components_text": "Металлические детали(8), Напильник, Отвертка, Клей, Марля(3)",
+      "difficulty_options": [
+        30.0
+      ],
+      "automatic": false,
+      "tools_text": "---",
+      "duration_text": "60 минут",
+      "duration_seconds": 3600,
+      "requires_tool_crafting": true
+    },
+    {
+      "id": "recipe-aa35",
+      "name": "Хирург. Набор Крест(2)",
+      "skill": "other.medicine",
+      "group": "Продвинутая медицина",
+      "output_name": "Хирург. Набор Крест",
+      "output_count": 2,
+      "components": [
+        {
+          "name": "Ножницы",
+          "quantity": 2,
+          "source_text": "Ножницы(2)"
+        },
+        {
+          "name": "Тканные материалы",
+          "quantity": 1,
+          "source_text": "Тканные материалы"
+        },
+        {
+          "name": "Марля",
+          "quantity": 2,
+          "source_text": "Марля(2)"
+        },
+        {
+          "name": "Шина",
+          "quantity": 2,
+          "source_text": "Шина(2)"
+        },
+        {
+          "name": "Медицинские материалы",
+          "quantity": 2,
+          "source_text": "Медицинские материалы(2)"
+        }
+      ],
+      "components_text": "Ножницы(2), Тканные материалы, Марля(2), Шина(2), Медицинские материалы(2)",
+      "difficulty_options": [
+        40.0
+      ],
+      "automatic": false,
+      "tools_text": "Не нужен",
+      "duration_text": "5 минут",
+      "duration_seconds": 300
+    },
+    {
+      "id": "recipe-m36",
+      "name": "Набор инструментов Оружейника (Стандартные) 10/10",
+      "skill": "other.engineering",
+      "group": "Инструменты",
+      "output_name": "Набор инструментов Оружейника (Стандартные) 10/10",
+      "output_count": 1,
+      "components": [
+        {
+          "name": "Металлические детали",
+          "quantity": 14,
+          "source_text": "Металлические детали(14)"
+        },
+        {
+          "name": "Напильник",
+          "quantity": 2,
+          "source_text": "Напильник(2)"
+        },
+        {
+          "name": "Отвертка саперная",
+          "quantity": 1,
+          "source_text": "Отвертка саперная"
+        },
+        {
+          "name": "Клей",
+          "quantity": 2,
+          "source_text": "Клей(2)"
+        },
+        {
+          "name": "Марля",
+          "quantity": 5,
+          "source_text": "Марля(5)"
+        }
+      ],
+      "components_text": "Металлические детали(14), Напильник(2), Отвертка саперная, Клей(2), Марля(5)",
+      "difficulty_options": [
+        65.0
+      ],
+      "automatic": false,
+      "tools_text": "Печь",
+      "duration_text": "120 минут",
+      "duration_seconds": 7200,
+      "requires_tool_crafting": true
+    },
+    {
+      "id": "recipe-aa36",
+      "name": "Оксицел(2)",
+      "skill": "other.medicine",
+      "group": "Продвинутая медицина",
+      "output_name": "Оксицел",
+      "output_count": 2,
+      "components": [
+        {
+          "name": "Пустая ампула",
+          "quantity": 2,
+          "source_text": "Пустая ампула(2)"
+        },
+        {
+          "name": "Медицинские материалы",
+          "quantity": 1,
+          "source_text": "Медицинские материалы"
+        }
+      ],
+      "components_text": "Пустая ампула(2), Медицинские материалы",
+      "difficulty_options": [
+        50.0
+      ],
+      "automatic": false,
+      "tools_text": "Смесительный Станок",
+      "duration_text": "15 минут",
+      "duration_seconds": 900
+    },
+    {
+      "id": "recipe-m37",
+      "name": "Набор инструментов Бронника (Упрощёные) 5/5",
+      "skill": "other.engineering",
+      "group": "Инструменты",
+      "output_name": "Набор инструментов Бронника (Упрощёные) 5/5",
+      "output_count": 1,
+      "components": [
+        {
+          "name": "Металлические детали",
+          "quantity": 12,
+          "source_text": "Металлические детали(12)"
+        },
+        {
+          "name": "Резина",
+          "quantity": 1,
+          "source_text": "Резина"
+        },
+        {
+          "name": "Кусачки",
+          "quantity": 1,
+          "source_text": "Кусачки"
+        },
+        {
+          "name": "Ножницы",
+          "quantity": 1,
+          "source_text": "Ножницы"
+        }
+      ],
+      "components_text": "Металлические детали(12), Резина, Кусачки, Ножницы",
+      "difficulty_options": [
+        40.0
+      ],
+      "automatic": false,
+      "tools_text": "---",
+      "duration_text": "120 минут",
+      "duration_seconds": 7200,
+      "requires_tool_crafting": true
+    },
+    {
+      "id": "recipe-aa37",
+      "name": "Тромбин-Л",
+      "skill": "other.medicine",
+      "group": "Продвинутая медицина",
+      "output_name": "Тромбин-Л",
+      "output_count": 1,
+      "components": [
+        {
+          "name": "Пустая ампула",
+          "quantity": 1,
+          "source_text": "Пустая ампула"
+        },
+        {
+          "name": "Медицинские материалы",
+          "quantity": 1,
+          "source_text": "Медицинские материалы"
+        }
+      ],
+      "components_text": "Пустая ампула, Медицинские материалы",
+      "difficulty_options": [
+        50.0
+      ],
+      "automatic": false,
+      "tools_text": "Смесительный Станок",
+      "duration_text": "15 минут",
+      "duration_seconds": 900
+    },
+    {
+      "id": "recipe-m38",
+      "name": "Набор инструментов Бронника (Стандартные) 10/10",
+      "skill": "other.engineering",
+      "group": "Инструменты",
+      "output_name": "Набор инструментов Бронника (Стандартные) 10/10",
+      "output_count": 1,
+      "components": [
+        {
+          "name": "Металлические детали",
+          "quantity": 20,
+          "source_text": "Металлические детали(20)"
+        },
+        {
+          "name": "Резина",
+          "quantity": 2,
+          "source_text": "Резина(2)"
+        },
+        {
+          "name": "Кусачки",
+          "quantity": 1,
+          "source_text": "Кусачки"
+        },
+        {
+          "name": "Ножницы",
+          "quantity": 1,
+          "source_text": "Ножницы"
+        },
+        {
+          "name": "Скотч",
+          "quantity": 1,
+          "source_text": "Скотч"
+        },
+        {
+          "name": "Тканные материалы",
+          "quantity": 2,
+          "source_text": "Тканные материалы(2)"
+        },
+        {
+          "name": "Фольга",
+          "quantity": 1,
+          "source_text": "Фольга"
+        }
+      ],
+      "components_text": "Металлические детали(20), Резина(2), Кусачки, Ножницы, Скотч, Тканные материалы(2), Фольга",
+      "difficulty_options": [
+        70.0
+      ],
+      "automatic": false,
+      "tools_text": "Печь",
+      "duration_text": "180 минут",
+      "duration_seconds": 10800,
+      "requires_tool_crafting": true
+    },
+    {
+      "id": "recipe-v38",
+      "name": "Форма для патронов",
+      "skill": "other.engineering",
+      "group": "Боеприпасы",
+      "output_name": "Форма для патронов",
+      "output_count": 1,
+      "components": [
+        {
+          "name": "Металлические детали. 3 Использования",
+          "quantity": 1,
+          "source_text": "Металлические детали. 3 Использования"
+        }
+      ],
+      "components_text": "Металлические детали. 3 Использования",
+      "difficulty_options": [
+        50.0
+      ],
+      "automatic": false,
+      "tools_text": "Смесительный станок",
+      "duration_text": "30 минут",
+      "duration_seconds": 1800
+    },
+    {
+      "id": "recipe-aa38",
+      "name": "Тромбин",
+      "skill": "other.medicine",
+      "group": "Продвинутая медицина",
+      "output_name": "Тромбин",
+      "output_count": 1,
+      "components": [
+        {
+          "name": "Пустая ампула",
+          "quantity": 1,
+          "source_text": "Пустая ампула"
+        },
+        {
+          "name": "Медицинские материалы",
+          "quantity": 2,
+          "source_text": "Медицинские материалы(2)"
+        }
+      ],
+      "components_text": "Пустая ампула, Медицинские материалы(2)",
+      "difficulty_options": [
+        60.0
+      ],
+      "automatic": false,
+      "tools_text": "Смесительный Станок",
+      "duration_text": "15 минут",
+      "duration_seconds": 900
+    },
+    {
+      "id": "recipe-m39",
+      "name": "Набор восстановления инструментов",
+      "skill": "other.engineering",
+      "group": "Инструменты",
+      "output_name": "Набор восстановления инструментов",
+      "output_count": 1,
+      "components": [
+        {
+          "name": "Металлические детали",
+          "quantity": 20,
+          "source_text": "Металлические детали(20)"
+        }
+      ],
+      "components_text": "Металлические детали(20)",
+      "difficulty_options": [
+        30.0
+      ],
+      "automatic": false,
+      "tools_text": "---",
+      "duration_text": "30 минут",
+      "duration_seconds": 1800,
+      "requires_tool_crafting": true
+    },
+    {
+      "id": "recipe-v39",
+      "name": "Смесь Дымовая",
+      "skill": "other.engineering",
+      "group": "Боеприпасы",
+      "output_name": "Смесь Дымовая",
+      "output_count": 1,
+      "components": [
+        {
+          "name": "Химические материалы",
+          "quantity": 1,
+          "source_text": "Химические материалы"
+        }
+      ],
+      "components_text": "Химические материалы",
+      "difficulty_options": [
+        50.0
+      ],
+      "automatic": false,
+      "tools_text": "Смесительный станок",
+      "duration_text": "30 минут",
+      "duration_seconds": 1800
+    },
+    {
+      "id": "recipe-aa39",
+      "name": "Ибупрофен",
+      "skill": "other.medicine",
+      "group": "Продвинутая медицина",
+      "output_name": "Ибупрофен",
+      "output_count": 1,
+      "components": [
+        {
+          "name": "Мед Сырьё",
+          "quantity": 2,
+          "source_text": "Мед Сырьё(2)"
+        }
+      ],
+      "components_text": "Мед Сырьё(2)",
+      "difficulty_options": [
+        55.0
+      ],
+      "automatic": false,
+      "tools_text": "Смесительный Станок",
+      "duration_text": "5 минут",
+      "duration_seconds": 300
+    },
+    {
+      "id": "recipe-m40",
+      "name": "Кустарный самогонный аппарат",
+      "skill": "other.engineering",
+      "group": "Инструменты",
+      "output_name": "Кустарный самогонный аппарат",
+      "output_count": 1,
+      "components": [
+        {
+          "name": "Металлические детали",
+          "quantity": 4,
+          "source_text": "Металлические детали(4)"
+        },
+        {
+          "name": "Электронные материалы",
+          "quantity": 4,
+          "source_text": "Электронные материалы(4)"
+        },
+        {
+          "name": "Стеклянная бутылка",
+          "quantity": 2,
+          "source_text": "Стеклянная бутылка(2)"
+        },
+        {
+          "name": "Кастрюля",
+          "quantity": 1,
+          "source_text": "Кастрюля"
+        },
+        {
+          "name": "Канистра",
+          "quantity": 1,
+          "source_text": "Канистра"
+        },
+        {
+          "name": "Датчик",
+          "quantity": 1,
+          "source_text": "Датчик"
+        }
+      ],
+      "components_text": "Металлические детали(4), Электронные материалы(4), Стеклянная бутылка(2), Кастрюля, Канистра, Датчик",
+      "difficulty_options": [
+        50.0
+      ],
+      "automatic": false,
+      "tools_text": "---",
+      "duration_text": "120 минут",
+      "duration_seconds": 7200,
+      "requires_tool_crafting": true
+    },
+    {
+      "id": "recipe-v40",
+      "name": "Нитроглицерин",
+      "skill": "other.engineering",
+      "group": "Боеприпасы",
+      "output_name": "Нитроглицерин",
+      "output_count": 1,
+      "components": [
+        {
+          "name": "Химические материалы",
+          "quantity": 2,
+          "source_text": "Химические материалы (2)"
+        }
+      ],
+      "components_text": "Химические материалы (2)",
+      "difficulty_options": [
+        70.0
+      ],
+      "automatic": false,
+      "tools_text": "Смесительный станок",
+      "duration_text": "30 минут",
+      "duration_seconds": 1800
+    },
+    {
+      "id": "recipe-aa40",
+      "name": "Адреналин",
+      "skill": "other.medicine",
+      "group": "Продвинутая медицина",
+      "output_name": "Адреналин",
+      "output_count": 1,
+      "components": [
+        {
+          "name": "Пустая ампула",
+          "quantity": 1,
+          "source_text": "Пустая ампула"
+        },
+        {
+          "name": "Медицинские материалы",
+          "quantity": 4,
+          "source_text": "Медицинские материалы(4)"
+        }
+      ],
+      "components_text": "Пустая ампула, Медицинские материалы(4)",
+      "difficulty_options": [
+        70.0
+      ],
+      "automatic": false,
+      "tools_text": "Смесительный Станок",
+      "duration_text": "15 минут",
+      "duration_seconds": 900
+    },
+    {
+      "id": "recipe-m41",
+      "name": "Кустарная печь",
+      "skill": "other.engineering",
+      "group": "Инструменты",
+      "output_name": "Кустарная печь",
+      "output_count": 1,
+      "components": [
+        {
+          "name": "Кирпич",
+          "quantity": 200,
+          "source_text": "Кирпич(200)"
+        }
+      ],
+      "components_text": "Кирпич(200)",
+      "difficulty_options": [],
+      "automatic": true,
+      "tools_text": "---",
+      "duration_text": "1 сутки",
+      "duration_seconds": 86400,
+      "requires_tool_crafting": true
+    },
+    {
+      "id": "recipe-v41",
+      "name": "Форма гранаты(2)",
+      "skill": "other.engineering",
+      "group": "Боеприпасы",
+      "output_name": "Форма гранаты",
+      "output_count": 2,
+      "components": [
+        {
+          "name": "Взрыватель",
+          "quantity": 1,
+          "source_text": "Взрыватель"
+        },
+        {
+          "name": "Запал",
+          "quantity": 1,
+          "source_text": "Запал"
+        },
+        {
+          "name": "Металлические детали",
+          "quantity": 1,
+          "source_text": "Металлические детали"
+        }
+      ],
+      "components_text": "Взрыватель, Запал, Металлические детали",
+      "difficulty_options": [
+        50.0
+      ],
+      "automatic": false,
+      "tools_text": "Смесительный станок",
+      "duration_text": "30 минут",
+      "duration_seconds": 1800
+    },
+    {
+      "id": "recipe-aa41",
+      "name": "Жаропонижающее \"Мороз\"",
+      "skill": "other.medicine",
+      "group": "Продвинутая медицина",
+      "output_name": "Жаропонижающее \"Мороз\"",
+      "output_count": 1,
+      "components": [
+        {
+          "name": "Пустая ампула",
+          "quantity": 1,
+          "source_text": "Пустая ампула"
+        },
+        {
+          "name": "Медицинские материалы",
+          "quantity": 4,
+          "source_text": "Медицинские материалы(4)"
+        }
+      ],
+      "components_text": "Пустая ампула, Медицинские материалы(4)",
+      "difficulty_options": [
+        55.0
+      ],
+      "automatic": false,
+      "tools_text": "Смесительный Станок",
+      "duration_text": "15 минут",
+      "duration_seconds": 900
+    },
+    {
+      "id": "recipe-m42",
+      "name": "Кустарный станок оружейника",
+      "skill": "other.engineering",
+      "group": "Инструменты",
+      "output_name": "Кустарный станок оружейника",
+      "output_count": 1,
+      "components": [
+        {
+          "name": "Металлические детали",
+          "quantity": 30,
+          "source_text": "Металлические детали(30)"
+        },
+        {
+          "name": "Бинокль",
+          "quantity": 1,
+          "source_text": "Бинокль"
+        },
+        {
+          "name": "Набор инструментов Оружейника (Расширенные)",
+          "quantity": 50,
+          "source_text": "Набор инструментов Оружейника (Расширенные)(50)"
+        }
+      ],
+      "components_text": "Металлические детали(30), Бинокль, Набор инструментов Оружейника (Расширенные)(50)",
+      "difficulty_options": [],
+      "automatic": true,
+      "tools_text": "---",
+      "duration_text": "10 минут",
+      "duration_seconds": 600,
+      "requires_tool_crafting": true
+    },
+    {
+      "id": "recipe-v42",
+      "name": "Запал (2)",
+      "skill": "other.engineering",
+      "group": "Боеприпасы",
+      "output_name": "Запал",
+      "output_count": 2,
+      "components": [
+        {
+          "name": "Химические материалы",
+          "quantity": 1,
+          "source_text": "Химические материалы"
+        },
+        {
+          "name": "Металлические детали",
+          "quantity": 1,
+          "source_text": "Металлические детали"
+        }
+      ],
+      "components_text": "Химические материалы, Металлические детали",
+      "difficulty_options": [
+        65.0
+      ],
+      "automatic": false,
+      "tools_text": "Смесительный станок",
+      "duration_text": "30 минут",
+      "duration_seconds": 1800
+    },
+    {
+      "id": "recipe-aa42",
+      "name": "Стимулятор Морковчатник",
+      "skill": "other.medicine",
+      "group": "Продвинутая медицина",
+      "output_name": "Стимулятор Морковчатник",
+      "output_count": 1,
+      "components": [
+        {
+          "name": "Пустая ампула",
+          "quantity": 1,
+          "source_text": "Пустая ампула"
+        },
+        {
+          "name": "Медицинские материалы",
+          "quantity": 10,
+          "source_text": "Медицинские материалы(10)"
+        }
+      ],
+      "components_text": "Пустая ампула, Медицинские материалы(10)",
+      "difficulty_options": [
+        55.0
+      ],
+      "automatic": false,
+      "tools_text": "Смесительный Станок",
+      "duration_text": "15 минут",
+      "duration_seconds": 900
+    },
+    {
+      "id": "recipe-m43",
+      "name": "Кустарный станок бронника",
+      "skill": "other.engineering",
+      "group": "Инструменты",
+      "output_name": "Кустарный станок бронника",
+      "output_count": 1,
+      "components": [
+        {
+          "name": "Металлические детали",
+          "quantity": 25,
+          "source_text": "Металлические детали(25)"
+        },
+        {
+          "name": "Мультитул",
+          "quantity": 1,
+          "source_text": "Мультитул"
+        },
+        {
+          "name": "Набор инструментов Бронника (Расширенные)",
+          "quantity": 50,
+          "source_text": "Набор инструментов Бронника (Расширенные)(50)"
+        }
+      ],
+      "components_text": "Металлические детали(25), Мультитул, Набор инструментов Бронника (Расширенные)(50)",
+      "difficulty_options": [],
+      "automatic": true,
+      "tools_text": "---",
+      "duration_text": "10 минут",
+      "duration_seconds": 600,
+      "requires_tool_crafting": true
+    },
+    {
+      "id": "recipe-v43",
+      "name": "Химические материалы",
+      "skill": "other.engineering",
+      "group": "Боеприпасы",
+      "output_name": "Химические материалы",
+      "output_count": 1,
+      "components": [
+        {
+          "name": "Батарейки",
+          "quantity": 4,
+          "source_text": "Батарейки (4)"
+        }
+      ],
+      "components_text": "Батарейки (4)",
+      "difficulty_options": [
+        50.0
+      ],
+      "automatic": false,
+      "tools_text": "Смесительный станок",
+      "duration_text": "30 минут",
+      "duration_seconds": 1800
+    },
+    {
+      "id": "recipe-aa43",
+      "name": "Стимулятор Сова",
+      "skill": "other.medicine",
+      "group": "Продвинутая медицина",
+      "output_name": "Стимулятор Сова",
+      "output_count": 1,
+      "components": [
+        {
+          "name": "Пустая ампула",
+          "quantity": 1,
+          "source_text": "Пустая ампула"
+        },
+        {
+          "name": "Медицинские материалы",
+          "quantity": 8,
+          "source_text": "Медицинские материалы(8)"
+        }
+      ],
+      "components_text": "Пустая ампула, Медицинские материалы(8)",
+      "difficulty_options": [
+        45.0
+      ],
+      "automatic": false,
+      "tools_text": "Смесительный Станок",
+      "duration_text": "15 минут",
+      "duration_seconds": 900
+    },
+    {
+      "id": "recipe-m44",
+      "name": "Кустарный смесительный станок",
+      "skill": "other.engineering",
+      "group": "Инструменты",
+      "output_name": "Кустарный смесительный станок",
+      "output_count": 1,
+      "components": [
+        {
+          "name": "Металлические детали",
+          "quantity": 45,
+          "source_text": "Металлические детали(45)"
+        },
+        {
+          "name": "Стеклянная бутылка",
+          "quantity": 10,
+          "source_text": "Стеклянная бутылка(10)"
+        },
+        {
+          "name": "Смесительные инструменты",
+          "quantity": 50,
+          "source_text": "Смесительные инструменты(50)"
+        }
+      ],
+      "components_text": "Металлические детали(45), Стеклянная бутылка(10), Смесительные инструменты(50)",
+      "difficulty_options": [],
+      "automatic": true,
+      "tools_text": "---",
+      "duration_text": "10 минут",
+      "duration_seconds": 600,
+      "requires_tool_crafting": true
+    },
+    {
+      "id": "recipe-aa44",
+      "name": "Антирад-А",
+      "skill": "other.medicine",
+      "group": "Продвинутая медицина",
+      "output_name": "Антирад-А",
+      "output_count": 1,
+      "components": [
+        {
+          "name": "Пустая ампула",
+          "quantity": 1,
+          "source_text": "Пустая ампула"
+        },
+        {
+          "name": "Медицинские материалы",
+          "quantity": 1,
+          "source_text": "Медицинские материалы"
+        },
+        {
+          "name": "Активированный Уголь",
+          "quantity": 1,
+          "source_text": "Активированный Уголь"
+        }
+      ],
+      "components_text": "Пустая ампула, Медицинские материалы, Активированный Уголь",
+      "difficulty_options": [
+        45.0
+      ],
+      "automatic": false,
+      "tools_text": "Смесительный Станок",
+      "duration_text": "30 минут",
+      "duration_seconds": 1800
+    },
+    {
+      "id": "recipe-m45",
+      "name": "Кустарный станок электрика",
+      "skill": "other.engineering",
+      "group": "Инструменты",
+      "output_name": "Кустарный станок электрика",
+      "output_count": 1,
+      "components": [
+        {
+          "name": "Металлические детали",
+          "quantity": 40,
+          "source_text": "Металлические детали(40)"
+        },
+        {
+          "name": "Бинокль",
+          "quantity": 1,
+          "source_text": "Бинокль"
+        },
+        {
+          "name": "Паяльные инструменты",
+          "quantity": 50,
+          "source_text": "Паяльные инструменты(50)"
+        },
+        {
+          "name": "Батарейки",
+          "quantity": 10,
+          "source_text": "Батарейки(10)"
+        }
+      ],
+      "components_text": "Металлические детали(40), Бинокль, Паяльные инструменты(50), Батарейки(10)",
+      "difficulty_options": [],
+      "automatic": true,
+      "tools_text": "---",
+      "duration_text": "30 минут",
+      "duration_seconds": 1800,
+      "requires_tool_crafting": true
+    },
+    {
+      "id": "recipe-aa45",
+      "name": "Антирад-Б",
+      "skill": "other.medicine",
+      "group": "Продвинутая медицина",
+      "output_name": "Антирад-Б",
+      "output_count": 1,
+      "components": [
+        {
+          "name": "Пустая ампула",
+          "quantity": 1,
+          "source_text": "Пустая ампула"
+        },
+        {
+          "name": "Медицинские материалы",
+          "quantity": 4,
+          "source_text": "Медицинские материалы(4)"
+        },
+        {
+          "name": "Активированный Уголь",
+          "quantity": 4,
+          "source_text": "Активированный Уголь(4)"
+        }
+      ],
+      "components_text": "Пустая ампула, Медицинские материалы(4), Активированный Уголь(4)",
+      "difficulty_options": [
+        50.0
+      ],
+      "automatic": false,
+      "tools_text": "Смесительный Станок",
+      "duration_text": "30 минут",
+      "duration_seconds": 1800
+    },
+    {
+      "id": "recipe-aa46",
+      "name": "Препарат \"Радист\"-Л",
+      "skill": "other.medicine",
+      "group": "Продвинутая медицина",
+      "output_name": "Препарат \"Радист\"-Л",
+      "output_count": 1,
+      "components": [
+        {
+          "name": "Пустая ампула",
+          "quantity": 1,
+          "source_text": "Пустая ампула"
+        },
+        {
+          "name": "Медицинские материалы",
+          "quantity": 8,
+          "source_text": "Медицинские материалы(8)"
+        },
+        {
+          "name": "Активированный Уголь",
+          "quantity": 6,
+          "source_text": "Активированный Уголь(6)"
+        }
+      ],
+      "components_text": "Пустая ампула, Медицинские материалы(8), Активированный Уголь(6)",
+      "difficulty_options": [
+        70.0
+      ],
+      "automatic": false,
+      "tools_text": "Смесительный Станок",
+      "duration_text": "45 минут",
+      "duration_seconds": 2700
+    },
+    {
+      "id": "recipe-aa47",
+      "name": "Морфин",
+      "skill": "other.medicine",
+      "group": "Продвинутая медицина",
+      "output_name": "Морфин",
+      "output_count": 1,
+      "components": [
+        {
+          "name": "Пустая ампула",
+          "quantity": 1,
+          "source_text": "Пустая ампула"
+        },
+        {
+          "name": "Медицинские материалы",
+          "quantity": 5,
+          "source_text": "Медицинские материалы(5)"
+        },
+        {
+          "name": "Сахар",
+          "quantity": 1,
+          "source_text": "Сахар"
+        }
+      ],
+      "components_text": "Пустая ампула, Медицинские материалы(5), Сахар",
+      "difficulty_options": [
+        50.0
+      ],
+      "automatic": false,
+      "tools_text": "Смесительный Станок",
+      "duration_text": "30 минут",
+      "duration_seconds": 1800
+    },
+    {
+      "id": "recipe-aa48",
+      "name": "Самогон (4)",
+      "skill": "other.medicine",
+      "group": "Продвинутая медицина",
+      "output_name": "Самогон",
+      "output_count": 4,
+      "components": [
+        {
+          "name": "Спирт",
+          "quantity": 5,
+          "source_text": "Спирт(5)"
+        },
+        {
+          "name": "Сахар",
+          "quantity": 1,
+          "source_text": "Сахар"
+        }
+      ],
+      "components_text": "Спирт(5), Сахар",
+      "difficulty_options": [
+        50.0
+      ],
+      "automatic": false,
+      "tools_text": "Самогонный апарат",
+      "duration_text": "1 сутки, для старта создания требуется 1 час",
+      "duration_seconds": 86400,
+      "active_seconds": 3600
+    },
+    {
+      "id": "recipe-aa49",
+      "name": "Набор полного восстановления конечности",
+      "skill": "other.medicine",
+      "group": "Продвинутая медицина",
+      "output_name": "Набор полного восстановления конечности",
+      "output_count": 1,
+      "components": [
+        {
+          "name": "Резина",
+          "quantity": 8,
+          "source_text": "Резина(8)"
+        },
+        {
+          "name": "Ножницы",
+          "quantity": 1,
+          "source_text": "Ножницы"
+        },
+        {
+          "name": "Тканные материалы",
+          "quantity": 5,
+          "source_text": "Тканные материалы(5)"
+        },
+        {
+          "name": "Медицинские материалы",
+          "quantity": 5,
+          "source_text": "Медицинские материалы(5)"
+        }
+      ],
+      "components_text": "Резина(8), Ножницы, Тканные материалы(5), Медицинские материалы(5)",
+      "difficulty_options": [
+        55.0
+      ],
+      "automatic": false,
+      "tools_text": "Смесительный Станок",
+      "duration_text": "2 часа",
+      "duration_seconds": 7200
+    },
+    {
+      "id": "recipe-v51",
+      "name": "651.605",
+      "skill": "other.engineering",
+      "group": "Боеприпасы",
+      "output_name": "651.605",
+      "output_count": 1,
+      "components": [
+        {
+          "name": "0.3",
+          "quantity": 1,
+          "source_text": "0.3"
+        }
+      ],
+      "components_text": "0.3",
+      "difficulty_options": [
+        400.0
+      ],
+      "automatic": false,
+      "tools_text": "Смесительный станок",
+      "duration_text": "30 минут",
+      "duration_seconds": 1800
+    },
+    {
+      "id": "recipe-v52",
+      "name": "685.9",
+      "skill": "other.engineering",
+      "group": "Боеприпасы",
+      "output_name": "685.9",
+      "output_count": 1,
+      "components": [
+        {
+          "name": "0.35",
+          "quantity": 1,
+          "source_text": "0.35"
+        }
+      ],
+      "components_text": "0.35",
+      "difficulty_options": [
+        500.0
+      ],
+      "automatic": false,
+      "tools_text": "Смесительный станок",
+      "duration_text": "30 минут",
+      "duration_seconds": 1800
+    },
+    {
+      "id": "recipe-v53",
+      "name": "722",
+      "skill": "other.engineering",
+      "group": "Боеприпасы",
+      "output_name": "722",
+      "output_count": 1,
+      "components": [
+        {
+          "name": "0.4",
+          "quantity": 1,
+          "source_text": "0.4"
+        }
+      ],
+      "components_text": "0.4",
+      "difficulty_options": [
+        600.0
+      ],
+      "automatic": false,
+      "tools_text": "Смесительный станок",
+      "duration_text": "30 минут",
+      "duration_seconds": 1800
+    },
+    {
+      "id": "recipe-v54",
+      "name": "760",
+      "skill": "other.engineering",
+      "group": "Боеприпасы",
+      "output_name": "760",
+      "output_count": 1,
+      "components": [
+        {
+          "name": "0.45",
+          "quantity": 1,
+          "source_text": "0.45"
+        }
+      ],
+      "components_text": "0.45",
+      "difficulty_options": [
+        700.0
+      ],
+      "automatic": false,
+      "tools_text": "Смесительный станок",
+      "duration_text": "30 минут",
+      "duration_seconds": 1800
+    },
+    {
+      "id": "recipe-v55",
+      "name": "800.0",
+      "skill": "other.engineering",
+      "group": "Боеприпасы",
+      "output_name": "800.0",
+      "output_count": 1,
+      "components": [
+        {
+          "name": "0.5",
+          "quantity": 1,
+          "source_text": "0.5"
+        }
+      ],
+      "components_text": "0.5",
+      "difficulty_options": [
+        800.0
+      ],
+      "automatic": false,
+      "tools_text": "Смесительный станок",
+      "duration_text": "30 минут",
+      "duration_seconds": 1800
+    },
+    {
+      "id": "recipe-flame-37",
+      "name": "Струйный огнемёт",
+      "skill": "other.engineering",
+      "group": "Огнемёты",
+      "output_name": "Струйный огнемёт",
+      "output_count": 1,
+      "components": [
+        {
+          "name": "Металлические детали",
+          "quantity": 15,
+          "source_text": "Металлические детали (15)"
+        },
+        {
+          "name": "Резина",
+          "quantity": 6,
+          "source_text": "Резина (6)"
+        },
+        {
+          "name": "Клей",
+          "quantity": 1,
+          "source_text": "Клей"
+        },
+        {
+          "name": "Зажигалка",
+          "quantity": 1,
+          "source_text": "Зажигалка"
+        },
+        {
+          "name": "Датчик",
+          "quantity": 1,
+          "source_text": "Датчик"
+        }
+      ],
+      "components_text": "Металлические детали (15), Резина (6), Клей, Зажигалка, Датчик",
+      "difficulty_options": [
+        65.0
+      ],
+      "automatic": false,
+      "tools_text": "Станок Оружейника",
+      "duration_text": "1 час",
+      "duration_seconds": 3600
+    },
+    {
+      "id": "recipe-flame-38",
+      "name": "Бак для струйного огнемета (пустой)",
+      "skill": "other.engineering",
+      "group": "Огнемёты",
+      "output_name": "Бак для струйного огнемета (пустой)",
+      "output_count": 1,
+      "components": [
+        {
+          "name": "Металлические детали",
+          "quantity": 8,
+          "source_text": "Металлические детали (8)"
+        },
+        {
+          "name": "Резина",
+          "quantity": 3,
+          "source_text": "Резина (3)"
+        }
+      ],
+      "components_text": "Металлические детали (8), Резина (3)",
+      "difficulty_options": [
+        60.0
+      ],
+      "automatic": false,
+      "tools_text": "Станок Оружейника",
+      "duration_text": "1 час",
+      "duration_seconds": 3600
+    },
+    {
+      "id": "recipe-flame-39",
+      "name": "Бак для струйного огнемета (Бензин)",
+      "skill": "other.engineering",
+      "group": "Огнемёты",
+      "output_name": "Бак для струйного огнемета (Бензин)",
+      "output_count": 1,
+      "components": [
+        {
+          "name": "Бак для струйного огнемета (пустой)",
+          "quantity": 1,
+          "source_text": "Бак для струйного огнемета (пустой)",
+          "whole_tank": "jet"
+        },
+        {
+          "name": "Топливо(1 Литр)",
+          "quantity": 5,
+          "source_text": "Топливо(1 Литр) (5)"
+        }
+      ],
+      "components_text": "Бак для струйного огнемета (пустой), Топливо(1 Литр) (5)",
+      "difficulty_options": [
+        20.0
+      ],
+      "automatic": false,
+      "tools_text": "Не нужен",
+      "duration_text": "5 минут",
+      "duration_seconds": 300
+    },
+    {
+      "id": "recipe-flame-40",
+      "name": "Бак для струйного огнемета (Фосфорное топливо)",
+      "skill": "other.engineering",
+      "group": "Огнемёты",
+      "output_name": "Бак для струйного огнемета (Фосфорное топливо)",
+      "output_count": 1,
+      "components": [
+        {
+          "name": "Бак для струйного огнемета (пустой)",
+          "quantity": 1,
+          "source_text": "Бак для струйного огнемета (пустой)",
+          "whole_tank": "jet"
+        },
+        {
+          "name": "Топливо(1 Литр)",
+          "quantity": 5,
+          "source_text": "Топливо(1 Литр) (5)"
+        },
+        {
+          "name": "Химические материалы",
+          "quantity": 1,
+          "source_text": "Химические материалы"
+        }
+      ],
+      "components_text": "Бак для струйного огнемета (пустой), Топливо(1 Литр) (5), Химические материалы",
+      "difficulty_options": [
+        40.0
+      ],
+      "automatic": false,
+      "tools_text": "Не нужен",
+      "duration_text": "10 минут",
+      "duration_seconds": 600
+    },
+    {
+      "id": "recipe-flame-41",
+      "name": "Бак для струйного огнемета (Напалм)",
+      "skill": "other.engineering",
+      "group": "Огнемёты",
+      "output_name": "Бак для струйного огнемета (Напалм)",
+      "output_count": 1,
+      "components": [
+        {
+          "name": "Бак для струйного огнемета (пустой)",
+          "quantity": 1,
+          "source_text": "Бак для струйного огнемета (пустой)",
+          "whole_tank": "jet"
+        },
+        {
+          "name": "Топливо(1 Литр)",
+          "quantity": 5,
+          "source_text": "Топливо(1 Литр) (5)"
+        },
+        {
+          "name": "Химические материалы",
+          "quantity": 3,
+          "source_text": "Химические материалы (3)"
+        }
+      ],
+      "components_text": "Бак для струйного огнемета (пустой), Топливо(1 Литр) (5), Химические материалы (3)",
+      "difficulty_options": [
+        40.0
+      ],
+      "automatic": false,
+      "tools_text": "Смесительный станок / Смесительные инструменты",
+      "duration_text": "30 минут",
+      "duration_seconds": 1800
+    },
+    {
+      "id": "recipe-flame-46",
+      "name": "Реактивный огнемёт",
+      "skill": "other.engineering",
+      "group": "Огнемёты",
+      "output_name": "Реактивный огнемёт",
+      "output_count": 1,
+      "components": [
+        {
+          "name": "Металлические детали",
+          "quantity": 25,
+          "source_text": "Металлические детали (25)"
+        },
+        {
+          "name": "Резина",
+          "quantity": 10,
+          "source_text": "Резина (10)"
+        },
+        {
+          "name": "Клей",
+          "quantity": 1,
+          "source_text": "Клей"
+        },
+        {
+          "name": "Зажигалка",
+          "quantity": 1,
+          "source_text": "Зажигалка"
+        },
+        {
+          "name": "Датчик",
+          "quantity": 1,
+          "source_text": "Датчик"
+        }
+      ],
+      "components_text": "Металлические детали (25), Резина (10), Клей, Зажигалка, Датчик",
+      "difficulty_options": [
+        70.0
+      ],
+      "automatic": false,
+      "tools_text": "Станок Оружейника",
+      "duration_text": "1 час",
+      "duration_seconds": 3600
+    },
+    {
+      "id": "recipe-flame-42",
+      "name": "Баллон для реактивного огнемета (пустой)",
+      "skill": "other.engineering",
+      "group": "Огнемёты",
+      "output_name": "Баллон для реактивного огнемета (пустой)",
+      "output_count": 1,
+      "components": [
+        {
+          "name": "Металлические детали",
+          "quantity": 5,
+          "source_text": "Металлические детали (5)"
+        },
+        {
+          "name": "Резина",
+          "quantity": 1,
+          "source_text": "Резина"
+        }
+      ],
+      "components_text": "Металлические детали (5), Резина",
+      "difficulty_options": [
+        50.0
+      ],
+      "automatic": false,
+      "tools_text": "Станок Оружейника",
+      "duration_text": "1 час",
+      "duration_seconds": 3600
+    },
+    {
+      "id": "recipe-flame-43",
+      "name": "Баллон для реактивного огнемета (Бензин)",
+      "skill": "other.engineering",
+      "group": "Огнемёты",
+      "output_name": "Баллон для реактивного огнемета (Бензин)",
+      "output_count": 1,
+      "components": [
+        {
+          "name": "Баллон для реактивного огнемета (пустой)",
+          "quantity": 1,
+          "source_text": "Баллон для реактивного огнемета (пустой)",
+          "whole_tank": "reactive"
+        },
+        {
+          "name": "Топливо(1 Литр)",
+          "quantity": 8,
+          "source_text": "Топливо(1 Литр) (8)"
+        }
+      ],
+      "components_text": "Баллон для реактивного огнемета (пустой), Топливо(1 Литр) (8)",
+      "difficulty_options": [
+        25.0
+      ],
+      "automatic": false,
+      "tools_text": "Не нужен",
+      "duration_text": "5 минут",
+      "duration_seconds": 300
+    },
+    {
+      "id": "recipe-flame-44",
+      "name": "Баллон для реактивного огнемета (Фосфорное топливо)",
+      "skill": "other.engineering",
+      "group": "Огнемёты",
+      "output_name": "Баллон для реактивного огнемета (Фосфорное топливо)",
+      "output_count": 1,
+      "components": [
+        {
+          "name": "Баллон для реактивного огнемета (пустой)",
+          "quantity": 1,
+          "source_text": "Баллон для реактивного огнемета (пустой)",
+          "whole_tank": "reactive"
+        },
+        {
+          "name": "Топливо(1 Литр)",
+          "quantity": 8,
+          "source_text": "Топливо(1 Литр) (8)"
+        },
+        {
+          "name": "Химические материалы",
+          "quantity": 2,
+          "source_text": "Химические материалы (2)"
+        }
+      ],
+      "components_text": "Баллон для реактивного огнемета (пустой), Топливо(1 Литр) (8), Химические материалы (2)",
+      "difficulty_options": [
+        45.0
+      ],
+      "automatic": false,
+      "tools_text": "Не нужен",
+      "duration_text": "10 минут",
+      "duration_seconds": 600
+    },
+    {
+      "id": "recipe-flame-45",
+      "name": "Баллон для реактивного огнемета (Напалм)",
+      "skill": "other.engineering",
+      "group": "Огнемёты",
+      "output_name": "Баллон для реактивного огнемета (Напалм)",
+      "output_count": 1,
+      "components": [
+        {
+          "name": "Баллон для реактивного огнемета (пустой)",
+          "quantity": 1,
+          "source_text": "Баллон для реактивного огнемета (пустой)",
+          "whole_tank": "reactive"
+        },
+        {
+          "name": "Топливо(1 Литр)",
+          "quantity": 8,
+          "source_text": "Топливо(1 Литр) (8)"
+        },
+        {
+          "name": "Химические материалы",
+          "quantity": 5,
+          "source_text": "Химические материалы (5)"
+        }
+      ],
+      "components_text": "Баллон для реактивного огнемета (пустой), Топливо(1 Литр) (8), Химические материалы (5)",
+      "difficulty_options": [
+        45.0
+      ],
+      "automatic": false,
+      "tools_text": "Смесительный станок / Смесительные инструменты",
+      "duration_text": "30 минут",
+      "duration_seconds": 1800
+    },
+    {
+      "id": "recipe-flame-47",
+      "name": "Бак сжатого воздуха",
+      "skill": "other.engineering",
+      "group": "Огнемёты",
+      "output_name": "Бак сжатого воздуха",
+      "output_count": 1,
+      "components": [
+        {
+          "name": "Металлические детали",
+          "quantity": 5,
+          "source_text": "Металлические детали (5)"
+        }
+      ],
+      "components_text": "Металлические детали (5)",
+      "difficulty_options": [
+        60.0
+      ],
+      "automatic": false,
+      "tools_text": "Станок Оружейника",
+      "duration_text": "1 час",
+      "duration_seconds": 3600
+    },
+    {
+      "id": "recipe-air-pump-manual",
+      "name": "Накачка: Ручной насос",
+      "skill": "other.engineering",
+      "group": "Огнемёты",
+      "output_name": "Бак сжатого воздуха",
+      "output_count": 1,
+      "components": [
+        {
+          "name": "Бак сжатого воздуха",
+          "quantity": 1,
+          "source_text": "Бак сжатого воздуха",
+          "whole_air": true
+        }
+      ],
+      "components_text": "Бак сжатого воздуха",
+      "difficulty_options": [],
+      "automatic": true,
+      "tools_text": "Ручной насос",
+      "duration_text": "5 минут",
+      "duration_seconds": 300,
+      "maintenance": true
+    },
+    {
+      "id": "recipe-air-pump-electric",
+      "name": "Накачка: Электрический насос",
+      "skill": "other.engineering",
+      "group": "Огнемёты",
+      "output_name": "Бак сжатого воздуха",
+      "output_count": 1,
+      "components": [
+        {
+          "name": "Бак сжатого воздуха",
+          "quantity": 1,
+          "source_text": "Бак сжатого воздуха",
+          "whole_air": true
+        }
+      ],
+      "components_text": "Бак сжатого воздуха",
+      "difficulty_options": [],
+      "automatic": true,
+      "tools_text": "Электрический насос",
+      "duration_text": "30 секунд",
+      "duration_seconds": 30,
+      "maintenance": true
+    }
+  ],
+  "salvage": {
+    "armor": [
+      {
+        "maximum": 30,
+        "source_text": "Тканные материалы",
+        "materials": [
+          {
+            "name": "Тканные материалы",
+            "quantity": 1
+          }
+        ]
+      },
+      {
+        "maximum": 45,
+        "source_text": "Резина, Тканные материалы",
+        "materials": [
+          {
+            "name": "Резина",
+            "quantity": 1
+          },
+          {
+            "name": "Тканные материалы",
+            "quantity": 1
+          }
+        ]
+      },
+      {
+        "maximum": 60,
+        "source_text": "Тканные материалы(3), Резина",
+        "materials": [
+          {
+            "name": "Тканные материалы",
+            "quantity": 3
+          },
+          {
+            "name": "Резина",
+            "quantity": 1
+          }
+        ]
+      },
+      {
+        "maximum": 75,
+        "source_text": "Тканные материалы(5), Резина(2), Металлические детали",
+        "materials": [
+          {
+            "name": "Тканные материалы",
+            "quantity": 5
+          },
+          {
+            "name": "Резина",
+            "quantity": 2
+          },
+          {
+            "name": "Металлические детали",
+            "quantity": 1
+          }
+        ]
+      },
+      {
+        "maximum": 90,
+        "source_text": "Тканные материалы(6), Резина(2), Металлические детали(2)",
+        "materials": [
+          {
+            "name": "Тканные материалы",
+            "quantity": 6
+          },
+          {
+            "name": "Резина",
+            "quantity": 2
+          },
+          {
+            "name": "Металлические детали",
+            "quantity": 2
+          }
+        ]
+      },
+      {
+        "maximum": 99,
+        "source_text": "Тканные материалы(7), Металлические детали(3), Резина(3)",
+        "materials": [
+          {
+            "name": "Тканные материалы",
+            "quantity": 7
+          },
+          {
+            "name": "Металлические детали",
+            "quantity": 3
+          },
+          {
+            "name": "Резина",
+            "quantity": 3
+          }
+        ]
+      },
+      {
+        "maximum": 104,
+        "source_text": "Лут из 91-99, Тканные материалы(3), Резина, Металлические детали",
+        "materials": [
+          {
+            "name": "Тканные материалы",
+            "quantity": 10
+          },
+          {
+            "name": "Металлические детали",
+            "quantity": 4
+          },
+          {
+            "name": "Резина",
+            "quantity": 4
+          }
+        ]
+      },
+      {
+        "maximum": 109,
+        "source_text": "Лут из 100-104, Тканные материалы(3)",
+        "materials": [
+          {
+            "name": "Тканные материалы",
+            "quantity": 13
+          },
+          {
+            "name": "Металлические детали",
+            "quantity": 4
+          },
+          {
+            "name": "Резина",
+            "quantity": 4
+          }
+        ]
+      },
+      {
+        "maximum": 149,
+        "source_text": "Лут из 105-109, Тканные материалы(3)",
+        "materials": [
+          {
+            "name": "Тканные материалы",
+            "quantity": 16
+          },
+          {
+            "name": "Металлические детали",
+            "quantity": 4
+          },
+          {
+            "name": "Резина",
+            "quantity": 4
+          }
+        ]
+      },
+      {
+        "maximum": null,
+        "source_text": "---",
+        "materials": []
+      }
+    ],
+    "weapon": [
+      {
+        "maximum": 30,
+        "source_text": "Металлические детали(2)",
+        "materials": [
+          {
+            "name": "Металлические детали",
+            "quantity": 2
+          }
+        ]
+      },
+      {
+        "maximum": 45,
+        "source_text": "Металлические детали(3)",
+        "materials": [
+          {
+            "name": "Металлические детали",
+            "quantity": 3
+          }
+        ]
+      },
+      {
+        "maximum": 60,
+        "source_text": "Металлические детали(4)",
+        "materials": [
+          {
+            "name": "Металлические детали",
+            "quantity": 4
+          }
+        ]
+      },
+      {
+        "maximum": 75,
+        "source_text": "Металлические детали(6)",
+        "materials": [
+          {
+            "name": "Металлические детали",
+            "quantity": 6
+          }
+        ]
+      },
+      {
+        "maximum": 90,
+        "source_text": "Металлические детали(8)",
+        "materials": [
+          {
+            "name": "Металлические детали",
+            "quantity": 8
+          }
+        ]
+      },
+      {
+        "maximum": 99,
+        "source_text": "Металлические детали(10)",
+        "materials": [
+          {
+            "name": "Металлические детали",
+            "quantity": 10
+          }
+        ]
+      },
+      {
+        "maximum": 104,
+        "source_text": "Металлические детали(12)",
+        "materials": [
+          {
+            "name": "Металлические детали",
+            "quantity": 12
+          }
+        ]
+      },
+      {
+        "maximum": 109,
+        "source_text": "Металлические детали(15)",
+        "materials": [
+          {
+            "name": "Металлические детали",
+            "quantity": 15
+          }
+        ]
+      },
+      {
+        "maximum": 149,
+        "source_text": "Металлические детали(18)",
+        "materials": [
+          {
+            "name": "Металлические детали",
+            "quantity": 18
+          }
+        ]
+      },
+      {
+        "maximum": null,
+        "source_text": "Металлические детали(20)",
+        "materials": [
+          {
+            "name": "Металлические детали",
+            "quantity": 20
+          }
+        ]
+      }
+    ],
+    "ammo": [
+      {
+        "maximum": 30,
+        "source_text": "---",
+        "materials": []
+      },
+      {
+        "maximum": 45,
+        "source_text": "---",
+        "materials": []
+      },
+      {
+        "maximum": 60,
+        "source_text": "Металлические детали",
+        "materials": [
+          {
+            "name": "Металлические детали",
+            "quantity": 1
+          }
+        ]
+      },
+      {
+        "maximum": 75,
+        "source_text": "Металлические детали",
+        "materials": [
+          {
+            "name": "Металлические детали",
+            "quantity": 1
+          }
+        ]
+      },
+      {
+        "maximum": 90,
+        "source_text": "Металлические детали, Порох",
+        "materials": [
+          {
+            "name": "Металлические детали",
+            "quantity": 1
+          },
+          {
+            "name": "Порох",
+            "quantity": 1
+          }
+        ]
+      },
+      {
+        "maximum": 99,
+        "source_text": "Металлические детали(2), Порох",
+        "materials": [
+          {
+            "name": "Металлические детали",
+            "quantity": 2
+          },
+          {
+            "name": "Порох",
+            "quantity": 1
+          }
+        ]
+      },
+      {
+        "maximum": 104,
+        "source_text": "Металлические детали(2), Порох(2)",
+        "materials": [
+          {
+            "name": "Металлические детали",
+            "quantity": 2
+          },
+          {
+            "name": "Порох",
+            "quantity": 2
+          }
+        ]
+      },
+      {
+        "maximum": 109,
+        "source_text": "---",
+        "materials": []
+      },
+      {
+        "maximum": 149,
+        "source_text": "---",
+        "materials": []
+      },
+      {
+        "maximum": null,
+        "source_text": "---",
+        "materials": []
+      }
+    ],
+    "grenade": [
+      {
+        "maximum": 30,
+        "source_text": "Металлические детали",
+        "materials": [
+          {
+            "name": "Металлические детали",
+            "quantity": 1
+          }
+        ]
+      },
+      {
+        "maximum": 45,
+        "source_text": "Металлические детали, Запал",
+        "materials": [
+          {
+            "name": "Металлические детали",
+            "quantity": 1
+          },
+          {
+            "name": "Запал",
+            "quantity": 1
+          }
+        ]
+      },
+      {
+        "maximum": 60,
+        "source_text": "Металлические детали(2), Запал",
+        "materials": [
+          {
+            "name": "Металлические детали",
+            "quantity": 2
+          },
+          {
+            "name": "Запал",
+            "quantity": 1
+          }
+        ]
+      },
+      {
+        "maximum": 75,
+        "source_text": "Металлические детали, Запал, Взрыватель",
+        "materials": [
+          {
+            "name": "Металлические детали",
+            "quantity": 1
+          },
+          {
+            "name": "Запал",
+            "quantity": 1
+          },
+          {
+            "name": "Взрыватель",
+            "quantity": 1
+          }
+        ]
+      },
+      {
+        "maximum": 90,
+        "source_text": "Металлические детали(2), Запал, Взрыватель",
+        "materials": [
+          {
+            "name": "Металлические детали",
+            "quantity": 2
+          },
+          {
+            "name": "Запал",
+            "quantity": 1
+          },
+          {
+            "name": "Взрыватель",
+            "quantity": 1
+          }
+        ]
+      },
+      {
+        "maximum": 99,
+        "source_text": "Металлические детали, Запал, Взрыватель, Нитроглицерин",
+        "materials": [
+          {
+            "name": "Металлические детали",
+            "quantity": 1
+          },
+          {
+            "name": "Запал",
+            "quantity": 1
+          },
+          {
+            "name": "Взрыватель",
+            "quantity": 1
+          },
+          {
+            "name": "Нитроглицерин",
+            "quantity": 1
+          }
+        ]
+      },
+      {
+        "maximum": 104,
+        "source_text": "Металлические детали(2), Запал, Взрыватель, Нитроглицерин, Порох",
+        "materials": [
+          {
+            "name": "Металлические детали",
+            "quantity": 2
+          },
+          {
+            "name": "Запал",
+            "quantity": 1
+          },
+          {
+            "name": "Взрыватель",
+            "quantity": 1
+          },
+          {
+            "name": "Нитроглицерин",
+            "quantity": 1
+          },
+          {
+            "name": "Порох",
+            "quantity": 1
+          }
+        ]
+      },
+      {
+        "maximum": 109,
+        "source_text": "---",
+        "materials": []
+      },
+      {
+        "maximum": 149,
+        "source_text": "---",
+        "materials": []
+      },
+      {
+        "maximum": null,
+        "source_text": "---",
+        "materials": []
+      }
+    ],
+    "electronics": [
+      {
+        "maximum": 30,
+        "source_text": "Металлические детали",
+        "materials": [
+          {
+            "name": "Металлические детали",
+            "quantity": 1
+          }
+        ]
+      },
+      {
+        "maximum": 45,
+        "source_text": "Металлические детали",
+        "materials": [
+          {
+            "name": "Металлические детали",
+            "quantity": 1
+          }
+        ]
+      },
+      {
+        "maximum": 60,
+        "source_text": "Металлические детали, Электронные материалы",
+        "materials": [
+          {
+            "name": "Металлические детали",
+            "quantity": 1
+          },
+          {
+            "name": "Электронные материалы",
+            "quantity": 1
+          }
+        ]
+      },
+      {
+        "maximum": 75,
+        "source_text": "Электронные материалы(2)",
+        "materials": [
+          {
+            "name": "Электронные материалы",
+            "quantity": 2
+          }
+        ]
+      },
+      {
+        "maximum": 90,
+        "source_text": "Плата",
+        "materials": [
+          {
+            "name": "Плата",
+            "quantity": 1
+          }
+        ]
+      },
+      {
+        "maximum": 99,
+        "source_text": "Металлические детали, Плата",
+        "materials": [
+          {
+            "name": "Металлические детали",
+            "quantity": 1
+          },
+          {
+            "name": "Плата",
+            "quantity": 1
+          }
+        ]
+      },
+      {
+        "maximum": 104,
+        "source_text": "Электронные материалы, Плата",
+        "materials": [
+          {
+            "name": "Электронные материалы",
+            "quantity": 1
+          },
+          {
+            "name": "Плата",
+            "quantity": 1
+          }
+        ]
+      },
+      {
+        "maximum": 109,
+        "source_text": "Электронные материалы(2), Плата",
+        "materials": [
+          {
+            "name": "Электронные материалы",
+            "quantity": 2
+          },
+          {
+            "name": "Плата",
+            "quantity": 1
+          }
+        ]
+      },
+      {
+        "maximum": 149,
+        "source_text": "Металлические детали, Электронные материалы(2), Плата",
+        "materials": [
+          {
+            "name": "Металлические детали",
+            "quantity": 1
+          },
+          {
+            "name": "Электронные материалы",
+            "quantity": 2
+          },
+          {
+            "name": "Плата",
+            "quantity": 1
+          }
+        ]
+      },
+      {
+        "maximum": null,
+        "source_text": "---",
+        "materials": []
+      }
+    ]
+  },
+  "salvage_materials": [
+    {
+      "name": "Взрыватель",
+      "price": 1000,
+      "volume": 0.25,
+      "weight": 0.1
+    },
+    {
+      "name": "Запал",
+      "price": 350,
+      "volume": 0.25,
+      "weight": 0.1
+    },
+    {
+      "name": "Металлические детали",
+      "price": null
+    },
+    {
+      "name": "Нитроглицерин",
+      "price": 1350,
+      "volume": 0.5,
+      "weight": 0.5
+    },
+    {
+      "name": "Плата",
+      "price": 1000,
+      "volume": 1,
+      "weight": 0.5
+    },
+    {
+      "name": "Порох",
+      "price": null
+    },
+    {
+      "name": "Резина",
+      "price": null
+    },
+    {
+      "name": "Тканные материалы",
+      "price": null
+    },
+    {
+      "name": "Электронные материалы",
+      "price": null
+    }
+  ],
+  "modifications": [
+    {
+      "id": "weapon-b23",
+      "kind": "weapon",
+      "family": "Пистолеты",
+      "level": 1,
+      "description": "Прочность +10"
+    },
+    {
+      "id": "weapon-c23",
+      "kind": "weapon",
+      "family": "Пистолеты",
+      "level": 1,
+      "description": "Эргономика +5"
+    },
+    {
+      "id": "weapon-b24",
+      "kind": "weapon",
+      "family": "Пистолеты",
+      "level": 2,
+      "description": "Скорострельность +2"
+    },
+    {
+      "id": "weapon-c24",
+      "kind": "weapon",
+      "family": "Пистолеты",
+      "level": 2,
+      "description": "Очередь = 1/2 скорострельности + 1"
+    },
+    {
+      "id": "weapon-b25",
+      "kind": "weapon",
+      "family": "Пистолеты",
+      "level": 3,
+      "description": "Повышает степень эргономики на 1"
+    },
+    {
+      "id": "weapon-c25",
+      "kind": "weapon",
+      "family": "Пистолеты",
+      "level": 3,
+      "description": "Точность +1"
+    },
+    {
+      "id": "weapon-b27",
+      "kind": "weapon",
+      "family": "Дробовики",
+      "level": 1,
+      "description": "Минимальная сила -2"
+    },
+    {
+      "id": "weapon-c27",
+      "kind": "weapon",
+      "family": "Дробовики",
+      "level": 1,
+      "description": "Начать перезарядку - 0 ОД"
+    },
+    {
+      "id": "weapon-b28",
+      "kind": "weapon",
+      "family": "Дробовики",
+      "level": 2,
+      "description": "Повышает степень эргономики на 1"
+    },
+    {
+      "id": "weapon-c28",
+      "kind": "weapon",
+      "family": "Дробовики",
+      "level": 2,
+      "description": "Точность +1"
+    },
+    {
+      "id": "weapon-b29",
+      "kind": "weapon",
+      "family": "Дробовики",
+      "level": 3,
+      "description": "Эргономика = 50"
+    },
+    {
+      "id": "weapon-c29",
+      "kind": "weapon",
+      "family": "Дробовики",
+      "level": 3,
+      "description": "Стрельба в скопление целей совершает проверку попадания по каждому при использовании Картечи"
+    },
+    {
+      "id": "weapon-b32",
+      "kind": "weapon",
+      "family": "Пистолеты-пулеметы",
+      "level": 1,
+      "description": "Шанс 50% не потратить прочность при стрельбе очередью"
+    },
+    {
+      "id": "weapon-c32",
+      "kind": "weapon",
+      "family": "Пистолеты-пулеметы",
+      "level": 1,
+      "description": "Скорострельность +3"
+    },
+    {
+      "id": "weapon-b33",
+      "kind": "weapon",
+      "family": "Пистолеты-пулеметы",
+      "level": 2,
+      "description": "Ремонт на 50% дешевле"
+    },
+    {
+      "id": "weapon-c33",
+      "kind": "weapon",
+      "family": "Пистолеты-пулеметы",
+      "level": 2,
+      "description": "Эргономика +10"
+    },
+    {
+      "id": "weapon-b34",
+      "kind": "weapon",
+      "family": "Пистолеты-пулеметы",
+      "level": 3,
+      "description": "Размер очереди +1"
+    },
+    {
+      "id": "weapon-c34",
+      "kind": "weapon",
+      "family": "Пистолеты-пулеметы",
+      "level": 3,
+      "description": "Точность +1"
+    },
+    {
+      "id": "weapon-b36",
+      "kind": "weapon",
+      "family": "Штурмовые винтовки и карабины",
+      "level": 1,
+      "description": "Беглый выстрел с штрафом -1 вместо -4"
+    },
+    {
+      "id": "weapon-c36",
+      "kind": "weapon",
+      "family": "Штурмовые винтовки и карабины",
+      "level": 1,
+      "description": "Прочность +10"
+    },
+    {
+      "id": "weapon-b37",
+      "kind": "weapon",
+      "family": "Штурмовые винтовки и карабины",
+      "level": 2,
+      "description": "Эргономика +15"
+    },
+    {
+      "id": "weapon-c37",
+      "kind": "weapon",
+      "family": "Штурмовые винтовки и карабины",
+      "level": 2,
+      "description": "Шанс 50% не потратить прочность при стрельбе очередью"
+    },
+    {
+      "id": "weapon-b38",
+      "kind": "weapon",
+      "family": "Штурмовые винтовки и карабины",
+      "level": 3,
+      "description": "Стрельба очередью -1 ОД"
+    },
+    {
+      "id": "weapon-c38",
+      "kind": "weapon",
+      "family": "Штурмовые винтовки и карабины",
+      "level": 3,
+      "description": "Штраф от очереди -2"
+    },
+    {
+      "id": "weapon-b40",
+      "kind": "weapon",
+      "family": "Снайперские винтовки",
+      "level": 1,
+      "description": "Ремонт на 50% дешевле"
+    },
+    {
+      "id": "weapon-c40",
+      "kind": "weapon",
+      "family": "Снайперские винтовки",
+      "level": 1,
+      "description": "Эргономика +15"
+    },
+    {
+      "id": "weapon-b41",
+      "kind": "weapon",
+      "family": "Снайперские винтовки",
+      "level": 2,
+      "description": "Начать перезарядку - 0 ОД"
+    },
+    {
+      "id": "weapon-c41",
+      "kind": "weapon",
+      "family": "Снайперские винтовки",
+      "level": 2,
+      "description": "Повышает степень эргономики на 1"
+    },
+    {
+      "id": "weapon-b42",
+      "kind": "weapon",
+      "family": "Снайперские винтовки",
+      "level": 3,
+      "description": "Передернуть затвор - 0 ОД"
+    },
+    {
+      "id": "weapon-c42",
+      "kind": "weapon",
+      "family": "Снайперские винтовки",
+      "level": 3,
+      "description": "Точность +2"
+    },
+    {
+      "id": "weapon-b44",
+      "kind": "weapon",
+      "family": "Гранатометы",
+      "level": 1,
+      "description": "Прочность +15"
+    },
+    {
+      "id": "weapon-c44",
+      "kind": "weapon",
+      "family": "Гранатометы",
+      "level": 1,
+      "description": "Перезарядка -1 ОД"
+    },
+    {
+      "id": "weapon-b45",
+      "kind": "weapon",
+      "family": "Гранатометы",
+      "level": 2,
+      "description": "Эргономика +15"
+    },
+    {
+      "id": "weapon-c45",
+      "kind": "weapon",
+      "family": "Гранатометы",
+      "level": 2,
+      "description": "Точность прицельного выстрела +1"
+    },
+    {
+      "id": "weapon-b46",
+      "kind": "weapon",
+      "family": "Гранатометы",
+      "level": 3,
+      "description": "Скорострельность +1"
+    },
+    {
+      "id": "weapon-c46",
+      "kind": "weapon",
+      "family": "Гранатометы",
+      "level": 3,
+      "description": "Доп. травма волны проверяется дважды"
+    },
+    {
+      "id": "weapon-b48",
+      "kind": "weapon",
+      "family": "Пулемёты",
+      "level": 1,
+      "description": "Прочность +15"
+    },
+    {
+      "id": "weapon-c48",
+      "kind": "weapon",
+      "family": "Пулемёты",
+      "level": 1,
+      "description": "Вес на 3 кг меньше"
+    },
+    {
+      "id": "weapon-b49",
+      "kind": "weapon",
+      "family": "Пулемёты",
+      "level": 2,
+      "description": "Ремонт на 50% дешевле"
+    },
+    {
+      "id": "weapon-c49",
+      "kind": "weapon",
+      "family": "Пулемёты",
+      "level": 2,
+      "description": "Эргономика +15"
+    },
+    {
+      "id": "weapon-b50",
+      "kind": "weapon",
+      "family": "Пулемёты",
+      "level": 3,
+      "description": "Точность +1"
+    },
+    {
+      "id": "weapon-c50",
+      "kind": "weapon",
+      "family": "Пулемёты",
+      "level": 3,
+      "description": "Скорострельность +4"
+    },
+    {
+      "id": "armor-a5",
+      "kind": "armor",
+      "family": "Лёгкая",
+      "branch": "Физический",
+      "level": 1,
+      "name": "Усиленные прокладки",
+      "description": "Физическая защита +10%",
+      "scientist_only": false
+    },
+    {
+      "id": "armor-a6",
+      "kind": "armor",
+      "family": "Лёгкая",
+      "branch": "Физический",
+      "level": 2,
+      "name": "Перешитые швы",
+      "description": "Физическая защита +5%, Прочность +10",
+      "scientist_only": false
+    },
+    {
+      "id": "armor-a7",
+      "kind": "armor",
+      "family": "Лёгкая",
+      "branch": "Физический",
+      "level": 3,
+      "name": "Облегченные материалы",
+      "description": "Штраф перемещения -1",
+      "scientist_only": false
+    },
+    {
+      "id": "armor-a9",
+      "kind": "armor",
+      "family": "Лёгкая",
+      "branch": "Аномальный",
+      "level": 1,
+      "name": "Прочные материалы",
+      "description": "Прочность +15",
+      "scientist_only": false
+    },
+    {
+      "id": "armor-a10",
+      "kind": "armor",
+      "family": "Лёгкая",
+      "branch": "Аномальный",
+      "level": 2,
+      "name": "Свинцовая пропитка",
+      "description": "Радиационная защита +10%",
+      "scientist_only": false
+    },
+    {
+      "id": "armor-a11",
+      "kind": "armor",
+      "family": "Лёгкая",
+      "branch": "Аномальный",
+      "level": 3,
+      "name": "Контейнер для артефактов",
+      "description": "Слот контейнера для артефактов +1",
+      "scientist_only": false
+    },
+    {
+      "id": "armor-a13",
+      "kind": "armor",
+      "family": "Лёгкая",
+      "branch": "Удобство",
+      "level": 1,
+      "name": "Эргономичный рукав",
+      "description": "Эргономика используемого оружия становится на 1 стадию выше (до максимума)",
+      "scientist_only": false
+    },
+    {
+      "id": "armor-a14",
+      "kind": "armor",
+      "family": "Лёгкая",
+      "branch": "Удобство",
+      "level": 1,
+      "name": "Камуфляжный раскрас",
+      "description": "Скрытность +4 при попытках спрятаться",
+      "scientist_only": false
+    },
+    {
+      "id": "armor-a15",
+      "kind": "armor",
+      "family": "Лёгкая",
+      "branch": "Удобство",
+      "level": 1,
+      "name": "Автоинъектор",
+      "description": "Позволяет установить шприц в отсек брони за 5 ОД, после чего использовать его за 1 ОД или 1 СД без проверки Лечения",
+      "scientist_only": false
+    },
+    {
+      "id": "armor-a18",
+      "kind": "armor",
+      "family": "Средняя",
+      "branch": "Упрочнение",
+      "level": 1,
+      "name": "Перешитые швы",
+      "description": "Физическая защита +5%, Прочность +10",
+      "scientist_only": false
+    },
+    {
+      "id": "armor-a19",
+      "kind": "armor",
+      "family": "Средняя",
+      "branch": "Упрочнение",
+      "level": 2,
+      "name": "Усиленные прокладки",
+      "description": "Физическая защита +10%, Прочность +10",
+      "scientist_only": false
+    },
+    {
+      "id": "armor-a20",
+      "kind": "armor",
+      "family": "Средняя",
+      "branch": "Упрочнение",
+      "level": 3,
+      "name": "Противоосколочный слой",
+      "description": "Физическая защита от взрывной волны и осколков +25%. Урон по броне от взрывов 0.5х",
+      "scientist_only": false
+    },
+    {
+      "id": "armor-a22",
+      "kind": "armor",
+      "family": "Средняя",
+      "branch": "Физический",
+      "level": 1,
+      "name": "Дополнительные вставки",
+      "description": "Физическая защита +5%, Прочность +5",
+      "scientist_only": false
+    },
+    {
+      "id": "armor-a23",
+      "kind": "armor",
+      "family": "Средняя",
+      "branch": "Физический",
+      "level": 2,
+      "name": "Усиленные плиты",
+      "description": "Физическая защита +10%",
+      "scientist_only": false
+    },
+    {
+      "id": "armor-a24",
+      "kind": "armor",
+      "family": "Средняя",
+      "branch": "Физический",
+      "level": 3,
+      "name": "Укрепление каркаса",
+      "description": "Физическая защита +5%, Прочность +5, Помеха на доп. травмы по вам",
+      "scientist_only": false
+    },
+    {
+      "id": "armor-a26",
+      "kind": "armor",
+      "family": "Средняя",
+      "branch": "Аномальный",
+      "level": 1,
+      "name": "Контейнер для артефактов",
+      "description": "Слот контейнера для артефактов +1",
+      "scientist_only": false
+    },
+    {
+      "id": "armor-a27",
+      "kind": "armor",
+      "family": "Средняя",
+      "branch": "Аномальный",
+      "level": 2,
+      "name": "Дополнительные вставки",
+      "description": "Физическая защита +5%, Прочность +5",
+      "scientist_only": false
+    },
+    {
+      "id": "armor-a28",
+      "kind": "armor",
+      "family": "Средняя",
+      "branch": "Аномальный",
+      "level": 3,
+      "name": "Прошивка из ткани АНОМ",
+      "description": "Аномальная защита +10%",
+      "scientist_only": false
+    },
+    {
+      "id": "armor-a30",
+      "kind": "armor",
+      "family": "Средняя",
+      "branch": "Удобство",
+      "level": 1,
+      "name": "Дополнительные карманы",
+      "description": "Слоты карманов +10",
+      "scientist_only": false
+    },
+    {
+      "id": "armor-a31",
+      "kind": "armor",
+      "family": "Средняя",
+      "branch": "Удобство",
+      "level": 1,
+      "name": "Автоинъектор",
+      "description": "Позволяет установить шприц в отсек брони за 5 ОД, после чего использовать его за 1 ОД или 1 СД без проверки Лечения",
+      "scientist_only": false
+    },
+    {
+      "id": "armor-a32",
+      "kind": "armor",
+      "family": "Средняя",
+      "branch": "Удобство",
+      "level": 1,
+      "name": "Облегчение",
+      "description": "Штраф перемещения -1 (не меньше 0)",
+      "scientist_only": false
+    },
+    {
+      "id": "armor-a33",
+      "kind": "armor",
+      "family": "Средняя",
+      "branch": "Удобство",
+      "level": 1,
+      "name": "Улучшенная фильтрация",
+      "description": "Радиационная защита +10% при использовании противогаза/противогазо-шлема",
+      "scientist_only": false
+    },
+    {
+      "id": "armor-a34",
+      "kind": "armor",
+      "family": "Средняя",
+      "branch": "Удобство",
+      "level": 1,
+      "name": "Дополнительный патронташ",
+      "description": "При перезарядке оружия с несьёмным магазином заряжает на 1 патрон больше",
+      "scientist_only": false
+    },
+    {
+      "id": "armor-a35",
+      "kind": "armor",
+      "family": "Средняя",
+      "branch": "Удобство",
+      "level": 1,
+      "name": "Набор противовесов",
+      "description": "СЛ Метания -4",
+      "scientist_only": false
+    },
+    {
+      "id": "armor-a38",
+      "kind": "armor",
+      "family": "Тяжелая",
+      "branch": "Физический",
+      "level": 1,
+      "name": "Усиленные компоненты",
+      "description": "Физическая защита +5%, Прочность +10",
+      "scientist_only": false
+    },
+    {
+      "id": "armor-a39",
+      "kind": "armor",
+      "family": "Тяжелая",
+      "branch": "Физический",
+      "level": 2,
+      "name": "Жидкокристаллический слой",
+      "description": "Физическая защита +20% до первого попадания по броне. Отсутствие заброневого урона при этом попадании. Перезарядка - 10 минут и проверка Инженерии со СЛ 12. При провале перезарядка начинается заново",
+      "scientist_only": false
+    },
+    {
+      "id": "armor-a41",
+      "kind": "armor",
+      "family": "Тяжелая",
+      "branch": "Физический",
+      "level": 3,
+      "name": "Полное бронирование",
+      "description": "Физическая защита +5%, Физическая защита рук и ног равна защите остального костюма",
+      "scientist_only": false
+    },
+    {
+      "id": "armor-a43",
+      "kind": "armor",
+      "family": "Тяжелая",
+      "branch": "Аномальный",
+      "level": 1,
+      "name": "Сенсорная синхронизация",
+      "description": "Бонус детектора аномалий увеличивается на 3 при его наличии",
+      "scientist_only": false
+    },
+    {
+      "id": "armor-a44",
+      "kind": "armor",
+      "family": "Тяжелая",
+      "branch": "Аномальный",
+      "level": 2,
+      "name": "Контейнер для артефактов",
+      "description": "Слот контейнера для артефактов +1",
+      "scientist_only": false
+    },
+    {
+      "id": "armor-a45",
+      "kind": "armor",
+      "family": "Тяжелая",
+      "branch": "Аномальный",
+      "level": 3,
+      "name": "Прошивка из ткани АНОМ",
+      "description": "Аномальная защита +10%",
+      "scientist_only": false
+    },
+    {
+      "id": "armor-a47",
+      "kind": "armor",
+      "family": "Тяжелая",
+      "branch": "Удобство",
+      "level": 1,
+      "name": "Переноска для экипировки",
+      "description": "Штраф к весу -2",
+      "scientist_only": false
+    },
+    {
+      "id": "armor-a48",
+      "kind": "armor",
+      "family": "Тяжелая",
+      "branch": "Удобство",
+      "level": 1,
+      "name": "Упоры для рук",
+      "description": "Точность +2 при использовании сошек, упирании оружия на укрытие или при дополнительном прицеливании",
+      "scientist_only": false
+    },
+    {
+      "id": "armor-a49",
+      "kind": "armor",
+      "family": "Тяжелая",
+      "branch": "Удобство",
+      "level": 1,
+      "name": "Запасные пластины",
+      "description": "Позволяет один раз восстановить 2 стадии прочности брони за 10 ОД, после чего слот модификации освобождается",
+      "scientist_only": false
+    },
+    {
+      "id": "armor-d5",
+      "kind": "armor",
+      "family": "Аномальная",
+      "branch": "Физический",
+      "level": 1,
+      "name": "Дополнительная обшивка",
+      "description": "Прочность +20",
+      "scientist_only": false
+    },
+    {
+      "id": "armor-d6",
+      "kind": "armor",
+      "family": "Аномальная",
+      "branch": "Физический",
+      "level": 2,
+      "name": "Дополнительный слой кевлара",
+      "description": "Физическая защита +10%",
+      "scientist_only": false
+    },
+    {
+      "id": "armor-d7",
+      "kind": "armor",
+      "family": "Аномальная",
+      "branch": "Физический",
+      "level": 3,
+      "name": "Воздушный наполнитель",
+      "description": "Тяжесть каждого отдельного кровотечения меньше на 1. Помеха при проверках доп. травмы при попадании по вам. Вы получаете на 1 эффект аномалии меньше",
+      "scientist_only": false
+    },
+    {
+      "id": "armor-d9",
+      "kind": "armor",
+      "family": "Аномальная",
+      "branch": "Аномальный",
+      "level": 1,
+      "name": "Прошивка из ткани АНОМ",
+      "description": "Аномальная защита +10%",
+      "scientist_only": false
+    },
+    {
+      "id": "armor-d10",
+      "kind": "armor",
+      "family": "Аномальная",
+      "branch": "Аномальный",
+      "level": 2,
+      "name": "Упрочнение материала",
+      "description": "Урон стадиям брони от аномалий уменьшен вдвое",
+      "scientist_only": false
+    },
+    {
+      "id": "armor-d11",
+      "kind": "armor",
+      "family": "Аномальная",
+      "branch": "Аномальный",
+      "level": 3,
+      "name": "Дополнительная герметизация",
+      "description": "Костюм не теряет аномальную защиту от повреждений до стадии прочности \"Сильно повреждена\"",
+      "scientist_only": false
+    },
+    {
+      "id": "armor-d13",
+      "kind": "armor",
+      "family": "Аномальная",
+      "branch": "Удобство",
+      "level": 1,
+      "name": "Контейнер для артефактов",
+      "description": "Слот контейнера для артефактов +1",
+      "scientist_only": false
+    },
+    {
+      "id": "armor-d14",
+      "kind": "armor",
+      "family": "Аномальная",
+      "branch": "Удобство",
+      "level": 1,
+      "name": "Изоляция приборов",
+      "description": "Устойчивость к повреждению оборудования от аномальных воздействий",
+      "scientist_only": false
+    },
+    {
+      "id": "armor-d15",
+      "kind": "armor",
+      "family": "Аномальная",
+      "branch": "Удобство",
+      "level": 1,
+      "name": "Облегчение",
+      "description": "Штраф перемещения -1 (не меньше 0)",
+      "scientist_only": false
+    },
+    {
+      "id": "armor-d18",
+      "kind": "armor",
+      "family": "Экзоскелет",
+      "branch": "Физический",
+      "level": 1,
+      "name": "Усиленные каркасы",
+      "description": "Физическая защита +5%, Прочность +10",
+      "scientist_only": true
+    },
+    {
+      "id": "armor-d19",
+      "kind": "armor",
+      "family": "Экзоскелет",
+      "branch": "Физический",
+      "level": 2,
+      "name": "Ударостойкая прослойка",
+      "description": "Физическая защита +10%",
+      "scientist_only": true
+    },
+    {
+      "id": "armor-d20",
+      "kind": "armor",
+      "family": "Экзоскелет",
+      "branch": "Физический",
+      "level": 3,
+      "name": "Модернизированные плиты",
+      "description": "Физическая защита +5%, Штраф перемещения -1",
+      "scientist_only": true
+    },
+    {
+      "id": "armor-d22",
+      "kind": "armor",
+      "family": "Экзоскелет",
+      "branch": "Аномальный",
+      "level": 1,
+      "name": "Контейнер для артефактов",
+      "description": "Слот контейнера для артефактов +1",
+      "scientist_only": true
+    },
+    {
+      "id": "armor-d23",
+      "kind": "armor",
+      "family": "Экзоскелет",
+      "branch": "Аномальный",
+      "level": 2,
+      "name": "Продвинутая поршневая система",
+      "description": "Сложность выхода из аномалий -3",
+      "scientist_only": true
+    },
+    {
+      "id": "armor-d24",
+      "kind": "armor",
+      "family": "Экзоскелет",
+      "branch": "Аномальный",
+      "level": 3,
+      "name": "Свинцовая прослойка",
+      "description": "Радиационная защита +30%. Аномальная защита -10%",
+      "scientist_only": true
+    },
+    {
+      "id": "armor-d26",
+      "kind": "armor",
+      "family": "Экзоскелет",
+      "branch": "Удобство",
+      "level": 1,
+      "name": "Регенератор полимеров",
+      "description": "Броня регенерирует 100 прочности стадии за 10 минут",
+      "scientist_only": true
+    },
+    {
+      "id": "armor-d27",
+      "kind": "armor",
+      "family": "Экзоскелет",
+      "branch": "Удобство",
+      "level": 1,
+      "name": "Система распределения веса",
+      "description": "При разрядке батареи, штраф веса от переносимого груза не добавляется к штрафу перемещения экзоскелета",
+      "scientist_only": true
+    },
+    {
+      "id": "armor-d28",
+      "kind": "armor",
+      "family": "Экзоскелет",
+      "branch": "Удобство",
+      "level": 1,
+      "name": "Улучшенные сервоприводы",
+      "description": "Штраф к перемещению =3",
+      "scientist_only": true
+    },
+    {
+      "id": "armor-d29",
+      "kind": "armor",
+      "family": "Экзоскелет",
+      "branch": "Удобство",
+      "level": 1,
+      "name": "Артефактная Электростанция",
+      "description": "Позволяет поместить артефакт классом выше Мусорного в отсек для расщепления. На следующий ход вы перезаряжаете батарею, артефакт расщепляется",
+      "scientist_only": true
+    },
+    {
+      "id": "armor-d30",
+      "kind": "armor",
+      "family": "Экзоскелет",
+      "branch": "Удобство",
+      "level": 1,
+      "name": "Железная хватка",
+      "description": "Снижает штраф к точности оружия при стрельбе очередями на 2 (не ниже 0). СЛ выхватывания вещей из ваших рук +6",
+      "scientist_only": true
+    },
+    {
+      "id": "armor-d31",
+      "kind": "armor",
+      "family": "Экзоскелет",
+      "branch": "Удобство",
+      "level": 1,
+      "name": "Протокол реанимации",
+      "description": "Позволяет выйти из болевого шока без проверки, Уровень боли =0. Добавляет +10 ХП во все части тела (до максимума). Перезарядка - 5% Стоимости брони",
+      "scientist_only": true
+    },
+    {
+      "id": "armor-d32",
+      "kind": "armor",
+      "family": "Экзоскелет",
+      "branch": "Удобство",
+      "level": 1,
+      "name": "Бег",
+      "description": "Позволяет бегать в экзоскелете",
+      "scientist_only": true
+    },
+    {
+      "id": "armor-g5",
+      "kind": "armor",
+      "family": "Ушанка",
+      "branch": "Пафос",
+      "level": 1,
+      "name": "Термоизоляция",
+      "description": "Термо защита +5%",
+      "scientist_only": false
+    },
+    {
+      "id": "armor-g6",
+      "kind": "armor",
+      "family": "Ушанка",
+      "branch": "Пафос",
+      "level": 1,
+      "name": "Упрочненные уши",
+      "description": "Физ защита ушей +15%",
+      "scientist_only": false
+    },
+    {
+      "id": "armor-g7",
+      "kind": "armor",
+      "family": "Ушанка",
+      "branch": "Пафос",
+      "level": 1,
+      "name": "Золотая звезда",
+      "description": "Харизма +1",
+      "scientist_only": false
+    },
+    {
+      "id": "armor-g11",
+      "kind": "armor",
+      "family": "Противогазы",
+      "branch": "Удобство",
+      "level": 1,
+      "name": "Упрочнение резины",
+      "description": "Штраф к харизме =0",
+      "scientist_only": false
+    },
+    {
+      "id": "armor-g12",
+      "kind": "armor",
+      "family": "Противогазы",
+      "branch": "Удобство",
+      "level": 1,
+      "name": "Чистые линзы",
+      "description": "Штраф к точности =0",
+      "scientist_only": false
+    },
+    {
+      "id": "armor-g13",
+      "kind": "armor",
+      "family": "Противогазы",
+      "branch": "Удобство",
+      "level": 1,
+      "name": "Улучшенная фильтрация",
+      "description": "Фильтр теряет заряд вдвое медленее, Рад. защита +10%",
+      "scientist_only": false
+    },
+    {
+      "id": "armor-g14",
+      "kind": "armor",
+      "family": "Противогазы",
+      "branch": "Удобство",
+      "level": 1,
+      "name": "Тонированные линзы",
+      "description": "Штраф к точности +1. Коэффициент ослепления 0.5х",
+      "scientist_only": false
+    },
+    {
+      "id": "armor-g18",
+      "kind": "armor",
+      "family": "Забрала",
+      "branch": "Удобство",
+      "level": 1,
+      "name": "Система креплений",
+      "description": "Позволяет вешать фонарик и ПНВ",
+      "scientist_only": false
+    },
+    {
+      "id": "armor-g19",
+      "kind": "armor",
+      "family": "Забрала",
+      "branch": "Удобство",
+      "level": 1,
+      "name": "Пропитка забрала спреем",
+      "description": "Штраф к точности и харизме =0",
+      "scientist_only": false
+    },
+    {
+      "id": "armor-g20",
+      "kind": "armor",
+      "family": "Забрала",
+      "branch": "Удобство",
+      "level": 1,
+      "name": "Слой тонировки",
+      "description": "Коэффициент ослепления 0.65х",
+      "scientist_only": false
+    },
+    {
+      "id": "armor-g21",
+      "kind": "armor",
+      "family": "Забрала",
+      "branch": "Удобство",
+      "level": 1,
+      "name": "Стоп-слой",
+      "description": "Если голова за забралом должна получить больше 10 урона, забрало рассыпается, но не пропускает урон",
+      "scientist_only": false
+    },
+    {
+      "id": "armor-g25",
+      "kind": "armor",
+      "family": "Шлема без забрала",
+      "branch": "Удобство",
+      "level": 1,
+      "name": "Крепление для ПНВ",
+      "description": "Позволяет вешать ПНВ на шлем",
+      "scientist_only": false
+    },
+    {
+      "id": "armor-g26",
+      "kind": "armor",
+      "family": "Шлема без забрала",
+      "branch": "Удобство",
+      "level": 1,
+      "name": "Улучшенная гарнитура",
+      "description": "Броски на внимательность, основанные на слухе имеют преимущество. Эргономика +3",
+      "scientist_only": false
+    },
+    {
+      "id": "armor-g27",
+      "kind": "armor",
+      "family": "Шлема без забрала",
+      "branch": "Удобство",
+      "level": 1,
+      "name": "Гладкое блестящее покрытие",
+      "description": "Прицельный выстрел по вашей голове +3 сложность",
+      "scientist_only": false
+    },
+    {
+      "id": "armor-g29",
+      "kind": "armor",
+      "family": "Шлема без забрала",
+      "branch": "Защита",
+      "level": 1,
+      "name": "Налобное бронирование",
+      "description": "Физ защита +5%",
+      "scientist_only": false
+    },
+    {
+      "id": "armor-g30",
+      "kind": "armor",
+      "family": "Шлема без забрала",
+      "branch": "Защита",
+      "level": 2,
+      "name": "Подкладки из ткани АНОМ",
+      "description": "Аномальная защита +5%",
+      "scientist_only": false
+    },
+    {
+      "id": "armor-g31",
+      "kind": "armor",
+      "family": "Шлема без забрала",
+      "branch": "Защита",
+      "level": 3,
+      "name": "Дополнительная броня затылка",
+      "description": "Физ защита +10%. -5 эргономика",
+      "scientist_only": false
+    },
+    {
+      "id": "armor-g35",
+      "kind": "armor",
+      "family": "Шлема с забралом",
+      "branch": "Удобство",
+      "level": 1,
+      "name": "Гелевые подкладки",
+      "description": "Уменьшает штраф от контузии с 3 до 1",
+      "scientist_only": false
+    },
+    {
+      "id": "armor-g36",
+      "kind": "armor",
+      "family": "Шлема с забралом",
+      "branch": "Удобство",
+      "level": 1,
+      "name": "Улучшенная гарнитура",
+      "description": "Броски на внимательность, основанные на слухе имеют преимущество. Эргономика +3",
+      "scientist_only": false
+    },
+    {
+      "id": "armor-g37",
+      "kind": "armor",
+      "family": "Шлема с забралом",
+      "branch": "Удобство",
+      "level": 1,
+      "name": "Фиксатор шеи",
+      "description": "Позволяет заблокировать заброневой урон от 1 попадания, если оно не пробило шлем. Перезарядка - 10 минут и проверка Инженерии со СЛ 12. При провале перезарядка начинается заново",
+      "scientist_only": false
+    },
+    {
+      "id": "armor-g40",
+      "kind": "armor",
+      "family": "Шлема с забралом",
+      "branch": "Защита",
+      "level": 1,
+      "name": "Противоосколочный слой",
+      "description": "Физ защита от осколков и взрывной волны +20%",
+      "scientist_only": false
+    },
+    {
+      "id": "armor-g41",
+      "kind": "armor",
+      "family": "Шлема с забралом",
+      "branch": "Защита",
+      "level": 2,
+      "name": "Укрепленные материалы",
+      "description": "Прочность +10",
+      "scientist_only": false
+    },
+    {
+      "id": "armor-g42",
+      "kind": "armor",
+      "family": "Шлема с забралом",
+      "branch": "Защита",
+      "level": 3,
+      "name": "Усиленные материалы",
+      "description": "Физ. защита +5%",
+      "scientist_only": false
+    },
+    {
+      "id": "armor-g46",
+      "kind": "armor",
+      "family": "Шлема-противогазы",
+      "branch": "Эргономичность",
+      "level": 1,
+      "name": "Пропитка линз спреем",
+      "description": "Штраф к точности -2",
+      "scientist_only": false
+    },
+    {
+      "id": "armor-g47",
+      "kind": "armor",
+      "family": "Шлема-противогазы",
+      "branch": "Эргономичность",
+      "level": 1,
+      "name": "Голосовой усилитель",
+      "description": "Штраф к харизме -3",
+      "scientist_only": false
+    },
+    {
+      "id": "armor-g48",
+      "kind": "armor",
+      "family": "Шлема-противогазы",
+      "branch": "Эргономичность",
+      "level": 1,
+      "name": "Переработанные фильтры",
+      "description": "Штраф перемещения -1. Фильтр теряет заряд вдвое медленее",
+      "scientist_only": false
+    },
+    {
+      "id": "armor-g50",
+      "kind": "armor",
+      "family": "Шлема-противогазы",
+      "branch": "Полное погружение",
+      "level": 1,
+      "name": "Налобное бронирование",
+      "description": "Физ защита +5% Прочность +5",
+      "scientist_only": false
+    },
+    {
+      "id": "armor-g51",
+      "kind": "armor",
+      "family": "Шлема-противогазы",
+      "branch": "Полное погружение",
+      "level": 2,
+      "name": "Подкладки из ткани АНОМ",
+      "description": "Аномальная защита +5%",
+      "scientist_only": false
+    },
+    {
+      "id": "armor-g52",
+      "kind": "armor",
+      "family": "Шлема-противогазы",
+      "branch": "Полное погружение",
+      "level": 3,
+      "name": "Дополнительный слой защиты",
+      "description": "Физ защита +5%. Прочность +5. -5 эргономика. Штраф перемещения +1",
+      "scientist_only": false
+    },
+    {
+      "id": "armor-g56",
+      "kind": "belt",
+      "family": "Пояс",
+      "branch": "Многозадачность",
+      "level": 1,
+      "name": "Дополнительное крепление",
+      "description": "Вы можете повесить дополнительный подсумок/ножны на любом месте тела",
+      "scientist_only": false
+    },
+    {
+      "id": "armor-g57",
+      "kind": "belt",
+      "family": "Пояс",
+      "branch": "Многозадачность",
+      "level": 1,
+      "name": "Расширенный пояс",
+      "description": "Вы можете повесить дополнительный шлем/противогаз или два дополнительных подсумка",
+      "scientist_only": false
+    },
+    {
+      "id": "armor-g58",
+      "kind": "belt",
+      "family": "Пояс",
+      "branch": "Многозадачность",
+      "level": 1,
+      "name": "Разгрузочный пояс",
+      "description": "Вес предметов на поясе уменьшен вдвое",
+      "scientist_only": false
+    },
+    {
+      "id": "armor-g60",
+      "kind": "belt",
+      "family": "Пояс",
+      "branch": "Инженер",
+      "level": 1,
+      "name": "Крепление для гранаты",
+      "description": "Вы можете повесить себе на пояс 1 любую гранату, достать которую будет стоить 1 СД",
+      "scientist_only": false
+    },
+    {
+      "id": "armor-g61",
+      "kind": "belt",
+      "family": "Пояс",
+      "branch": "Инженер",
+      "level": 1,
+      "name": "Крепежи для инструментов",
+      "description": "Вы можете повесить до 4 инструментов себе на пояс, не учитывая их вес",
+      "scientist_only": false
+    },
+    {
+      "id": "armor-g62",
+      "kind": "belt",
+      "family": "Пояс",
+      "branch": "Инженер",
+      "level": 1,
+      "name": "Крепеж для освещения",
+      "description": "Вы можете повесить себе на пояс фонарь или ХИС, сохраняя их работоспособность",
+      "scientist_only": false
+    },
+    {
+      "id": "armor-g64",
+      "kind": "belt",
+      "family": "Пояс",
+      "branch": "Полевой медик",
+      "level": 1,
+      "name": "Кармашек для перевязки",
+      "description": "Вы можете повесить до 2 бинтов/жгутов на пояс, достать которые будет стоить 1 СД",
+      "scientist_only": false
+    },
+    {
+      "id": "armor-g65",
+      "kind": "belt",
+      "family": "Пояс",
+      "branch": "Полевой медик",
+      "level": 1,
+      "name": "Кармашек для шприцов",
+      "description": "Вы можете повесить до 2 шприцов на пояс, достать которые будет стоить 1 СД",
+      "scientist_only": false
+    },
+    {
+      "id": "armor-g66",
+      "kind": "belt",
+      "family": "Пояс",
+      "branch": "Полевой медик",
+      "level": 1,
+      "name": "Лучшие подсумки",
+      "description": "Объем медицинских подсумков на поясе увеличивается в 2 раза",
+      "scientist_only": false
+    },
+    {
+      "id": "armor-g68",
+      "kind": "belt",
+      "family": "Пояс",
+      "branch": "Исследователь",
+      "level": 1,
+      "name": "Быстрый доступ для детектора",
+      "description": "Вы можете повесить любой детектор (аномалий/артефактов/радиации) себе на пояс. Вы всегда знаете, что он показывает",
+      "scientist_only": false
+    },
+    {
+      "id": "armor-g69",
+      "kind": "belt",
+      "family": "Пояс",
+      "branch": "Исследователь",
+      "level": 1,
+      "name": "Удобный крепеж для рации",
+      "description": "Вы можете повесить рацию себе на пояс. Вы всегда можете слышать, что по ней говорят",
+      "scientist_only": false
+    },
+    {
+      "id": "armor-g70",
+      "kind": "belt",
+      "family": "Пояс",
+      "branch": "Исследователь",
+      "level": 1,
+      "name": "Крепление для артефакта",
+      "description": "Вы можете повесить артефакт и использовать его у себя на поясе, но не можете при этом использовать для него контейнер",
+      "scientist_only": false
+    },
+    {
+      "id": "armor-g72",
+      "kind": "belt",
+      "family": "Пояс",
+      "branch": "Шериф",
+      "level": 1,
+      "name": "Законный ремень",
+      "description": "Вы можете повесить до 15 хомутов или веревку на ремень. Они считаются в быстром доступе",
+      "scientist_only": false
+    },
+    {
+      "id": "armor-g73",
+      "kind": "belt",
+      "family": "Пояс",
+      "branch": "Шериф",
+      "level": 1,
+      "name": "Кобура",
+      "description": "Вы имеете кобуру для оружия размером меньше 4. Оно считается в быстром доступе",
+      "scientist_only": false
+    },
+    {
+      "id": "armor-g74",
+      "kind": "belt",
+      "family": "Пояс",
+      "branch": "Шериф",
+      "level": 1,
+      "name": "Патронташ",
+      "description": "Вы можете повесить до 50 любых патронов себе на пояс. Они считаются в быстром доступе",
+      "scientist_only": false
+    },
+    {
+      "id": "armor-g76",
+      "kind": "belt",
+      "family": "Пояс",
+      "branch": "Стрелок",
+      "level": 1,
+      "name": "Дополнительные магазины",
+      "description": "У вас появляется возможность повесить два дополнительных магазинных подсумка на любом месте тела",
+      "scientist_only": false
+    },
+    {
+      "id": "armor-g77",
+      "kind": "belt",
+      "family": "Пояс",
+      "branch": "Стрелок",
+      "level": 1,
+      "name": "Ускоренная перезарядка",
+      "description": "Если вы перезаряжаетесь, используя магазины с пояса, перезарядка занимает на 1 ОД меньше (не меньше 0 ОД)",
+      "scientist_only": false
+    },
+    {
+      "id": "armor-g78",
+      "kind": "belt",
+      "family": "Пояс",
+      "branch": "Стрелок",
+      "level": 1,
+      "name": "Эргономичные подкладки",
+      "description": "Эргономика +10 при использовании оружия размером 6 и более",
+      "scientist_only": false
+    },
+    {
+      "id": "pda-b2",
+      "kind": "pda",
+      "difficulty_group": "Низкая",
+      "name": "Триангуляционные антенны",
+      "description": "Определение точного местоположения источника известного сигнала"
+    },
+    {
+      "id": "pda-b3",
+      "kind": "pda",
+      "difficulty_group": "Низкая",
+      "name": "Шифратор данных 1 порядка",
+      "description": "1 уровень сложности шифрации. Не допускает взлома КПК устройством без Дешифратора данных 1 порядка"
+    },
+    {
+      "id": "pda-b4",
+      "kind": "pda",
+      "difficulty_group": "Низкая",
+      "name": "Высоковольтный аккумулятор",
+      "description": "КПК держит заряд вдвое дольше"
+    },
+    {
+      "id": "pda-b5",
+      "kind": "pda",
+      "difficulty_group": "Низкая",
+      "name": "Улучшенное экранирование",
+      "description": "Позволяет работать даже при работе глушилки и во время Выброса и штормов"
+    },
+    {
+      "id": "pda-b6",
+      "kind": "pda",
+      "difficulty_group": "Низкая",
+      "name": "Мини-осциллограф",
+      "description": "Выводит показатели всех подключенных детекторов (аномалий, артефактов, радиации и т.д.) на экран"
+    },
+    {
+      "id": "pda-b7",
+      "kind": "pda",
+      "difficulty_group": "Низкая",
+      "name": "Динамо-машина",
+      "description": "Позволяет зарядить аккумулятор КПК на 1% за минуту непрерывного использования динамо-машины"
+    },
+    {
+      "id": "pda-b8",
+      "kind": "pda",
+      "difficulty_group": "Средняя",
+      "name": "Детектор приближения",
+      "description": "Издает звуковой сигнал при появлении сигнала КПК не из вашего списка друзей (звуковой сигнал можно отключить)"
+    },
+    {
+      "id": "pda-b9",
+      "kind": "pda",
+      "difficulty_group": "Средняя",
+      "name": "Маска телеметрических данных",
+      "description": "Не отображает местоположение владельца КПК"
+    },
+    {
+      "id": "pda-b10",
+      "kind": "pda",
+      "difficulty_group": "Средняя",
+      "name": "Усиление антенн связи",
+      "description": "Поиск и улавливание сигналов КПК в большем радиусе"
+    },
+    {
+      "id": "pda-b11",
+      "kind": "pda",
+      "difficulty_group": "Средняя",
+      "name": "Дешифратор данных 1 порядка",
+      "description": "Взлом 1 уровня шифрации. Взлом занимает 2 часа"
+    },
+    {
+      "id": "pda-b12",
+      "kind": "pda",
+      "difficulty_group": "Средняя",
+      "name": "Шифратор данных 2 порядка",
+      "description": "2 уровень сложности шифрации"
+    },
+    {
+      "id": "pda-b13",
+      "kind": "pda",
+      "difficulty_group": "Средняя",
+      "name": "Упрочнённый корпус Диэлектрик",
+      "description": "Устойчив к электрическим аномалиям, ударам и падениям"
+    },
+    {
+      "id": "pda-b14",
+      "kind": "pda",
+      "difficulty_group": "Средняя",
+      "name": "Чистая запись",
+      "description": "Позволяет удалить все данные с КПК кроме имени"
+    },
+    {
+      "id": "pda-b15",
+      "kind": "pda",
+      "difficulty_group": "Высокая",
+      "name": "Второй профиль",
+      "description": "Профиль-заглушка с ложными данными, на который можно быстро переключиться"
+    },
+    {
+      "id": "pda-b16",
+      "kind": "pda",
+      "difficulty_group": "Высокая",
+      "name": "Глушилка радиоволн",
+      "description": "Глушит сигналы других КПК и простой апаратуры связи. Разряжает батарею через 1 минуту."
+    },
+    {
+      "id": "pda-b17",
+      "kind": "pda",
+      "difficulty_group": "Высокая",
+      "name": "Спам-атака",
+      "description": "Позволяет отправить огромное количество сообщений определенного содержания на одно КПК в сети. Каждое сообщение издает писк"
+    },
+    {
+      "id": "pda-b18",
+      "kind": "pda",
+      "difficulty_group": "Высокая",
+      "name": "Физический взлом",
+      "description": "Набор утилит для взлома и получения доступа к другому КПК при подключении проводами. Если на устройстве есть шифратор, необходим дешифратор соответствующего порядка"
+    },
+    {
+      "id": "pda-b19",
+      "kind": "pda",
+      "difficulty_group": "Высокая",
+      "name": "Дешифратор данных 2 порядка",
+      "description": "Взлом 2 уровня шифрации. Взлом занимает 1 час"
+    },
+    {
+      "id": "pda-b20",
+      "kind": "pda",
+      "difficulty_group": "Высокая",
+      "name": "Шифратор данных 3 порядка",
+      "description": "3 уровень сложности шифрации"
+    },
+    {
+      "id": "pda-b21",
+      "kind": "pda",
+      "difficulty_group": "Высокая",
+      "name": "Замена данных",
+      "description": "Позволяет замаскировать свои реальные данные на любые другие, включая программное изменение голоса при передаче аудио"
+    },
+    {
+      "id": "pda-b22",
+      "kind": "pda",
+      "difficulty_group": "Очень высокая",
+      "name": "Подмена голоса",
+      "description": "При наличии образцов голоса человека позволяет имитировать его речь в голосовых звонках"
+    },
+    {
+      "id": "pda-b23",
+      "kind": "pda",
+      "difficulty_group": "Очень высокая",
+      "name": "Громоотвод",
+      "description": "КПК перезаряжется при попадании в электроаномалию. Шанс 10%, что он сгорит в процессе. Шанс 0%, если установлено улучшение \"Упрочнённый корпус Диэлектрик\""
+    },
+    {
+      "id": "pda-b24",
+      "kind": "pda",
+      "difficulty_group": "Очень высокая",
+      "name": "Убийца взломщиков",
+      "description": "При удалённом доступе к вашему устройству с шансом 75% вы будете проинформированны. Пока удалённый доступ поддерживается, вы можете контратаковать устройство, получившее доступ. Контратака с шансом 25% сжигает устройство взломщика. Вы можете разорвать сеанс в любой момент"
+    },
+    {
+      "id": "pda-b25",
+      "kind": "pda",
+      "difficulty_group": "Очень высокая",
+      "name": "Дистанционный взлом",
+      "description": "Дистанционный взлом устройств путём получения их телеметрических данных и замены входных данных. Если на устройстве есть шифратор, то необходим дешифратор соответствующего порядка"
+    },
+    {
+      "id": "pda-b26",
+      "kind": "pda",
+      "difficulty_group": "Очень высокая",
+      "name": "Дешифратор данных 3 порядка",
+      "description": "Взлом 3 уровня шифрации. Взлом занимает 30 минут"
+    }
+  ],
+  "workbenches": [
+    {
+      "name": "Самогонный Аппарат",
+      "price": 25000,
+      "hourly_rent": 250,
+      "uses": 50
+    },
+    {
+      "name": "Печь",
+      "price": 40000,
+      "hourly_rent": 400,
+      "uses": 50
+    },
+    {
+      "name": "Станок Оружейника",
+      "price": 45000,
+      "hourly_rent": 450,
+      "uses": 50
+    },
+    {
+      "name": "Станок Бронника",
+      "price": 50000,
+      "hourly_rent": 500,
+      "uses": 50
+    },
+    {
+      "name": "Смесительный Станок",
+      "price": 65000,
+      "hourly_rent": 650,
+      "uses": 50
+    },
+    {
+      "name": "Станок Электрика",
+      "price": 80000,
+      "hourly_rent": 800,
+      "uses": 50
+    }
+  ]
+}

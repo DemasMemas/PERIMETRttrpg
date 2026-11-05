@@ -65,7 +65,7 @@ def _preparation_payments(data, path, item, role):
     return [(max(0, retrieval - 1), 1), (retrieval, 0)]
 
 
-def _fixed_weapon_loading_cost(data, target, quantity, prepared):
+def _fixed_weapon_loading_level(data, target):
     template = _template(target)
     category = str(
         (template.subcategory if template else target.get('subcategory')) or ''
@@ -89,10 +89,16 @@ def _fixed_weapon_loading_cost(data, target, quantity, prepared):
     level = (((data.get('skills') or {}).get('specialized') or {}).get(specialization) or {}).get(
         'level', 'unfamiliar'
     ) if specialization else 'unfamiliar'
+    return level
+
+
+def _fixed_weapon_loading_cost(data, target, quantity, prepared):
+    level=_fixed_weapon_loading_level(data,target)
     tariff = 2 if level == 'unfamiliar' else 1
     duplex = int((_attributes(target).get('fire_modes') or {}).get('duplex_size') or 0)
-    includes_start = not prepared and duplex >= 2 and quantity == 2
-    return tariff + (0 if prepared or includes_start else 1)
+    from app.services.equipment_modifications import rule as modification_rule,worn_rule
+    includes_start = not prepared and duplex >= 2 and 2 <= quantity <= 2+int(worn_rule(data,'fixed_reload_extra'))
+    return max(0,tariff + (0 if prepared or includes_start else modification_rule(target,'reload_start_ap',1))+modification_rule(target,'reload_ap_delta'))
 
 
 def _validate_combat_payment(data, request, target, source, quantity, fixed, device):
@@ -243,15 +249,19 @@ def validate_loading(data, request, *, combat=False):
                 raise ValidationError('Подавач заряжает не более 20 патронов за действие')
             minimum = 2 if quantity > 10 else 1
         elif fixed:
-            if quantity > 2:
+            from app.services.equipment_modifications import worn_rule
+            base_quantity=2 if _fixed_weapon_loading_level(data,target)=='professional' else 1
+            if int((_attributes(target).get('fire_modes') or {}).get('duplex_size') or 0)>=2:base_quantity=max(2,base_quantity)
+            limit=base_quantity+int(worn_rule(data,'fixed_reload_extra'))
+            if quantity > limit:
                 raise ValidationError('Нельзя зарядить столько патронов за это действие')
         else:
             if quantity not in (1, 3):
                 raise ValidationError('Россыпью заряжают по 1 или 3 патрона')
             minimum = 2 if quantity == 3 else 1
         if fixed:
-            from app.services.character_traits import action_cost
-            minimum=action_cost(data,'reload',minimum)
+            # Точный тариф ниже учитывает специализацию, модификации и уже начатую зарядку.
+            minimum=0
         if ap + free < minimum:
             raise ValidationError('Не оплачена зарядка патронов')
         _validate_combat_payment(data, request, target, source, quantity, fixed, device)

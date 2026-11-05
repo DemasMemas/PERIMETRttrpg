@@ -13,6 +13,7 @@ def _text(value):
 def eligible(template):
     category=template.category
     attrs=template.attributes or {}
+    if attrs.get('craft_only') or 'price' in (attrs.get('unspecified_fields') or []):return False
     if category.endswith('_module') or category in {'modification','artifact','background','special_trait'}:
         return False
     if attrs.get('installedModules') or attrs.get('modifications'):
@@ -53,7 +54,12 @@ def item_from_template(template,quantity=1):
           'description':template.description,'price':template.price or 0,'weight':template.weight or 0,
           'volume':template.volume or 0,'quantity':quantity,'attributes':attrs,
           'installedModules':[],'modifications':[],'contents':[], 'compatible_ids':deepcopy(template.compatible_ids or [])}
+    if template.category in {'container', 'backpack', 'pouch'}:
+        item.update(isContainer=True, capacity=attrs.get('capacity', attrs.get('limit', template.volume or 0)))
+    if isinstance(attrs.get('pouches'), list):
+        item['pouches'] = deepcopy(attrs['pouches'])
     if attrs.get('uses') is not None:item.update(uses=attrs['uses'],maxUses=attrs['uses'])
+    if attrs.get('flamethrower_tank'):item['uses']=attrs.get('uses_remaining',attrs['uses'])
     if template.category in {'weapon','melee_weapon','armor','helmet','gas_mask'}:
         maximum=attrs.get('max_durability',100)
         item.update(durability=maximum,maxDurability=maximum)

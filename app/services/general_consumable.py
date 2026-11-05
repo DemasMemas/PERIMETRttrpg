@@ -120,11 +120,11 @@ def _available_uses(item, template=None):
     maximum = max(1, int(_number(
         item.get("maxUses") or (item.get("attributes") or {}).get("uses") or attributes.get("uses"), 1,
     )))
-    quantity = max(0, int(_number(item.get("quantity"))))
-    uses = max(0, int(_number(
-        item.get("uses") or (item.get("attributes") or {}).get("uses_remaining"), maximum,
-    )))
-    return uses + max(0, quantity - 1) * maximum
+    quantity = max(0, int(_number(item.get("quantity"), 1)))
+    raw_uses=item.get('uses')
+    if raw_uses is None:raw_uses=(item.get('attributes') or {}).get('uses_remaining')
+    uses=max(0,int(_number(raw_uses,maximum)))
+    return uses + max(0, quantity - 1) * maximum if quantity else 0
 
 
 def _consume_entry(parent, index, amount):
@@ -136,16 +136,19 @@ def _consume_entry(parent, index, amount):
         or ((template.attributes or {}).get("uses") if template else None),
         1,
     )))
-    quantity = max(0, int(_number(item.get("quantity"))))
-    uses = max(0, int(_number(
-        item.get("uses") or (item.get("attributes") or {}).get("uses_remaining"), maximum,
-    )))
+    quantity = max(0, int(_number(item.get("quantity"), 1)))
+    raw_uses=item.get('uses')
+    if raw_uses is None:raw_uses=(item.get('attributes') or {}).get('uses_remaining')
+    uses=max(0,int(_number(raw_uses,maximum)))
     remaining = max(1, int(_number(amount, 1)))
-    if uses + max(0, quantity - 1) * maximum < remaining:
+    if quantity<=0 or uses + max(0, quantity - 1) * maximum < remaining:
         return False
+    if not uses:
+        quantity-=1
+        uses=maximum
     while remaining:
-        spent = min(uses or maximum, remaining)
-        uses = (uses or maximum) - spent
+        spent = min(uses, remaining)
+        uses -= spent
         remaining -= spent
         if uses <= 0:
             quantity -= 1

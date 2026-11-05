@@ -23,6 +23,53 @@ REASONS={'Unknown action':'Неизвестное действие','Not enough 
     'Cycle the weapon action before firing':'Сначала досылайте патрон или передёрните затвор'}
 
 
+def append_trade(data, request_id, character_id, other_name, *, given, received, money_given, money_received,
+                 action_points=0, location_id=None, merchant=False):
+    """Записывает результат в тот же снимок, что вещи и деньги; без отдельного commit."""
+    history = data.setdefault('health', {}).setdefault('combatMeta', {}).setdefault('actionJournal', [])
+    entry_id = f'trade:{request_id}:{character_id}'
+    if any(entry.get('id') == entry_id for entry in history):
+        return
+    def describe(items, amount):
+        parts = [f"{item['name']} ×{item['amount']}" for item in items]
+        if amount:
+            parts.append(f'{amount} ₽')
+        return ', '.join(parts) or 'ничего'
+    history.append({'id':entry_id, 'timestamp':datetime.now(timezone.utc).isoformat(),
+        'action':'trade', 'kind':'trade', 'label':('Торговля' if merchant else 'Обмен') + f' с {other_name}',
+        'status':'completed', 'location_id':location_id, 'action_points':action_points,
+        'movement_points':0, 'free_actions':0,
+        'outcome':f'Передано: {describe(given, money_given)}. Получено: {describe(received, money_received)}.',
+        'money_given':money_given, 'money_received':money_received})
+    data['health']['combatMeta']['actionJournal'] = history[-LIMIT:]
+
+
+def append_work(data,operation_id,action,result):
+    history=data.setdefault('health',{}).setdefault('combatMeta',{}).setdefault('actionJournal',[])
+    job_id=result.get('job_id') or (result.get('id') if action in {'start','modify','read_book','salvage'} else None)
+    entry_id='crafting-job:'+job_id if job_id else 'crafting:'+operation_id
+    existing=next((entry for entry in history if entry['id']==entry_id),None)
+    label={'start':'Создание предмета','salvage':'Разбор предмета','modify':'Установка модификации','read_book':'Чтение книги','request_tool':'Заявка на инструмент',
+        'approve_tool':'Решение по инструменту','unlock_slot':'Открытие слота'}.get(action,(existing or {}).get('label','Работа'))
+    text=result.get('name') or result.get('recipe_name') or ''
+    if action in {'start','modify','read_book','salvage'}:text+=f" · {max(0,result['ready_at']-result['started_at'])/60:g} мин"
+    elif action in {'finish','cancel'}:
+        text+=' · '+('отменено' if result.get('cancelled') else 'готово' if result.get('success') else 'неудача')
+        if result.get('roll') is not None:
+            text+=(f" · к100 {result['roll']} + {result['bonus']} = {result['total']}" if result.get('kind')=='salvage'
+                else f" · к100 {result['roll']}, СЛ {result['difficulty']}")
+        if result.get('materials'):text+=' · получено: '+', '.join(f"{i['name']} ×{i['quantity']}" for i in result['materials'])
+        if result.get('lost_items'):text+=' · потеряно: '+', '.join(f"{i['name']} ×{i['amount']}" for i in result['lost_items'])
+    elif action=='unlock_slot':text=f"2500 ₽ · открыто {result['slots']['available']} слотов"
+    elif action=='approve_tool':text+=' · '+('одобрено' if result.get('status')=='approved' else 'отклонено')
+    entry={'id':entry_id,'timestamp':(existing or {}).get('timestamp') or datetime.now(timezone.utc).isoformat(),
+        'action':'crafting','kind':'crafting','label':label,'status':'cancelled' if action=='cancel' else 'completed',
+        'action_points':0,'movement_points':0,'free_actions':0,'location_id':None,'outcome':text}
+    if existing:existing.update(entry)
+    else:history.append(entry)
+    data['health']['combatMeta']['actionJournal']=history[-LIMIT:]
+
+
 def preserve(current, incoming):
     old = (((current or {}).get('health') or {}).get('combatMeta') or {})
     meta = incoming.setdefault('health', {}).setdefault('combatMeta', {})
@@ -67,6 +114,7 @@ def record(actor, values, before, result=None, error=None):
     label = next((item['label'] for item in ACTION_CATALOG if item['key'] == key),
                  {'move':'Перемещение','end_turn':'Конец хода','end_combat':'Конец боя',
                   'weapon_grip':'Смена хвата','consumable_use':'Применение предмета','medical_procedure':'Медицинская процедура',
+                  'equipment_care':'Обработка перчаток',
                   'spend_resources':'Расход ресурсов','portable_light':'Фонарь','body_transport':'Переноска'}.get(key, 'Действие'))
     row = db.session.get(DeferredCombatAction, str(action_id)) if action_id else None
     paid = max(0, before[0] - (actor.action_points_current or 0)) if key not in {'end_turn','end_combat'} else 0

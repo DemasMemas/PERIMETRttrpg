@@ -4,6 +4,17 @@ from pathlib import Path
 import os
 
 ALLOWED_MODULES = (
+    'test_salvage.py',
+    'test_flamethrower.py',
+    'test_equipment_modifications.py',
+    'test_crafting.py',
+    'test_equipment_care.py',
+    'test_quick_skill_checks.py',
+    'test_character_interactions.py',
+    'test_regression_trade_boundaries.py',
+    'test_npc_loot.py',
+    'test_npc_trade.py',
+    'test_crafting_rules.py',
     'test_equipment_importer.py',
     'test_catalog_sweep.py',
     'test_character_creation.py',
@@ -44,6 +55,7 @@ ALLOWED_MODULES = (
     'test_regression_catalog_application.py',
 )
 ALLOWED_NODEIDS = (
+    'test_character_traits_runtime.py::test_welder_recognizes_new_catalog_name_of_welding_glasses',
     'test_combat_movement.py::test_new_turn_resets_distance_but_keeps_run_and_sprint_exhaustion',
     'test_combat_movement.py::test_pending_action_spends_future_turn_points_until_complete',
     'test_combat_movement.py::test_gm_can_restore_psi_zombie_sheet_with_current_loot_and_without_heal',

@@ -18,6 +18,22 @@ logger = logging.getLogger(__name__)
 
 
 def _preserve_intoxication_status(current_data, incoming_data):
+    from app.services.flamethrower import preserve as preserve_flame_resources
+    preserve_flame_resources(current_data,incoming_data)
+    from app.services.equipment_modifications import preserve as preserve_modifications
+    preserve_modifications(current_data,incoming_data)
+    from app.services.crafting import preserve as preserve_crafting
+    preserve_crafting(current_data,incoming_data)
+    from app.services.consumable_effects import normalize_owl_modifiers
+    normalize_owl_modifiers(incoming_data)
+    from app.services.equipment_care import preserve as preserve_care
+    preserve_care(current_data,incoming_data)
+    from app.services.npc_trade import preserve as preserve_merchant
+    preserve_merchant(current_data, incoming_data)
+    from app.services.npc_loot import preserve as preserve_loot
+    preserve_loot(current_data, incoming_data)
+    from app.services.social_check import preserve as preserve_checks
+    preserve_checks(current_data,incoming_data)
     from app.services.prostheses import preserve as preserve_prostheses
     preserve_prostheses(current_data,incoming_data)
     from app.services.portable_lights import preserve as preserve_lights
@@ -541,6 +557,8 @@ class CharacterService:
             validate_trait_selection(character.data,character_data)
             from app.services.character_traits import validate_target_weapons
             validate_target_weapons(character.data,character_data)
+            from app.services.equipment_passives import validate_glasses
+            validate_glasses(character_data, character.data)
             from app.services.character_traits import sync_pocket_capacity
             sync_pocket_capacity(character.data,character_data)
             CharacterService.validate_skill_fields(character.data, character_data)

@@ -1,4 +1,7 @@
 import { itemTooltipModel, tooltipPosition } from './itemPresentation.js';
+import { applyPouchTemplate, applyVestTemplate, returnPouchContents, vestMountVolume } from './inventoryContainers.js';
+import { rollQuickSkill } from './quickSkillCheck.js';
+import {modificationStat,wornModificationStat,modificationRule,wornModificationRule,modifiedFireProfile} from './itemModifications.js';
 import { renderPortableLights,usesNightVision } from './portableLights.js';
 import { renderProstheses,prostheticLimb } from './prostheses.js';
 import { pairedFireOptions } from './pairedFire.js';
@@ -1591,12 +1594,13 @@ function createItemFromTemplate(template, quantity = 1, options = {}) {
         weight: template.weight || 0,
         volume: template.volume || 0,
         price: template.price || 0,
-        attributes: { ...template.attributes },
+        attributes: structuredClone(template.attributes || {}),
         durability: templateDurability,
         maxDurability: templateMaxDurability,
         installedModules: [],
         contents: [],
         isContainer: template.category === 'container' || template.category === 'backpack' || template.category === 'pouch',
+        capacity: template.attributes?.capacity ?? template.attributes?.limit ?? template.volume ?? 0,
         isEquippable: ['weapon', 'armor', 'helmet', 'gas_mask', 'device', 'detector', 'backpack'].includes(template.category),
         isStackable: ['consumable', 'crafting_material', 'artifact', 'ammo'].includes(template.category)
     };
@@ -1632,6 +1636,9 @@ function createItemFromTemplate(template, quantity = 1, options = {}) {
 
     if (template.category === 'armor_plate') {
         initArmorStagedDurability(item, template);
+    }
+    if (Array.isArray(template.attributes?.pouches)) {
+        item.pouches = structuredClone(template.attributes.pouches);
     }
 
     return item;
@@ -1859,6 +1866,7 @@ function getTotalWeight(item) {
     if (!item || typeof item !== 'object') return 0;
     if(item.attributes?.prosthesis_id)return 0;
     let baseWeight = item.attributes?.prosthesis?.weight ?? item.weight ?? 0;
+    baseWeight=Math.max(0,modificationStat(item,'weight',baseWeight));
     if (item.category === 'magazine') {
         const currentAmmo = Number(item.currentAmmo) || (Array.isArray(item.ammo)
             ? item.ammo.reduce((sum, stack) => sum + (Number(stack?.quantity) || 0), 0)
@@ -2035,10 +2043,12 @@ function getConsumableStatValue(data, statName) {
 function getAwarenessModeChoices(data, darkness = false) {
     const headphones = Number(
         data?.equipment?.headphones?.awarenessBonus
-        ?? data?.equipment?.headphones?.awareness_bonus,
+        ?? data?.equipment?.headphones?.awareness_bonus
+        ?? data?.equipment?.headphones?.attributes?.awareness_bonus,
     ) || 0;
     const vision = getConsumableStatValue(data, 'vision_awareness')
-        + getConsumableStatValue(data, darkness ? 'darkness_awareness' : 'light_awareness');
+        + (darkness && usesNightVision(data) ? 0
+            : getConsumableStatValue(data, darkness ? 'darkness_awareness' : 'light_awareness'));
     const deafness = getDeafnessLevel(data);
     const hearingPenalty=hearingModifier(deafness);
     const signed = value => `${value >= 0 ? '+' : ''}${value}`;
@@ -2051,13 +2061,13 @@ function getAwarenessModeChoices(data, darkness = false) {
     ].filter(Boolean);
     return [
         {
-            label: `Зрение: ${signed(vision)}${visualParts.length ? ` (${visualParts.join(', ')})` : ''}`,
+            label: `Зрение${visualParts.length ? ` (${visualParts.join(', ')})` : ''}`,
             mode: 'visual',
         },
         {
             label: deafness >= 90
                 ? `Слух: невозможно (глухота ${deafness})`
-                : `Слух: ${signed(headphones+hearingPenalty)}${hearingParts.length ? ` (${hearingParts.join(', ')})` : ''}${deafness ? `, глухота ${deafness}` : ''}`,
+                : `Слух${hearingParts.length ? ` (${hearingParts.join(', ')})` : ''}${deafness ? `, глухота ${deafness}` : ''}`,
             mode: 'hearing',
             disabled: deafness >= 90,
         },
@@ -2101,6 +2111,7 @@ function calculateCarriedWeight(data) {
     const inv = data?.inventory || {};
     const eq = data?.equipment || {};
     const items = [];
+    items.push(...(data?.crafting?.current?.escrow || []).map(entry=>entry.item));
     if (Array.isArray(inv.backpack)) items.push(...inv.backpack);
     if (Array.isArray(inv.pockets)) items.push(...inv.pockets);
     for (const group of ['belt', 'vest']) {
@@ -2111,7 +2122,9 @@ function calculateCarriedWeight(data) {
     }
     if (Array.isArray(data?.weapons)) items.push(...data.weapons);
     for(const parts of Object.values(data?.health?.prostheses || {}))items.push(...Object.values(parts));
-    return items.reduce((sum, item) => sum + getTotalWeight(item), 0);
+    const belt=eq.belt,discount=belt&&!belt.protectionDisabled?Math.min(1,Math.max(0,modificationRule(belt,'belt_weight_reduction'))):0;
+    const beltWeight=(belt?.pouches||[]).reduce((sum,pouch)=>sum+(pouch?.contents||[]).reduce((total,item)=>total+getTotalWeight(item),0),0);
+    return items.reduce((sum, item) => sum + getTotalWeight(item), 0)-beltWeight*discount;
 }
 
 function getMovementPenaltyBreakdown(data, suppliedWeight = null) {
@@ -2121,12 +2134,12 @@ function getMovementPenaltyBreakdown(data, suppliedWeight = null) {
     const weightPerPenalty = getWeightPerMovementPenalty(data);
     const rawWeightPenalty = Math.floor(totalWeight / weightPerPenalty);
     const backpackReduction = Math.max(0, Number(eq.backpack?.attributes?.weight_reduction) || 0);
-    let weightPenalty = Math.max(0, Math.floor(rawWeightPenalty*passiveTraits(data).weightMultiplier) - backpackReduction+getConsumableStatValue(data,'weight'));
-    let armorPenalty = Number(armor.movementPenalty ?? armor.movement_penalty) || 0;
+    let weightPenalty = Math.max(0, Math.floor(rawWeightPenalty*passiveTraits(data).weightMultiplier) - backpackReduction+getConsumableStatValue(data,'weight')+wornModificationStat(data,'weight_penalty'));
+    let armorPenalty = Math.max(0,modificationStat(armor,'movement_penalty',Number(armor.movementPenalty ?? armor.movement_penalty)||0));
     const helmet = eq.helmet || {};
     const helmetPenalty = helmet.integratedWithArmor
         ? 0
-        : (Number(helmet.movementPenalty ?? helmet.movement_penalty) || 0);
+        : Math.max(0,modificationStat(helmet,'movement_penalty',Number(helmet.movementPenalty ?? helmet.movement_penalty)||0));
     const exoskeleton = getExoskeletonPowerProfile(data);
     const isExoskeleton = exoskeleton.isExoskeleton;
     const powered = exoskeleton.powered;
@@ -2204,6 +2217,7 @@ function getEffectiveWeaponStats(weapon) {
         range: weapon.range ?? weapon.attributes?.range ?? 0,
         ergonomics: weapon.ergonomics ?? weapon.attributes?.ergonomics ?? 0
     };
+    for(const key of Object.keys(base))base[key]=modificationStat(weapon,key,base[key]);
     if (!weapon.installedModules) return base;
     weapon.installedModules.forEach(mod => {
         const m = mod.modifiers || mod.attributes?.modifiers || {};
@@ -3308,7 +3322,7 @@ function renderHealthTab(data, container = null) {
     const modifierLabels = {
         strength: 'Сила', agility: 'Ловкость', accuracy: 'Точность', weight: 'Штраф нагрузки', movement_points:'Штраф перемещения', hp_max:'Максимум ОЗ',
         will: 'Воля', psy_defense: 'Пси-защита', vision_awareness: 'Внимательность (зрение)',
-        darkness_awareness: 'Внимательность в темноте', light_awareness: 'Внимательность на свету',
+        darkness_awareness: 'Внимательность в темноте без ПНВ', darkness_accuracy: 'Точность в темноте без ПНВ', light_awareness: 'Внимательность на свету',
         darkness_visual_immunity: 'Без помехи к зрению в темноте',
         darkness_shooting_immunity: 'Без помехи к стрельбе в темноте',
         action_points: 'ОД', organ_toughness_multiplier: 'Живучесть органов', rest_heal_multiplier: 'Лечение на отдыхе'
@@ -4624,6 +4638,7 @@ async function renderEquipmentTab(data) {
                     <div style="display: flex; flex-direction: column; gap: 5px;">
                         ${eq.gloves ? `
                             <div><strong>${escapeHtml(eq.gloves.name)}</strong></div>
+                            ${eq.gloves.attributes?.sterile_duration_seconds || eq.gloves.name?.toLowerCase()==='медицинские' ? `<div class="glove-care">${eq.gloves.sterility?.remaining_seconds>0 ? `Стерильны · осталось ${Math.ceil(eq.gloves.sterility.remaining_seconds/60)} мин` : 'Стерильность истекла'}<button type="button" class="btn btn-sm btn-secondary" onclick="window.sterilizeGloves()">Обработать · 3 ОД</button></div>` : ''}
                             <div><label>Бонус харизмы</label> <input type="number" class="form-control number-input" name="equipment.gloves.charismaBonus" value="${eq.gloves.charismaBonus || 0}" step="0.1" style="width: 100%; min-width: 180px;"></div>
                             <div><label>Эффект</label> <input type="text" class="form-control" name="equipment.gloves.effect" value="${escapeHtml(eq.gloves.effect || '')}" style="width: 100%; min-width: 180px;"></div>
                         ` : '<em>Не надеты</em>'}
@@ -4705,8 +4720,24 @@ async function renderEquipmentTab(data) {
     await renderPortableLights(container,currentCharacterId,data,window.operatePortableLight,
         ()=>renderVersion===equipmentRenderVersion,currentCharacterCanEdit&&!medicalOperationInProgress).catch(error=>console.warn('Не удалось загрузить фонари:',error));
     if(renderVersion===equipmentRenderVersion)renderProstheses(container,data,window.operateProsthesis,currentCharacterCanEdit&&!medicalOperationInProgress,currentCharacterId);
+    if(renderVersion===equipmentRenderVersion){
+        const craftingButton=document.createElement('button');craftingButton.type='button';craftingButton.className='btn btn-secondary';
+        craftingButton.id='character-crafting-open';craftingButton.textContent='Создание и модификации';craftingButton.disabled=!currentCharacterCanEdit;
+        craftingButton.onclick=window.openCharacterCrafting;container.prepend(craftingButton);
+    }
     restoreSheetViewState(viewState);
 }
+
+window.openCharacterCrafting=async function(){
+    if(!currentCharacterCanEdit||medicalOperationInProgress)return;
+    const characterId=currentCharacterId,lobbyId=currentLobbyId;
+    try{
+        await forceSyncCharacter();await Server.waitForCharacterSave(characterId);
+        if(currentCharacterId!==characterId)return;
+        const {showCrafting}=await import('./crafting.js');
+        await showCrafting({characterId,lobbyId,onSaved:data=>queueRemoteSheetData(data,characterId)});
+    }catch(error){showNotification(error.message,'system');}
+};
 
 function equipmentModule(item, slotType) {
     const modules = Array.isArray(item?.installedModules) ? item.installedModules : [];
@@ -5030,8 +5061,7 @@ function renderSlotsUniversal(item, itemPath, depth = 0) {
                 const acc = installed.attributes?.accuracy_penalty ?? installed.accuracy_penalty ?? 0;
                 const aware = installed.attributes?.awareness_penalty ?? installed.awareness_penalty ?? 0;
                 info = `${info} (точность ${acc}, вним. ${aware}`;
-                const battery = (installed.installedModules || []).find(m => m.slotType === 'battery');
-                if (battery) info += `, заряд ${battery.attributes?.power ?? '?'}%`;
+                info += `, заряд ${installed.lightPower?.uses_left ?? 10}/10`;
                 info += `)`;
             } else if (slot.type === 'visor') {
                 const acc = installed.attributes?.accuracy_penalty ?? installed.accuracy_penalty ?? 0;
@@ -5140,10 +5170,15 @@ function renderVestPouches(pouches, pouchTemplates, isBase, totalCapacity) {
     return html;
 }
 
+function renderRuleModification(mod) {
+    return `<div class="installed-rule-modification"><strong>${escapeHtml(mod.name)}</strong> · уровень ${mod.level}${mod.gunsmith?' · Оружейник ×1,5':''}${mod.description!==mod.name?`<div>${escapeHtml(mod.description)}</div>`:''}<small>Заменить можно в окне «Создание и модификации».</small></div>`;
+}
+
 function renderBeltModifications(mods, modTemplates) {
     if (!mods || mods.length === 0) return '<p>Нет модификаций</p>';
     let html = '';
     mods.forEach((mod, index) => {
+        if(mod.ruleId){html+=renderRuleModification(mod);return;}
         const options = modTemplates.map(t =>
             `<option value="${t.id}" ${mod.name === t.name ? 'selected' : ''}>${t.name}</option>`
         ).join('');
@@ -5165,6 +5200,7 @@ function renderHelmetModifications(mods, groupedTemplates) {
     if (!mods || mods.length === 0) return '';
     let html = '';
     mods.forEach((mod, index) => {
+        if(mod.ruleId){html+=renderRuleModification(mod);return;}
         const options = Object.entries(groupedTemplates).map(([cat, items]) => `
             <optgroup label="${cat}">
                 ${items.map(t => `<option value="${t.id}" ${mod.name === t.name ? 'selected' : ''}>${t.name}</option>`).join('')}
@@ -5188,6 +5224,7 @@ function renderGasMaskModifications(mods, groupedTemplates) {
     if (!mods || mods.length === 0) return '';
     let html = '';
     mods.forEach((mod, index) => {
+        if(mod.ruleId){html+=renderRuleModification(mod);return;}
         const options = Object.entries(groupedTemplates).map(([cat, items]) => `
             <optgroup label="${cat}">
                 ${items.map(t => `<option value="${t.id}" ${mod.name === t.name ? 'selected' : ''}>${t.name}</option>`).join('')}
@@ -5211,6 +5248,7 @@ function renderArmorModifications(mods, groupedTemplates) {
     if (!mods || mods.length === 0) return '';
     let html = '';
     mods.forEach((mod, index) => {
+        if(mod.ruleId){html+=renderRuleModification(mod);return;}
         const options = Object.entries(groupedTemplates).map(([cat, items]) => `
             <optgroup label="${cat}">
                 ${items.map(t => `<option value="${t.id}" ${mod.name === t.name ? 'selected' : ''}>${t.name}</option>`).join('')}
@@ -5270,7 +5308,8 @@ function renderPdaModifications(items, groupedTemplates) {
 
 function getWeaponFireProfile(weapon, template) {
     const stored = weapon.fireModes || weapon.attributes?.fire_modes || template?.attributes?.fire_modes;
-    if (stored) return stored;
+    const modified=profile=>modifiedFireProfile(weapon,profile,modificationStat(weapon,'fire_rate',weapon.fireRate??weapon.attributes?.fire_rate??template?.attributes?.fire_rate??0));
+    if (stored) return modified(stored);
 
     const raw = String(weapon.burst || template?.attributes?.burst || '').trim();
     const lower = raw.toLowerCase();
@@ -5283,7 +5322,7 @@ function getWeaponFireProfile(weapon, template) {
         : (!duplexSize && plainBurstMatch ? Number(plainBurstMatch[1]) : null);
     const machineGunBurst = lower.includes('пулеметн') || lower.includes('пулемётн');
     const supportsBurst = Boolean(burstSize || machineGunBurst);
-    return {
+    return modified({
         raw,
         single_shot_options: duplexSize ? [1, duplexSize] : [1],
         duplex_size: duplexSize,
@@ -5292,7 +5331,7 @@ function getWeaponFireProfile(weapon, template) {
         supports_burst: supportsBurst,
         supports_suppression: supportsBurst,
         supports_area_fire: supportsBurst,
-    };
+    });
 }
 
 function getWeaponClass(weapon, template = null) {
@@ -5455,8 +5494,11 @@ window.operatePortableLight = async function(payload) {
         if (currentCharacterId!==characterId || medicalOperationInProgress) return;
         if (sheetSaveBlocked) throw new Error('Переоткройте лист перед управлением фонарём');
         medicalOperationInProgress=locked=true;medicalRemoteUpdate=null;
-        const result=await Server.operatePortableLight(characterId,{...payload,character_revision:currentCharacterData._revision});
-        currentCharacterData=result.data;showNotification('Состояние фонаря обновлено','success');
+        const {operation,...selection}=payload;
+        const result=operation==='sterilize'
+            ? await Server.sterilizeGloves(characterId,{...selection,character_revision:currentCharacterData._revision})
+            : await Server.operatePortableLight(characterId,{...payload,character_revision:currentCharacterData._revision});
+        currentCharacterData=result.data;showNotification(operation==='sterilize'?'Перчатки стерильны ещё час':'Состояние прибора обновлено','success');
     } catch (error) { showNotification(error.message || 'Не удалось изменить состояние фонаря','system'); }
     finally {
         if (locked) {
@@ -5464,6 +5506,15 @@ window.operatePortableLight = async function(payload) {
             medicalRemoteUpdate=null;medicalOperationInProgress=false;await refreshSavedSheet(characterId);
         }
     }
+};
+
+window.sterilizeGloves = async function() {
+    const choices=collectInventoryEntries(currentCharacterData,item=>/(?:^|\s|«|")(?:спирт|водка)(?:\s|$|»|")/i.test(item?.name||''))
+        .filter(({item})=>getInventoryItemAvailableUses(item)>0)
+        .map(({item,path})=>({label:`${item.name} · 1 использование · 3 ОД`,path,source_id:item.id??null}));
+    if (!choices.length) {showNotification('В инвентаре нет спирта или водки');return;}
+    const choice=await chooseConsumableApplication('Обработать перчатки',choices,{alwaysShow:true});
+    if(choice) await window.operatePortableLight({operation:'sterilize',path:choice.path,source_id:choice.source_id});
 };
 
 window.changeWeaponGrip = async function(weaponIndex, hands, hand) {
@@ -5609,7 +5660,7 @@ window.cycleWeaponFromEquipment = async function(weaponIndex) {
     const cycleType = getManualCycleType(weapon, template);
     const specialization = weaponSpecializationKey(template);
     const level = currentCharacterData?.skills?.specialized?.[specialization]?.level || 'unfamiliar';
-    const actionPoints = cycleType === 'pump' && level === 'professional' ? 0 : 1;
+    const actionPoints = Math.min(cycleType === 'pump' && level === 'professional' ? 0 : 1,modificationRule(weapon,'cycle_ap',1));
     try {
         const paid = await chooseAndSpendCombatPayment(
             cycleType === 'pump' ? 'Дослать патрон' : 'Передёрнуть затвор',
@@ -5810,7 +5861,7 @@ function renderRangedAttackButtons(weapon, template, index, disabled) {
     if (profile.supports_burst) {
         const machineGun = Boolean(profile.machine_gun_burst);
         const burstShots = Number(profile.burst_size) || 0;
-        const burstActionPoints = Math.max(1,(weaponClass === 'submachine_gun' ? 2 : 3)-(backgroundIs(currentCharacterData,'Полицейский')&&['pistol','submachine_gun'].includes(weaponClass)?1:0));
+        const burstActionPoints = Math.max(0,(weaponClass === 'submachine_gun' ? 2 : 3)+modificationRule(weapon,'burst_ap_delta')-(backgroundIs(currentCharacterData,'Полицейский')&&['pistol','submachine_gun'].includes(weaponClass)?1:0));
         const action = (mode, actionPoints = 3, volleyCount = 1) => {
             if (machineGun && mode === 'area') {
                 return `useWeaponFromEquipment(${index}, '${mode}', 10, ${actionPoints}, 2)`;
@@ -5902,7 +5953,10 @@ async function renderWeapons(weapons, weaponTemplates, moduleTemplates, weaponMo
     );
     const strengthValue = getSkillEffectiveValue(currentCharacterData, 'physical.strength');
     const strengthBonus = Math.floor((strengthValue - 10) / 2);
-    const fistDamage = Math.max(10, 10 * strengthBonus);
+    const gloves = currentCharacterData.equipment?.gloves;
+    const wraps = !gloves?.protectionDisabled && (gloves?.attributes?.unarmed_damage_factor
+        || gloves?.name?.trim().toLowerCase() === 'обвязки на руки');
+    const fistDamage = wraps ? Math.max(25, 15 * strengthBonus) : Math.max(10, 10 * strengthBonus);
     weaponsHtml.push(`
         <div data-weapon-index="-1" style="border:1px solid var(--panel-border); padding:10px; margin-bottom:10px;">
             <div style="font-weight:bold; margin-bottom:5px;">Кулаки</div>
@@ -6170,6 +6224,7 @@ async function renderWeapons(weapons, weaponTemplates, moduleTemplates, weaponMo
 
         let modificationsHtml = '';
         modifications.forEach((mod, mi) => {
+            if(mod.ruleId){modificationsHtml+=renderRuleModification(mod);return;}
             const modOptions = Object.entries(groupedMods).map(([cat, items]) => `
                 <optgroup label="${cat}">
                     ${items.map(t => `<option value="${t.id}" ${mod.name === t.name ? 'selected' : ''}>${t.name}</option>`).join('')}
@@ -6290,7 +6345,7 @@ window.equipModuleToWeapon = async function(weaponIndex, slotType) {
     inventoryModules.forEach((entry, idx) => {
         const opt = document.createElement('option');
         opt.value = idx;
-        opt.textContent = `${entry.item.name} (${entry.item.weight} кг, ${entry.item.volume} л)`;
+        opt.textContent = `${entry.item.name} (${entry.item.weight} кг, объём ${entry.item.volume})`;
         select.appendChild(opt);
     });
 
@@ -6836,7 +6891,7 @@ window.reloadFixedMagazine = async function(weaponIndex) {
             const prepared = state.targetType === 'fixed' && Number(state.weaponIndex) === Number(weaponIndex);
             const sourceKey = selected.item.id || selected.path.join('.');
             const sameSource = prepared && state.sourceId === sourceKey;
-            const plans = fixedMagazineLoadingPlans(weaponTemplate, selected.item, needed, prepared);
+            const plans = fixedMagazineLoadingPlans(weaponTemplate, selected.item, needed, prepared,weapon);
             const sourcePayments = sameSource
                 ? null
                 : await inventoryItemPreparationPayments(selected.item, selected.path, 'ammo');
@@ -6924,7 +6979,7 @@ window.reloadFixedMagazine = async function(weaponIndex) {
         const prepared = state.targetType === 'fixed' && Number(state.weaponIndex) === Number(weaponIndex);
         const sourceKey = selected.item.id || selected.path.join('.');
         const sameSource = prepared && state.sourceId === sourceKey;
-        const plans = fixedMagazineLoadingPlans(weaponTemplate, selected.item, needed, prepared);
+        const plans = fixedMagazineLoadingPlans(weaponTemplate, selected.item, needed, prepared,weapon);
         if (!plans.length) {
             showNotification('Недостаточно патронов для выбранного способа зарядки');
             return;
@@ -8429,6 +8484,10 @@ window.equipVestFromInventory = async function(itemPath) {
         showNotification('Этот предмет нельзя надеть как разгрузку');
         return;
     }
+    if (Number(item.quantity || 1) > 1 && (item.pouches || []).some(pouch => pouch.contents?.length)) {
+        showNotification('Сначала освободите подсумки разгрузок в стопке или разделите её на отдельные экземпляры');
+        return;
+    }
 
     const templates = await loadTemplatesForLobby('vest');
     const template = templates.find(t => t.id === item.templateId);
@@ -8438,6 +8497,9 @@ window.equipVestFromInventory = async function(itemPath) {
     }
 
     const vestToEquip = {
+        ...structuredClone(item),
+        id: Number(item.quantity || 1) > 1 ? generateItemId() : item.id || generateItemId(),
+        quantity: 1,
         createdByPlayer: Boolean(item.createdByPlayer),
         templateId: template.id,
         name: template.name,
@@ -8445,11 +8507,14 @@ window.equipVestFromInventory = async function(itemPath) {
         volume: template.volume,
         model: template.id ? String(template.id) : (item.model || 'custom'),
         totalCapacity: item.totalCapacity || template.attributes?.total_capacity || 0,
-        pouches: item.pouches || template.attributes?.pouches || [],
+        attributes: structuredClone(item.attributes || template.attributes || {}),
+        pouches: structuredClone(item.pouches || template.attributes?.pouches || []),
         modifications: item.modifications || []
     };
 
-    if (!removeItemByPath(itemPath)) {
+    if (Number(item.quantity || 1) > 1) {
+        item.quantity -= 1;
+    } else if (!removeItemByPath(itemPath)) {
         showNotification('Не удалось найти предмет в инвентаре');
         return;
     }
@@ -8460,6 +8525,7 @@ window.equipVestFromInventory = async function(itemPath) {
         const oldTemplate = oldTemplates.find(t => t.id === oldVest.templateId);
         if (oldTemplate) {
             const oldItem = createItemFromTemplate(oldTemplate);
+            Object.assign(oldItem, structuredClone(oldVest), {quantity: 1});
             oldItem.model = oldVest.model;
             oldItem.totalCapacity = oldVest.totalCapacity;
             oldItem.pouches = oldVest.pouches || [];
@@ -8742,6 +8808,7 @@ window.equipGlassesFromInventory = async function(itemPath) {
         return;
     }
     const glassesToEquip = {
+        attributes: structuredClone(item.attributes || template.attributes || {}),
         createdByPlayer: Boolean(item.createdByPlayer),
         templateId: template.id,
         name: template.name,
@@ -8814,13 +8881,21 @@ window.equipGlovesFromInventory = async function(itemPath) {
         return;
     }
     const glovesToEquip = {
+        ...structuredClone(item),
+        quantity: 1,
+        attributes: structuredClone(item.attributes || template.attributes || {}),
         createdByPlayer: Boolean(item.createdByPlayer),
         templateId: template.id,
         name: template.name,
         charismaBonus: item.charismaBonus ?? template.attributes?.charisma_bonus ?? 0,
         effect: item.effect ?? template.attributes?.effect ?? '',
     };
-    if (!removeItemByPath(itemPath)) {
+    const stacked=Number(item.quantity||1)>1;
+    if (stacked) {
+        item.quantity-=1;
+        item.id=generateItemId();
+        delete item.sterility;
+    } else if (!removeItemByPath(itemPath)) {
         showNotification('Не удалось найти предмет в инвентаре');
         return;
     }
@@ -8829,7 +8904,7 @@ window.equipGlovesFromInventory = async function(itemPath) {
         const oldTemplates = await loadTemplatesForLobby('gloves');
         const oldTemplate = oldTemplates.find(t => t.id === oldGloves.templateId);
         if (oldTemplate) {
-            const oldItem = createItemFromTemplate(oldTemplate);
+            const oldItem = {...createItemFromTemplate(oldTemplate),...structuredClone(oldGloves)};
             oldItem.charismaBonus = oldGloves.charismaBonus;
             oldItem.effect = oldGloves.effect;
             restoreItemToPath(oldItem, itemPath);
@@ -8856,7 +8931,7 @@ window.unequipGloves = async function() {
         showNotification('Шаблон перчаток не найден');
         return;
     }
-    const restoredItem = createItemFromTemplate(template);
+    const restoredItem = {...createItemFromTemplate(template),...structuredClone(gloves)};
     restoredItem.charismaBonus = gloves.charismaBonus;
     restoredItem.effect = gloves.effect;
     if (!currentCharacterData.inventory) currentCharacterData.inventory = {};
@@ -9382,6 +9457,7 @@ window.unequipVest = async function() {
         return;
     }
     const restoredItem = createItemFromTemplate(template);
+    Object.assign(restoredItem, structuredClone(vest), {quantity: 1});
     restoredItem.model = vest.model;
     restoredItem.totalCapacity = vest.totalCapacity;
     restoredItem.pouches = vest.pouches || [];
@@ -9458,6 +9534,10 @@ window.useWeaponFromEquipment = async function(
     const weaponTemplate = (allTemplatesCache || []).find(
         template => template.id == weapon.templateId
     );
+
+    if ((weapon.attributes||weaponTemplate?.attributes)?.flamethrower) {
+        window.openCharacterCrafting();return;
+    }
 
     const combatState = window.locationCombatState;
     const isCombatActive = Boolean(combatState && combatState.status === 'active');
@@ -10652,14 +10732,18 @@ function weaponSpecializationKey(template) {
     return null;
 }
 
-function fixedMagazineLoadingPlans(template, source, needed, prepared) {
+function fixedMagazineLoadingPlans(template, source, needed, prepared,weapon=template) {
     const sourceKind = ammoLoadingKind(source);
     const discount=traitCount(currentCharacterData,'Быстрые руки');
-    const discounted=payments=>payments.map(p=>({...p,actionPoints:p.actionPoints?Math.max(1,p.actionPoints-discount):0}));
+    const discounted=payments=>payments.map(p=>{
+        const modified=Math.max(0,p.actionPoints+modificationRule(weapon,'reload_ap_delta'));
+        return {...p,actionPoints:modified?Math.max(1,modified-discount):0};
+    });
     if (sourceKind !== 'loose') return magazineLoadingPlans(source, needed).map(plan=>({...plan,includesStart:true,payments:discounted(plan.payments)}));
     const specialization = weaponSpecializationKey(template);
     const level = currentCharacterData?.skills?.specialized?.[specialization]?.level || 'unfamiliar';
-    const quantity = level === 'professional' ? 2 : 1;
+    const extra=Math.floor(wornModificationRule(currentCharacterData,'fixed_reload_extra'));
+    const quantity = Math.min((level === 'professional' ? 2 : 1)+extra,needed,ammoSourceCount(source));
     const plans = [];
     if (
         !prepared
@@ -10668,8 +10752,8 @@ function fixedMagazineLoadingPlans(template, source, needed, prepared) {
         && ammoSourceCount(source) >= 2
     ) {
         plans.push({
-            quantity: 2,
-            label: 'Начать перезарядку и зарядить дуплетом 2 патрона',
+            quantity: Math.min(2+extra,needed,ammoSourceCount(source)),
+            label: `Начать перезарядку и зарядить дуплетом ${Math.min(2+extra,needed,ammoSourceCount(source))} патрона`,
             payments: [{ actionPoints: 2, freeActions: 0 }],
             includesStart: true,
         });
@@ -10684,7 +10768,7 @@ function fixedMagazineLoadingPlans(template, source, needed, prepared) {
             }],
         });
     }
-    return plans.map(plan=>({...plan,includesStart:true,payments:discounted(plan.payments.map(p=>({...p,actionPoints:p.actionPoints+(!prepared&&!plan.includesStart?1:0)})))}));
+    return plans.map(plan=>({...plan,includesStart:true,payments:discounted(plan.payments.map(p=>({...p,actionPoints:p.actionPoints+(!prepared&&!plan.includesStart?modificationRule(weapon,'reload_start_ap',1):0)})))}));
 }
 
 window.calculateInventoryAccess = calculateInventoryAccess;
@@ -12824,6 +12908,7 @@ window.addBeltPouch = function() {
 window.removeBeltPouch = function(index) {
     updateDataFromFields();
     if (!currentCharacterData.equipment?.belt?.pouches) return;
+    returnPouchContents(currentCharacterData, [currentCharacterData.equipment.belt.pouches[index]]);
     currentCharacterData.equipment.belt.pouches.splice(index, 1);
     renderInventoryTab(currentCharacterData)
     scheduleAutoSave();
@@ -12870,6 +12955,7 @@ window.addVestPouch = function() {
 window.removeVestPouch = function(index) {
     updateDataFromFields();
     if (!currentCharacterData.equipment?.vest?.pouches) return;
+    returnPouchContents(currentCharacterData, [currentCharacterData.equipment.vest.pouches[index]]);
     currentCharacterData.equipment.vest.pouches.splice(index, 1);
     renderInventoryTab(currentCharacterData);
     scheduleAutoSave();
@@ -12881,6 +12967,7 @@ window.onVestModelChange = async function(select) {
 
     if (selectedValue === 'custom') {
         currentCharacterData.equipment.vest = {
+            ...currentCharacterData.equipment.vest,
             model: 'custom',
             pouches: currentCharacterData.equipment.vest?.pouches || [],
             totalCapacity: currentCharacterData.equipment.vest?.totalCapacity || 0
@@ -12889,23 +12976,14 @@ window.onVestModelChange = async function(select) {
         const templates = await loadTemplatesForLobby('vest'); // <-- исправлено: 'vest', не 'vests'
         const template = templates.find(t => t.id == selectedValue);
         if (template) {
-            // Убедимся, что у каждого подсумка есть internalVolume
-            const pouches = (template.attributes?.pouches || []).map(p => ({
-                ...p,
-                internalVolume: p.internalVolume || template.volume || 0,
-                contents: p.contents || []
-            }));
-            currentCharacterData.equipment.vest = {
-                model: selectedValue,
-                pouches: pouches,
-                totalCapacity: template.attributes?.total_capacity || 0
-            };
+            applyVestTemplate(currentCharacterData, template);
         } else {
             showNotification('Шаблон разгрузки не найден');
             return;
         }
     } else {
-        delete currentCharacterData.equipment.vest;
+        await window.unequipVest();
+        return;
     }
 
     await renderInventoryTab(currentCharacterData);
@@ -13660,7 +13738,7 @@ window.saveVestTemplateFromEditor = async function() {
         pouches.push({
             type: parseInt(typeId, 10),
             capacity: capacity,
-            internalVolume: template ? template.volume : 0
+            internalVolume: capacity
         });
     }
 
@@ -13763,15 +13841,14 @@ async function renderVestTemplatePouches() {
             const templateId = e.target.value;
             const template = pouchTemplates.find(t => t.id == templateId);
             if (template) {
-                pouch.type = template.id;
-                pouch.capacity = template.volume || 0;
+                applyPouchTemplate(pouch, template);
                 renderVestTemplatePouches(); // обновить отображение объёма
             }
         };
 
         const volumeSpan = document.createElement('span');
         volumeSpan.style.width = '80px';
-        volumeSpan.textContent = `${pouch.capacity} л`;
+        volumeSpan.textContent = `${pouch.capacity}`;
 
         const delBtn = document.createElement('button');
         delBtn.type = 'button';
@@ -13810,6 +13887,9 @@ async function renderInventoryTab(data) {
     const pouchTemplates = allTemplates.filter(t => t.category === 'pouch');
     const modificationTemplates = allTemplates.filter(t => t.category === 'modification');
     const vestTemplates = allTemplates.filter(t => t.category === 'vest');
+    const currentVestTemplate = vestTemplates.find(t => Number(t.id) === Number(eq.vest?.templateId));
+    const vestModel = {...eq.vest, attributes: {...currentVestTemplate?.attributes, ...eq.vest?.attributes}};
+    const vestIsModular = eq.vest?.model === 'custom' || vestModel.attributes.modular === true;
 
     // Группируем для селекторов в карманах/рюкзаке
     const groupedByCategory = {};
@@ -13936,7 +14016,7 @@ async function renderInventoryTab(data) {
             ` : ''}
             <div style="display: flex; align-items: center;">
                 <h5 style="margin: 0;">Подсумки</h5>
-                ${eq.vest?.model === 'custom' ? `<button type="button" class="btn btn-sm btn-secondary" onclick="addVestPouch()" style="padding: 2px 8px;">➕</button>` : ''}
+                ${vestIsModular ? `<button type="button" class="btn btn-sm btn-secondary" onclick="addVestPouch()" style="padding: 2px 8px;">➕</button>` : ''}
             </div>
             <div id="vest-pouches-container"></div>
         </div>
@@ -13975,7 +14055,7 @@ async function renderInventoryTab(data) {
         renderBeltPouchesNew(eq.belt.pouches || [], pouchTemplates, allTemplates);
     }
     if (eq.vest?.templateId) {
-        renderVestPouchesNew(eq.vest.pouches || [], pouchTemplates, eq.vest.model === 'custom', eq.vest.totalCapacity, allTemplates);
+        renderVestPouchesNew(eq.vest.pouches || [], pouchTemplates, vestIsModular, eq.vest.totalCapacity ?? currentVestTemplate?.attributes?.total_capacity, allTemplates, vestModel);
     }
     const pocketsContainer = document.getElementById('pockets-container');
     if (pocketsContainer) {
@@ -14269,17 +14349,24 @@ function renderBeltPouchesNew(pouches, pouchTemplates, allTemplates) {
     });
 }
 
-function renderVestPouchesNew(pouches, pouchTemplates, isCustom, totalCapacity, allTemplates) {
+function renderVestPouchesNew(pouches, pouchTemplates, isCustom, totalCapacity, allTemplates, vestModel) {
     const container = document.getElementById('vest-pouches-container');
     if (!container) return;
     container.innerHTML = '';
     if (!pouches || pouches.length === 0) {
         container.innerHTML = '<p>Нет подсумков</p>';
-        return;
     }
-    pouches.forEach((pouch, index) => {
+    (pouches || []).forEach((pouch, index) => {
         renderVestPouchItem(pouch, index, ['equipment', 'vest', 'pouches', index], container, pouchTemplates, isCustom, allTemplates);
     });
+    if (isCustom) {
+        const used = vestMountVolume(vestModel, pouchTemplates), limit = Number(totalCapacity || 0);
+        const info = document.createElement('div');
+        info.className = 'vest-mount-usage';
+        info.textContent = `Объём подсумков: ${Number(used.toFixed(2))} / ${limit}`;
+        if (used > limit + 1e-9) info.style.color = '#e7c3a2';
+        container.appendChild(info);
+    }
 }
 
 function renderPouchItem(pouch, index, path, parentContainer, pouchTemplates, allTemplates) {
@@ -14325,9 +14412,7 @@ function renderPouchItem(pouch, index, path, parentContainer, pouchTemplates, al
     select.onchange = () => {
         const template = pouchTemplates.find(t => t.id == select.value);
         if (template) {
-            pouch.type = template.id;
-            pouch.capacity = template.volume || 0;
-            pouch.name = template.name;
+            applyPouchTemplate(pouch, template);
             renderInventoryTab(currentCharacterData);
             scheduleAutoSave();
         }
@@ -14339,7 +14424,7 @@ function renderPouchItem(pouch, index, path, parentContainer, pouchTemplates, al
     infoSpan.dataset.volumeInfo = '';
     const used = calculatePouchUsedVolume(pouch);
     const internalLimit = pouch.internalVolume || pouch.capacity;
-    infoSpan.textContent = `📦 ${used} / ${internalLimit} л`;
+    infoSpan.textContent = `📦 ${used} / ${internalLimit}`;
     row.appendChild(infoSpan);
 
     const delBtn = document.createElement('button');
@@ -14348,6 +14433,7 @@ function renderPouchItem(pouch, index, path, parentContainer, pouchTemplates, al
     delBtn.textContent = '✕';
     delBtn.onclick = () => {
         const parentArray = currentCharacterData.equipment.belt.pouches;
+        returnPouchContents(currentCharacterData, [parentArray[index]]);
         parentArray.splice(index, 1);
         renderInventoryTab(currentCharacterData);
         scheduleAutoSave();
@@ -14458,21 +14544,37 @@ function renderVestPouchItem(pouch, index, path, parentContainer, pouchTemplates
         if (!isCustom) return;
         const template = pouchTemplates.find(t => t.id == select.value);
         if (template) {
-            pouch.type = template.id;
-            pouch.capacity = template.volume || 0;
-            pouch.name = template.name;
+            const currentVest = currentCharacterData.equipment.vest;
+            const vestTemplate = allTemplates.find(t => Number(t.id) === Number(currentVest.templateId));
+            const vest = {...currentVest, attributes: {...vestTemplate?.attributes, ...currentVest.attributes}};
+            const changedPouch = applyPouchTemplate(structuredClone(pouch), template);
+            const oldVolume = vestMountVolume(vest, pouchTemplates);
+            const newVolume = vestMountVolume({...vest, pouches: vest.pouches.map((item,i) => i === index ? changedPouch : item)}, pouchTemplates);
+            const limit = Number(vest.totalCapacity ?? vest.attributes.total_capacity ?? 0);
+            if (newVolume > limit + 1e-9 && newVolume > oldVolume + 1e-9) {
+                select.value = pouch.type || '';
+                showNotification('Недостаточно объёма разгрузки для этого подсумка');
+                return;
+            }
+            applyPouchTemplate(pouch, template);
             renderInventoryTab(currentCharacterData);
             scheduleAutoSave();
         }
     };
-    leftWrapper.appendChild(select);
+    if (isCustom) leftWrapper.appendChild(select);
+    else {
+        const caption = document.createElement('strong');
+        caption.className = 'vest-pouch-name';
+        caption.textContent = pouch.name || pouchTemplates.find(t => t.id == pouch.type)?.name || 'Подсумок';
+        leftWrapper.appendChild(caption);
+    }
     row.appendChild(leftWrapper);
 
     const infoSpan = document.createElement('span');
     infoSpan.dataset.volumeInfo = '';
     const used = calculatePouchUsedVolume(pouch);
     const internalLimit = pouch.internalVolume || pouch.capacity;
-    infoSpan.textContent = `📦 ${used} / ${internalLimit} л`;
+    infoSpan.textContent = `📦 ${used} / ${internalLimit}`;
     infoSpan.style.whiteSpace = 'nowrap';
     row.appendChild(infoSpan);
 
@@ -14486,6 +14588,7 @@ function renderVestPouchItem(pouch, index, path, parentContainer, pouchTemplates
         delBtn.style.flexShrink = '0';
         delBtn.onclick = () => {
             const parentArray = currentCharacterData.equipment.vest.pouches;
+            returnPouchContents(currentCharacterData, [parentArray[index]]);
             parentArray.splice(index, 1);
             renderInventoryTab(currentCharacterData);
             scheduleAutoSave();
@@ -14566,7 +14669,7 @@ function updatePouchVolumeFromContentsDiv(contentsDiv) {
 
     const used = calculatePouchUsedVolume(pouch);
     const internalLimit = pouch.internalVolume || pouch.capacity;
-    infoSpan.textContent = `📦 ${used} / ${internalLimit} л`;
+    infoSpan.textContent = `📦 ${used} / ${internalLimit}`;
 }
 
 // ========== МОДАЛЬНОЕ ОКНО ДЛЯ СОЗДАНИЯ ПРЕДМЕТА В ИНВЕНТАРЕ ==========
@@ -16711,6 +16814,15 @@ window.rollSkill = async function(skillPath, skillLabel) {
             vegetation:skillPath==='other.stealth'&&Boolean(traitCount(currentCharacterData,'Человек-куст')),onSaved:data=>queueRemoteSheetData(data,characterId)});
         return;
     }
+    if (skillPath === 'physical.awareness' || skillPath === 'physical.shooting') {
+        const characterId=currentCharacterId;
+        await forceSyncCharacter();
+        if (Number(currentCharacterId)!==Number(characterId)) return;
+        return rollQuickSkill({characterId, skillLabel,
+            skillPath:awarenessMode ? `skills.physical.awareness.${awarenessMode}` : `skills.${skillPath}`,
+            locationId:window.isLocationActive ? window.currentLocationId : null,
+            onSaved:data=>queueRemoteSheetData(data,characterId)});
+    }
     const parts = skillPath.split('.');
     let skillObj = currentCharacterData.skills;
     for (const part of parts) {
@@ -16738,7 +16850,8 @@ window.rollSkill = async function(skillPath, skillLabel) {
         for (const key of ['glasses','gloves','ring','necklace','earrings','bracelet1','bracelet2','helmet','gasMask']) {
             const item=eq[key];if(!item)continue;
             let bonus=Number(item.charismaBonus ?? item.charisma_bonus ?? item.attributes?.charisma_bonus)||0;
-            if(key==='glasses'&&traitCount(currentCharacterData,'Сварщик')&&item.name?.trim().toLowerCase()==='очки сварщика')bonus=1;
+            if(key==='glasses'&&traitCount(currentCharacterData,'Сварщик')
+                &&(item.attributes?.welding_glasses||['очки сварщика','сварочные защитные очки'].includes(item.name?.trim().toLowerCase())))bonus=1;
             equipmentBonus+=bonus;
         }
     }
@@ -17325,6 +17438,12 @@ function setupDropTarget(containerDiv, containerPath, containerItem) {
             return;
         }
 
+        if (targetContainer.category === 'container' && !isItemCompatibleWithPouch(draggedItem, targetContainer)) {
+            showNotification('Этот предмет не подходит для выбранного кейса');
+            draggedItem = null;
+            draggedItemPath = null;
+            return;
+        }
         const targetItems = Array.isArray(targetContainer)
             ? targetContainer
             : targetContainer.contents;
@@ -17339,7 +17458,7 @@ function setupDropTarget(containerDiv, containerPath, containerItem) {
             - (isSameContainer ? newVolume : 0);
         const limit = containerPath.length===2&&containerPath[0]==='inventory'&&containerPath[1]==='pockets'
             ? pocketCapacity(currentCharacterData)
-            : Number(targetContainer.internalVolume || targetContainer.capacity || targetContainer.volume || 0);
+            : Number(targetContainer.internalVolume ?? targetContainer.capacity ?? targetContainer.attributes?.capacity ?? targetContainer.volume ?? 0);
         if (currentUsed + newVolume > limit) {
             showNotification('Недостаточно места в контейнере');
             draggedItem = null; draggedItemPath = null;

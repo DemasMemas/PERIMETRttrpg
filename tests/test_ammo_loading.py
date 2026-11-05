@@ -9,6 +9,26 @@ from app.services.exceptions import ValidationError
 from test_magazine_installation import case, pay
 
 
+@pytest.mark.parametrize('level,extra,quantity,allowed',[
+    ('professional',True,3,True),('professional',False,3,False),
+    ('familiar',True,2,True),('familiar',True,3,False),('unfamiliar',False,2,False),
+])
+def test_armor_reload_extra_moves_real_rounds_without_exceeding_tariff(app,level,extra,quantity,allowed):
+    from app.services.equipment_modifications import make_record
+    armor={'modifications':[make_record('armor-a34')]} if extra else {}
+    data={'skills':{'specialized':{'shotguns':{'level':level}}},'equipment':{'armor':armor},
+        'weapons':[{'name':'Дробовик','subcategory':'Дробовики','attributes':{'fixedMagazine':True,'magazine_size':6,'caliber':'12x70'},'fixedAmmo':[]}],
+        'inventory':{'pockets':[{'id':'shells','category':'ammo','name':'12х70 Картечь','quantity':5,'attributes':{'caliber':'12x70'}}]}}
+    payload={'weapon_index':0,'source_path':['inventory','pockets',0],'quantity':quantity,'action_points':4,'free_actions':0}
+    before=deepcopy(data)
+    if not allowed:
+        with pytest.raises(ValidationError,match='столько патронов'):load_ammunition(data,payload,combat=True)
+        assert data==before
+    else:
+        result=load_ammunition(data,payload,combat=True)
+        assert result['ammo']==quantity and data['inventory']['pockets'][0]['quantity']==5-quantity
+
+
 @pytest.fixture
 def loading_case(case):
     data = deepcopy(case['actor_character'].data)
@@ -142,6 +162,21 @@ def test_free_loading_cannot_bypass_combat(client, loading_case, auth_headers):
                                'character_revision': case['actor_character'].revision, 'loading': request(case, full=True),
                            })
     assert response.status_code == 400
+
+
+def test_modified_prepared_launcher_loads_for_zero_ap_without_bypassing_start(loading_case):
+    from app.services.ammo_loading import validate_loading
+    from app.services.equipment_modifications import make_record
+    data=deepcopy(loading_case['actor_character'].data)
+    data['weapons']=[{'id':'launcher','subcategory':'Гранатометы',
+        'attributes':{'fixedMagazine':True,'caliber':'9x19','magazine_size':1},'fixedAmmo':[],
+        'modifications':[make_record('weapon-c44')]}]
+    data.setdefault('skills',{}).setdefault('specialized',{})['grenadeLaunchers']={'level':'familiar'}
+    data['combatMagazineLoading']={'targetType':'fixed','weaponIndex':0,'sourceId':'ammo'}
+    payload={'weapon_index':0,'source_path':['inventory','pockets',0],'quantity':1,'action_points':0,'free_actions':0}
+    validate_loading(data,payload,combat=True)
+    data.pop('combatMagazineLoading')
+    with pytest.raises(ValidationError):validate_loading(data,payload,combat=True)
 
 
 @pytest.mark.parametrize('bad', [

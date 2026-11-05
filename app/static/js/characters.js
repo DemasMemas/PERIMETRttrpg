@@ -3,6 +3,8 @@ import { Server } from './api.js';
 import { showNotification } from './utils.js';
 import { createCharacterFolderPanel, createCharacterFolderStore } from './characterFolders.js';
 import { openCharacterCreation } from './characterCreation.js';
+import { openNpcLoot } from './npcLoot.js';
+import { openNpcMerchant } from './merchantEditor.js';
 
 let currentLobbyId;
 let mutantCatalog = [];
@@ -58,6 +60,25 @@ function displayLobbyCharacters(characters) {
         title.textContent = char.name;
         title.addEventListener('click', () => window.openCharacterSheet(char.id));
         charDiv.appendChild(title);
+        if (window.isGM && (char.data?.is_npc === true || char.data?.basic?.is_npc === true
+                || char.data?.character_type === 'npc' || char.data?.basic?.character_type === 'npc')) {
+            const loot = document.createElement('button');
+            loot.type = 'button';loot.className = 'btn btn-sm btn-secondary npc-loot-open';
+            loot.textContent = 'Пулы добычи';
+            loot.onclick = async () => {
+                try { await openNpcLoot(currentLobbyId, char.id, lobbyCharacters, loadLobbyCharacters); }
+                catch (error) { showNotification(error.message, 'error'); }
+            };
+            charDiv.appendChild(loot);
+            const merchant = document.createElement('button');
+            merchant.type = 'button';merchant.className = 'btn btn-sm btn-secondary npc-merchant-open';
+            merchant.textContent = 'Настроить торговлю';
+            merchant.onclick = async () => {
+                try { await openNpcMerchant(currentLobbyId, char.id, loadLobbyCharacters); }
+                catch (error) { showNotification(error.message, 'error'); }
+            };
+            charDiv.appendChild(merchant);
+        }
 
         charDiv.addEventListener('dragstart', (e) => {
             e.dataTransfer.setData('text/plain', JSON.stringify({

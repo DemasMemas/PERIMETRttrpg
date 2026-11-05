@@ -162,3 +162,30 @@ test('Подпись тяжести совпадает с расчётом кр�
     assert.equal(getEffectImpact(effect).severity,health.bleeding.totalSeverity);
     assert.ok(effectSummary(effect).includes(`тяжесть ${health.bleeding.totalSeverity}`));
 });
+
+test('неизвестный размер из каталога не выдаётся за нулевой, косметика имеет русские поля',async()=>{
+    const {itemTooltipModel}=await load('itemPresentation.js');
+    const item={name:'Рюкзак',category:'backpack',weight:0,volume:0,
+        attributes:{unspecified_fields:['weight','volume'],limit:40}};
+    const result=itemTooltipModel(item);
+    assert.ok(result.metrics.includes('Вес: не указан'));
+    assert.ok(result.metrics.includes('Объём: не указан'));
+    assert.ok(result.metrics.includes('Вместимость рюкзака: 40'));
+    const changed=itemTooltipModel({...item,weight:2});
+    assert.ok(changed.metrics.includes('Вес: 2 кг'));
+    assert.ok(!changed.metrics.includes('Вес: не указан'));
+    const glasses=itemTooltipModel({category:'glasses',attributes:{flash_protection:.8,eye_physical_protection:15}});
+    assert.ok(glasses.metrics.includes('Коэффициент ослепления: 0.8'));
+    assert.ok(glasses.metrics.includes('Физическая защита глаз (%): 15'));
+});
+
+test('старая официальная подпись обновляется, а ручной текст экземпляра остаётся',async()=>{
+    const {itemTooltipModel}=await load('itemPresentation.js');
+    const template={name:'12.7x55',category:'ammo',description:'Две проверки дополнительной травмы.',
+        attributes:{source_description:'Одна дополнительная травма.'}};
+    const result=itemTooltipModel(template,{name:template.name,category:'ammo',description:'Одна дополнительная травма.'});
+    assert.ok(result.rules.includes('Две проверки дополнительной травмы.'));
+    assert.ok(!result.rules.includes('Одна дополнительная травма.'));
+    const custom=itemTooltipModel(template,{name:template.name,category:'ammo',description:'Ручное правило ГМа.'});
+    assert.ok(custom.rules.includes('Ручное правило ГМа.'));
+});

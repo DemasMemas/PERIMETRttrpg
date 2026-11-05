@@ -71,7 +71,8 @@ def installed(weapon,flag):
 
 def weapon_stat(weapon,stat,base):
     from app.services.combat import CombatService
-    value=base
+    from app.services.equipment_modifications import stat as modification_stat
+    value=modification_stat(weapon,stat,base)
     for module in (weapon or {}).get('installedModules') or []:
         if not isinstance(module,dict):continue
         modifiers=module.get('modifiers') or module_attributes(module).get('modifiers') or {}
@@ -79,11 +80,19 @@ def weapon_stat(weapon,stat,base):
     return value
 
 
-def uses_nvg(data):
+def active_nvg_module(data):
     equipment=(data or {}).get('equipment') or {}
-    modules=(equipment.get('helmet') or {}).get('installedModules') or []
-    return any(isinstance(m,dict) and (m.get('slotType')=='nvg' or module_attributes(m).get('night_vision'))
-               and m.get('active',True) and m.get('enabled',True) and not m.get('raised',False) for m in modules)
+    helmet=equipment.get('helmet') if isinstance(equipment,dict) else None
+    modules=helmet.get('installedModules') if isinstance(helmet,dict) else None
+    if not isinstance(modules,list):return None
+    return next((m for m in modules if isinstance(m,dict)
+        and (m.get('slotType')=='nvg' or module_attributes(m).get('night_vision'))
+        and m.get('active',True) and m.get('enabled',True) and not m.get('raised',False)
+        and (m.get('lightPower') or {}).get('uses_left',10)>0),None)
+
+
+def uses_nvg(data):
+    return active_nvg_module(data) is not None
 
 
 def conditional_accuracy(weapon,*,fire_mode,distance,posture,nvg=False):

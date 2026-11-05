@@ -189,7 +189,7 @@ def _parse_shared_strings(archive: zipfile.ZipFile) -> List[str]:
     return values
 
 
-def _read_sheet_rows(workbook_path: Path, sheet_name: str) -> List[Dict[str, str]]:
+def _read_sheet_rows(workbook_path: Path, sheet_name: str, *, include_row_numbers=False) -> List[Dict[str, str]]:
     with zipfile.ZipFile(workbook_path) as archive:
         shared_strings = _parse_shared_strings(archive)
         workbook = ET.fromstring(archive.read("xl/workbook.xml"))
@@ -200,15 +200,20 @@ def _read_sheet_rows(workbook_path: Path, sheet_name: str) -> List[Dict[str, str
         for sheet in workbook.findall(".//m:sheet", NS):
             if sheet.attrib.get("name") == sheet_name:
                 rel_id = sheet.attrib["{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id"]
-                target = "xl/" + rel_targets[rel_id]
+                from posixpath import normpath
+                relative_target = rel_targets[rel_id]
+                target = relative_target.lstrip('/') if relative_target.startswith('/') else normpath('xl/' + relative_target)
                 break
         if not target:
             raise ValueError(f"Sheet '{sheet_name}' was not found in workbook")
 
         root = ET.fromstring(archive.read(target))
         rows: List[Dict[str, str]] = []
+        by_number = {}
         for row in root.findall(".//m:sheetData/m:row", NS):
             parsed: Dict[str, str] = {}
+            if include_row_numbers:
+                parsed['__row__'] = int(row.attrib['r'])
             for cell in row.findall("m:c", NS):
                 ref = cell.attrib.get("r", "")
                 column = "".join(ch for ch in ref if ch.isalpha())
@@ -226,7 +231,24 @@ def _read_sheet_rows(workbook_path: Path, sheet_name: str) -> List[Dict[str, str
                     value = "".join(parts)
                 parsed[column] = value
             rows.append(parsed)
-        return rows
+            by_number[int(row.attrib['r'])] = parsed
+        # Вертикально объединённая ячейка относится ко всем строкам группы.
+        # Например, совместимость магазинов и размеры приборов заданы один раз.
+        for merged in root.findall('.//m:mergeCell', NS):
+            match = re.fullmatch(r'([A-Z]+)(\d+):\1(\d+)', merged.attrib.get('ref', ''))
+            if not match:
+                continue
+            column, start, end = match[1], int(match[2]), int(match[3])
+            value = by_number.get(start, {}).get(column)
+            if value in (None, ''):
+                continue
+            for number in range(start + 1, end + 1):
+                destination = by_number.setdefault(number, {'__row__': number} if include_row_numbers else {})
+                if destination.get(column) in (None, ''):
+                    destination[column] = value
+                    if include_row_numbers:
+                        destination.setdefault('__merged__', []).append(column)
+        return [by_number[number] for number in sorted(by_number)]
 
 
 def _parse_od(text: str) -> Optional[int]:
@@ -578,6 +600,10 @@ def _parse_armor(rows: List[Dict[str, str]]) -> List[Dict[str, Any]]:
 
 def _parse_helmets(rows: List[Dict[str, str]]) -> List[Dict[str, Any]]:
     templates: List[Dict[str, Any]] = []
+    header=next((r for r in rows if _normalize_text(r.get('B')) in {'Шлема','Шлемы'}),{})
+    modern='категор' in _normalize_text(header.get('M')).casefold() and 'цена' in _normalize_text(header.get('N')).casefold()
+    columns=({'accuracy':'J','ergonomics':'K','charisma':'L','class':'M','price':'N','movement':'O','volume':'P'} if modern
+        else {'accuracy':'K','ergonomics':'L','charisma':'M','class':'N','price':'O','movement':'P','volume':'J'})
     for row in rows[22:45]:
         name = _normalize_text(row.get("B"))
         if not name:
@@ -585,9 +611,9 @@ def _parse_helmets(rows: List[Dict[str, str]]) -> List[Dict[str, Any]]:
         name = re.sub(r"^Прочее\s+", "", name, flags=re.IGNORECASE)
         is_gas_mask = name.lower().startswith(("противогаз", "респиратор"))
         requires_filter = _normalize_text(row.get("A")) == "Противогазо-шлем"
-        integrated_visor = name.lower().startswith("шлем")
+        integrated_visor = name.lower().startswith("шлем") and 'face' in _helmet_protection_zones(name)
         material = _normalize_text(row.get("I"))
-        charisma_bonus = _normalize_text(row.get("M"))
+        charisma_bonus = _normalize_text(row.get(columns['charisma']))
         if name.lower().endswith("ушанка"):
             charisma_bonus = "1.5"
         slots = []
@@ -598,21 +624,24 @@ def _parse_helmets(rows: List[Dict[str, str]]) -> List[Dict[str, Any]]:
                 "name": name,
                 "category": "gas_mask" if is_gas_mask else "helmet",
                 "subcategory": _normalize_text(row.get("I")),
-                "item_class": _normalize_text(row.get("N")),
+                "item_class": _normalize_text(row.get(columns['class'])),
                 "description": _normalize_text(row.get("A")),
-                "price": _as_int(row.get("O")),
+                "price": _as_int(row.get(columns['price'])),
                 "weight": _parse_weight(row.get("Q")),
-                "volume": _as_float(row.get("J")),
+                "volume": _as_float(row.get(columns['volume'])),
                 "attributes": {
                     "import_source": "equipment_workbook",
                     "max_durability": _as_int(row.get("C"), 1),
                     "protection": _protection(row, ("D", "E", "F", "G", "H")),
                     "armor_type": _normalize_text(row.get("I")),
                     "material": material,
-                    "accuracy_penalty": _normalize_text(row.get("K")),
-                    "ergonomics_penalty": _normalize_text(row.get("L")),
+                    "accuracy_penalty": _normalize_text(row.get(columns['accuracy'])),
+                    "ergonomics_penalty": _normalize_text(row.get(columns['ergonomics'])),
                     "charisma_bonus": charisma_bonus,
-                    "movement_penalty": _as_int(row.get("P")),
+                    "movement_penalty": _as_int(row.get(columns['movement'])),
+                    "soft_headwear":material.casefold()=='текстиль' and not is_gas_mask and not requires_filter,
+                    "modification_category":('Ушанка' if name.casefold()=='ушанка' else 'Противогазы' if is_gas_mask else
+                        'Шлема-противогазы' if requires_filter else 'Шлема с забралом' if integrated_visor else 'Шлема без забрала'),
                     "requires_filter": requires_filter,
                     "integrated_visor": integrated_visor,
                     "slots": slots,
@@ -755,6 +784,15 @@ def parse_equipment_templates(workbook_path: Path) -> List[Dict[str, Any]]:
     weapon_rows = _read_sheet_rows(workbook_path, "Оружие")
     armor_rows = _read_sheet_rows(workbook_path, "Броня")
     misc_rows = _read_sheet_rows(workbook_path, "Прочее")
+    from app.services.catalog_import import additional_templates
+    additional_rows = []
+    for sheet in ('Косметическая Экипировка', 'Разгрузочные системы'):
+        try:
+            additional_rows.append(_read_sheet_rows(workbook_path, sheet))
+        except ValueError as error:
+            if 'was not found in workbook' not in str(error):
+                raise
+            additional_rows.append([])
     templates: List[Dict[str, Any]] = [
         *_parse_ranged_weapons(weapon_rows),
         *_parse_melee_weapons(weapon_rows),
@@ -915,9 +953,46 @@ def parse_equipment_templates(workbook_path: Path) -> List[Dict[str, Any]]:
                 template["attributes"]["manual_cycle"] = "bolt"
             elif matches_pump:
                 template["attributes"]["manual_cycle"] = "pump"
+    # Специализированные оружейные и ремонтные профили имеют приоритет.
+    known = {(entry['category'], _normalize_equipment_name(entry['name'])) for entry in templates}
+    for entry in additional_templates(misc_rows, *additional_rows):
+        key = (entry['category'], _normalize_equipment_name(entry['name']))
+        if key not in known:
+            templates.append(entry)
+            known.add(key)
     for source_order, template in enumerate(templates):
         template.setdefault("attributes", {})["source_order"] = source_order
     return templates
+
+
+def insert_missing_templates(templates, session=None):
+    """Добавляет отсутствующее, сохраняя цены, профили и ID существующих записей."""
+    from copy import deepcopy
+    session = session or db.session
+    existing = session.query(ItemTemplate).all()
+    known = {(item.category, _normalize_equipment_name(item.name)) for item in existing}
+    inserted = 0
+    for original in sorted(templates, key=lambda entry: entry['category'] == 'magazine'):
+        data = deepcopy(original)
+        data.pop('id', None)
+        key = (data['category'], _normalize_equipment_name(data['name']))
+        if key in known:
+            continue
+        if data['category'] == 'magazine':
+            session.flush()
+            aliases = {}
+            for weapon in session.query(ItemTemplate).filter_by(category='weapon').all():
+                for alias in _weapon_aliases(weapon.name):
+                    aliases.setdefault(alias, []).append(weapon.id)
+            compatible = sorted({weapon_id for name in data['attributes'].get('compatible_weapon_names', [])
+                                 for weapon_id in aliases.get(_equipment_alias(name), [])})
+            data['compatible_ids'] = compatible
+            data['attributes']['compatible_weapons'] = compatible
+        session.add(ItemTemplate(**data))
+        known.add(key)
+        inserted += 1
+    session.flush()
+    return {'parsed': len(templates), 'inserted': inserted, 'updated': 0, 'skipped': len(templates) - inserted}
 
 
 def upsert_equipment_templates(workbook_path: str | Path, session=None) -> Dict[str, int]:

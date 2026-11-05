@@ -3,14 +3,14 @@ import { rememberEquipmentChoice } from './equipmentChoices.js';
 
 export function usesNightVision(data) {
     return (data?.equipment?.helmet?.installedModules || []).some(module=>(module.slotType==='nvg' || module.attributes?.night_vision)
-        && module.active!==false && module.enabled!==false && !module.raised);
+        && module.active!==false && module.enabled!==false && !module.raised && (module.lightPower?.uses_left??10)>0);
 }
 
 export async function renderPortableLights(container,characterId,data,operate,isCurrent=()=>true,canEdit=true) {
     const result=await Server.getPortableLights(characterId);
     if (!isCurrent() || !result.lights.length) return;
     const root=document.createElement('section');root.className='loadout-group portable-lights';
-    const heading=document.createElement('h4');heading.textContent='Свет';root.append(heading);
+    const heading=document.createElement('h4');heading.textContent='Свет и ПНВ';root.append(heading);
     const active=window.locationCombatState?.status==='active';
     const ownTurn=canEdit && (!active || window.locationCombatState?.current_character?.character_id===characterId);
     for (const light of result.lights) {
@@ -28,7 +28,7 @@ export async function renderPortableLights(container,characterId,data,operate,is
         };
         if (light.binding) {
             button(`${light.binding.on?'Выключить':'Включить'}${active?' · 1 ОД':''}`,'toggle',{},!light.binding.on && light.uses_left<=0);
-            if (light.binding.mount!=='weapon') button(`Убрать${active?' · 1 ОД':''}`,'stow');
+            if (!['weapon','nvg'].includes(light.binding.mount)) button(`Убрать${active?' · 1 ОД':''}`,'stow');
         } else {
             const mount=light.kind==='head'?'head':light.kind==='module'?'weapon':'hand';
             button(mount==='head'?'Надеть':mount==='weapon'?'Подготовить модуль':'Взять в руку','prepare',

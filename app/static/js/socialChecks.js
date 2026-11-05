@@ -35,6 +35,7 @@ export async function showSocialCheck({characterId,lobbyId,skillPath,skillLabel,
         try {
             const payload=retry?{retry:true,operation_id:pendingId}:{operation_id:pendingId,target_character_id:form.elements.target.value?Number(form.elements.target.value):null,
                 skill_path:skillPath,difficulty:Number(form.elements.difficulty.value),face_visible:form.elements.face?.checked||false,
+                ...(window.isLocationActive && window.currentLocationId ? {location_id:window.currentLocationId} : {}),
                 vegetation:form.elements.vegetation?.checked||false,related_favored:form.elements.related_favored?.checked||false};
             const result=await Server.performSkillCheck(characterId,payload);pendingId=null;
             const check=result.check;

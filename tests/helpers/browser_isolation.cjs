@@ -5,7 +5,7 @@ const {promisify} = require('node:util');
 const execute = promisify(execFile);
 const root = path.resolve(__dirname, '../..');
 const fixedVendor=require('./fixed_vendor.cjs');
-const BROWSER_SCENARIOS=Object.freeze({pripyat:'VTT_PRIPYAT',widgets:'VTT_WIDGETS_ONLY',skills:'VTT_SKILLS_ONLY',creation:'VTT_SKILLS_ONLY',weapons:'VTT_SKILLS_ONLY',traits:'VTT_SKILLS_ONLY',movement:'VTT_MOVEMENT_ONLY',magazine:'VTT_MAGAZINE_ONLY','damage-revoke':'VTT_DAMAGE_REVOKE_ONLY','durable-reload':'VTT_DURABLE_RELOAD_ONLY','medical-retry':'VTT_MEDICAL_RETRY_ONLY',weather:'VTT_MOVEMENT_ONLY','health-audit':'VTT_MOVEMENT_ONLY','morning-answers':'VTT_MOVEMENT_ONLY','fire-rate':'VTT_MOVEMENT_ONLY','sheet-repro':'VTT_SHEET_REPRO_ONLY',rotation:'VTT_ROTATION_ONLY',surface:'VTT_MOVEMENT_ONLY',height:'VTT_MOVEMENT_ONLY','gm-relocation':'VTT_GM_RELOCATION_ONLY',terrain:'VTT_MOVEMENT_ONLY',walls:'VTT_MOVEMENT_ONLY',psi:'VTT_MOVEMENT_ONLY',climb:'VTT_MOVEMENT_ONLY',jump:'VTT_MOVEMENT_ONLY',graphics:'VTT_MOVEMENT_ONLY','anomaly-boar':'VTT_MOVEMENT_ONLY',ice:'VTT_MOVEMENT_ONLY',slippery:'VTT_MOVEMENT_ONLY',grenades:'VTT_MOVEMENT_ONLY','world-loading':'VTT_MOVEMENT_ONLY'});
+const BROWSER_SCENARIOS=Object.freeze({pripyat:'VTT_PRIPYAT',widgets:'VTT_WIDGETS_ONLY',skills:'VTT_SKILLS_ONLY',creation:'VTT_SKILLS_ONLY',weapons:'VTT_SKILLS_ONLY',traits:'VTT_SKILLS_ONLY',movement:'VTT_MOVEMENT_ONLY',magazine:'VTT_MAGAZINE_ONLY','damage-revoke':'VTT_DAMAGE_REVOKE_ONLY','durable-reload':'VTT_DURABLE_RELOAD_ONLY','medical-retry':'VTT_MEDICAL_RETRY_ONLY',trade:'VTT_MOVEMENT_ONLY',weather:'VTT_MOVEMENT_ONLY','health-audit':'VTT_MOVEMENT_ONLY','morning-answers':'VTT_MOVEMENT_ONLY','fire-rate':'VTT_MOVEMENT_ONLY','sheet-repro':'VTT_SHEET_REPRO_ONLY',rotation:'VTT_ROTATION_ONLY',surface:'VTT_MOVEMENT_ONLY',height:'VTT_MOVEMENT_ONLY','gm-relocation':'VTT_GM_RELOCATION_ONLY',terrain:'VTT_MOVEMENT_ONLY',walls:'VTT_MOVEMENT_ONLY',psi:'VTT_MOVEMENT_ONLY',climb:'VTT_MOVEMENT_ONLY',jump:'VTT_MOVEMENT_ONLY',graphics:'VTT_MOVEMENT_ONLY','anomaly-boar':'VTT_MOVEMENT_ONLY',ice:'VTT_MOVEMENT_ONLY',slippery:'VTT_MOVEMENT_ONLY',grenades:'VTT_MOVEMENT_ONLY','world-loading':'VTT_MOVEMENT_ONLY'});
 const BROWSER_DB_MODES=Object.freeze({memory:'--confirm-memory-browser','owned-file':'--confirm-isolated-browser'});
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
 function cleanEnvironment(source) {
@@ -19,7 +19,7 @@ function validateEnvironment(env) {
     if (!/^[0-9a-f-]{36}$/.test(env.VTT_SAFE_RUN_ID || '') || env.PYTHON_DOTENV_DISABLED !== '1'
         || env.VTT_BROWSER_GPU !== '1' || !Object.hasOwn(BROWSER_SCENARIOS,env.VTT_SAFE_SCENARIO)) throw Error('Нет безопасного допуска браузера');
     if(!Object.hasOwn(BROWSER_DB_MODES,env.VTT_SAFE_DB_MODE)||env.VTT_SAFE_DB_CONFIRMATION!==BROWSER_DB_MODES[env.VTT_SAFE_DB_MODE])throw Error('Режим БД не подтверждён соответствующим флагом');
-    if(['fire-rate','health-audit','weather','morning-answers','movement','magazine','damage-revoke','durable-reload','medical-retry','sheet-repro','skills','rotation','surface','height','gm-relocation','terrain','walls','psi','climb','jump','graphics','anomaly-boar','ice','slippery','grenades','world-loading'].includes(env.VTT_SAFE_SCENARIO)&&env.VTT_SAFE_DB_MODE!=='owned-file')throw Error('Сценарий требует owned-file маршрут');
+    if(['trade','fire-rate','health-audit','weather','morning-answers','movement','magazine','damage-revoke','durable-reload','medical-retry','sheet-repro','skills','rotation','surface','height','gm-relocation','terrain','walls','psi','climb','jump','graphics','anomaly-boar','ice','slippery','grenades','world-loading'].includes(env.VTT_SAFE_SCENARIO)&&env.VTT_SAFE_DB_MODE!=='owned-file')throw Error('Сценарий требует owned-file маршрут');
     const flag=BROWSER_SCENARIOS[env.VTT_SAFE_SCENARIO];
     if(['creation','weapons','traits'].includes(env.VTT_SAFE_SCENARIO)&&env.VTT_SAFE_DB_MODE!=='owned-file')throw Error('Создание персонажа проверяется только в отдельной файловой БД');
     const allowed = new Set(['VTT_SAFE_RUN_ID','VTT_SAFE_SCENARIO','VTT_BROWSER_GPU','VTT_SAFE_DB_MODE','VTT_SAFE_DB_CONFIRMATION',flag]);
@@ -115,6 +115,8 @@ with app.app_context():
     with database_scope():
         check_database()
 ${scenario==='creation'?`        from character_creation_fixture import install
+        install(app, db, check_database, '${runId}')
+`:''}${scenario==='trade'?`        from trade_fixture import install
         install(app, db, check_database, '${runId}')
 `:''}${['health-audit','fire-rate','morning-answers'].includes(scenario)?`        from health_audit_fixture import install
         install(app, db, check_database, '${runId}')

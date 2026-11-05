@@ -2,7 +2,10 @@ const normalized=value=>String(value??'').trim().toLocaleLowerCase('ru').replace
 export const ruleText=value=>String(value??'').replace(/\s+/gu,' ').trim();
 export function traitCount(data,name){return(data?.features?.specialTraits||[]).filter(t=>t?.active!==false&&normalized(t?.name)===normalized(name)).length;}
 export function backgroundIs(data,name){return normalized(data?.basic?.background?.name)===normalized(name);}
-export function pocketCapacity(data){return Math.max(0,10+passiveTraits(data).pocketCells);}
+export function pocketCapacity(data){
+    const additional=Object.values(data?.equipment||{}).reduce((sum,item)=>sum+(!item?.protectionDisabled?(item?.modifications||[]).reduce((value,m)=>value+(m?.ruleId?Number(m.modifiers?.pocket_cells)||0:0),0):0),0);
+    return Math.max(0,10+passiveTraits(data).pocketCells+Math.floor(additional));
+}
 export function carriedWeaponEntries(data){
     const entries=[];
     const visit=(value,path,weapon=false)=>{

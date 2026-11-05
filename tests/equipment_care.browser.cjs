@@ -1,0 +1,65 @@
+// Действия обычного игрока в том же изолированном браузере и копии Припяти.
+const assert=require('node:assert/strict');
+module.exports=async({peer,request,recipient,token,api,read,devices,nvg,helmet})=>{
+    await peer.evaluate('window.closeCharacterSheet?.();true');
+    const [gloves,consumables]=await Promise.all(['gloves','consumable'].map(category=>request(api+'/templates?category='+category,null,token,'GET')));
+    const medical=gloves.global.find(t=>t.attributes?.sterile_duration_seconds);
+    const alcohol=consumables.global.find(t=>t.name==='Спирт');
+    const battery=devices.global.find(t=>t.subcategory==='battery');
+    assert.ok(medical&&alcohol&&battery);
+    const data=(await read()).data;
+    data.equipment.helmet={id:'care-helmet',name:helmet.name,templateId:helmet.id,attributes:helmet.attributes,
+        installedModules:[{id:'care-nvg',slotType:'nvg',name:nvg.name,templateId:nvg.id,attributes:nvg.attributes}]};
+    data.equipment.gloves={id:'care-gloves',name:medical.name,category:'gloves',templateId:medical.id,attributes:medical.attributes};
+    data.inventory.pockets.push({id:'care-alcohol',name:alcohol.name,category:'consumable',templateId:alcohol.id,attributes:alcohol.attributes,quantity:1,uses:2,maxUses:5},
+        {id:'care-battery',name:battery.name,category:'device',templateId:battery.id,attributes:battery.attributes,quantity:2});
+    await request('/lobbies/characters/'+recipient.id,{data},token,'PUT');
+    const open=()=>peer.evaluate(`window.openCharacterSheet(${recipient.id},'equipment').then(()=>true)`);
+    await open();
+    await peer.until("document.querySelector('.glove-care')&&document.querySelector('.portable-light-row [data-light-operation=toggle]')",'ПНВ и обработка перчаток в реальном листе');
+    const clickToggle=()=>peer.evaluate("document.querySelector('.portable-light-row [data-light-operation=toggle]').click();true");
+    await clickToggle();
+    await peer.until(`(async()=>{const {Server}=await import('/static/js/api.js');return (await Server.getCharacter(${recipient.id})).data.equipment.helmet.installedModules[0].active===false})()`,'ПНВ выключен игроком');
+    await peer.until("document.querySelector('.portable-light-row [data-light-operation=toggle]')?.textContent.includes('Включить')",'Лист показал выключенный ПНВ');
+    await clickToggle();
+    await peer.until("document.querySelector('.portable-light-row [data-light-operation=toggle]')?.textContent.includes('Выключить')",'ПНВ снова включён');
+    await peer.evaluate("document.querySelector('.glove-care button').click();true");
+    await peer.until("document.querySelector('#consumable-application-modal .consumable-application-list button')",'Выбор спирта для обработки');
+    await peer.evaluate("document.querySelector('#consumable-application-modal .consumable-application-list button').click();true");
+    await peer.until(`(async()=>{const {Server}=await import('/static/js/api.js');const c=await Server.getCharacter(${recipient.id});return c.data.inventory.pockets.find(i=>i.id==='care-alcohol')?.uses===1})()`,'Обработка потратила одно использование спирта');
+    let saved=(await read()).data;
+    assert.equal(saved.equipment.gloves.sterility.remaining_seconds,3600);
+    assert.equal(saved.health.intoxication||0,0);
+    await peer.until("document.querySelector('.glove-care')?.textContent.includes('Стерильны')",'Стерильность видна в листе');
+    await peer.evaluate('window.unequipGloves().then(()=>true)');
+    await peer.until(`(async()=>{const {Server}=await import('/static/js/api.js');const c=await Server.getCharacter(${recipient.id});return !c.data.equipment.gloves&&c.data.inventory.backpack.some(i=>i.id==='care-gloves')})()`,'Снятие перчаток сохранило экземпляр');
+    await request(api+'/time',{game_day:1,game_time_minutes:10},token,'PATCH');
+    saved=(await read()).data;
+    assert.equal(saved.equipment.helmet.installedModules[0].lightPower.uses_left,9);
+    const index=saved.inventory.backpack.findIndex(i=>i.id==='care-gloves');
+    assert.equal(saved.inventory.backpack[index].sterility.remaining_seconds,3000);
+    await open();
+    await peer.evaluate(`window.equipGlovesFromInventory(['inventory','backpack',${index}]).then(()=>true)`);
+    await peer.until(`(async()=>{const {Server}=await import('/static/js/api.js');const c=await Server.getCharacter(${recipient.id});return c.data.equipment.gloves?.sterility?.remaining_seconds===3000})()`,'Повторное надевание не обновило час');
+    await peer.until("document.querySelector('.portable-light-row')?.textContent.includes('9/10')",'Расход ПНВ виден после десяти минут');
+    await peer.evaluate("[...document.querySelectorAll('.portable-light-row button')].find(e=>e.textContent.includes('Заменить батарейку')).click();true");
+    await peer.until(`(async()=>{const {Server}=await import('/static/js/api.js');const c=await Server.getCharacter(${recipient.id});return c.data.equipment.helmet.installedModules[0].lightPower.uses_left===10&&c.data.inventory.pockets.find(i=>i.id==='care-battery')?.quantity===1})()`,'Заменена одна батарейка ПНВ');
+    await peer.until("document.querySelector('.portable-light-row')?.textContent.includes('10/10')",'Лист получил результат замены батареи');
+    await peer.evaluate('window.closeCharacterSheet?.();true');
+    saved=(await read()).data;
+    saved.inventory.pockets.push({id:'care-glove-stack',name:medical.name,category:'gloves',templateId:medical.id,
+        attributes:medical.attributes,quantity:3});
+    const stackIndex=saved.inventory.pockets.length-1;
+    await request('/lobbies/characters/'+recipient.id,{data:saved},token,'PUT');
+    await open();
+    await peer.evaluate(`window.equipGlovesFromInventory(['inventory','pockets',${stackIndex}]).then(()=>true)`);
+    await peer.until(`(async()=>{const {Server}=await import('/static/js/api.js');const c=await Server.getCharacter(${recipient.id});return c.data.equipment.gloves?.id==='care-glove-stack'&&c.data.equipment.gloves.quantity===1})()`,'Надета одна пара из стопки');
+    saved=(await read()).data;
+    const oldPair=saved.inventory.pockets.find(i=>i.id==='care-gloves');
+    const unused=saved.inventory.pockets.find(i=>i.templateId===medical.id&&i.id!=='care-gloves');
+    assert.equal(oldPair.sterility.remaining_seconds,3000);
+    assert.equal(unused.quantity,2);assert.notEqual(unused.id,'care-glove-stack');
+    assert.equal(unused.sterility,undefined);
+    assert.equal(saved.equipment.gloves.sterility.remaining_seconds,3600);
+    console.log(JSON.stringify({equipment_care:true,normal_player:true,nvg_toggle:true,nvg_clock:true,battery_replaced:true,glove_sterilization:true,one_alcohol_use:true,glove_reequip_timer_preserved:true,glove_stack_split:true,swapped_pair_preserved:true}));
+};

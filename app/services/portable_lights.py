@@ -28,9 +28,14 @@ def walk(data,all_items=False):
         if isinstance(value,list):
             for index,item in enumerate(value):visit(item,path+[index])
         elif isinstance(value,dict):
-            if definition(value) or all_items:result.append((path,value))
+            if all_items or definition(value):result.append((path,value))
             for key in ('contents','pouches','installedModules'):
                 if isinstance(value.get(key),list):visit(value[key],path+[key])
+            if all_items:
+                for key in ('installedMagazine','loadedGrenade'):
+                    if isinstance(value.get(key),dict):visit(value[key],path+[key])
+                for key in ('fixedAmmo','ammo'):
+                    if isinstance(value.get(key),list):visit(value[key],path+[key])
     for key,items in (data.get('inventory') or {}).items():visit(items,['inventory',key])
     for key,item in (data.get('equipment') or {}).items():visit(item,['equipment',key])
     visit(data.get('weapons') or [],['weapons'])
@@ -39,6 +44,15 @@ def walk(data,all_items=False):
 
 def bindings(data):
     return (((data or {}).get('health') or {}).get('combatMeta') or {}).get('portableLights') or []
+
+
+def nvg_items(data):
+    return [(path,item) for path,item in walk(data,all_items=True)
+            if item.get('slotType')=='nvg' or (item.get('attributes') or {}).get('night_vision')]
+
+
+def nvg_on(item):
+    return item.get('active',True) and item.get('enabled',True) and not item.get('raised',False)
 
 
 def power(item):
@@ -59,6 +73,15 @@ def preserve(current,incoming):
         if item.get('id') in states:
             if states[item['id']] is None:item.pop('lightPower',None)
             else:item['lightPower']=deepcopy(states[item['id']])
+    def identity(path,item):return item.get('id') or (*path,item.get('templateId'),item.get('name'))
+    previous={identity(path,item):item for path,item in nvg_items(current or {})}
+    for path,item in nvg_items(incoming):
+        old=previous.get(identity(path,item))
+        if old:
+            for key in ('lightPower','active','enabled','raised'):
+                if key in old:item[key]=deepcopy(old[key])
+                else:item.pop(key,None)
+        else:item['lightPower']={'uses_left':10,'elapsed_seconds':0}
 
 
 def held_hand(data):
@@ -66,25 +89,40 @@ def held_hand(data):
     return any(binding.get('mount')=='hand' and binding.get('id') in ids for binding in bindings(data))
 
 
+def _advance_power(state,binding,seconds,battle_end):
+    if binding.get('on'):
+        elapsed=max(0,float(state.get('elapsed_seconds') or 0))+max(0,seconds)
+        used=int(elapsed//600)
+        state['uses_left']=max(0,int(state.get('uses_left',10))-used)
+        state['elapsed_seconds']=elapsed%600 if state['uses_left'] else 0
+        if seconds>0:binding['period_used']=bool(state['elapsed_seconds']) if used else True
+        if state['uses_left']==0:binding['on']=False
+    if battle_end and (binding.get('battle_used') or binding.get('on')) and binding.get('period_used',True):
+        state['uses_left']=max(0,int(state.get('uses_left',10))-1)
+        state['elapsed_seconds']=0;binding['battle_used']=False;binding['period_used']=False
+        if not state['uses_left']:binding['on']=False
+
+
 def advance(data,seconds=0,*,battle_end=False):
     items={item.get('id'):item for _,item in walk(data)}
-    changed=False
+    from app.services.equipment_care import advance as advance_care
+    changed=advance_care(data,seconds)
     for binding in bindings(data):
         item=items.get(binding.get('id'))
         if not item:continue
         state=power(item);before=deepcopy((state,binding))
-        if binding.get('on'):
-            elapsed=max(0,float(state.get('elapsed_seconds') or 0))+max(0,seconds)
-            used=int(elapsed//600)
-            state['uses_left']=max(0,int(state.get('uses_left',10))-used)
-            state['elapsed_seconds']=elapsed%600 if state['uses_left'] else 0
-            if seconds>0:binding['period_used']=bool(state['elapsed_seconds']) if used else True
-            if state['uses_left']==0:binding['on']=False
-        if battle_end and (binding.get('battle_used') or binding.get('on')) and binding.get('period_used',True):
-            state['uses_left']=max(0,int(state.get('uses_left',10))-1)
-            state['elapsed_seconds']=0;binding['battle_used']=False;binding['period_used']=False
-            if not state['uses_left']:binding['on']=False
+        _advance_power(state,binding,seconds,battle_end)
         changed=changed or before!=(state,binding)
+    for path,item in nvg_items(data):
+        state=power(item);before=deepcopy(item)
+        mounted=path[:3]==['equipment','helmet','installedModules']
+        binding={key:state[key] for key in ('battle_used','period_used') if key in state}
+        binding['on']=bool(mounted and nvg_on(item))
+        _advance_power(state,binding,seconds,battle_end)
+        for key in ('battle_used','period_used'):
+            if key in binding:state[key]=binding[key]
+        if not state['uses_left']:item['active']=False
+        changed=changed or before!=item
     return changed
 
 
@@ -93,13 +131,17 @@ def start_battle(data):
     for binding in bindings(data):
         if binding.get('on'):
             binding['battle_used']=binding['period_used']=True;changed=True
+    for path,item in nvg_items(data):
+        if path[:3]==['equipment','helmet','installedModules'] and nvg_on(item) and power(item)['uses_left']:
+            power(item).update(battle_used=True,period_used=True);changed=True
     return changed
 
 
 def advance_lobby(lobby,seconds):
+    from app.services.equipment_care import has_timers
     updated=[]
     for character in LobbyCharacter.query.filter_by(lobby_id=lobby.id).all():
-        if not bindings(character.data):continue
+        if not bindings(character.data) and not nvg_items(character.data or {}) and not has_timers(character.data or {}):continue
         data=deepcopy(character.data or {})
         if advance(data,seconds):
             character.data=data;flag_modified(character,'data');updated.append(character)
@@ -201,7 +243,7 @@ def operate(character_id,user_id,payload):
     CharacterService.check_access(character,user_id,edit=True)
     if type(payload.get('character_revision')) is not int or payload['character_revision']!=character.revision:raise ConflictError()
     data=deepcopy(character.data or {});path=payload.get('path')
-    selected=next((item for item_path,item in walk(data) if item_path==path),None)
+    selected=next((item for item_path,item in [*walk(data),*nvg_items(data)] if item_path==path),None)
     if not selected:raise ValidationError('Фонарь перемещён или отсутствует')
     if 'source_id' in payload and selected.get('id')!=payload['source_id']:raise ConflictError('Фонарь перемещён. Выберите его заново.')
     models=LocationCharacter.query.join(LocationCombatState,LocationCombatState.location_id==LocationCharacter.location_id).filter(
@@ -218,6 +260,11 @@ def operate(character_id,user_id,payload):
     selected.setdefault('id',str(uuid4()));states=data.setdefault('health',{}).setdefault('combatMeta',{}).setdefault('portableLights',[])
     binding=next((item for item in states if item['id']==selected['id']),None)
     operation=payload.get('operation');cost=0
+    nvg=any(item is selected for _,item in nvg_items(data))
+    if nvg:
+        if path[:3]!=['equipment','helmet','installedModules'] or operation not in {'toggle','battery'}:
+            raise ValidationError('Выберите установленный ПНВ и переключение или замену батарейки')
+        binding={'on':bool(nvg_on(selected)),**{key:power(selected)[key] for key in ('period_used','battle_used') if key in power(selected)}}
     if operation=='prepare':
         mount=payload.get('mount') or ('head' if definition(selected)=='head' else 'weapon' if definition(selected)=='module' else 'hand')
         if binding:raise ValidationError('Фонарь уже подготовлен')
@@ -271,6 +318,10 @@ def operate(character_id,user_id,payload):
             selected['lightPower']={'uses_left':10,'elapsed_seconds':0}
     else:raise ValidationError('Неизвестное действие фонаря')
     if actor and actor.action_points_current<cost:raise ValidationError('Недостаточно ОД для фонаря')
+    if nvg:
+        selected['active']=binding['on'];selected['enabled']=True;selected['raised']=False
+        for key in ('period_used','battle_used'):
+            if key in binding:power(selected)[key]=binding[key]
     if actor:actor.action_points_current-=cost
     character.data=data;flag_modified(character,'data')
     return character,actor,{'operation':operation,'action_points':cost}

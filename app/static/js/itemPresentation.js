@@ -13,6 +13,11 @@ const labels = {
     strength:'Сила', agility:'Ловкость', will:'Воля', psy_defense:'Пси-защита',
     movement_points:'ОП', action_points:'ОД',
     noise_absorption:'Поглощение шума', blindnessResistance:'Защита от ослепления',
+    deafening_coef:'Коэффициент оглушения', awareness_bonus:'Бонус слуховой Внимательности',
+    flash_protection:'Коэффициент ослепления', eye_physical_protection:'Физическая защита глаз (%)',
+    limit:'Вместимость рюкзака', access_action_points:'Доступ к содержимому, ОД',
+    weight_reduction:'Снижение штрафа нагрузки', total_capacity:'Объём разгрузки',
+    radiation_limit:'Допустимая радиация артефакта',
 };
 const protectionLabels = {physical:'Физическая',chemical:'Химическая',thermal:'Термическая',
     electric:'Электрическая',radiation:'Радиационная',psy:'Пси'};
@@ -20,7 +25,9 @@ const statLabels = {weight:'Штраф нагрузки'};
 const categories = {weapon:'Огнестрельное оружие',melee_weapon:'Холодное оружие',ammo:'Патроны',
     consumable:'Расходник',armor:'Броня',helmet:'Шлем',gas_mask:'Противогаз',artifact:'Артефакт',
     backpack:'Рюкзак',vest:'Разгрузка',belt:'Пояс',misc:'Предмет',magazine:'Магазин',
-    weapon_module:'Оружейный модуль',gas_mask_module:'Модуль противогаза',detector:'Детектор',jewelry:'Аксессуар'};
+    weapon_module:'Оружейный модуль',gas_mask_module:'Модуль противогаза',detector:'Детектор',jewelry:'Аксессуар',
+    headphones:'Наушники',glasses:'Очки',gloves:'Перчатки',container:'Контейнер',pouch:'Подсумок',
+    device:'Прибор',armor_plate:'Бронеплита',crafting_material:'Материал',tool:'Инструмент'};
 const compact = text => String(text || '').replace(/\s+/g, ' ').trim();
 const key = text => compact(text).toLocaleLowerCase('ru').replace(/[−–—]/g,'-').replace(/[\s.,:;•%()]/g, '');
 const percent = value => `${Number(value) <= 1 && Number(value) > 0 ? Math.round(Number(value) * 100) : value}%`;
@@ -71,7 +78,10 @@ export function itemTooltipModel(template = {}, item = {}) {
         && template.attributes.raw_description === item.attributes.raw_description
         && item.attributes?.consumable?.catalog_rules_version !== currentProfile.catalog_rules_version;
     const profile = (oldImportedCopy ? currentProfile : attrs.consumable) || {};
-    const rawDescription = compact(item.description || template.description || attrs.raw_description || attrs.notes);
+    const sourceDescription = template.attributes?.source_description;
+    const officialDescription = sourceDescription != null && template.description
+        && key(item.description || '') === key(sourceDescription) ? template.description : null;
+    const rawDescription = compact(officialDescription || item.description || template.description || attrs.raw_description || attrs.notes);
     const description = numericDescriptionCovered(rawDescription,profile.direct) ? '' : rawDescription;
     const metrics = [], rules = [], seen = new Set();
     const add = (list, text) => {
@@ -85,6 +95,10 @@ export function itemTooltipModel(template = {}, item = {}) {
         || template.categoryDisplay || categories[category] || 'Предмет');
     for (const [field, caption, unit] of [['weight','Вес',' кг'],['volume','Объём','']]) {
         const value = item[field] ?? template[field];
+        if (attrs.unspecified_fields?.includes(field) && (value == null || Number(value) === 0)) {
+            add(metrics, `${caption}: не указан`);
+            continue;
+        }
         if (value != null) add(metrics, `${caption}: ${value}${unit}`);
     }
     for (const [field, caption] of Object.entries(labels)) {

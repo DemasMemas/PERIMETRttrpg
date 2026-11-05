@@ -140,12 +140,14 @@ def consume_equipped_filter_charges(character_data: Dict[str, Any], amount: floa
             continue
 
         installed = modules[filter_index]
+        from app.services.equipment_modifications import rule
+        item_spent=spent*max(0,1-rule(item,'filter_wear_reduction'))
         before = filter_charges(installed)
-        after = max(0, before - spent)
+        after = max(0, before - item_spent)
         installed["durability"] = after
         installed.setdefault("attributes", {})["durability"] = after
         result["changed"] = True
-        result["consumed"] += min(before, spent)
+        result["consumed"] += min(before, item_spent)
         if after > 0:
             continue
 

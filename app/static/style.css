@@ -3894,3 +3894,59 @@ input[type=range]::-webkit-slider-thumb {
   .creation-shop-columns { grid-template-columns:1fr; }
   .creation-cart { position:static; }
 }
+/* Обмен: две стороны, общий выбор вещей и денег. */
+.character-trade { width: min(960px, calc(100vw - 24px)); max-width: 960px; max-height: 90vh; overflow: auto; }
+.character-trade-heading { display: flex; justify-content: space-between; align-items: center; gap: 16px; }
+.character-trade-heading h3 { margin: 0; }
+.character-trade-heading small, .trade-balance { opacity: .72; }
+.character-trade-heading .trade-close { width: 36px; height: 36px; padding: 0; border-radius: 50%; }
+.character-trade-sides { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); gap: 16px; margin: 16px 0; }
+.character-trade-side { min-width: 0; padding: 14px; border: 1px solid rgba(185,188,139,.25); border-radius: 12px; background: rgba(0,0,0,.14); }
+.character-trade-side h4 { margin: 0 0 8px; }
+.trade-money-label { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin: 12px 0 4px; }
+.trade-money-label span { display: flex; align-items: center; gap: 6px; }
+.trade-money { width: 124px; }
+.trade-filters { display: grid; grid-template-columns: minmax(0,1fr) minmax(120px,.8fr); gap: 8px; margin: 14px 0 8px; }
+.trade-item-list { height: clamp(160px, 35vh, 380px); overflow: auto; overscroll-behavior: contain; }
+.trade-item-row { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 9px 0; border-bottom: 1px solid rgba(255,255,255,.07); }
+.trade-item-row label { display: flex; align-items: center; gap: 10px; min-width: 0; flex: 1; cursor: pointer; }
+.trade-item-row label span { min-width: 0; overflow-wrap: anywhere; }
+.trade-item-row small { display: block; opacity: .66; margin-top: 3px; }
+.character-trade .trade-quantity { width: 72px; max-width: 72px; flex: 0 0 72px; }
+.character-trade .trade-money { width: 124px; max-width: 124px; }
+.trade-summary { line-height: 1.6; white-space: pre-wrap; }
+.trade-error { min-height: 22px; margin: 8px 0; color: #e7c3a2; }
+.character-trade-review { max-height: 60vh; overflow: auto; }
+.character-trade .form-actions { flex-wrap: wrap; }
+.merchant-editor { display: flex; flex-direction: column; box-sizing: border-box; }
+.merchant-editor > * { flex-shrink: 0; }
+.merchant-editor p { margin: 8px 0; }
+.merchant-enable { display: flex; gap: 10px; align-items: center; margin: 16px 0; }
+.character-trade .merchant-money { width: 124px; max-width: 124px; }
+.merchant-columns, .merchant-price-row { display: grid; grid-template-columns: minmax(0,1fr) 104px 104px; gap: 10px; align-items: center; }
+.merchant-columns { padding: 8px 0; font-size: 13px; opacity: .7; }
+.merchant-price-list { height: min(35vh, 320px); min-height: 180px; overflow: auto; }
+.merchant-editor .merchant-price-list { flex-shrink: 1; min-height: 90px; }
+.merchant-page-info { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin: 8px 0; }
+.merchant-price-row { padding: 8px 0; border-bottom: 1px solid rgba(255,255,255,.07); }
+.merchant-price-row > span { min-width: 0; overflow-wrap: anywhere; }
+.merchant-price-row small { display: block; opacity: .65; margin-top: 3px; }
+.character-trade .merchant-price { width: 100%; max-width: 100%; min-width: 0; }
+.npc-loot-editor { width: min(960px, calc(100vw - 24px)); max-width: 960px; max-height: 90vh; overflow: auto; box-sizing: border-box; }
+.npc-loot-editor p { opacity: .8; }
+.loot-profile-fields, .loot-pool-filters, .loot-pool-numbers { display: grid; gap: 10px; margin: 12px 0; }
+.loot-profile-fields { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.loot-pool-filters { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.loot-pool-numbers { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+.loot-pool { padding: 12px; margin: 12px 0; border: 1px solid var(--panel-border); border-radius: 12px; }
+.loot-pool-heading { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.loot-match-count { opacity: .7; }
+.loot-receipt { overflow-wrap: anywhere; line-height: 1.5; }
+.npc-loot-editor .form-actions { flex-wrap: wrap; }
+@media(max-width: 640px) {
+    .loot-profile-fields, .loot-pool-filters, .loot-pool-numbers { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .character-trade-sides { grid-template-columns: minmax(0,1fr); }
+    .trade-item-list { height: 210px; }
+    .trade-filters { grid-template-columns: minmax(0,1fr); }
+    .merchant-columns, .merchant-price-row { grid-template-columns: minmax(0,1fr) 80px 80px; gap: 6px; }
+}

@@ -278,6 +278,10 @@ if(typeof renderFacingPreview==='function'){const original=renderFacingPreview;r
             await require('./health_audit.browser.cjs')({page,request,token,lobby,login,profile,base,connect,debugPort,safeSession});
             return;
         }
+        if (safeSession && process.env.VTT_SAFE_SCENARIO === 'trade') {
+            await require('./character_trade.browser.cjs')({page,request,token,lobby,base,connect,debugPort,safeSession});
+            return;
+        }
         if (safeSession && process.env.VTT_SAFE_SCENARIO === 'weather') {
             await require('./weather.browser.cjs')({page,request,token,lobby,base,connect,debugPort,safeSession});
             return;
@@ -1120,6 +1124,7 @@ if(typeof renderFacingPreview==='function'){const original=renderFacingPreview;r
         assert.equal(vegetationPerf.stale,0,'no detached vegetation batches left in scene');
         await page.call('Browser.close');
     } catch (error) {
+        console.error('Сбой браузерного сценария:',String(error?.message||error).replace(/eyJ[\w-]+\.[\w-]+\.[\w-]+/g,'[test token]'));
         if (safeSession && page) {
             try {
                 fs.writeFileSync(path.join(safeSession.artifacts,'failure.json'),JSON.stringify({error:String(error.message).replace(/eyJ[\w-]+\.[\w-]+\.[\w-]+/g,'[test token]'),network:page.networkEvents},null,2));

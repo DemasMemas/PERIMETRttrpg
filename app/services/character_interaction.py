@@ -9,10 +9,21 @@ from app.models import CharacterInteractionRequest, LocationCombatState
 from app.models.location_character import LocationCharacter
 from app.services.combat import CombatService
 from app.services.exceptions import ConflictError, NotFoundError, PermissionDenied, ValidationError
+from app.services.transaction import atomic_operation
 
 
 class CharacterInteractionService:
     OPEN_STATUSES = {'pending', 'accepted', 'forced', 'in_progress'}
+
+    @staticmethod
+    def _claim_pending(request_row, status):
+        claimed = db.session.execute(db.update(CharacterInteractionRequest).where(
+            CharacterInteractionRequest.id == request_row.id,
+            CharacterInteractionRequest.status == 'pending',
+        ).values(status=status).execution_options(synchronize_session=False)).rowcount
+        if claimed != 1:
+            raise ConflictError('Предложение уже получило ответ или было отменено')
+        db.session.refresh(request_row)
 
     @staticmethod
     def _controlled_by(location_character, user_id, is_gm=False):
@@ -101,6 +112,7 @@ class CharacterInteractionService:
         return CombatService._incapacitated_character_snapshot(actor, target, condition)
 
     @staticmethod
+    @atomic_operation
     def create_request(
         location_id,
         user_id,
@@ -121,9 +133,13 @@ class CharacterInteractionService:
             raise ValidationError('Consent is only required from a conscious character')
         target_user_id = CharacterInteractionService._target_user_id(location, target)
         clean_payload = deepcopy(payload) if isinstance(payload, dict) else {}
+        if kind == 'trade':
+            from app.services.trade import prepare_payload
+            clean_payload = prepare_payload(actor.character, target.character, clean_payload)
         clean_payload.pop('gm_decision_for_offline_target', None)
+        automated_trade = kind == 'trade' and clean_payload.get('_merchant') is True
         delegated_to_gm = False
-        if target_user_id != user_id:
+        if target_user_id != user_id and not automated_trade:
             from app.sockets.auth import lobby_has_online_users, user_is_online_in_lobby
 
             if lobby_has_online_users(location.lobby_id) and not user_is_online_in_lobby(
@@ -144,7 +160,7 @@ class CharacterInteractionService:
             actor_user_id=user_id,
             target_user_id=target_user_id,
             kind=kind,
-            status='accepted' if target_user_id == user_id and not delegated_to_gm else 'pending',
+            status='accepted' if automated_trade or target_user_id == user_id and not delegated_to_gm else 'pending',
             payload=clean_payload,
         )
         db.session.add(request_row)
@@ -156,6 +172,7 @@ class CharacterInteractionService:
         return CharacterInteractionService._serialize(request_row)
 
     @staticmethod
+    @atomic_operation
     def cancel_request(request_id, user_id):
         request_row = db.session.get(CharacterInteractionRequest, request_id)
         if not request_row:
@@ -164,7 +181,7 @@ class CharacterInteractionService:
             raise PermissionDenied('Отменить запрос может только его автор')
         if request_row.status != 'pending':
             raise ConflictError('Запрос уже получил ответ или начал выполняться')
-        request_row.status = 'cancelled'
+        CharacterInteractionService._claim_pending(request_row, 'cancelled')
         request_row.resolved_at = datetime.now(timezone.utc)
         db.session.commit()
         return CharacterInteractionService._serialize(request_row)
@@ -180,6 +197,7 @@ class CharacterInteractionService:
         return {key:result[key] for key in ('roll','bonus','total')}
 
     @staticmethod
+    @atomic_operation
     def respond(request_id, user_id, decision):
         request_row = db.session.get(CharacterInteractionRequest, request_id)
         if not request_row or request_row.status != 'pending':
@@ -204,7 +222,10 @@ class CharacterInteractionService:
             raise ValidationError('The characters are no longer adjacent')
 
         accepted = str(decision).lower() == 'accept'
+        if request_row.kind == 'trade' and (not isinstance(decision,str) or decision not in {'accept', 'decline'}):
+            raise ValidationError('Неизвестный ответ на обмен')
         result = {'decision': 'accept' if accepted else 'decline'}
+        CharacterInteractionService._claim_pending(request_row, 'accepted' if accepted else 'rejected')
         if accepted:
             request_row.status = 'accepted'
         elif request_row.kind == 'treatment':
@@ -229,27 +250,22 @@ class CharacterInteractionService:
 
     @staticmethod
     def _resolve_item_path(character_data, item_id, fallback_path):
-        def walk(value, path):
-            if isinstance(value, list):
-                for index, item in enumerate(value):
-                    if isinstance(item, dict) and item_id is not None and item.get('id') == item_id:
-                        return path + [index]
-                    found = walk(item, path + [index])
-                    if found:
-                        return found
-            elif isinstance(value, dict):
-                for key, child in value.items():
-                    if key in {'inventory', 'equipment', 'contents', 'pouches', 'backpack', 'pockets'}:
-                        found = walk(child, path + [key])
-                        if found:
-                            return found
-            return None
-
+        from app.services.portable_lights import walk
+        entries = [(path, item) for path, item in walk(character_data, all_items=True)
+                   if path and (path[0] == 'equipment' and len(path) >= 2
+                       or len(path) >= 3 and path[:2] in (['inventory', 'backpack'], ['inventory', 'pockets']))
+                   and not any(key in path for key in ('installedModules', 'installedMagazine', 'fixedAmmo', 'ammo', 'loadedGrenade'))]
+        valid_fallback = isinstance(fallback_path,list) and all(type(part) in {str,int} for part in fallback_path)
+        if valid_fallback:
+            found = next((path for path, item in entries if path == fallback_path
+                          and (item_id is None or item.get('id') == item_id)), None)
+            if found is not None:return found
         if item_id is not None:
-            found = walk(character_data, [])
-            if found:
-                return found
-        return list(fallback_path or [])
+            found = next((path for path, item in entries if item.get('id') == item_id), None)
+            if found:return found
+        if valid_fallback:
+            return next((path for path, item in entries if path == fallback_path), [])
+        return []
 
     @staticmethod
     def _apply_offer(source_data, target_data, offer):
@@ -278,12 +294,21 @@ class CharacterInteractionService:
             if not isinstance(backpack, list):
                 backpack = []
                 target_inventory['backpack'] = backpack
+            from app.services.portable_lights import walk
+            from uuid import uuid4
+            occupied = {entry['id'] for _, entry in walk(target_data, all_items=True) if entry.get('id') is not None}
+            for _, entry in walk({'inventory':{'pockets':[item]}}, all_items=True):
+                if entry.get('id') is not None:
+                    if entry['id'] in occupied:entry['id'] = uuid4().hex
+                    occupied.add(entry['id'])
             backpack.append(item)
             moved.append({'name': item.get('name', 'Предмет'), 'amount': item.get('quantity', 1)})
         return moved
 
     @staticmethod
     def _complete_trade(request_row):
+        if request_row.status != 'accepted':
+            raise ConflictError('Предложение уже выполнено или не подтверждено')
         actor = db.session.get(LocationCharacter, request_row.actor_location_character_id)
         target = db.session.get(LocationCharacter, request_row.target_location_character_id)
         state = LocationCombatState.query.filter_by(location_id=request_row.location_id).first()
@@ -303,6 +328,21 @@ class CharacterInteractionService:
         actor_data = deepcopy(actor.character.data or {})
         target_data = deepcopy(target.character.data or {})
         payload = request_row.payload or {}
+        from app.services.trade import exchange_money, prepare_offer
+        expected = payload.get('_expected_revisions') or {}
+        if expected and (expected.get('actor') != actor.character.revision or expected.get('target') != target.character.revision):
+            raise ConflictError('Снаряжение или деньги изменились. Откройте обмен заново.')
+        if payload.get('_merchant'):
+            from app.services.npc_trade import enabled, totals, require_contact
+            if not enabled(target.character):
+                raise ConflictError('Торговец больше не принимает предложения')
+            require_contact(actor, target)
+            current = totals(actor_data, target_data, payload.get('actor_offer', []), payload.get('target_offer', []))
+            if any(current[key] != payload.get(key) for key in current):
+                raise ConflictError('Стоимость товаров изменилась. Откройте торговлю заново.')
+        prepare_offer(actor_data, payload.get('actor_offer', []))
+        prepare_offer(target_data, payload.get('target_offer', []))
+        money_result = exchange_money(actor_data, target_data, payload)
         actor_moved = CharacterInteractionService._apply_offer(
             actor_data,
             target_data,
@@ -316,6 +356,15 @@ class CharacterInteractionService:
         if state and state.status == 'active':
             actor.action_points_current -= 2
             CombatService._clear_aim(actor)
+        from app.services.action_journal import append_trade
+        append_trade(actor_data, request_row.id, actor.character_id, target.character.name,
+            given=actor_moved, received=target_moved, money_given=money_result['actor_to_target_money'],
+            money_received=money_result['target_to_actor_money'], action_points=2 if state and state.status=='active' else 0,
+            location_id=actor.location_id, merchant=bool(payload.get('_merchant')))
+        append_trade(target_data, request_row.id, target.character_id, actor.character.name,
+            given=target_moved, received=actor_moved, money_given=money_result['target_to_actor_money'],
+            money_received=money_result['actor_to_target_money'], location_id=actor.location_id,
+            merchant=bool(payload.get('_merchant')))
         actor.character.data = actor_data
         target.character.data = target_data
         flag_modified(actor.character, 'data')
@@ -326,6 +375,7 @@ class CharacterInteractionService:
             'action_points': 2 if state and state.status == 'active' else 0,
             'actor_to_target': actor_moved,
             'target_to_actor': target_moved,
+            **money_result,
         }
         request_row.resolved_at = datetime.now(timezone.utc)
         db.session.commit()

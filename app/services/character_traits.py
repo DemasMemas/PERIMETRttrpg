@@ -42,10 +42,11 @@ def skill_learning_multiplier(data,path):
 
 def passive_profile(data):
     n=lambda name:trait_count(data,name)
+    from app.services.equipment_modifications import worn_stat
     return {
         'weight_multiplier':max(0,1-.25*(n('Тяжеловес')+int(background_is(data,'Кладовщик')))),
         'movement_penalty':n('Ползун')-n('Я - конченный. Бегите')+int(background_is(data,'Утиный стрелок')),
-        'pocket_cells':30*n('Глубокие карманы')-5*n('Узкие карманы'),
+        'pocket_cells':30*n('Глубокие карманы')-5*n('Узкие карманы')+int(worn_stat(data,'pocket_cells')),
         'pockets_quick_access':not bool(n('Глубокие карманы')),
         'backpack_volume_reduction':.2*n('Игрок в тетрис'),
         'launcher_weight_reduction':3 if n('Да не такой и тяжелый') else 0,

@@ -16,6 +16,175 @@ from app.services.weapon_catalog import attachment_slots, parse_weapon_size, nor
 from app.schemas.templates import ItemTemplateSchema
 
 
+def test_small_item_fraction_and_pouch_variants_have_different_semantics():
+    from app.services.catalog_import import excel_fraction, volume, rig_templates
+    assert excel_fraction('43862') == '1/2'
+    assert volume('44682') == .2
+    assert volume('1/10') == .1
+    items = rig_templates([{'A': 'Гранатный подсумок -', 'B': '43862', 'C': '150/250', 'D': '43862'}])
+    assert [item['attributes']['capacity'] for item in items] == [1, 2]
+    assert [item['price'] for item in items] == [150, 250]
+    from app.services.consumable_importer import _as_weight_float
+    assert _as_weight_float('45931') == .1
+
+
+def test_missing_catalog_import_preserves_customized_records_and_is_idempotent(app):
+    from app.extensions import db
+    from app.models.templates import ItemTemplate
+    from app.services.catalog_import import template
+    from app.services.equipment_importer import insert_missing_templates
+    old = ItemTemplate(name='Пояс', category='belt', price=735, attributes={'custom_rule': True})
+    db.session.add(old)
+    db.session.flush()
+    old_id = old.id
+    entries = [template('Пояс', 'belt', 500, 0, 0), template('КПК', 'misc', 1500, .25, 1)]
+    assert insert_missing_templates(entries)['inserted'] == 1
+    assert insert_missing_templates(entries)['inserted'] == 0
+    db.session.commit()
+    assert db.session.get(ItemTemplate, old_id).price == 735
+    assert db.session.get(ItemTemplate, old_id).attributes == {'custom_rule': True}
+    assert ItemTemplate.query.count() == 2
+
+
+def test_new_equipment_book_includes_side_tables_and_all_rig_variants():
+    import pytest
+
+
+def test_new_helmet_headers_keep_price_class_volume_and_penalties_in_their_columns():
+    rows=[{} for _ in range(45)]
+    rows[21]={'B':'Шлема','M':'Категория','N':'Цена'}
+    rows[24]={'B':'Прочее Ушанка','C':'5','D':'0','I':'Текстиль','J':'0','K':'0','L':'44682',
+        'M':'1','N':'1000','O':'0','P':'1','Q':'Не весит'}
+    rows[27]={'B':'Противогаз ГП-5','C':'8','I':'Текстиль','J':'3','K':'10','L':'-3','M':'1','N':'2500','O':'0','P':'4','Q':'1 кг'}
+    result=_parse_helmets(rows);hat,mask=result
+    assert (hat['item_class'],hat['price'],hat['volume'])==('1',1000,1)
+    assert hat['attributes']['ergonomics_penalty']=='0' and hat['attributes']['charisma_bonus']=='1.5'
+    assert hat['attributes']['modification_category']=='Ушанка'
+    assert (mask['price'],mask['volume'])==(2500,4)
+    assert mask['attributes']['accuracy_penalty']=='3' and mask['attributes']['ergonomics_penalty']=='10'
+    assert mask['attributes']['charisma_bonus']=='-3'
+
+
+def test_shifted_helmet_repair_requires_proof_and_preserves_manual_changes():
+    from copy import deepcopy
+    from app.services.equipment_catalog import shifted_helmet_updates
+    row={'M':'1','N':'1000','O':'0','P':'1','J':'0','K':'0','L':'44682'}
+    previous={'name':'Ушанка','category':'helmet','item_class':'1000','price':0,'volume':0,
+        'attributes':{'import_source':'equipment_workbook','raw_row':row,'accuracy_penalty':'0','ergonomics_penalty':'44682',
+            'charisma_bonus':'1.5','movement_penalty':1,'manual_note':'Сохранить'}}
+    canonical={'item_class':'1','price':1000,'volume':1,'attributes':{'accuracy_penalty':'0','ergonomics_penalty':'0',
+        'charisma_bonus':'1.5','movement_penalty':0,'modification_category':'Ушанка','soft_headwear':True,'integrated_visor':False}}
+    result=shifted_helmet_updates(previous,canonical)
+    assert result['item_class']=='1' and result['price']==1000 and result['volume']==1
+    assert result['attributes']['ergonomics_penalty']=='0' and result['attributes']['manual_note']=='Сохранить'
+    manual=deepcopy(previous);manual['price']=3000
+    assert shifted_helmet_updates(manual,canonical) is None
+    already={**previous,**result};assert shifted_helmet_updates(already,canonical) is None
+
+
+def test_helmet_repair_migration_is_idempotent_and_preserves_manual_price(app,monkeypatch):
+    import importlib.util
+    from pathlib import Path
+    from app.extensions import db
+    from app.models.templates import ItemTemplate
+    row={'M':'1','N':'1000','O':'0','P':'1','J':'0','K':'0','L':'44682'}
+    attrs={'import_source':'equipment_workbook','raw_row':row,'accuracy_penalty':'0','ergonomics_penalty':'44682',
+        'charisma_bonus':'1.5','movement_penalty':1,'manual_note':'Сохранить'}
+    hat=ItemTemplate(name='Ушанка',category='helmet',item_class='1000',price=0,volume=0,attributes=attrs)
+    custom=ItemTemplate(name='Балаклава',category='helmet',item_class='150',price=999,volume=0,attributes={**attrs,'raw_row':{**row,'N':'150','L':'.5'}})
+    db.session.add_all([hat,custom]);db.session.flush();identity=hat.id
+    path=Path(__file__).resolve().parents[1]/'migrations/versions/b17f4a9c2d60_correct_shifted_helmet_columns.py'
+    spec=importlib.util.spec_from_file_location('helmet_columns_migration',path);migration=importlib.util.module_from_spec(spec);spec.loader.exec_module(migration)
+    monkeypatch.setattr(migration.op,'get_bind',lambda:db.session.connection())
+    migration.upgrade();migration.upgrade();db.session.expire_all()
+    assert (hat.id,hat.item_class,hat.price,hat.volume)==(identity,'1',1000,1)
+    assert hat.attributes['ergonomics_penalty']=='0' and hat.attributes['manual_note']=='Сохранить'
+    assert custom.price==999
+    from pathlib import Path
+    from app.services.equipment_importer import parse_equipment_templates
+    path = Path(__file__).resolve().parents[1] / '.private-testing' / 'Снаряжение (4).xlsx'
+    if not path.exists():
+        pytest.skip('Локальная исходная книга недоступна')
+    entries = parse_equipment_templates(path)
+    lookup = {(item['category'], item['name']): item for item in entries}
+    assert lookup['backpack', 'БФРР']['attributes']['limit'] == 100
+    assert lookup['backpack', 'БФРР']['attributes']['weight_reduction'] == 3
+    case = lookup['container', 'Патронный-М2У']
+    assert case['volume'] == 15
+    assert case['attributes']['capacity'] == 30
+    assert case['attributes']['access_action_points'] == 2
+    assert lookup['crafting_material', 'Пустая ампула']['volume'] == .2
+    assert lookup['glasses', 'Противоосколочные очки СтекИКо']['attributes']['eye_physical_protection'] == 5
+    assert lookup['headphones', 'ТактикКiт']['attributes']['noise_absorption'] == 10
+    assert len([item for item in entries if item['category'] == 'armor_plate']) == 8
+    assert len([item for item in entries if item['category'] == 'vest']) == 25
+    assert len([item for item in entries if item['category'] == 'pouch']) == 22
+    assert not any(item['category'] == 'ammo' and item['name'].startswith('Подствольный') for item in entries)
+    assert all(item['attributes']['compatible_weapon_names'] for item in entries if item['category'] == 'magazine')
+
+
+def test_full_catalog_migration_preserves_existing_items_and_resolves_magazines(app, monkeypatch):
+    import importlib.util
+    from pathlib import Path
+    from app.extensions import db
+    from app.models.templates import ItemTemplate
+    from app.services.equipment_catalog import load_catalog
+    path = Path(__file__).resolve().parents[1] / 'migrations/versions/a0e6b8243d15_complete_equipment_catalog.py'
+    spec = importlib.util.spec_from_file_location('equipment_catalog_migration', path)
+    migration = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(migration)
+    previous = ItemTemplate(name='Пояс', category='belt', price=750, attributes={'user_configured': True})
+    db.session.add(previous)
+    db.session.flush()
+    monkeypatch.setattr(migration.op, 'get_bind', lambda: db.session.connection())
+    migration.upgrade()
+    migration.upgrade()
+    db.session.expire_all()
+    assert ItemTemplate.query.count() == len(load_catalog())
+    assert previous.price == 750 and previous.attributes == {'user_configured': True}
+    magazine = ItemTemplate.query.filter_by(category='magazine').filter(ItemTemplate.compatible_ids != []).first()
+    assert magazine is not None and magazine.compatible_ids
+    assert all(db.session.get(ItemTemplate, id).category == 'weapon' for id in magazine.compatible_ids)
+
+
+def test_starting_purchase_creates_usable_cases_with_independent_contents():
+    from types import SimpleNamespace
+    from app.services.character_starting_purchase import item_from_template
+    case = SimpleNamespace(id=234, name='Медицинский-Л', category='container', subcategory='Кейсы',
+        item_class=None, description='', price=1000, weight=.25, volume=5, compatible_ids=[],
+        attributes={'capacity': 15, 'allowed_categories': ['med']})
+    first, second = item_from_template(case), item_from_template(case)
+    assert first['isContainer'] and first['capacity'] == 15 and first['volume'] == 5
+    first['contents'].append({'name': 'Бинт'})
+    assert second['contents'] == []
+
+
+def test_catalog_descriptions_are_idempotent_and_do_not_repeat_compatibility():
+    from app.services.equipment_catalog import prepare_catalog
+    from app.services.catalog_import import template
+    raw = template('Магазин', 'magazine', 50, .1, 2, 'Пистолет А, Пистолет Б',
+        attributes={'compatible_weapon_names':['Пистолет А', 'Пистолет Б']})
+    result = prepare_catalog([raw])
+    assert result[0]['description'] == 'Совместимость: Пистолет А, Пистолет Б.'
+    assert prepare_catalog(result) == result
+    cartridge = template('12.7x55', 'ammo', 250, .25, .02,
+        'При полном пробитии одна Дополнительная трамва')
+    result = prepare_catalog([cartridge])[0]
+    assert 'две проверки' in result['description']
+    assert 'одна Дополнительная' not in result['description']
+    assert result['attributes']['source_description'] == cartridge['description']
+
+
+def test_published_equipment_matches_current_book_and_accepted_builtin_rules():
+    import pytest
+    from pathlib import Path
+    from app.services.equipment_catalog import load_catalog, parse_catalog
+    source = Path(__file__).resolve().parents[1] / '.private-testing/Снаряжение (4).xlsx'
+    if not source.exists():
+        pytest.skip('Книга приватна и не включена в репозиторий')
+    assert parse_catalog(source) == load_catalog()
+
+
 def test_molotov_cocktail_is_not_imported_as_ammunition():
     assert _looks_like_grenade_ammo({"L": "Коктейль Молотова"}) is True
 

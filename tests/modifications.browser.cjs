@@ -1,0 +1,47 @@
+const assert=require('node:assert/strict');
+module.exports=async({peer,request,recipient,token,api,read})=>{
+    await peer.evaluate('window.closeCharacterSheet?.();true');
+    const response=await request(api+'/templates',null,token,'GET');const all=response.global;
+    const book=all.find(t=>t.attributes?.book_kind==='equipment'&&t.attributes.book_subject==='Пистолеты');
+    const pistol=all.find(t=>t.category==='weapon'&&t.subcategory==='Пистолеты'&&String(t.item_class)==='1');
+    const tools=all.find(t=>t.category==='tool'&&/оружейника/i.test(t.name)&&/расшир/i.test(t.name));
+    const pda=all.find(t=>t.name==='КПК');assert.ok(book&&pistol&&tools&&pda);
+    const make=(t,id)=>({id,name:t.name,templateId:t.id,category:t.category,subcategory:t.subcategory,attributes:t.attributes,
+        weight:t.weight,volume:t.volume,quantity:1,uses:t.attributes?.uses,maxUses:t.attributes?.uses});
+    const data=(await read()).data;
+    data.basic={...(data.basic||{}),background:{name:'Оружейник'}};
+    data.weapons=[{...make(pistol,'upgrade-browser-pistol'),model:pistol.name,itemClass:pistol.item_class,accuracy:0,ergonomics:20,
+        durability:100,maxDurability:100,fireRate:pistol.attributes.fire_rate,installedModules:[],modifications:[],ammo:0,fixedAmmo:[]}];
+    data.inventory.pockets.push(make(book,'upgrade-browser-book'),make(tools,'upgrade-browser-tools'),make(pda,'upgrade-browser-pda'));
+    await request('/lobbies/characters/'+recipient.id,{data},token,'PUT');
+    await peer.evaluate(`window.openCharacterSheet(${recipient.id},'equipment').then(()=>true)`);
+    await peer.evaluate("document.querySelector('#character-crafting-open').click();true");
+    await peer.until("document.querySelector('#crafting-modal select[aria-label=\"Книга для чтения\"]')",'Книга снаряжения доступна игроку');
+    await peer.evaluate("[...document.querySelectorAll('#crafting-modal button')].find(b=>b.textContent==='Читать · 4 часа').click();true");
+    await peer.until("document.querySelector('#crafting-modal')?.innerText.includes('Работа идёт')",'Начато настоящее чтение');
+    assert.equal((await read()).data.crafting.current.kind,'book');
+    await request(api+'/time',{game_day:1,game_time_minutes:270},token,'PATCH');
+    await peer.evaluate("[...document.querySelectorAll('#crafting-modal button')].find(b=>b.textContent==='Обновить').click();true");
+    await peer.until("[...document.querySelectorAll('#crafting-modal button')].some(b=>b.textContent==='Завершить чтение'&&!b.disabled)",'Прошли четыре игровых часа');
+    await peer.evaluate("[...document.querySelectorAll('#crafting-modal button')].find(b=>b.textContent==='Завершить чтение').click();true");
+    await peer.until("document.querySelector('#crafting-modal select[aria-label=\"Предмет для модификации\"]')",'Вернулся список снаряжения');
+    await peer.evaluate("(()=>{const d=[...document.querySelectorAll('#crafting-modal details')].find(d=>d.querySelector('summary')?.textContent==='Модификации снаряжения');d.open=true;const r=d.querySelector('select[aria-label=Модификация]');r.value='weapon-c23';r.dispatchEvent(new Event('change'));const t=d.querySelector('select[aria-label=\"Инструменты для модификации\"]');t.value=[...t.options].find(o=>/оружейника/i.test(o.textContent)&&/расшир/i.test(o.textContent)).value;t.dispatchEvent(new Event('change'));const c=d.querySelector('input[type=checkbox]');c.checked=true;c.dispatchEvent(new Event('change'));return true})()");
+    await peer.until("[...document.querySelectorAll('#crafting-modal button')].some(b=>b.textContent==='Установить самостоятельно')",'Книга, навык и инструменты разрешили установку');
+    assert.ok(await peer.evaluate("document.querySelector('#crafting-modal').innerText.includes('Итоговая СЛ -5')"));
+    await peer.evaluate("[...document.querySelectorAll('#crafting-modal button')].find(b=>b.textContent==='Установить самостоятельно').click();true");
+    await peer.until("document.querySelector('#crafting-modal')?.innerText.includes('Работа идёт')",'Установка началась');
+    let saved=(await read()).data;
+    assert.equal(saved.crafting.current.kind,'modification');
+    assert.equal(saved.inventory.pockets.find(i=>i.id==='upgrade-browser-tools').uses,tools.attributes.uses-20);
+    await request(api+'/time',{game_day:1,game_time_minutes:300},token,'PATCH');
+    await peer.evaluate("[...document.querySelectorAll('#crafting-modal button')].find(b=>b.textContent==='Обновить').click();true");
+    await peer.until("[...document.querySelectorAll('#crafting-modal button')].some(b=>b.textContent==='Завершить · к100'&&!b.disabled)",'Прошло полчаса установки');
+    await peer.evaluate("[...document.querySelectorAll('#crafting-modal button')].find(b=>b.textContent==='Завершить · к100').click();true");
+    await peer.until(`(async()=>{const {Server}=await import('/static/js/api.js');const c=await Server.getCharacter(${recipient.id});return c.data.weapons[0].modifications[0]?.ruleId==='weapon-c23'})()`,'Модификация установлена на реальный экземпляр');
+    saved=(await read()).data;assert.equal(saved.weapons[0].modifications[0].modifiers.ergonomics,7.5);
+    assert.equal(saved.crafting.library[0].book_kind,'equipment');
+    await peer.until("document.querySelector('#crafting-modal .block-header button')&&!document.querySelector('#crafting-modal').innerText.includes('Работа идёт')",'Завершённая работа исчезла');
+    await peer.evaluate("document.querySelector('#crafting-modal .block-header button').click();true");
+    await peer.until("document.querySelector('.installed-rule-modification')?.textContent.includes('Оружейник')",'В листе показано защищённое улучшение');
+    console.log(JSON.stringify({equipment_book_read:true,four_game_hours:true,native_weapon_modification:true,normal_player:true,gunsmith_bonus:7.5,tool_uses:20,installation_minutes:30}));
+};

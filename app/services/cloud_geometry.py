@@ -55,6 +55,12 @@ def cells(location,objects,area):
 
 
 def prepare(location,objects,area):
+    if area.get('shape') in {'flame_rectangle','flame_cone'}:
+        from app.services.flamethrower import cells as flame_cells
+        signature=[area.get('x'),area.get('y'),area.get('direction'),area.get('length'),area.get('width'),[[o.id,o.revision] for o in objects]]
+        if area.get('cells_signature')!=signature:
+            area['cells']=flame_cells(location,objects,area);area['cells_signature']=signature
+        return area
     signature=[area.get('radius'),[[o.id,o.revision] for o in objects]]
     if area.get('cells_signature')!=signature:
         area['cells']=[list(p) for p in cells(location,objects,area)]

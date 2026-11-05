@@ -398,7 +398,7 @@ def test_projectile_range_does_not_round_fractional_impact():
 @pytest.mark.parametrize('protection,armor,expected',[(20,32,75),(35,32,56),(50,0,0),(0,35,75),(0,50,0)])
 def test_fragments_use_bullet_damage_formula_through_cover_and_armor(grenade_game,monkeypatch,protection,armor,expected):
     target=grenade_game['actor_location'];hits=[]
-    monkeypatch.setattr(CombatService,'_target_armor',lambda *a:(armor,[]))
+    monkeypatch.setattr(CombatService,'_target_armor',lambda *a,**kw:(armor,[]))
     monkeypatch.setattr(CombatService,'_apply_attack_damage',lambda target,damage,*a,**kw:hits.append(damage) or {})
     monkeypatch.setattr('app.services.combat.random.randint',lambda a,b:a)
     cover={'protection':protection,'zones':{'chest':{'physical_protection':protection}}} if protection else {'protection':0}
@@ -409,7 +409,7 @@ def test_fragments_use_bullet_damage_formula_through_cover_and_armor(grenade_gam
 
 def test_additional_fragment_checks_armor_of_its_own_zone(grenade_game,monkeypatch):
     target=grenade_game['actor_location']
-    monkeypatch.setattr(CombatService,'_target_armor',lambda data,zone:(100 if zone=='head' else 0,[]))
+    monkeypatch.setattr(CombatService,'_target_armor',lambda data,zone,**kw:(100 if zone=='head' else 0,[]))
     monkeypatch.setattr(CombatService,'_apply_attack_damage',lambda *a,**kw:{})
     main=CombatService._explosion_fragment_hit(target,100,20,'head',{},1)
     extra=CombatService._explosion_fragment_hit(target,16,20,'chest',{},1,additional=True)

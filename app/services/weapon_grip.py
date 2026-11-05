@@ -158,7 +158,8 @@ def minimum_strength(weapon):
     from app.services.combat import CombatService
     attrs=CombatService._template_attributes(weapon)
     base=weapon.get('minStrength',weapon.get('min_strength',attrs.get('min_strength',0)))
-    result=CombatService._coerce_int(base,0)
+    from app.services.equipment_modifications import stat as modification_stat
+    result=max(0,modification_stat(weapon,'min_strength',CombatService._coerce_int(base,0)))
     for module in weapon.get('installedModules') or []:
         modifiers=module.get('modifiers') or (module.get('attributes') or {}).get('modifiers') or {}
         result=CombatService._apply_numeric_modifier(result,modifiers.get('min_strength',modifiers.get('required_strength')))

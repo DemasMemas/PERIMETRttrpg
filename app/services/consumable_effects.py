@@ -150,9 +150,41 @@ def with_darkness_modifiers(profile: Dict[str, Any], description: str) -> Dict[s
     existing = {modifier.get("stat") for modifier in result["modifiers"] if isinstance(modifier, dict)}
     result["modifiers"].extend(
         modifier for modifier in darkness_modifiers_from_description(description)
-        if modifier["stat"] not in existing
+        if modifier["stat"] not in existing and not ('darkness_accuracy' in existing and modifier['stat'].endswith('_immunity'))
     )
     return result
+
+
+def normalize_owl_modifiers(character_data):
+    """Сохраняет остаток срока уже действующей официальной Совы при обновлении правил."""
+    from flask import has_app_context
+    from app.extensions import db
+    if not has_app_context():return
+    meta=((character_data.get('health') or {}).get('combatMeta') or {})
+    modifiers=meta.get('consumableModifiers')
+    if not isinstance(modifiers,list):return
+    sources={m.get('source') for m in modifiers if isinstance(m,dict) and m.get('stat') in {'darkness_visual_immunity','darkness_shooting_immunity'}}
+    from app.services.item_template_lookup import resolve_item_template
+    for source in sources:
+        match=re.fullmatch(r'consumable-template:(\d+)',str(source))
+        if not match:continue
+        from app.models.lobby_templates import LobbyItemTemplate
+        from app.services.item_template_lookup import LOCAL_TEMPLATE_ID_OFFSET
+        template_id=int(match[1])
+        template=(db.session.get(LobbyItemTemplate,template_id-LOCAL_TEMPLATE_ID_OFFSET)
+                  if template_id>=LOCAL_TEMPLATE_ID_OFFSET
+                  else resolve_item_template({'templateId':template_id}))
+        if not template:continue
+        attrs=template.attributes or {};name=str(attrs.get('catalog_name') or template.name).casefold()
+        official=attrs.get('catalog_name') and attrs.get('raw_description')==template.description
+        if not official or 'стимулятор сова' not in name or (attrs.get('consumable') or {}).get('editor_version'):continue
+        selected=[m for m in modifiers if isinstance(m,dict) and m.get('source')==source and m.get('stat') in {'darkness_awareness','light_awareness','darkness_visual_immunity','darkness_shooting_immunity'}]
+        if not selected:continue
+        example=next((m for m in selected if m.get('stat')=='darkness_awareness'),selected[0])
+        improved='стимулятор сова-н' in name
+        modifiers[:]=[m for m in modifiers if not any(m is old for old in selected)]
+        for stat,value in [('darkness_awareness',5 if improved else 3),('darkness_accuracy',5 if improved else 3),*([] if improved else [('light_awareness',-3)])]:
+            modifiers.append({**example,'stat':stat,'value':value,'note':{'darkness_awareness':'Внимательность в темноте без ПНВ','darkness_accuracy':'Точность в темноте без ПНВ','light_awareness':'Внимательность на свету'}[stat]})
 
 
 def enrich_imported_consumable(attributes, description):

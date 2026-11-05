@@ -1,7 +1,9 @@
 // Матрица использует настоящий конструктор вариантов из листа, без второй копии формул.
 const fs=require('node:fs'),path=require('node:path'),vm=require('node:vm');
 const root=path.resolve(__dirname,'../..');
-const report=path.join(root,'.private-testing/reports/catalog-sweep-2026-11-04');
+const report=path.resolve(process.argv[2]||path.join(root,'.private-testing/reports/catalog-sweep-2026-11-04'));
+const relative=path.relative(path.join(root,'.private-testing/reports'),report);
+if(relative.startsWith('..')||path.isAbsolute(relative))throw Error('Результаты проверки должны оставаться в приватной папке отчётов');
 const source=fs.readFileSync(path.join(root,'app/static/js/characterSheet.js'),'utf8');
 const names=['normalizeAmmoVariant','getAmmoVariantLabel','getAmmoVariantStats','applyAmmoVariantToItem'];
 const definitions=names.map(name=>{

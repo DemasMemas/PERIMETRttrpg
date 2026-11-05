@@ -607,12 +607,11 @@ def correct_owl_profile(profile, direct, name):
     direct.pop('sleep_block_hours', None)
     direct['satisfy_sleep'] = True
     profile['direct'] = direct
-    stats = {'darkness_awareness', 'light_awareness', 'darkness_visual_immunity', 'darkness_shooting_immunity'}
+    stats = {'darkness_awareness', 'darkness_accuracy', 'light_awareness', 'darkness_visual_immunity', 'darkness_shooting_immunity'}
     profile['modifiers'] = [m for m in profile.get('modifiers') or [] if m.get('stat') not in stats]
     for stat, value, note in (
         ('darkness_awareness', 5 if improved else 3, 'Внимательность в темноте'),
-        ('darkness_visual_immunity', 1, 'Зрение в темноте'),
-        ('darkness_shooting_immunity', 1, 'Стрельба в темноте'),
+        ('darkness_accuracy', 5 if improved else 3, 'Точность в темноте без ПНВ'),
         *([] if improved else [('light_awareness', -3, 'Внимательность на свету')]),
     ):
         profile['modifiers'].append({'stat': stat, 'value': value, 'remaining': (8 if improved else 4) * 60,

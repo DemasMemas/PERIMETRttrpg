@@ -1,5 +1,6 @@
 """Горение: общий эффект огненных гранат и последствий взрыва."""
 import math
+import random
 from sqlalchemy.orm.attributes import flag_modified
 from app.services.effects import apply_effect_to_health,normalize_effect_list
 
@@ -14,6 +15,87 @@ def ignite(target,rounds,*,source,damage=50,threshold=35,inclusive=False,extingu
         'thermal_threshold':threshold,'threshold_inclusive':inclusive,
         'extinguish_difficulty_modifier':extinguish_difficulty_modifier,'source_character_id':source_character_id})
     flag_modified(target.character,'data')
+
+
+def flammable_object(obj):
+    from app.services.movement_geometry import tree_movement_profiles
+    kind=str(obj.type or '').casefold();material=str((obj.properties or {}).get('material') or '').casefold()
+    plant=kind in {'tree','bush','vegetation'} or kind.startswith('nature_') and kind[7:] in tree_movement_profiles()
+    return plant or material in {'wood','дерево','vegetation','растительность'}
+
+
+def object_cells(obj):
+    """Клетки, которые занимает объект; узкий объект сохраняет клетку привязки."""
+    from app.services.location_navigation import contains,pose
+    cx,cy,width,depth,_=pose(obj)
+    reach=math.ceil(math.hypot(width,depth)/2)+1
+    cells={(obj.tile_x,obj.tile_y)}
+    for x in range(math.floor(cx-reach),math.ceil(cx+reach)+1):
+        for y in range(math.floor(cy-reach),math.ceil(cy+reach)+1):
+            if contains(obj,x+.5,y+.5):cells.add((x,y))
+    return cells
+
+
+def ignite_objects(objects,cells,*,rounds,damage,source):
+    """Прямой поджог горючих объектов в затронутых клетках; цепного перехода нет."""
+    from app.services.location_navigation import contains,level_of
+    occupied=set(map(tuple,cells))
+    ignited=[]
+    for obj in objects:
+        if not flammable_object(obj):continue
+        level=level_of(obj)
+        if not any(cell_level==level and ((cell_x,cell_y)==(obj.tile_x,obj.tile_y) or contains(obj,cell_x+.5,cell_y+.5))
+                   for cell_x,cell_y,cell_level in occupied):continue
+        from app.services.combat import CombatService
+        if CombatService._cover_profile(obj)['hp']<=0:continue
+        properties=dict(obj.properties or {})
+        current=properties.get('object_fire') or {}
+        properties['object_fire']={'remaining':max(rounds,int(current.get('remaining') or 0)),
+                                   'duration_rounds':rounds,
+                                   'damage_per_round':damage,'source':source}
+        obj.properties=properties;flag_modified(obj,'properties')
+        ignited.append(obj.id)
+    return ignited
+
+
+def advance_object_fires(location_id):
+    """Один тик урона объектам в конце общего раунда."""
+    from app.models import LocationObject
+    from app.services.combat import CombatService
+    from app.services.location_navigation import level_of
+    affected=[]
+    objects=LocationObject.query.filter_by(location_id=location_id).all()
+    burning=[(obj,dict((obj.properties or {})['object_fire'])) for obj in objects
+             if isinstance((obj.properties or {}).get('object_fire'),dict)
+             and int((obj.properties or {})['object_fire'].get('remaining') or 0)>0]
+    if not burning:return []
+    burning_ids={obj.id for obj,_ in burning}
+    for obj,fire in burning:
+        damage=max(0,int(fire.get('damage_per_round') or 0))
+        state=CombatService.apply_cover_damage(obj,damage,'fire')
+        affected.append({'object_id':obj.id,'type':'fire','damage':damage,'destroyed':state['destroyed']})
+        if state['destroyed']:continue
+        properties=dict(obj.properties or {})
+        remaining=int(fire['remaining'])-1
+        if remaining:properties['object_fire']={**fire,'remaining':remaining}
+        else:properties.pop('object_fire',None)
+        obj.properties=properties;flag_modified(obj,'properties')
+    cells_by_id={obj.id:object_cells(obj) for obj in objects if flammable_object(obj)}
+    for source,fire in burning:
+        source_cells=cells_by_id.get(source.id,set())
+        for target in objects:
+            if target.id in burning_ids or target.id not in cells_by_id or level_of(target)!=level_of(source):continue
+            if not any(max(abs(sx-tx),abs(sy-ty))<=1 for sx,sy in source_cells for tx,ty in cells_by_id[target.id]):continue
+            if random.randint(1,100)>50:continue
+            properties=dict(target.properties or {})
+            rounds=max(1,int(fire.get('duration_rounds') or fire.get('remaining') or 1))
+            properties['object_fire']={'remaining':rounds,'duration_rounds':rounds,
+                                       'damage_per_round':max(0,int(fire.get('damage_per_round') or 0)),
+                                       'source':fire.get('source')}
+            target.properties=properties;flag_modified(target,'properties')
+            burning_ids.add(target.id)
+            affected.append({'object_id':target.id,'type':'fire_spread','from_object_id':source.id})
+    return affected
 
 
 def extinguish_in_water(target,*,include_traversed=True):

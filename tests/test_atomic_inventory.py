@@ -16,6 +16,95 @@ def pair(client, create_user, auth_headers):
     return _setup_pair(client, create_user, auth_headers)
 
 
+def _money_request(client, pair, auth_headers, payload):
+    return client.post(f"/lobbies/{pair['lobby'].id}/locations/{pair['location'].id}/character-interactions",
+        headers=auth_headers(pair['actor_user']), json={'kind': 'trade',
+            'actor_location_character_id': pair['actor_location'].id,
+            'target_character_id': pair['target_character'].id, 'payload': payload})
+
+
+def _respond_money(client, pair, auth_headers, request_id, decision='accept'):
+    return client.post(f"/lobbies/{pair['lobby'].id}/character-interactions/{request_id}/response",
+                      headers=auth_headers(pair['target_user']), json={'decision': decision})
+
+
+def _set_money(pair):
+    for key, value in [('actor_character', 1000), ('target_character', 500)]:
+        data = deepcopy(pair[key].data)
+        data['inventory']['money'] = value
+        pair[key].data = data
+    db.session.commit()
+
+
+def test_money_only_exchange_requires_consent_and_cannot_repeat(client, pair, auth_headers):
+    _set_money(pair)
+    pending = _money_request(client, pair, auth_headers, {'actor_money': 250})
+    assert pending.status_code == 201, pending.json
+    assert pair['actor_character'].data['inventory']['money'] == 1000
+    response = _respond_money(client, pair, auth_headers, pending.json['id'])
+    assert response.status_code == 200, response.json
+    assert response.json['result']['actor_to_target_money'] == 250
+    assert pair['actor_character'].data['inventory']['money'] == 750
+    assert pair['target_character'].data['inventory']['money'] == 750
+    assert pair['actor_location'].action_points_current == 3
+    again = _respond_money(client, pair, auth_headers, pending.json['id'])
+    assert again.status_code == 404
+    assert pair['actor_character'].data['inventory']['money'] == 750
+
+
+def test_trade_combines_goods_and_money_and_uses_actual_item_names(client, pair, auth_headers):
+    _set_money(pair)
+    pending = _money_request(client, pair, auth_headers, {'actor_money': 100, 'target_money': 25,
+        'target_offer': [{'item_id': 'target-water', 'path': ['inventory', 'backpack', 0], 'amount': 1,
+                          'name': 'Неверное имя из клиента'}]})
+    assert pending.status_code == 201, pending.json
+    assert pending.json['payload']['target_offer'][0]['name'] == 'Вода'
+    result = _respond_money(client, pair, auth_headers, pending.json['id'])
+    assert result.status_code == 200, result.json
+    assert pair['actor_character'].data['inventory']['money'] == 925
+    assert pair['target_character'].data['inventory']['money'] == 575
+    assert pair['actor_character'].data['inventory']['backpack'][-1]['id'] == 'target-water'
+
+
+@pytest.mark.parametrize('amount', [-1, True, '50', .5, 1001])
+def test_money_offer_rejects_invalid_amount_without_spending_anything(client, pair, auth_headers, amount):
+    _set_money(pair)
+    result = _money_request(client, pair, auth_headers, {'actor_money': amount})
+    assert result.status_code == 400
+    assert pair['actor_character'].data['inventory']['money'] == 1000
+    assert pair['actor_location'].action_points_current == 5
+    assert CharacterInteractionRequest.query.count() == 0
+
+
+def test_trade_stale_money_or_items_does_not_change_either_character(client, pair, auth_headers):
+    _set_money(pair)
+    pending = _money_request(client, pair, auth_headers, {'actor_money': 100})
+    data = deepcopy(pair['actor_character'].data)
+    data['inventory']['money'] = 50
+    pair['actor_character'].data = data
+    db.session.commit()
+    result = _respond_money(client, pair, auth_headers, pending.json['id'])
+    assert result.status_code == 409, result.json
+    assert pair['actor_character'].data['inventory']['money'] == 50
+    assert pair['target_character'].data['inventory']['money'] == 500
+    assert pair['actor_location'].action_points_current == 5
+    assert db.session.get(CharacterInteractionRequest, pending.json['id']).status == 'pending'
+
+
+def test_declined_money_transfer_and_failure_after_flush_are_atomic(client, pair, auth_headers, monkeypatch):
+    _set_money(pair)
+    pending = _money_request(client, pair, auth_headers, {'actor_money': 100})
+    result = _respond_money(client, pair, auth_headers, pending.json['id'], 'decline')
+    assert result.json['status'] == 'rejected'
+    pending = _money_request(client, pair, auth_headers, {'actor_money': 100})
+    monkeypatch.setattr(db.session, 'commit', fail_after_flush)
+    result = _respond_money(client, pair, auth_headers, pending.json['id'])
+    assert result.status_code == 400
+    assert pair['actor_character'].data['inventory']['money'] == 1000
+    assert pair['target_character'].data['inventory']['money'] == 500
+    assert pair['actor_location'].action_points_current == 5
+
+
 def container(pair, *, ground=False):
     obj = LocationObject(location_id=pair['location'].id, name='Box',
                          type='ground_item' if ground else 'container', tile_x=1, tile_y=2,

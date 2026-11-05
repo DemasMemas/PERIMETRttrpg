@@ -35,6 +35,12 @@ const characterSaver = createCharacterSaver((characterId, updates) => apiFetch(`
 }), getCharacterBase);
 
 export const Server = {
+    getCrafting: characterId => apiFetch(`/lobbies/characters/${characterId}/crafting`),
+    craft: (characterId,payload) => apiFetch(`/lobbies/characters/${characterId}/crafting`,{
+        method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}),
+    getCraftingRequests: lobbyId => apiFetch(`/lobbies/${lobbyId}/crafting-requests`),
+    sterilizeGloves: (characterId,payload) => apiFetch(`/lobbies/characters/${characterId}/sterilize-gloves`,{
+        method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}),
     getActionJournal: lobbyId => apiFetch(`/lobbies/${lobbyId}/action-journal`),
     changeWeaponPair: (characterId,payload) => apiFetch(`/lobbies/characters/${characterId}/weapon-pair`,{
         method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}),
@@ -616,6 +622,18 @@ export const Server = {
                 body: JSON.stringify(payload),
             }
         );
+    },
+
+    async npcLootPool(lobbyId, characterId, payload, generate = false) {
+        return apiFetch(`/lobbies/${lobbyId}/characters/${characterId}/loot-pool`, {
+            method: generate ? 'POST' : 'PATCH', headers: {'Content-Type':'application/json'}, body: JSON.stringify(payload),
+        });
+    },
+
+    async configureNpcMerchant(lobbyId, characterId, payload) {
+        return apiFetch(`/lobbies/${lobbyId}/characters/${characterId}/merchant`, {
+            method: 'PATCH', headers: {'Content-Type':'application/json'}, body: JSON.stringify(payload),
+        });
     },
 
     async createCharacterInteraction(lobbyId, locationId, payload) {

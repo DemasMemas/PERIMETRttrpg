@@ -49,7 +49,8 @@ def _as_float(value: Any, default: float = 0.0) -> float:
 
 
 def _as_weight_float(value: Any, default: float = 0.0) -> float:
-    text = _normalize_text(value).replace(",", ".")
+    from app.services.catalog_import import excel_fraction
+    text = excel_fraction(value).replace(",", ".")
     if not text:
         return default
     if "/" in text:
@@ -138,44 +139,9 @@ def _read_shared_strings(archive: zipfile.ZipFile) -> List[str]:
 
 
 def _read_sheet_rows(workbook_path: Path, sheet_name: str = "Расходники") -> List[Dict[str, str]]:
-    with zipfile.ZipFile(workbook_path) as archive:
-        shared_strings = _read_shared_strings(archive)
-        workbook = ET.fromstring(archive.read("xl/workbook.xml"))
-        rels = ET.fromstring(archive.read("xl/_rels/workbook.xml.rels"))
-        rel_targets = {rel.attrib["Id"]: rel.attrib["Target"] for rel in rels}
-
-        target = None
-        for sheet in workbook.findall(".//m:sheet", NS):
-            if sheet.attrib.get("name") == sheet_name:
-                rel_id = sheet.attrib["{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id"]
-                target = "xl/" + rel_targets[rel_id]
-                break
-        if not target:
-            raise ValueError(f"Sheet '{sheet_name}' was not found in workbook")
-
-        root = ET.fromstring(archive.read(target))
-        rows: List[Dict[str, str]] = []
-        for row in root.findall(".//m:sheetData/m:row", NS):
-            parsed: Dict[str, str] = {}
-            for cell in row.findall("m:c", NS):
-                ref = cell.attrib.get("r", "")
-                column = "".join(ch for ch in ref if ch.isalpha())
-                cell_type = cell.attrib.get("t")
-                value = ""
-                raw_v = cell.find("m:v", NS)
-                inline = cell.find("m:is", NS)
-                if raw_v is not None and raw_v.text is not None:
-                    value = raw_v.text
-                    if cell_type == "s" and value.isdigit():
-                        value = shared_strings[int(value)]
-                elif inline is not None:
-                    parts: List[str] = []
-                    for text_node in inline.iterfind(".//m:t", NS):
-                        parts.append(text_node.text or "")
-                    value = "".join(parts)
-                parsed[column] = value
-            rows.append(parsed)
-        return rows
+    from app.services.equipment_importer import _read_sheet_rows as read_rows
+    return [row for row in read_rows(workbook_path, sheet_name, include_row_numbers=True)
+            if 'A' not in row.get('__merged__', [])]
 
 
 def parse_consumable_templates(workbook_path: Path) -> List[Dict[str, Any]]:
@@ -291,8 +257,8 @@ def parse_consumable_templates_v2(workbook_path: Path) -> List[Dict[str, Any]]:
             volume = _as_weight_float(col_e, 0.0)
             import_tier = col_b if col_b else None
 
-        if volume > 1000:
-            volume = 1.0
+        from app.services.catalog_import import volume as parse_volume
+        volume = parse_volume(col_e)
 
         profile = parse_consumable_profile(f"{name}. {description}")
         profile["addiction"] = addiction_profile(name, price)

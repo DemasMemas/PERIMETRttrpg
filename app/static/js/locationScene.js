@@ -1,3 +1,5 @@
+import { renderTradeEditor, tradeResultNotice } from './characterTrade.js';
+import { renderMerchantEditor } from './merchantEditor.js';
 import { terrainLineHit, terrainOpeningAt } from './terrainLineOfSight.js';
 import { createPortableLightRenderer } from './portableLights.js';
 import { createLocationWeather } from './locationWeather.js';
@@ -1676,7 +1678,7 @@ function updateAttackPreview(clientX, clientY) {
             updateJumpPreview(clientX,clientY,actorEntry);
             return;
         }
-        const point = pendingCombatAction.actionKey==='explosive_attack'?localMapToolPoint(clientX,clientY):getPointerWorldPoint(clientX, clientY, actorEntry.model.position.y);
+        const point = ['explosive_attack','flamethrower_fire'].includes(pendingCombatAction.actionKey)?localMapToolPoint(clientX,clientY):getPointerWorldPoint(clientX, clientY, actorEntry.model.position.y);
         if (!point) {
             clearAttackPreview();
             return;
@@ -5500,7 +5502,7 @@ function selectAreaFireAnchor(clientX, clientY) {
     const actor = findCombatCharacterByCharacterId(action.actorCharacterId);
     const actorEntry = actor ? characterModels.get(actor.character_id) : null;
     if (!actorEntry) return false;
-    const point = action.actionKey==='explosive_attack'?localMapToolPoint(clientX,clientY):getPointerWorldPoint(clientX, clientY, actorEntry.model.position.y);
+    const point = ['explosive_attack','flamethrower_fire'].includes(action.actionKey)?localMapToolPoint(clientX,clientY):getPointerWorldPoint(clientX, clientY, actorEntry.model.position.y);
     if (!point) return false;
     const x = Math.floor(point.x);
     const y = Math.floor(point.z);
@@ -5653,7 +5655,7 @@ async function resolveCombatPointSelection(clientX, clientY) {
             attribute_choice: action.attributeChoice,
             target_x: targetX,
             target_y: targetY,
-            target_floor_level: action.actionKey==='explosive_attack'?point.floor_level:undefined,
+            target_floor_level: ['explosive_attack','flamethrower_fire'].includes(action.actionKey)?point.floor_level:undefined,
             pending_action_id: `combat-point-${action.actorLocationCharacterId}-${Date.now()}-${Math.random().toString(36).slice(2)}`,
         };
         const result = await Server.performLocationCombatAction(
@@ -9766,46 +9768,19 @@ function ensureCharacterTradeModal() {
     return characterTradeModal;
 }
 
-function addTradeOfferEntry(offer, entry, amount) {
-    const item = entry.item || {};
-    const safeAmount = Math.max(1, Math.min(Number(amount || 1), getTransferItemQuantity(item)));
-    const key = item.id != null ? `id:${item.id}` : `path:${entry.path.join('.')}`;
-    const existing = offer.find(candidate => candidate.key === key);
-    if (existing) {
-        existing.amount = Math.min(existing.available, existing.amount + safeAmount);
-        return;
-    }
-    offer.push({
-        key,
-        item_id: item.id ?? null,
-        path: [...entry.path],
-        name: item.name || 'Предмет',
-        amount: safeAmount,
-        available: getTransferItemQuantity(item),
-    });
+function notifyTradeResult(result) {
+    const notice = tradeResultNotice(result);
+    if (notice) showNotification(notice.message, notice.type);
 }
 
-function renderTradeInventoryList(container, entries, direction, onAdd = null) {
-    container.innerHTML = '';
-    if (!entries.length) {
-        container.innerHTML = '<div style="padding:10px;opacity:.7;">Инвентарь пуст</div>';
-        return;
-    }
-    entries.forEach(entry => {
-        if (onAdd) {
-            container.appendChild(buildTransferRow(entry, direction, amount => onAdd(entry, amount)));
-            return;
-        }
-        const row = document.createElement('div');
-        row.style.cssText = 'padding:8px 2px;border-bottom:1px solid rgba(255,255,255,.06);';
-        row.innerHTML = `<strong>${escapeHtml(entry.item?.name || 'Предмет')}</strong><div style="font-size:12px;opacity:.7;">${escapeHtml(entry.rootLabel)} · x${getTransferItemQuantity(entry.item)}</div>`;
-        container.appendChild(row);
-    });
-}
-
-function renderTradeOfferList(container, title, offer, direction, onRemove = null) {
+function renderTradeOfferList(container, title, offer, direction, onRemove = null, money = 0) {
     container.innerHTML = `<div style="font-weight:700;margin-bottom:6px;">${escapeHtml(title)}</div>`;
-    if (!offer.length) {
+    if (money > 0) {
+        const funds = document.createElement('p');
+        funds.textContent = `${Number(money).toLocaleString('ru-RU')} ₽`;
+        container.appendChild(funds);
+    }
+    if (!offer.length && money === 0) {
         container.insertAdjacentHTML('beforeend', '<div style="padding:8px 0;opacity:.65;">Ничего</div>');
         return;
     }
@@ -9825,93 +9800,49 @@ function renderTradeOfferList(container, title, offer, direction, onRemove = nul
     });
 }
 
-async function showCharacterTradeMenu(actorLocationCharacterId, actorCharacterId, targetCharacterId) {
+export async function showCharacterTradeMenu(actorLocationCharacterId, actorCharacterId, targetCharacterId) {
     const [actorCharacter, snapshot] = await Promise.all([
         Server.getCharacter(actorCharacterId),
-        Server.inspectLocationCharacter(
-            window.currentLobbyId,
-            getCurrentLocationId(),
-            targetCharacterId,
-            actorLocationCharacterId,
-        ),
+        Server.inspectLocationCharacter(window.currentLobbyId, getCurrentLocationId(), targetCharacterId, actorLocationCharacterId),
     ]);
-    const actorEntries = getCharacterTransferEntries(actorCharacter?.data || {});
-    const targetEntries = getCharacterTransferEntries(snapshot?.target_data || {});
-    const actorOffer = [];
-    const targetOffer = [];
     const modal = ensureCharacterTradeModal();
-    modal.innerHTML = `
-        <div class="modal-content" style="width:min(1120px,calc(100vw - 24px));max-width:1120px;max-height:88vh;overflow:hidden;">
-            <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;padding-bottom:10px;border-bottom:1px solid rgba(255,255,255,.08);">
-                <div><h3 style="margin:0;">Обмен</h3><div style="font-size:12px;opacity:.7;">Стоимость в бою: 2 ОД после согласия</div></div>
-                <button type="button" class="btn btn-secondary trade-decline">Отказаться</button>
-            </div>
-            <div style="display:grid;grid-template-columns:minmax(0,1fr) minmax(240px,.8fr) minmax(0,1fr);gap:12px;overflow:auto;max-height:calc(88vh - 130px);padding:12px 0;">
-                <section class="trade-panel"><h4>${escapeHtml(actorCharacter?.name || 'Ваш персонаж')}</h4><div class="trade-actor-inventory"></div></section>
-                <section style="background:rgba(255,255,255,.035);border:1px solid rgba(255,255,255,.08);border-radius:12px;padding:10px;">
-                    <div class="trade-actor-offer"></div>
-                    <div class="trade-target-offer" style="margin-top:16px;"></div>
-                </section>
-                <section class="trade-panel"><h4>${escapeHtml(snapshot.target_name || 'Другой персонаж')}</h4><div class="trade-target-inventory"></div></section>
-            </div>
-            <div class="form-actions"><button type="button" class="btn btn-primary trade-confirm">Подтвердить предложение</button><button type="button" class="btn btn-secondary trade-decline">Отказаться</button></div>
-        </div>`;
-    const render = () => {
-        renderTradeInventoryList(
-            modal.querySelector('.trade-actor-inventory'),
-            actorEntries,
-            '→',
-            (entry, amount) => { addTradeOfferEntry(actorOffer, entry, amount); render(); },
-        );
-        renderTradeInventoryList(
-            modal.querySelector('.trade-target-inventory'),
-            targetEntries,
-            '←',
-            (entry, amount) => { addTradeOfferEntry(targetOffer, entry, amount); render(); },
-        );
-        renderTradeOfferList(
-            modal.querySelector('.trade-actor-offer'),
-            `${actorCharacter?.name || 'Вы'} отдаёт`,
-            actorOffer,
-            '→',
-            index => { actorOffer.splice(index, 1); render(); },
-        );
-        renderTradeOfferList(
-            modal.querySelector('.trade-target-offer'),
-            `${snapshot.target_name || 'Персонаж'} отдаёт`,
-            targetOffer,
-            '←',
-            index => { targetOffer.splice(index, 1); render(); },
-        );
-    };
-    render();
-    modal.querySelectorAll('.trade-decline').forEach(button => {
-        button.onclick = () => { modal.style.display = 'none'; };
-    });
-    modal.querySelector('.trade-confirm').onclick = async () => {
-        try {
-            const result = await Server.createCharacterInteraction(
-                window.currentLobbyId,
-                getCurrentLocationId(),
-                {
-                    actor_location_character_id: actorLocationCharacterId,
-                    target_character_id: targetCharacterId,
-                    kind: 'trade',
-                    payload: {
-                        actor_offer: actorOffer.map(({ available, key, ...entry }) => entry),
-                        target_offer: targetOffer.map(({ available, key, ...entry }) => entry),
+    delete modal.dataset.interactionRequestId;
+    const targetData = snapshot.target_data || {};
+    const npc = targetData.is_npc === true || targetData.basic?.is_npc === true
+        || targetData.character_type === 'npc' || targetData.basic?.character_type === 'npc';
+    renderTradeEditor(modal, {
+        actor: actorCharacter,
+        target: {name:snapshot.target_name, data:snapshot.target_data || {}},
+        actorEntries:getCharacterTransferEntries(actorCharacter?.data || {}),
+        targetEntries:getCharacterTransferEntries(snapshot.target_data || {}),
+        quantity:getTransferItemQuantity,
+        merchant:npc && targetData.merchant?.enabled ? targetData.merchant : null,
+        onConfigure:window.isGM && npc ? async () => {
+            try {
+                const templates = await Server.getLobbyTemplates(window.currentLobbyId, '');
+                renderMerchantEditor(modal, {
+                    character:{id:targetCharacterId,name:snapshot.target_name,data:targetData}, templates:templates.global || [],
+                    onClose:() => showCharacterTradeMenu(actorLocationCharacterId, actorCharacterId, targetCharacterId),
+                    onSave:async payload => {
+                        await Server.configureNpcMerchant(window.currentLobbyId, targetCharacterId, payload);
+                        await showCharacterTradeMenu(actorLocationCharacterId, actorCharacterId, targetCharacterId);
+                        showNotification('Прайс торговца сохранён', 'success');
                     },
-                },
-            );
+                });
+            } catch (error) {
+                showNotification(error.message || 'Не удалось открыть прайс', 'system');
+            }
+        } : null,
+        onClose:() => { modal.style.display = 'none'; },
+        onSubmit:async payload => {
+            const result = await Server.createCharacterInteraction(window.currentLobbyId, getCurrentLocationId(), {
+                actor_location_character_id:actorLocationCharacterId, target_character_id:targetCharacterId,
+                kind:'trade', payload,
+            });
             modal.style.display = 'none';
-            showNotification(
-                result.status === 'completed' ? 'Обмен завершён' : 'Предложение обмена отправлено',
-                result.status === 'completed' ? 'success' : 'system',
-            );
-        } catch (error) {
-            showNotification(error.message || 'Не удалось предложить обмен', 'system');
-        }
-    };
+            notifyTradeResult(result);
+        },
+    });
     modal.style.display = 'flex';
 }
 
@@ -9936,39 +9867,21 @@ async function showIncomingCharacterInteraction(requestData) {
                 <div class="form-actions"><button class="btn btn-primary interaction-accept">Согласиться</button><button class="btn btn-secondary interaction-decline">Отказаться</button></div>
             </div>`;
     } else {
-        modal.innerHTML = `
-            <div class="modal-content" style="width:min(1120px,calc(100vw - 24px));max-width:1120px;max-height:88vh;overflow:hidden;">
-                <h3>Предложение обмена</h3>
-                <div style="display:grid;grid-template-columns:minmax(0,1fr) minmax(240px,.8fr) minmax(0,1fr);gap:12px;overflow:auto;max-height:calc(88vh - 150px);">
-                    <section><h4>${escapeHtml(requestData.actor_name)}</h4><div class="trade-actor-inventory"></div></section>
-                    <section style="background:rgba(255,255,255,.035);border:1px solid rgba(255,255,255,.08);border-radius:12px;padding:10px;"><div class="trade-actor-offer"></div><div class="trade-target-offer" style="margin-top:16px;"></div></section>
-                    <section><h4>${escapeHtml(requestData.target_name)}</h4><div class="trade-target-inventory"></div></section>
-                </div>
-                <div class="form-actions"><button class="btn btn-primary interaction-accept">Подтвердить обмен</button><button class="btn btn-secondary interaction-decline">Отказаться</button></div>
-            </div>`;
-        renderTradeInventoryList(
-            modal.querySelector('.trade-actor-inventory'),
-            getCharacterTransferEntries(requestData.actor_data || {}),
-            '',
-        );
-        renderTradeInventoryList(
-            modal.querySelector('.trade-target-inventory'),
-            getCharacterTransferEntries(requestData.target_data || {}),
-            '',
-        );
-        renderTradeOfferList(
-            modal.querySelector('.trade-actor-offer'),
-            `${requestData.actor_name} отдаёт`,
-            requestData.payload?.actor_offer || [],
-            '→',
-        );
-        renderTradeOfferList(
-            modal.querySelector('.trade-target-offer'),
-            `${requestData.target_name} отдаёт`,
-            requestData.payload?.target_offer || [],
-            '←',
-        );
+        modal.innerHTML = `<div class="modal-content character-trade">
+            <h3>${escapeHtml(requestData.actor_name)} предлагает обмен</h3>
+            <div class="character-trade-sides character-trade-review">
+                <section class="character-trade-side"><div class="trade-target-offer"></div></section>
+                <section class="character-trade-side"><div class="trade-actor-offer"></div></section>
+            </div>
+            <div class="form-actions"><button type="button" class="btn btn-secondary interaction-decline">Отказаться</button>
+                <button type="button" class="btn btn-primary interaction-accept">Подтвердить обмен</button></div>
+        </div>`;
+        renderTradeOfferList(modal.querySelector('.trade-target-offer'), 'Вы отдаёте',
+            requestData.payload?.target_offer || [], '→', null, Number(requestData.payload?.target_money || 0));
+        renderTradeOfferList(modal.querySelector('.trade-actor-offer'), 'Вы получаете',
+            requestData.payload?.actor_offer || [], '←', null, Number(requestData.payload?.actor_money || 0));
     }
+
     const respond = async decision => {
         modal.querySelectorAll('button').forEach(button => { button.disabled = true; });
         try {
@@ -9986,6 +9899,8 @@ async function showIncomingCharacterInteraction(requestData) {
                         : `Лечение отклонено. Сила: ${contest.actor_strength?.total ?? '?'} против ${contest.target_strength?.total ?? '?'}`,
                     contest.forced ? 'system' : 'success',
                 );
+            } else if (requestData.kind === 'trade') {
+                notifyTradeResult(result);
             } else {
                 showNotification(
                     result.status === 'completed' ? 'Обмен завершён' : 'Ответ отправлен',
@@ -10025,8 +9940,7 @@ export function handleCharacterInteractionResolved(requestData) {
         });
     }
     if (requestData.kind === 'trade') {
-        if (requestData.status === 'completed') showNotification('Обмен завершён', 'success');
-        if (requestData.status === 'rejected') showNotification('Предложение обмена отклонено', 'system');
+        notifyTradeResult(requestData);
     }
 }
 

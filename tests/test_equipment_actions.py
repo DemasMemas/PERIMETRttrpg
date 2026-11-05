@@ -6,6 +6,60 @@ from app.services.combat import CombatService
 from app.services.exceptions import ValidationError
 
 
+def test_fragment_glasses_are_incompatible_in_both_equipment_orders(app):
+    from app.services.equipment_passives import validate_glasses
+    data = {'equipment': {'glasses': {'name':'Защитные очки', 'attributes':{
+        'incompatible_with_gasmask':True, 'incompatible_with_visor':True}}},
+        'inventory': {'pockets': []}}
+    validate_glasses(data)
+    mask = add_template('Проверочный противогаз', 'gas_mask')
+    data['inventory']['pockets'].append(inventory_item(mask))
+    with pytest.raises(ValidationError, match='очк'):
+        CombatService.equipment_action_details(data, 'equip', 'gasMask', item_path=['inventory','pockets',0])
+    data['equipment']['gasMask'] = inventory_item(mask)
+    with pytest.raises(ValidationError, match='очк'):
+        validate_glasses(data)
+    data['equipment'].pop('gasMask')
+    helmet = add_template('Шлем с забралом', 'helmet', attributes={'slots':[{'type':'visor'}]})
+    data['inventory']['pockets'].append(inventory_item(helmet))
+    with pytest.raises(ValidationError, match='очк'):
+        CombatService.equipment_action_details(data, 'equip', 'helmet', item_path=['inventory','pockets',1])
+
+
+def test_fragment_glasses_protect_eyes_but_do_not_cover_ears_or_whole_head(app):
+    data = {'equipment': {'glasses': {'eyePhysicalProtection':15}}}
+    assert CombatService._target_armor(data, 'head', 'eyes')[0] == 15
+    assert CombatService._target_armor(data, 'head', 'ears')[0] == 0
+    assert CombatService._target_armor(data, 'head')[0] == 0
+
+
+@pytest.mark.parametrize('strength,normal,wrapped', [(8,10,25), (10,10,25), (14,20,30), (20,50,75)])
+def test_hand_wraps_change_real_unarmed_attack_profile(app, strength, normal, wrapped):
+    from copy import deepcopy
+    data = {'skills':{'physical':{'strength':{'base':strength}}}, 'health':{'effects':[]}}
+    assert CombatService._virtual_melee_profile('unarmed', character_data=data)['damage'] == normal
+    data['equipment'] = {'gloves': {'name':'Обвязки на руки'}}
+    assert CombatService._virtual_melee_profile('unarmed', character_data=data)['damage'] == wrapped
+    carried = deepcopy(data['equipment']['gloves'])
+    data['equipment'] = {}
+    data['inventory'] = {'pockets':[carried]}
+    assert CombatService._virtual_melee_profile('unarmed', character_data=data)['damage'] == normal
+
+
+def test_legacy_incompatible_outfit_can_save_health_but_new_incompatibility_is_rejected(app):
+    from copy import deepcopy
+    from app.services.equipment_passives import validate_glasses
+    previous = {'equipment': {'helmet':'Старое имя вместо объекта',
+        'glasses': {'name':'Очки', 'attributes':{'incompatible_with_gasmask':True}},
+        'gasMask': {'templateId':12, 'name':'Противогаз'}}}
+    updated = deepcopy(previous)
+    updated['health'] = {'painLevel':2}
+    validate_glasses(updated, previous)
+    previous['equipment'].pop('glasses')
+    with pytest.raises(ValidationError):
+        validate_glasses(updated, previous)
+
+
 def add_template(name, category, *, subcategory=None, weight=0, attributes=None):
     template = ItemTemplate(
         name=name,

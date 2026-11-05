@@ -3622,6 +3622,10 @@ def perform_social_check(character_id):
     if not result.get('replayed'):
         actor=db.session.get(LobbyCharacter,character_id);check=result['check']
         outcome=check.get('failure_reason') if check.get('blocked') else f"d20 {'/'.join(str(roll) for roll in check.get('rolls',[]))}, итог {check.get('total')} против СЛ {check['difficulty']} — {'успех' if check['success'] else 'провал'}"
+        if check.get('difficulty') is None:
+            outcome=check.get('failure_reason') if check.get('automatic_failure') else f"d20 {'/'.join(str(roll) for roll in check.get('rolls',[]))}, итог {check.get('total')}"
+            if check.get('weather_modifier'):outcome+=f", погода {check['weather_modifier']:+d}"
+            if check.get('equipment_modifier'):outcome+=f", экипировка {check['equipment_modifier']:+g}"
         _emit_lobby_chat_message(actor.lobby_id,user_id,f"{actor.name}: {check['skill_label']} — {result['target_name']}: {outcome}",username='Проверка')
     return jsonify(result),200
 
@@ -3931,6 +3935,34 @@ def treat_incapacitated_location_character(
     return jsonify({'actor_data': actor_result.character.data_snapshot(), 'target_data': target.character.data_snapshot(), 'consumable_result': use_result}), 200
 
 
+@lobbies_bp.route('/<int:lobby_id>/characters/<int:character_id>/loot-pool', methods=['PATCH', 'POST'])
+@jwt_required()
+@requires_gm
+def npc_loot_pool(lobby_id, character_id, lobby):
+    from app.services import npc_loot
+    args = (lobby_id, character_id, int(get_jwt_identity()), request.get_json(silent=True))
+    if request.method == 'PATCH':
+        character = npc_loot.configure(*args)
+        receipt = None
+    else:
+        character, receipt = npc_loot.generate(*args)
+    emit_character_update({'character_id': character_id, 'updates': {'data': character.data_snapshot()},
+                           'updated_by': int(get_jwt_identity())})
+    return jsonify({'data': character.data_snapshot(), 'receipt': receipt})
+
+
+@lobbies_bp.route('/<int:lobby_id>/characters/<int:character_id>/merchant', methods=['PATCH'])
+@jwt_required()
+@requires_gm
+def configure_npc_merchant(lobby_id, character_id, lobby):
+    from app.services.npc_trade import configure
+    result = configure(lobby_id, character_id, int(get_jwt_identity()), request.get_json(silent=True))
+    character = db.session.get(LobbyCharacter, character_id)
+    emit_character_update({'character_id': character_id, 'updates': {'data': character.data_snapshot()},
+                           'updated_by': int(get_jwt_identity())})
+    return jsonify(result)
+
+
 @lobbies_bp.route(
     '/<int:lobby_id>/locations/<int:location_id>/character-interactions',
     methods=['POST'],
@@ -3938,6 +3970,8 @@ def treat_incapacitated_location_character(
 @jwt_required()
 @requires_participant
 def create_character_interaction(lobby_id, location_id, lobby, participant):
+    if not Location.query.filter_by(id=location_id, lobby_id=lobby_id).first():
+        return jsonify({'error':'Локация не найдена в этой комнате'}),404
     data = request.get_json() or {}
     result = CharacterInteractionService.create_request(
         location_id,
@@ -3975,6 +4009,8 @@ def create_character_interaction(lobby_id, location_id, lobby, participant):
                 )
         state = CombatService.get_state(location_id, participant.user_id)
         socketio.emit('combat_state_updated', state, room=f"location_{location_id}")
+        if result['kind'] == 'trade':
+            socketio.emit('action_journal_updated', {'lobby_id':lobby_id}, room=f'lobby_{lobby_id}')
     return jsonify(result), 201
 
 
@@ -3985,6 +4021,9 @@ def create_character_interaction(lobby_id, location_id, lobby, participant):
 @jwt_required()
 @requires_participant
 def respond_character_interaction(lobby_id, request_id, lobby, participant):
+    request_row = db.session.get(CharacterInteractionRequest, request_id)
+    if not request_row or not Location.query.filter_by(id=request_row.location_id,lobby_id=lobby_id).first():
+        return jsonify({'error':'Запрос взаимодействия не найден'}),404
     data = request.get_json() or {}
     result = CharacterInteractionService.respond(
         request_id,
@@ -4015,6 +4054,8 @@ def respond_character_interaction(lobby_id, request_id, lobby, participant):
                 )
         state = CombatService.get_state(result['location_id'], participant.user_id)
         socketio.emit('combat_state_updated', state, room=f"location_{result['location_id']}")
+        if result['kind'] == 'trade':
+            socketio.emit('action_journal_updated', {'lobby_id':lobby_id}, room=f'lobby_{lobby_id}')
     return jsonify(result), 200
 
 
@@ -4041,6 +4082,9 @@ def cancel_character_interaction(lobby_id, request_id, lobby, participant):
 @jwt_required()
 @requires_participant
 def start_character_treatment(lobby_id, request_id, lobby, participant):
+    request_row = db.session.get(CharacterInteractionRequest, request_id)
+    if not request_row or not Location.query.filter_by(id=request_row.location_id,lobby_id=lobby_id).first():
+        return jsonify({'error':'Запрос взаимодействия не найден'}),404
     result = CharacterInteractionService.mark_treatment_in_progress(
         request_id,
         participant.user_id,
@@ -4846,7 +4890,7 @@ def get_extinguishing_options(lobby_id, location_id, actor_id, lobby, participan
 @lobbies_bp.route('/characters/<int:character_id>/portable-lights', methods=['GET','POST'])
 @jwt_required()
 def portable_lights(character_id):
-    from app.services.portable_lights import operate,walk,bindings,definition
+    from app.services.portable_lights import operate,walk,bindings,definition,nvg_items,nvg_on
     user_id=int(get_jwt_identity())
     character=db.session.get(LobbyCharacter,character_id)
     if not character:raise NotFoundError('Персонаж не найден')
@@ -4857,6 +4901,10 @@ def portable_lights(character_id):
             binding=next((binding for binding in bindings(character.data) if binding.get('id')==item.get('id')),None)
             items.append({'path':path,'id':item.get('id'),'name':item.get('name'),'kind':definition(item),'binding':binding,
                 'uses_left':(item.get('lightPower') or {}).get('uses_left',10)})
+        for path,item in nvg_items(character.data or {}):
+            if path[:3]!=['equipment','helmet','installedModules']:continue
+            items.append({'path':path,'id':item.get('id'),'name':item.get('name') or 'ПНВ','kind':'nvg',
+                'binding':{'mount':'nvg','on':bool(nvg_on(item))},'uses_left':(item.get('lightPower') or {}).get('uses_left',10)})
         batteries=[{'path':path,'name':item.get('name')} for path,item in walk(character.data or {},True)
             if 'батаре' in str(item.get('name') or '').casefold() and 'installedModules' not in path]
         return jsonify({'lights':items,'batteries':batteries}),200
@@ -4865,6 +4913,42 @@ def portable_lights(character_id):
     for model in LocationCharacter.query.filter_by(character_id=character.id).all():
         socketio.emit('combat_state_updated',CombatService.get_state(model.location_id,user_id),room=f'location_{model.location_id}')
     return jsonify({'light_operation':result,'data':character.data_snapshot()}),200
+
+
+@lobbies_bp.route('/characters/<int:character_id>/sterilize-gloves',methods=['POST'])
+@jwt_required()
+def sterilize_gloves(character_id):
+    from app.services.equipment_care import sterilize
+    user_id=int(get_jwt_identity())
+    character,actor,result=sterilize(character_id,user_id,request.get_json() or {})
+    emit_character_update({'character_id':character.id,'updates':{'data':character.data_snapshot()},'source':'equipment_care'})
+    if actor:socketio.emit('combat_state_updated',CombatService.get_state(actor.location_id,user_id),room=f'location_{actor.location_id}')
+    return jsonify({'operation':result,'data':character.data_snapshot()}),200
+
+
+@lobbies_bp.route('/characters/<int:character_id>/crafting',methods=['GET','POST'])
+@jwt_required()
+def character_crafting(character_id):
+    from app.services.crafting import snapshot,operate
+    user_id=int(get_jwt_identity())
+    character=db.session.get(LobbyCharacter,character_id)
+    if not character:raise NotFoundError('Персонаж не найден')
+    if request.method=='GET':return jsonify(snapshot(character,user_id)),200
+    character,result=operate(character_id,user_id,request.get_json() or {})
+    if (request.get_json() or {}).get('operation') not in {'quote','quote_modification','quote_salvage'}:
+        emit_character_update({'character_id':character.id,'updates':{'data':character.data_snapshot()},'source':'crafting'})
+    return jsonify({'result':result,'data':character.data_snapshot()}),200
+
+
+@lobbies_bp.route('/<int:lobby_id>/crafting-requests',methods=['GET'])
+@jwt_required()
+@requires_gm
+def crafting_requests(lobby_id,lobby):
+    result=[]
+    for character in LobbyCharacter.query.filter_by(lobby_id=lobby_id).all():
+        for entry in (character.data.get('crafting') or {}).get('tool_requests',[]):
+            if entry['status']=='pending':result.append({**entry,'character_id':character.id,'character_name':character.name,'revision':character.revision})
+    return jsonify({'requests':result}),200
 
 
 @lobbies_bp.route('/characters/<int:character_id>/prostheses', methods=['POST'])

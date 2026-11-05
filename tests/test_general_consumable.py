@@ -15,6 +15,25 @@ from app.services.medical_procedure import minimum_consumable_payment
 from test_consumable_use import pair
 
 
+@pytest.mark.parametrize('entry,available,remaining',[
+    ({'quantity':1,'uses':0,'maxUses':3},0,None),
+    ({'quantity':2,'uses':0,'maxUses':3},3,{'quantity':1,'uses':2}),
+    ({'quantity':0,'uses':3,'maxUses':3},0,None),
+    ({'uses':2,'maxUses':3},2,{'quantity':1,'uses':1}),
+    ({'quantity':1,'maxUses':3,'attributes':{'uses_remaining':0}},0,None),
+])
+def test_empty_uses_do_not_refill_and_legacy_single_item_is_preserved(app,entry,available,remaining):
+    from app.services.general_consumable import _available_uses,_consume_entry
+    item={'id':'uses-boundary','name':'Вода',**deepcopy(entry)};inventory=[item]
+    before=deepcopy(inventory)
+    assert _available_uses(item)==available
+    assert _consume_entry(inventory,0,1)==bool(available)
+    if remaining:
+        assert {key:inventory[0][key] for key in remaining}==remaining
+        assert _available_uses(inventory[0])==available-1
+    else:assert inventory==before
+
+
 def test_previously_applied_official_suppressor_does_not_keep_false_movement_bonus(app):
     from app.services.combat import CombatService
     description='Ампула. Длительность - 6 перемещений. Пси-состояние -25.'
