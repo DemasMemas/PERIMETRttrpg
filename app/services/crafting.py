@@ -164,7 +164,9 @@ def _tools(character,data,recipe,option):
     if normalized(raw)=='обязателен' and recipe['group']=='Электроника':raw='Станок Электрика'
     if normalized(raw) in {'да','нужна'} and recipe['group']=='Ловушки':raw='Печь'
     required=[part.strip() for part in raw.split(',') if part.strip()]
-    names={name for _,item in entries(data) if _available_uses(item)>0 for name in item_names(item)}
+    names={name for _,item in entries(data) if item.get('quantity',1)>0
+        and (_available_uses(item)>0 or item_names(item)&{'котелок','кастрюля'})
+        for name in item_names(item)}
     # Станки/костёр на сцене доступны только рядом и на текущем этаже.
     placement=LocationCharacter.query.filter_by(character_id=character.id).order_by(LocationCharacter.last_action.desc().nullslast(),LocationCharacter.id.desc()).first()
     if placement:
