@@ -5101,6 +5101,18 @@ def sterilize_gloves(character_id):
     return jsonify({'operation':result,'data':character.data_snapshot()}),200
 
 
+@lobbies_bp.route('/characters/<int:character_id>/spare-plates',methods=['POST'])
+@jwt_required()
+def activate_spare_plates(character_id):
+    from app.services.equipment_care import use_spare_plates
+    user_id=int(get_jwt_identity())
+    character,actor,result=use_spare_plates(character_id,user_id,request.get_json(silent=True) or {})
+    if not result['duplicate']:
+        emit_character_update({'character_id':character.id,'updates':{'data':character.data_snapshot()},'source':'equipment_care'})
+        if actor:socketio.emit('combat_state_updated',CombatService.get_state(actor.location_id,user_id),room=f'location_{actor.location_id}')
+    return jsonify({'operation':result,'data':character.data_snapshot()}),200
+
+
 @lobbies_bp.route('/characters/<int:character_id>/crafting',methods=['GET','POST'])
 @jwt_required()
 def character_crafting(character_id):

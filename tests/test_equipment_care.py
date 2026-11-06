@@ -24,6 +24,43 @@ def test_polymer_regenerator_restores_current_stage_over_game_time():
     assert not has_timers(data)
 
 
+def test_spare_plates_restore_two_stages_once_and_free_slot(client,checks,auth_headers):
+    assert supported(definition('armor-a49'))
+    character=checks['actor_character'];actor=checks['actor_location']
+    data=deepcopy(character.data)
+    data['equipment']['armor']={'id':'armor-spare','name':'Тяжёлая броня','category':'armor',
+        'durability':100,'maxDurability':100,'stage':4,'stageDurability':1000,
+        'currentStageDurability':70,'modifications':[make_record('armor-a49')]}
+    character.data=data;actor.action_points_current=12;db.session.commit()
+    payload={'character_revision':character.revision,'item_id':'armor-spare','operation_id':'plates-once'}
+    url=f'/lobbies/characters/{character.id}/spare-plates'
+    first=client.post(url,headers=auth_headers(checks['actor_user']),json=payload)
+    assert first.status_code==200,first.json
+    armor=first.json['data']['equipment']['armor']
+    assert armor['stage']==2 and armor['condition']=='2. Немного повреждена'
+    assert armor['currentStageDurability']==armor['stageDurability']==1000
+    assert armor['durability']==100 and armor['modifications']==[]
+    assert actor.action_points_current==2
+    repeated=client.post(url,headers=auth_headers(checks['actor_user']),json=payload)
+    assert repeated.status_code==200 and repeated.json['operation']['duplicate']
+    assert actor.action_points_current==2 and character.data['equipment']['armor']['stage']==2
+
+
+def test_spare_plates_require_ten_ap_and_do_not_change_armor_on_failure(client,checks,auth_headers):
+    character=checks['actor_character'];actor=checks['actor_location']
+    data=deepcopy(character.data)
+    data['equipment']['armor']={'id':'armor-spare','name':'Тяжёлая броня','category':'armor',
+        'durability':100,'stage':5,'modifications':[make_record('armor-a49')]}
+    character.data=data;actor.action_points_current=9;db.session.commit()
+    payload={'character_revision':character.revision,'item_id':'armor-spare','operation_id':'plates-fail'}
+    response=client.post(f'/lobbies/characters/{character.id}/spare-plates',
+        headers=auth_headers(checks['actor_user']),json=payload)
+    assert response.status_code==400,response.json
+    assert character.data['equipment']['armor']['stage']==5
+    assert len(character.data['equipment']['armor']['modifications'])==1
+    assert actor.action_points_current==9
+
+
 def test_polymer_regenerator_does_not_restore_destroyed_stage_or_other_armor():
     armor={'name':'Экзоскелет','category':'armor','stage':5,'stageDurability':1000,
         'currentStageDurability':0,'modifications':[make_record('armor-d26')]}

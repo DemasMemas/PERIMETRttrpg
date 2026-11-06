@@ -69,6 +69,70 @@ def infection_multiplier(data):
     return .5 if medical_gloves(gloves) and (gloves.get('sterility') or {}).get('remaining_seconds',0)>0 else 1
 
 
+@atomic_operation
+def use_spare_plates(character_id,user_id,payload):
+    """Одноразово восстановить две стадии надетой тяжёлой брони."""
+    from datetime import datetime,timezone
+    from app.services.character import CharacterService
+    from app.services.combat import CombatService,ARMOR_STAGE_LABELS
+    from app.services.equipment_modifications import installed
+    if not isinstance(payload,dict) or set(payload)!={'character_revision','item_id','operation_id'}:
+        raise ValidationError('Некорректное использование запасных пластин')
+    operation_id=payload['operation_id']
+    if not isinstance(operation_id,str) or not 1<=len(operation_id)<=100:
+        raise ValidationError('Укажите идентификатор действия')
+    character=db.session.get(LobbyCharacter,character_id)
+    if not character:raise NotFoundError('Персонаж не найден')
+    CharacterService.check_access(character,user_id,edit=True)
+    previous=next((row for row in (((character.data or {}).get('health') or {}).get('combatMeta') or {}).get('actionJournal',[])
+        if row.get('id')=='spare-plates:'+operation_id),None)
+    if previous:
+        if previous.get('item_id')!=payload['item_id']:
+            raise ConflictError('Идентификатор действия уже использован для другой брони')
+        return character,None,{'duplicate':True,'stage_after':previous.get('stage_after')}
+    if type(payload['character_revision']) is not int or character.revision!=payload['character_revision']:
+        raise ConflictError('Лист брони изменился. Откройте его заново')
+    data=deepcopy(character.data or {});armor=(data.get('equipment') or {}).get('armor')
+    if not isinstance(armor,dict) or armor.get('id')!=payload['item_id']:
+        raise ConflictError('Броня перемещена. Откройте лист заново')
+    record=next((entry for entry in installed(armor) if entry['ruleId']=='armor-a49'),None)
+    if not record:raise ValidationError('Запасные пластины не установлены на этой броне')
+    stage=CombatService._coerce_int(armor.get('stage'),1)
+    if not 2<=stage<=5:raise ValidationError('Стадии брони уже целые')
+    models=LocationCharacter.query.join(LocationCombatState,LocationCombatState.location_id==LocationCharacter.location_id).filter(
+        LocationCharacter.character_id==character_id,LocationCombatState.status=='active').all()
+    if len(models)>1:raise ValidationError('Персонаж участвует в нескольких боях')
+    actor=models[0] if models else None
+    if actor:
+        state=LocationCombatState.query.filter_by(location_id=actor.location_id).one()
+        is_gm=CombatService._ensure_access(actor.location,user_id)
+        if state.current_location_character_id!=actor.id or not CombatService._can_end_turn_for_character(actor,user_id,is_gm=is_gm):
+            raise PermissionDenied('Использовать пластины можно только в свой ход')
+        CombatService.ensure_character_can_act(actor)
+        if actor.action_points_current<10:raise ValidationError('Для установки пластин нужно 10 ОД')
+    elif CombatService._character_condition(data)['state']!='active':
+        raise ValidationError('Персонаж не может использовать запасные пластины')
+    new_stage=max(1,stage-2)
+    armor['stage']=new_stage;armor['condition']=ARMOR_STAGE_LABELS[new_stage-1]
+    template=CombatService._equipment_template(armor)
+    attributes={**(template.attributes or {} if template else {}),**(armor.get('attributes') or {})}
+    armor['stageDurability']=CombatService._armor_stage_capacity(armor,attributes)
+    armor['currentStageDurability']=armor['stageDurability']
+    armor['modifications']=[entry for entry in armor['modifications'] if entry is not record]
+    if actor:actor.action_points_current-=10
+    journal=data.setdefault('health',{}).setdefault('combatMeta',{}).setdefault('actionJournal',[])
+    journal.append({'id':'spare-plates:'+operation_id,'timestamp':datetime.now(timezone.utc).isoformat(),
+        'action':'spare_plates','kind':'equipment_care','label':'Запасные пластины',
+        'status':'completed','location_id':actor.location_id if actor else None,
+        'action_points':10 if actor else 0,'movement_points':0,'free_actions':0,
+        'item_id':payload['item_id'],'stage_after':new_stage,
+        'outcome':f'Броня: стадия {stage} → {new_stage}. Модификация израсходована.'})
+    data['health']['combatMeta']['actionJournal']=journal[-100:]
+    character.data=data;flag_modified(character,'data')
+    return character,actor,{'duplicate':False,'stage_before':stage,'stage_after':new_stage,
+        'action_points':10 if actor else 0}
+
+
 @journaled(kind='equipment_care')
 @atomic_operation
 def sterilize(character_id,user_id,payload):

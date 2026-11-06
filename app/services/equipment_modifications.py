@@ -55,6 +55,7 @@ SPECIAL_ARMOR={
  'g77':({}, {'belt_reload_ap_reduction':1}),'g78':({}, {'large_weapon_ergonomics':10}),
  'd27':({}, {'unpowered_weight_penalty_suppression':True}),
  'd28':({'movement_penalty':'=3'},{}),
+ 'a49':({}, {'spare_plates':True}),
  'd32':({}, {'exoskeleton_run':True})}
 
 

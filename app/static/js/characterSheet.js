@@ -4515,6 +4515,7 @@ async function renderEquipmentTab(data) {
                             <label>Макс. прочность стадии</label>
                             <input type="number" class="number-input form-control" value="${calculateStageDurability(armor.durability || 0, armor.material || 'Текстиль')}" readonly disabled>
                         </div>
+                        ${armor.modifications?.some(mod => mod?.ruleId === 'armor-a49') ? `<button type="button" class="btn btn-sm btn-secondary" onclick="window.useSparePlates()">Запасные пластины · восстановить 2 стадии · 10 ОД в бою</button>` : ''}
                         <div class="field-group field-select field-material">
                             <label>Материал</label>
                             <select name="equipment.armor.material" class="form-control">
@@ -5521,6 +5522,28 @@ window.sterilizeGloves = async function() {
     if (!choices.length) {showNotification('В инвентаре нет спирта или водки');return;}
     const choice=await chooseConsumableApplication('Обработать перчатки',choices,{alwaysShow:true});
     if(choice) await window.operatePortableLight({operation:'sterilize',path:choice.path,source_id:choice.source_id});
+};
+
+window.useSparePlates = async function() {
+    if(medicalOperationInProgress || !currentCharacterCanEdit)return;
+    const characterId=currentCharacterId;let locked=false;
+    try{
+        if(autoSaveTimer)await forceSyncCharacter();
+        await Server.waitForCharacterSave(characterId);
+        if(currentCharacterId!==characterId || medicalOperationInProgress)return;
+        if(sheetSaveBlocked)throw new Error('Переоткройте лист перед использованием пластин');
+        const armor=currentCharacterData?.equipment?.armor;
+        if(!armor?.id)throw new Error('У брони нет ID. Снимите и наденьте её заново.');
+        medicalOperationInProgress=locked=true;medicalRemoteUpdate=null;
+        const result=await Server.useSparePlates(characterId,{character_revision:currentCharacterData._revision,
+            item_id:armor.id,operation_id:crypto.randomUUID()});
+        currentCharacterData=result.data;
+        showNotification(`Броня восстановлена до стадии ${result.operation.stage_after}`,'success');
+    }catch(error){showNotification(error.message||'Не удалось использовать запасные пластины','system');}
+    finally{if(locked){
+        if(medicalRemoteUpdate?.character_id===Number(characterId)&&Number(medicalRemoteUpdate.data?._revision)>Number(currentCharacterData?._revision))currentCharacterData=medicalRemoteUpdate.data;
+        medicalRemoteUpdate=null;medicalOperationInProgress=false;await refreshSavedSheet(characterId);
+    }}
 };
 
 window.changeWeaponGrip = async function(weaponIndex, hands, hand) {
