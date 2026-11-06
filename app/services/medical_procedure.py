@@ -4,6 +4,7 @@ from app.services.action_journal import journaled
 from dataclasses import dataclass, field
 import hashlib
 import hmac
+import math
 import random
 import uuid
 
@@ -63,6 +64,22 @@ def _doctor_tools_medicine_bonus(actor_data, lobby_id, direct):
         if isinstance(uses, (int, float)) and uses > 0:
             return 2
     return 0
+
+
+def _surgeon_tools_available(actor_data, lobby_id):
+    from app.services.portable_lights import walk
+    for path, item in walk(actor_data, True):
+        if path[:2] not in (['inventory', 'pockets'], ['inventory', 'backpack']):
+            continue
+        template = resolve_item_template(item, lobby_id)
+        if not (template and template.name == 'Набор инструментов Хирурга 30/30'
+                and template.category == 'tool' and item.get('name') == template.name
+                and item.get('category') == template.category):
+            continue
+        uses = item.get('uses', item.get('maxUses', (template.attributes or {}).get('uses', 0)))
+        if isinstance(uses, (int, float)) and uses > 0:
+            return True
+    return False
 MINOR_RESTORABLE_PARTS = {'nose', 'jaw', 'leftEar', 'rightEar', 'ear'}
 GENERIC_MEDICAL_BLOCKED_FIELDS = {
     'applications', 'requires_injury', 'target_body_part', 'target_required',
@@ -1133,6 +1150,9 @@ class MedicalProcedureService:
             raise ValidationError('Боязнь крови не позволяет оказать эту медицинскую помощь')
         if trait_count(actor_data,'Аккуратные пальчики') and direct.get('surgical_kit') and _numeric(direct.get('pain_delta'))>0:
             direct=deepcopy(direct);direct['pain_delta']=_numeric(direct['pain_delta'])/2
+        surgeon_tools = bool(direct.get('surgical_kit') and _surgeon_tools_available(actor_data,actor.lobby_id))
+        if surgeon_tools and _numeric(direct.get('pain_delta'))>0:
+            direct=deepcopy(direct);direct['pain_delta']=math.floor(_numeric(direct['pain_delta'])/2)
         requirements = _procedure_requirements(health, direct, application)
         canonical_application = requirements['canonical_application']
         required_uses = requirements['required_uses']
@@ -1189,7 +1209,8 @@ class MedicalProcedureService:
             medication_bonus = 0
         skill_bonus = (_medicine_skill(actor_data)
                        + _scissors_medicine_bonus(actor_data,actor.lobby_id,profile)
-                       + _doctor_tools_medicine_bonus(actor_data,actor.lobby_id,direct))
+                       + _doctor_tools_medicine_bonus(actor_data,actor.lobby_id,direct)
+                       + (5 if surgeon_tools else 0))
         if helper:skill_bonus+=_numeric(helper.get('roll_bonus'))
         patient_counts=((actor_data.get('health') or {}).get('combatMeta') or {}).get('patientTreatments') or {}
         if trait_count(actor_data,'Личный врач') and _numeric(patient_counts.get(str(target.id)))>10:skill_bonus+=3

@@ -1152,6 +1152,31 @@ def test_limb_surgery_without_preexisting_pain_does_not_cause_maximum_pain_shock
     assert not any(e['type']=='shock' for e in health['effects'])
 
 
+def test_charged_surgeon_tools_improve_surgery_and_halve_patient_pain(client,pair,auth_headers,monkeypatch):
+    from app.services.medical_procedure import _medicine_skill, _surgeon_tools_available
+    _, _, item = install_item(pair, 'Хирургический набор "Крест"',
+        'Восстанавливает часть тела. Она имеет 10 здоровья. Усиливает боль на 5 уровней.',
+        quantity=10, pain=0, zones={'leftArm': {'current':0,'max':50}})
+    tool=ItemTemplate(name='Набор инструментов Хирурга 30/30',category='tool',price=100,attributes={'uses':30})
+    db.session.add(tool);db.session.flush()
+    data=deepcopy(pair['actor_character'].data)
+    data['inventory']['pockets']=[{'name':'Поддельный набор','category':'tool','templateId':tool.id,'uses':30}]
+    assert not _surgeon_tools_available(data,pair['lobby'].id)
+    data['inventory']['pockets'][0]['name']=tool.name
+    data['inventory']['pockets'][0]['uses']=0
+    assert not _surgeon_tools_available(data,pair['lobby'].id)
+    data['inventory']['pockets'][0]['uses']=10
+    assert _surgeon_tools_available(data,pair['lobby'].id)
+    pair['actor_character'].data=data;flag_modified(pair['actor_character'],'data');db.session.commit()
+    monkeypatch.setattr('app.services.medical_procedure.random.randint',lambda *_:20)
+    application={'kind':'injury','effect':{'type':'damaged_zone','area':'leftArm'},
+        'treatmentMode':'restore_disabled_limb','actionPoints':6}
+    response=apply(client,pair,auth_headers,payload(pair,item,application))
+    assert response.status_code==200,response.json
+    assert response.json['medical_result']['medicine_bonus']==_medicine_skill(data)+5
+    assert response.json['actor_data']['health']['painLevel']==2
+
+
 def test_splint_fix_and_restore_are_separate_procedures(client, pair, auth_headers, monkeypatch):
     fracture = {'id': 'fracture-1', 'type': 'fracture', 'area': 'leftLeg', 'source': 'fall'}
     zones = {
