@@ -222,7 +222,9 @@ def repair_equipment(
         current = max(0, int(target.get("uses", maximum)))
         if current >= maximum:
             raise ValueError("Набор инструментов уже полностью восстановлен")
-        restored = max(1, math.ceil(maximum * float(profile.get("restore_fraction") or 0.5)))
+        restored = math.floor(maximum * float(profile.get("restore_fraction") or 0.5))
+        if restored <= 0:
+            raise ValueError("Набор не восстановит ни одного заряда")
         target["uses"] = min(maximum, current + restored)
         target.setdefault("attributes", {})["uses_remaining"] = target["uses"]
         result = {

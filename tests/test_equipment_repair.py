@@ -165,5 +165,15 @@ def test_tool_restoration_recovers_half_charges_and_consumes_restore_kit():
         ["inventory", "pockets", 1],
     )
 
-    assert result["after"] == 10
+    assert result["after"] == 9
     assert data["inventory"]["pockets"] == [damaged_tool]
+
+
+def test_tool_restoration_does_not_consume_kit_for_zero_rounded_recovery():
+    kit={"name":"Набор восстановления инструментов","category":"tool","quantity":1,
+        "attributes":{"repair_profile":{"kind":"restore_tool","restore_fraction":0.5}}}
+    target={"name":"Мини-инструмент","category":"tool","uses":0,"maxUses":1}
+    data={"inventory":{"pockets":[kit,target]}}
+    with pytest.raises(ValueError,match="ни одного заряда"):
+        repair_equipment(data,["inventory","pockets",0],["inventory","pockets",1])
+    assert data["inventory"]["pockets"]==[kit,target]
