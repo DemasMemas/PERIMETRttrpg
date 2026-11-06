@@ -64,6 +64,27 @@ def test_tool_charge_suffix_matches_recipe_and_multiple_sets_cover_fifty_uses(wo
     assert _tools(workshop['actor_character'],data,recipe,0)==['Смесительные инструменты']
 
 
+def test_dry_ration_recipe_spends_one_box_of_ten_matches(client,workshop,auth_headers,monkeypatch):
+    data=deepcopy(workshop['actor_character'].data)
+    data['skills']['other']['survival']={'base':13,'bonus':0}
+    data['inventory']['pockets']=[{'name':name,'category':'consumable','quantity':quantity}
+        for name,quantity in [('Консервы',2),('Хлеб',1),('Спички (10 штук)',2),('Бумага',1)]]
+    workshop['actor_character'].data=data
+    output=ItemTemplate(name='Сухой паек',category='consumable',price=100)
+    db.session.add(output);db.session.commit()
+    quoted=call(client,workshop,auth_headers,'quote',recipe_id='recipe-aa4')
+    assert quoted.status_code==200,quoted.json
+    assert quoted.json['result']['missing']==[]
+    started=call(client,workshop,auth_headers,'start',recipe_id='recipe-aa4')
+    assert started.status_code==200,started.json
+    workshop['lobby'].game_time_minutes+=5;db.session.commit()
+    monkeypatch.setattr('app.services.crafting.resolve_creation',lambda quote:{'success':True,'roll':100,'automatic':False})
+    finished=call(client,workshop,auth_headers,'finish',job_id=started.json['result']['id'],chosen_loss=[0])
+    assert finished.status_code==200,finished.json
+    assert units(finished.json['data'],'Спички (10 штук)')==1
+    assert units(finished.json['data'],'Сухой паек')==1
+
+
 def test_depleted_workbench_does_not_satisfy_recipe_requirement(client,workshop,auth_headers,monkeypatch):
     from app.services import crafting
     original=crafting.recipe_by_id

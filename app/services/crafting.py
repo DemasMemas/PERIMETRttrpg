@@ -101,17 +101,20 @@ def _allocate(data,recipe):
         for path,item in candidates:
             from app.services.flamethrower import charges
             attrs=item.get('attributes') or {};whole=bool(meat_component or component.get('whole_tank') or component.get('whole_air'))
+            matches_box=(recipe['id']=='recipe-aa4' and component['name']=='Спички'
+                and normalized(item.get('name'))=='спички 10 штук')
             if meat_component:
                 from app.services.cooked_meat import ingredient_matches
                 matches=ingredient_matches(recipe['id'],item)
             else:matches=(attrs.get('flamethrower_tank')==component.get('whole_tank') and charges(item)==0 if component.get('whole_tank')
-                else bool(attrs.get('flamethrower_air')) if component.get('whole_air') else bool(item_names(item)&names))
+                else bool(attrs.get('flamethrower_air')) if component.get('whole_air') else matches_box or bool(item_names(item)&names))
             if not matches or _contains_individual_items(item):continue
             key=tuple(path);available=(item.get('quantity',1) if whole else _available_uses(item) if item.get('quantity',1)>0 else 0)-spent.get(key,0)
-            take=min(left,available)
+            unit=10 if matches_box else 1
+            take=min(ceil(left/unit),available)
             if take>0:
                 allocations.append({'component':index,'path':path,'amount':take,'item':deepcopy(item),'whole':whole})
-                spent[key]=spent.get(key,0)+take;left-=take
+                spent[key]=spent.get(key,0)+take;left=max(0,left-take*unit)
             if not left:break
         if left:missing.append(f"{component['name']}: не хватает {left}")
     return allocations,missing
