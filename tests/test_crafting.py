@@ -122,6 +122,19 @@ def test_glue_recipe_uses_catalog_pot_without_consuming_it(client,workshop,auth_
     assert any(entry['item']['name']==pan and entry['whole'] for entry in allocations)
 
 
+def test_extinguished_campfire_does_not_satisfy_recipe_tool(workshop):
+    from app.services.crafting import _tools,recipe_by_id
+    placed=LocationCharacter.query.filter_by(character_id=workshop['actor_character'].id).first()
+    fire=LocationObject(location_id=placed.location_id,name='Костёр',type='campfire',
+        tile_x=round(placed.pos_x),tile_y=round(placed.pos_y),properties={'is_lit':False})
+    db.session.add(fire);db.session.commit()
+    recipe=recipe_by_id('recipe-aa9')
+    data={'inventory':{'pockets':[{'name':'Котелок','category':'misc','quantity':1}]}}
+    assert 'Костер' in _tools(workshop['actor_character'],data,recipe,0)
+    fire.properties={'is_lit':True};db.session.commit()
+    assert _tools(workshop['actor_character'],data,recipe,0)==[]
+
+
 @pytest.mark.parametrize('recipe_id,name,amount',[('recipe-m33','Стеклянная бутылка (Объем 1 литр) (3 использования воды)',3),
     ('recipe-m40','Стеклянная бутылка (Объем 1 литр) (3 использования воды)',2),
     ('recipe-m44','Стеклянная бутылка (Объем 1 литр) (3 использования воды)',10),

@@ -172,8 +172,9 @@ def _tools(character,data,recipe,option):
             props=obj.properties or {}
             if (props.get('level',0) or 0)!=(placement.floor_level or 0):continue
             if ((obj.tile_x-placement.pos_x)**2+(obj.tile_y-placement.pos_y)**2)**.5>1.5:continue
-            names.add(normalized(obj.name))
-            if obj.type in {'campfire','fire_barrel'} and props.get('is_lit',True):names.add('костер')
+            if obj.type in {'campfire','fire_barrel'}:
+                if props.get('is_lit',True):names.add('костер')
+            else:names.add(normalized(obj.name))
     missing=[]
     for part in required:
         if normalized(part) in {'не нужен','не нужна','не обязателен','не обязательна','не обязателен станок',''} or part in {'---','-'}:continue
