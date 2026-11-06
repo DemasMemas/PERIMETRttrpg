@@ -136,6 +136,36 @@ module.exports=async({page,request,token,lobby,safeSession})=>{
     assert.equal(await page.evaluate('Boolean(document.querySelector(`[onclick="unequipModuleFromWeapon(0, \'barrel\')"]`))'),false);
     await page.evaluate('window.shortenWeaponBarrel(0)');
     assert.equal((await read()).data.weapons[0].installedModules.length,1,'повторное действие не дублирует изменение');
+    const picker=await page.evaluate(`(async()=>{
+        const {renderInventoryTemplatePicker}=await import('/static/js/characterSheet.js');
+        const samples=[
+            ['weapon','Пистолеты'],['weapon','Дробовики'],
+            ['armor','Лёгкая'],['armor','Средняя'],['armor','Тяжёлая'],
+            ['helmet','Текстиль',{soft_headwear:true}],['helmet','Плита',{}],
+            ['helmet','Композит',{requires_filter:true}],['helmet','Кевлар',{integrated_visor:true}],
+            ['vest',''],['belt',''],['armor_plate',''],
+            ['device','battery'],['exoskeleton_module','battery'],
+            ['artifact','',{anomaly_type:'Электрическая'}],
+        ].map(([category,subcategory,attributes],id)=>({id:id+1,name:'Образец '+id,category,subcategory,
+            attributes:attributes||{},item_class:category==='artifact'?'2':null}));
+        const root=document.createElement('div');root.innerHTML=renderInventoryTemplatePicker(samples);
+        const roots=[...root.querySelectorAll(':scope > details')];
+        const section=name=>{
+            const root=roots.find(item=>item.querySelector(':scope > summary span')?.textContent===name);
+            return root?[...root.querySelectorAll(':scope > details > summary span:first-child')].map(item=>item.textContent):[];
+        };
+        return {weapons:section('Оружие'),armor:section('Броня'),helmets:section('Головное снаряжение'),
+            vests:section('Разгрузки'),devices:section('Приборы'),
+            artifacts:section('Артефакты'),
+            duplicateIds:(()=>{const ids=[...root.querySelectorAll('[data-item-template-id]')].map(item=>item.dataset.itemTemplateId);return ids.length-new Set(ids).size})()};
+    })()`);
+    assert.ok(picker.weapons.includes('Пистолеты')&&picker.weapons.includes('Дробовики'),JSON.stringify(picker));
+    assert.ok(picker.armor.includes('Лёгкая')&&picker.armor.includes('Средняя')&&picker.armor.includes('Тяжёлая'));
+    assert.ok(picker.helmets.includes('Головные уборы')&&picker.helmets.includes('Шлемы-противогазы'));
+    assert.ok(picker.vests.includes('Пояса')&&picker.vests.includes('Бронеплиты'));
+    assert.ok(picker.devices.includes('Батарейки')&&picker.devices.includes('Аккумуляторы экзоскелета'));
+    assert.ok(picker.artifacts.includes('Электрическая'));
+    assert.equal(picker.duplicateIds,0,'группировка не дублирует шаблоны');
     fs.writeFileSync(path.join(safeSession.artifacts,'weapon-loadout.json'),JSON.stringify({modelSurvivesSave:true,threeSlots:true,launcherTwoSlots:true,
         oneModuleFromStack:true,weaponIdPreserved:true,volume:8,loadedLauncherPreserved:true,reloadPreserved:true,detachedModuleStatePreserved:true,allCatalogModules:checked,shortBarrelVolume:6},null,2));
 };

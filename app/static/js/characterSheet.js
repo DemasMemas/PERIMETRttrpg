@@ -275,7 +275,7 @@ export function getCategoryDisplay(cat) {
         'weapon': 'Оружие',
         'melee_weapon': 'Оружие ближнего боя',
         'armor': 'Броня',
-        'helmet': 'Шлемы',
+        'helmet': 'Головное снаряжение',
         'gas_mask': 'Противогазы',
         'detector': 'Детекторы',
         'container': 'Контейнеры',
@@ -289,13 +289,13 @@ export function getCategoryDisplay(cat) {
         'magazine': 'Магазины',
         'ammo': 'Патроны',
         'gas_mask_module': 'Фильтры противогазов',
-        'exoskeleton_module': 'Прочее',
+        'exoskeleton_module': 'Приборы',
         'helmet_module': 'Модули шлемов',
         'visor': 'Забрала',
-        'belt': 'Пояс',
+        'belt': 'Разгрузки',
         'grenade': 'Гранаты',
         'device': 'Приборы',
-        'armor_plate': 'Бронеплиты',
+        'armor_plate': 'Разгрузки',
         'headphones': 'Наушники',
         'glasses': 'Очки',
         'gloves': 'Перчатки',
@@ -522,9 +522,9 @@ const WEAPON_SUBCATEGORY_ORDER = [
     'Оружие ближнего боя',
 ];
 const ITEM_CATEGORY_ORDER = [
-    'Оружие', 'Оружие ближнего боя', 'Броня', 'Шлемы', 'Противогазы',
-    'Магазины', 'Патроны', 'Гранаты', 'Оружейные модули', 'Бронеплиты',
-    'Рюкзаки', 'Разгрузки', 'Пояс', 'Подсумки', 'Контейнеры',
+    'Оружие', 'Оружие ближнего боя', 'Броня', 'Головное снаряжение', 'Противогазы',
+    'Магазины', 'Патроны', 'Гранаты', 'Оружейные модули',
+    'Рюкзаки', 'Разгрузки', 'Подсумки', 'Контейнеры',
     'Расходники', 'Приборы', 'Детекторы', 'Фильтры противогазов',
     'Модули шлемов', 'Артефакты', 'Материалы', 'Инструменты', 'Книги', 'Прочее',
 ];
@@ -15031,6 +15031,25 @@ window.addCatalogConsumableComponent = function() {
     renderConsumableProfileTree(document.getElementById('consumable-advanced-fields'), modal._advancedProfile);
 };
 
+function inventoryPickerSection(template) {
+    const attrs = template.attributes || {};
+    if (template.category === 'weapon') return template.subcategory || 'Другой тип оружия';
+    if (template.category === 'armor') return attrs.modification_category || template.subcategory || 'Другой класс брони';
+    if (template.category === 'helmet') {
+        if (attrs.soft_headwear) return 'Головные уборы';
+        if (attrs.requires_filter) return 'Шлемы-противогазы';
+        if (attrs.integrated_visor) return 'Шлемы с забралом';
+        return 'Шлемы без забрала';
+    }
+    if (template.category === 'armor_plate') return 'Бронеплиты';
+    if (template.category === 'belt') return 'Пояса';
+    if (template.category === 'vest') return 'Разгрузки';
+    if (template.category === 'exoskeleton_module') return 'Аккумуляторы экзоскелета';
+    if (template.category === 'device' && template.subcategory === 'battery') return 'Батарейки';
+    if (template.category === 'artifact') return attrs.anomaly_type || attrs.anomalyType || template.subcategory || 'Тип аномалии не указан';
+    return null;
+}
+
 export function renderInventoryTemplatePicker(templates, query = '', options = {}) {
     const normalizedQuery = query.trim().toLowerCase();
     const availableTemplates = templates.filter(t => {
@@ -15052,7 +15071,8 @@ export function renderInventoryTemplatePicker(templates, query = '', options = {
                 t.attributes?.ammo_group,
                 t.attributes?.ammo_kind,
                 t.attributes?.purchase_category,
-                t.attributes?.book_kind ? 'книга книги чтение' : ''
+                t.attributes?.book_kind ? 'книга книги чтение' : '',
+                inventoryPickerSection(t),
             ].filter(Boolean).join(' ').toLowerCase();
             return haystack.includes(normalizedQuery);
         })
@@ -15121,6 +15141,31 @@ export function renderInventoryTemplatePicker(templates, query = '', options = {
                         </summary>
                         ${renderCards(sections[section].sort(compareTemplatesBySourceOrder))}
                     </details>`).join('');
+        } else if (['Оружие', 'Броня', 'Головное снаряжение', 'Артефакты', 'Разгрузки', 'Приборы'].includes(group)) {
+            const sections = {};
+            items.forEach(template => {
+                const section = inventoryPickerSection(template) || 'Другие предметы';
+                (sections[section] ||= []).push(template);
+            });
+            const sectionOrder = group === 'Оружие' ? WEAPON_SUBCATEGORY_ORDER
+                : group === 'Броня' ? ['Лёгкая', 'Средняя', 'Тяжёлая', 'Аномальная', 'Экзоскелет']
+                : group === 'Головное снаряжение' ? ['Головные уборы', 'Шлемы без забрала', 'Шлемы-противогазы', 'Шлемы с забралом']
+                : group === 'Разгрузки' ? ['Разгрузки', 'Пояса', 'Бронеплиты']
+                : group === 'Приборы' ? ['Батарейки', 'Аккумуляторы экзоскелета'] : [];
+            contents = Object.keys(sections)
+                .sort((a, b) => compareByFixedOrder(a, b, sectionOrder))
+                .map(section => {
+                    const sectionItems = sections[section].sort(compareTemplatesBySourceOrder);
+                    let cards = renderCards(sectionItems);
+                    if (group === 'Артефакты' && sectionItems.some(item => item.item_class)) {
+                        const classes = {};
+                        sectionItems.forEach(item => (classes[String(item.item_class || 'Без класса')] ||= []).push(item));
+                        cards = Object.keys(classes).sort((a, b) => a.localeCompare(b, 'ru', {numeric: true}))
+                            .map(key => `<details ${normalizedQuery ? 'open' : ''} style="margin:8px 0 0 12px; padding:6px; border-left:2px solid rgba(174,165,120,.45)"><summary>Класс ${escapeHtml(key)} · ${classes[key].length}</summary>${renderCards(classes[key])}</details>`).join('');
+                    }
+                    return `<details ${normalizedQuery ? 'open' : ''} style="border-left:2px solid rgba(174,165,120,.45); padding:6px 8px; margin-top:8px; background:rgba(255,255,255,.025);">
+                        <summary style="cursor:pointer; font-weight:600; display:flex; justify-content:space-between; gap:10px;"><span>${escapeHtml(section)}</span><span style="opacity:.6; font-weight:400;">${sectionItems.length}</span></summary>${cards}</details>`;
+                }).join('');
         }
         return `
             <details ${normalizedQuery || options.open ? 'open' : ''} style="border:1px solid rgba(255,255,255,0.12); border-radius:10px; padding:8px 10px; background: rgba(0,0,0,0.12); margin-bottom:8px;">
