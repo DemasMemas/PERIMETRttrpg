@@ -1,5 +1,5 @@
 import { itemTooltipModel, tooltipPosition } from './itemPresentation.js';
-import { applyPouchTemplate, applyVestTemplate, returnPouchContents, vestMountVolume } from './inventoryContainers.js';
+import { applyPouchTemplate, applyVestTemplate, returnPouchContents, vestMountVolume, pouchCapacity } from './inventoryContainers.js';
 import { rollQuickSkill } from './quickSkillCheck.js';
 import {modificationStat,wornModificationStat,modificationRule,wornModificationRule,modifiedFireProfile} from './itemModifications.js';
 import { renderPortableLights,usesNightVision } from './portableLights.js';
@@ -14485,7 +14485,7 @@ function renderPouchItem(pouch, index, path, parentContainer, pouchTemplates, al
     const infoSpan = document.createElement('span');
     infoSpan.dataset.volumeInfo = '';
     const used = calculatePouchUsedVolume(pouch);
-    const internalLimit = pouch.internalVolume || pouch.capacity;
+    const internalLimit = pouchCapacity(pouch, path[1] === 'belt' ? currentCharacterData.equipment?.belt : null);
     infoSpan.textContent = `📦 ${used} / ${internalLimit}`;
     row.appendChild(infoSpan);
 
@@ -14635,7 +14635,7 @@ function renderVestPouchItem(pouch, index, path, parentContainer, pouchTemplates
     const infoSpan = document.createElement('span');
     infoSpan.dataset.volumeInfo = '';
     const used = calculatePouchUsedVolume(pouch);
-    const internalLimit = pouch.internalVolume || pouch.capacity;
+    const internalLimit = pouchCapacity(pouch);
     infoSpan.textContent = `📦 ${used} / ${internalLimit}`;
     infoSpan.style.whiteSpace = 'nowrap';
     row.appendChild(infoSpan);
@@ -14730,7 +14730,7 @@ function updatePouchVolumeFromContentsDiv(contentsDiv) {
     if (!pouch) return;
 
     const used = calculatePouchUsedVolume(pouch);
-    const internalLimit = pouch.internalVolume || pouch.capacity;
+    const internalLimit = pouchCapacity(pouch, containerPath[1] === 'belt' ? currentCharacterData.equipment?.belt : null);
     infoSpan.textContent = `📦 ${used} / ${internalLimit}`;
 }
 
@@ -17539,7 +17539,9 @@ function setupDropTarget(containerDiv, containerPath, containerItem) {
             - (isSameContainer ? newVolume : 0);
         const limit = containerPath.length===2&&containerPath[0]==='inventory'&&containerPath[1]==='pockets'
             ? pocketCapacity(currentCharacterData)
-            : Number(targetContainer.internalVolume ?? targetContainer.capacity ?? targetContainer.attributes?.capacity ?? targetContainer.volume ?? 0);
+            : containerPath[0]==='equipment'&&containerPath[2]==='pouches'
+                ? pouchCapacity(targetContainer, containerPath[1]==='belt' ? currentCharacterData.equipment?.belt : null)
+                : Number(targetContainer.internalVolume ?? targetContainer.capacity ?? targetContainer.attributes?.capacity ?? targetContainer.volume ?? 0);
         if (currentUsed + newVolume > limit) {
             showNotification('Недостаточно места в контейнере');
             draggedItem = null; draggedItemPath = null;

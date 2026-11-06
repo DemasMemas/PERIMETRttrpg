@@ -144,7 +144,8 @@ def test_unlock_is_paid_once_and_cannot_exceed_maximum(client,gunsmith,auth_head
 
 
 @pytest.mark.parametrize('rule_id,effect,expected',[
-    ('armor-g58','belt_weight_reduction',.75),('armor-g77','belt_reload_ap_reduction',1),
+    ('armor-g58','belt_weight_reduction',.75),('armor-g66','medical_pouch_capacity_multiplier',3),
+    ('armor-g77','belt_reload_ap_reduction',1),
     ('armor-g78','large_weapon_ergonomics',15),
 ])
 def test_belt_uses_class_one_armor_rules_and_own_service_price(client,gunsmith,auth_headers,monkeypatch,rule_id,effect,expected):

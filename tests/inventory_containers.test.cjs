@@ -51,3 +51,16 @@ test('профильная скидка разгрузки меняет внеш
     assert.equal(vestMountVolume({...vest,pouches:[{type:11}]},[medical,magazine]),2);
     assert.equal(a.capacity,6);assert.equal(b.capacity,20);
 });
+
+test('лучшие подсумки увеличивают вместимость только медицинских подсумков надетого пояса',async()=>{
+    const {applyPouchTemplate,pouchCapacity}=await load();
+    const medical=applyPouchTemplate({}, {id:12,name:'Медицинский подсумок',subcategory:'Медицинский',attributes:{capacity:5}});
+    const magazine=applyPouchTemplate({}, {id:13,name:'Магазинный подсумок',subcategory:'Магазинный',attributes:{capacity:5}});
+    const belt={modifications:[{ruleId:'armor-g66',rules:{medical_pouch_capacity_multiplier:2}}]};
+    assert.equal(pouchCapacity(medical,belt),10);
+    assert.equal(pouchCapacity(magazine,belt),5);
+    assert.equal(pouchCapacity(medical,null),5);
+    assert.equal(pouchCapacity(medical,{...belt,protectionDisabled:true}),5);
+    assert.equal(pouchCapacity(medical,{modifications:[{ruleId:'armor-g66',rules:{medical_pouch_capacity_multiplier:3}}]}),15);
+    assert.equal(medical.internalVolume,5);
+});

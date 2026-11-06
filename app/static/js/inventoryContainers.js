@@ -54,3 +54,13 @@ export function vestMountVolume(vest, templates = []) {
         return total + (Number.isFinite(base) && Number.isFinite(multiplier) ? Math.max(0, base * multiplier) : 0);
     }, 0);
 }
+
+export function pouchCapacity(pouch, belt = null) {
+    const base = Number(pouch?.internalVolume ?? pouch?.capacity ?? pouch?.attributes?.capacity ?? 0);
+    if (!Number.isFinite(base) || base < 0) return 0;
+    if (!belt || belt.protectionDisabled || pouch?.subcategory !== 'Медицинский') return base;
+    const factor = (belt.modifications || [])
+        .filter(record => record?.ruleId === 'armor-g66')
+        .reduce((maximum, record) => Math.max(maximum, Number(record.rules?.medical_pouch_capacity_multiplier) || 1), 1);
+    return Math.floor(base * factor);
+}
