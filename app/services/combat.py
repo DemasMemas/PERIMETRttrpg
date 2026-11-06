@@ -6871,7 +6871,7 @@ class CombatService:
         return max(0,1-math.ceil(max(0,round(armor-penetration,9))/5)*.25)
 
     @staticmethod
-    def _explosion_fragment_hit(target,damage,penetration,zone,cover,round_number,additional=False):
+    def _explosion_fragment_hit(target,damage,penetration,zone,cover,round_number,additional=False,plate_side=None):
         protection=(cover.get('zones') or {}).get(zone)
         cover_multiplier=1
         if cover.get('live_shield') or protection and protection.get('terrain'):
@@ -6888,7 +6888,8 @@ class CombatService:
         data=target.character.data or {}
         from app.services.prostheses import hit_part
         limb_hit=hit_part(data,zone)
-        armor,layers=CombatService._target_armor(data,zone,explosive=True,**({'limb_hit':limb_hit} if limb_hit else {}),**({'target':target} if background_is(data,'Стойкий') else {}))
+        armor,layers=CombatService._target_armor(data,zone,explosive=True,**({'limb_hit':limb_hit} if limb_hit else {}),
+            **({'target':target} if background_is(data,'Стойкий') else {}),**({'plate_side':plate_side} if plate_side else {}))
         penetrated=penetration>=armor
         applied=(0 if additional and not penetrated else
                  round(incoming*CombatService._penetration_damage_multiplier(penetration,armor)))
@@ -7156,6 +7157,9 @@ class CombatService:
             if not target.character:
                 continue
             posture_at_detonation = CombatService._posture_key(target)
+            facing_x=CombatService._coerce_int(getattr(target,'facing_x',0),0)
+            facing_y=CombatService._coerce_int(getattr(target,'facing_y',1),1)
+            plate_side=('back' if facing_x*(epicenter_x-target.pos_x)+facing_y*(epicenter_y-target.pos_y)<0 else 'front')
             distance = spatial_distance(location,objects,epicenter_x,epicenter_y,floor_level,target)
             if distance > radius:
                 continue
@@ -7193,7 +7197,8 @@ class CombatService:
             if not profile.get('fragment_keeps_penetration'):
                 penetration = max(0, penetration - 5 * distance)
             fragment_zone = CombatService._grenade_fragment_zone()
-            fragment=CombatService._explosion_fragment_hit(target,fragment_damage,penetration,fragment_zone,cover,round_number)
+            fragment=CombatService._explosion_fragment_hit(target,fragment_damage,penetration,fragment_zone,cover,round_number,
+                **({'plate_side':plate_side} if fragment_zone in {'chest','abdomen'} else {}))
             armor,penetrated=fragment['armor'],fragment['penetrated']
             applied_fragment_damage,fragment_armor_damage=fragment['damage'],fragment['armor_damage']
             extra_traumas = max(
@@ -7205,7 +7210,8 @@ class CombatService:
             for _ in range(extra_traumas):
                 extra_damage = sum(random.randint(1, 6) for _ in range(4))
                 extra_zone = CombatService._grenade_fragment_zone()
-                extra=CombatService._explosion_fragment_hit(target,extra_damage,penetration,extra_zone,cover,round_number,additional=True)
+                extra=CombatService._explosion_fragment_hit(target,extra_damage,penetration,extra_zone,cover,round_number,
+                    additional=True,**({'plate_side':plate_side} if extra_zone in {'chest','abdomen'} else {}))
                 if extra['damage']<=0:
                     continue
                 extra_results.append({
@@ -7217,6 +7223,7 @@ class CombatService:
             target_data = target.character.data if isinstance(target.character.data, dict) else {}
             blast_armor, blast_armor_layers = CombatService._target_armor(
                 target_data, 'chest',explosive=True,**({'target':target} if background_is(target_data,'Стойкий') else {}),
+                plate_side=plate_side,
             )
             armor_multiplier = max(0, 1 - blast_armor / 100)
             blast = max(
