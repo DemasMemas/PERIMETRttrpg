@@ -54,6 +54,27 @@ def test_depleted_workbench_does_not_satisfy_recipe_requirement(client,workshop,
     assert 'Нужны: Станок Электрика' not in charged.json['result']['missing']
 
 
+def test_lockpick_recipe_creates_two_catalog_items(client,workshop,auth_headers,monkeypatch):
+    data=deepcopy(workshop['actor_character'].data)
+    data['basic']={'background':{'name':'Полевой учёный'}}
+    data['inventory']['pockets'].append({'name':'Печь','category':'tool','quantity':1,'uses':1,'maxUses':50})
+    workshop['actor_character'].data=data
+    output=ItemTemplate(name='Отмычка',category='misc',price=150,weight=.1,volume=.2)
+    db.session.add(output);db.session.commit()
+    quoted=call(client,workshop,auth_headers,'quote',recipe_id='recipe-m27')
+    assert quoted.status_code==200,quoted.json
+    assert quoted.json['result']['output_id']==output.id
+    assert not quoted.json['result']['missing']
+    started=call(client,workshop,auth_headers,'start',recipe_id='recipe-m27')
+    assert started.status_code==200,started.json
+    workshop['lobby'].game_time_minutes+=40;db.session.commit()
+    monkeypatch.setattr('app.services.crafting.resolve_creation',lambda quote:{'success':True,'roll':100,'automatic':False})
+    finished=call(client,workshop,auth_headers,'finish',job_id=started.json['result']['id'],chosen_loss=[0])
+    assert finished.status_code==200,finished.json
+    assert finished.json['result']['output_count']==2
+    assert units(finished.json['data'],'Отмычка')==2
+
+
 @pytest.mark.parametrize('recipe_id,catalog_name',[
     ('recipe-aa21','Анальгин (Таблетка)'),
     ('recipe-aa24','Пенициллин (Таблетка)'),

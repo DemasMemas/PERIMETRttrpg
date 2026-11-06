@@ -84,6 +84,8 @@ def test_ingredient_uses_and_numeric_table_rows_are_not_false_recipes():
     mold=next(item for item in data['recipes'] if item['id']=='recipe-v38')
     assert mold['components']==[{'name':'Металлические детали','quantity':3,
         'source_text':'Металлические детали. 3 Использования'}]
+    lockpick=next(item for item in data['recipes'] if item['id']=='recipe-m27')
+    assert lockpick['output_name']=='Отмычка' and lockpick['output_count']==2
 
 
 def test_published_creation_data_matches_unchanged_source_when_available():

@@ -34,11 +34,11 @@ def recipe(cell, name, ingredients, difficulty, bench, duration, skill, group, *
     raw = text(difficulty)
     if not name or re.fullmatch(r'\d+(?:\.\d+)?', text(name)) or not ingredients or not (raw == 'Автоуспех' or re.fullmatch(r'\d+(?:\.\d+)?(?:/\d+)*', raw)):
         return None
-    output = re.search(r'\(\s*(\d+)\s*\)\s*$', text(name))
+    output = re.search(r'\(\s*(\d+)\s*\)\s*$|\s+(\d+)\s*шт\.?\s*$', text(name), re.I)
     label = text(name)
     result = {'id': 'recipe-' + cell.lower(), 'name': label, 'skill': 'other.engineering' if skill=='engineering' else skill, 'group': group,
               'output_name': re.sub(r'\s*\(Инженерия\)\s*$','',label[:output.start()].strip() if output else label),
-              'output_count': int(output[1]) if output else 1,
+              'output_count': int(output[1] or output[2]) if output else 1,
               'components': components(ingredients), 'components_text': text(ingredients),
               'difficulty_options': [number(v) for v in raw.split('/')] if raw != 'Автоуспех' else [],
               'automatic': raw == 'Автоуспех', 'tools_text': text(bench), 'duration_text': text(duration),

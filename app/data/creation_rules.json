@@ -2094,8 +2094,8 @@
       "name": "Отмычка 2шт",
       "skill": "other.engineering",
       "group": "Инструменты",
-      "output_name": "Отмычка 2шт",
-      "output_count": 1,
+      "output_name": "Отмычка",
+      "output_count": 2,
       "components": [
         {
           "name": "Металлические детали",
