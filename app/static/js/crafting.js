@@ -83,7 +83,9 @@ export async function showCrafting({characterId,lobbyId,onSaved}){
                     if(quoteGeneration!==generation||!modal.isConnected)return;
                     const plan=response.result;preview.replaceChildren(el('p',`Итоговая СЛ ${plan.difficulty}${plan.automatic_success?' · автоуспех':''}`));
                     if(approval)preview.append(el('p',`ГМ одобрил: ${approval.tool_name||'условия'} · СЛ ${approval.modifier}`));
-                    for(const c of recipe.components)preview.append(el('p',`${c.name} × ${c.quantity}`));
+                    for(const c of recipe.components)preview.append(el('p',c.alternatives?.length
+                        ? c.alternatives.map(option=>`${option.name} × ${option.quantity}`).join(' или ')
+                        : `${c.name} × ${c.quantity}`));
                     for(const missing of plan.missing)preview.append(el('p',missing,'error-message'));
                     const start=button('Начать создание',()=>act('start',{recipe_id:recipe.id,tool_option:Number(tool.value),approval_id:approval?.id}));
                     start.disabled=plan.missing.length>0;preview.append(start);

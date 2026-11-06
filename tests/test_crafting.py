@@ -85,6 +85,42 @@ def test_dry_ration_recipe_spends_one_box_of_ten_matches(client,workshop,auth_he
     assert units(finished.json['data'],'Сухой паек')==1
 
 
+@pytest.mark.parametrize('name,quantity',[
+    ('Анальгин (Таблетка)',3),('Бинт',3),('Шина',2),('Жгут',2),
+])
+def test_medical_materials_recipe_accepts_each_whole_alternative(app,name,quantity):
+    from app.services.crafting import _allocate, recipe_by_id
+    recipe=recipe_by_id('recipe-aa23')
+    assert [(option['name'],option['quantity']) for option in recipe['components'][0]['alternatives']]==[
+        ('Анальгин',3),('Бинт',3),('Шина',2),('Жгут',2)]
+    data={'inventory':{'pockets':[{'name':name,'category':'consumable','quantity':quantity}]}}
+    allocations,missing=_allocate(data,recipe)
+    assert missing==[]
+    assert sum(item['amount'] for item in allocations)==quantity
+    data['inventory']['pockets'][0]['quantity']=quantity-1
+    assert _allocate(data,recipe)[1]
+
+
+def test_medical_materials_recipe_finishes_with_two_splints(client,workshop,auth_headers,monkeypatch):
+    data=deepcopy(workshop['actor_character'].data)
+    data['skills']['other']['medicine']={'base':15,'bonus':0}
+    data['inventory']['pockets']=[{'name':'Шина','category':'consumable','quantity':2}]
+    workshop['actor_character'].data=data
+    output=ItemTemplate(name='Медицинские материалы',category='crafting_material',price=100)
+    db.session.add(output);db.session.commit()
+    quoted=call(client,workshop,auth_headers,'quote',recipe_id='recipe-aa23')
+    assert quoted.status_code==200,quoted.json
+    assert quoted.json['result']['missing']==[]
+    started=call(client,workshop,auth_headers,'start',recipe_id='recipe-aa23')
+    assert started.status_code==200,started.json
+    workshop['lobby'].game_time_minutes+=10;db.session.commit()
+    monkeypatch.setattr('app.services.crafting.resolve_creation',lambda quote:{'success':True,'roll':100,'automatic':False})
+    finished=call(client,workshop,auth_headers,'finish',job_id=started.json['result']['id'],chosen_loss=[])
+    assert finished.status_code==200,finished.json
+    assert units(finished.json['data'],'Шина')==0
+    assert units(finished.json['data'],'Медицинские материалы')==1
+
+
 def test_depleted_workbench_does_not_satisfy_recipe_requirement(client,workshop,auth_headers,monkeypatch):
     from app.services import crafting
     original=crafting.recipe_by_id

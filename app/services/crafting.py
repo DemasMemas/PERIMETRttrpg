@@ -94,29 +94,39 @@ def _allocate(data,recipe):
     for index,component in enumerate(recipe['components']):
         if _environment(component):continue
         meat_component = index == 0 and recipe['id'] in {'recipe-aa15', 'recipe-aa16'}
-        names={normalized(name) for name in component['name'].split('/')}
-        if 'ргд 5' in names:names.add('граната ргд 5')
-        if 'ф 1' in names:names.add('граната ф 1')
-        left=component['quantity']
-        for path,item in candidates:
-            from app.services.flamethrower import charges
-            attrs=item.get('attributes') or {};whole=bool(meat_component or component.get('whole_tank') or component.get('whole_air'))
-            matches_box=(recipe['id']=='recipe-aa4' and component['name']=='Спички'
-                and normalized(item.get('name'))=='спички 10 штук')
-            if meat_component:
-                from app.services.cooked_meat import ingredient_matches
-                matches=ingredient_matches(recipe['id'],item)
-            else:matches=(attrs.get('flamethrower_tank')==component.get('whole_tank') and charges(item)==0 if component.get('whole_tank')
-                else bool(attrs.get('flamethrower_air')) if component.get('whole_air') else matches_box or bool(item_names(item)&names))
-            if not matches or _contains_individual_items(item):continue
-            key=tuple(path);available=(item.get('quantity',1) if whole else _available_uses(item) if item.get('quantity',1)>0 else 0)-spent.get(key,0)
-            unit=10 if matches_box else 1
-            take=min(ceil(left/unit),available)
-            if take>0:
-                allocations.append({'component':index,'path':path,'amount':take,'item':deepcopy(item),'whole':whole})
-                spent[key]=spent.get(key,0)+take;left=max(0,left-take*unit)
-            if not left:break
-        if left:missing.append(f"{component['name']}: не хватает {left}")
+        variants=component.get('alternatives') or [component]
+        remaining=None
+        for variant in variants:
+            names={normalized(name) for name in variant['name'].split('/')}
+            if 'ргд 5' in names:names.add('граната ргд 5')
+            if 'ф 1' in names:names.add('граната ф 1')
+            if 'анальгин' in names:names.add('анальгин таблетка')
+            left=variant['quantity'];trial_spent=spent.copy();trial=[]
+            for path,item in candidates:
+                from app.services.flamethrower import charges
+                attrs=item.get('attributes') or {};whole=bool(meat_component or component.get('whole_tank') or component.get('whole_air'))
+                matches_box=(recipe['id']=='recipe-aa4' and variant['name']=='Спички'
+                    and normalized(item.get('name'))=='спички 10 штук')
+                if meat_component:
+                    from app.services.cooked_meat import ingredient_matches
+                    matches=ingredient_matches(recipe['id'],item)
+                else:matches=(attrs.get('flamethrower_tank')==component.get('whole_tank') and charges(item)==0 if component.get('whole_tank')
+                    else bool(attrs.get('flamethrower_air')) if component.get('whole_air') else matches_box or bool(item_names(item)&names))
+                if not matches or _contains_individual_items(item):continue
+                key=tuple(path);available=(item.get('quantity',1) if whole else _available_uses(item) if item.get('quantity',1)>0 else 0)-trial_spent.get(key,0)
+                unit=10 if matches_box else 1
+                take=min(ceil(left/unit),available)
+                if take>0:
+                    trial.append({'component':index,'path':path,'amount':take,'item':deepcopy(item),'whole':whole})
+                    trial_spent[key]=trial_spent.get(key,0)+take;left=max(0,left-take*unit)
+                if not left:break
+            if not left:
+                spent=trial_spent;allocations.extend(trial)
+                break
+            remaining=left
+        else:
+            if component.get('alternatives'):missing.append(f"{component['source_text']}: нет полного варианта")
+            else:missing.append(f"{component['name']}: не хватает {remaining}")
     return allocations,missing
 
 

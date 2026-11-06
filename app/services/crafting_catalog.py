@@ -24,6 +24,20 @@ def components(value):
         if uses:
             result.append({'name': uses[1].strip(), 'quantity': int(uses[2]), 'source_text': part.strip()})
             continue
+        if '/' in part:
+            alternatives=[]
+            for option in part.split('/'):
+                option=option.strip()
+                count=re.search(r'\(\s*(\d+)\s*\)\s*$',option)
+                if not count and re.search(r'\([^)]*\)\s*$',option):
+                    alternatives=[]
+                    break
+                alternatives.append({'name':option[:count.start()].strip() if count else option,
+                    'quantity':int(count[1]) if count else 1})
+            if len(alternatives)>1:
+                result.append({'name':'/'.join(option['name'] for option in alternatives),
+                    'quantity':1,'alternatives':alternatives,'source_text':part.strip()})
+                continue
         count = re.search(r'\(\s*(\d+)\s*\)\s*$', part)
         result.append({'name': part[:count.start()].strip() if count else part.strip(),
                        'quantity': int(count[1]) if count else 1, 'source_text': part.strip()})
