@@ -32,7 +32,19 @@ module.exports=async({page,request,token,lobby,base,connect,debugPort,safeSessio
     await page.until(`document.querySelector('${root} [name=characterAlias]')`,'пошаговая форма открыта');
     assert.equal(await page.evaluate(`document.querySelector('${root} [name=characterAlias]').autocomplete`),'off');
     assert.equal(await page.evaluate(`document.querySelector('${root} [data-preview]')`),null);
+    const orderedBackgrounds=rules.backgrounds.filter(item=>item.available).sort((a,b)=>a.name.localeCompare(b.name,'ru',{sensitivity:'base'}));
+    const orderedTraits=[...rules.traits].sort((a,b)=>a.name.localeCompare(b.name,'ru',{sensitivity:'base'}));
+    assert.deepEqual(await page.evaluate(`Array.from(document.querySelectorAll('${root} [name=backgroundId] option')).slice(1).map(item=>item.value)`),orderedBackgrounds.map(item=>item.id));
+    assert.deepEqual(await page.evaluate(`Array.from(document.querySelectorAll('${root} [data-trait="0"] option')).slice(1).map(item=>item.value)`),orderedTraits.map(item=>item.id));
     await click(`${root} [name=characterAlias]`);await page.call('Input.insertText',{text:'Созданный по книге'});
+    const penaltyBackground=rules.backgrounds.find(item=>item.available&&item.entries.some(entry=>entry.type==='points'&&entry.amount<0));
+    const penaltyPoints=30+penaltyBackground.entries.filter(entry=>entry.type==='points').reduce((sum,entry)=>sum+entry.amount,0);
+    await set(`${root} [name=backgroundId]`,penaltyBackground.id);
+    assert.equal(await page.evaluate(`document.querySelector('${root} [data-points-remaining]').textContent`),String(penaltyPoints));
+    assert.ok((await page.evaluate(`document.querySelector('${root} [data-background-positive]').textContent`)).includes('Очки навыков -'));
+    const punctuationTrait=rules.traits.find(item=>item.limitText&&!/[.!?…]$/.test(item.effect.trim()));
+    const punctuation=await page.evaluate(`(async()=>{const {traitDescription}=await import('/static/js/characterCreation.js');return traitDescription(${JSON.stringify(punctuationTrait)})})()`);
+    assert.ok(punctuation.includes('. '+punctuationTrait.limitText));
     await set(`${root} [name=backgroundId]`,rules.backgrounds.find(b=>b.name==='Охотник').id);
     assert.equal(await page.evaluate(`document.querySelector('${root} [data-favored-mutant-field]').hidden`),false);
     assert.equal(await page.evaluate(`document.querySelectorAll('${root} [name=favoredMutant] option').length`),rules.mutants.length+1);
@@ -91,7 +103,8 @@ module.exports=async({page,request,token,lobby,base,connect,debugPort,safeSessio
     await set(`${root} [name=cashPoints]`,3);
     const buy=async(category,id,quantity)=>{
         await set(`${root} [data-purchase-category]`,category);
-        if(category==='consumable')await click(`${root} [data-purchase-catalog] details details > summary`);
+        if(category==='consumable'&&await page.evaluate(`document.querySelector('${root} [data-purchase-catalog] details details')?.open===false`))
+            await click(`${root} [data-purchase-catalog] details details > summary`);
         await click(`${root} [data-purchase-select="${id}"]`);
         await set(`${root} [data-purchase-quantity]`,quantity);
         await click(`${root} [data-purchase-add]`);

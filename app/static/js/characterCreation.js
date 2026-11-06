@@ -4,6 +4,12 @@ import { characterPlanFile, readCharacterPlanFile } from './creationTemplates.js
 
 const escape = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const money = value => `${Number(value || 0).toLocaleString('ru-RU')} ₽`;
+const compareChoice = (left, right) => ruleText(left.name).localeCompare(ruleText(right.name), 'ru', {sensitivity: 'base'});
+export function traitDescription(trait) {
+    if (!trait) return '';
+    const effect = ruleText(trait.effect).trim(), limit = ruleText(trait.limitText).trim();
+    return [effect && limit && !/[.!?…]$/.test(effect) ? `${effect}.` : effect, limit].filter(Boolean).join(' ');
+}
 const GROUPS = { physical: 'Физические', social: 'Социальные', other: 'Прочие' };
 const STEPS = [
     ['Предыстория', 'Имя персонажа, предыстория и её положительные бонусы.'],
@@ -35,6 +41,8 @@ export function traitChoiceFields(rules, trait, { specialized = [] } = {}) {
 export async function openCharacterCreation(lobbyId, onCreated) {
     if (document.getElementById('character-creation-modal')) return;
     const rules = await Server.characterCreationRules(lobbyId);
+    rules.backgrounds.sort(compareChoice);
+    rules.traits.sort(compareChoice);
     // Используем тот же каталог карточек, что и обычное добавление в инвентарь.
     const { renderInventoryTemplatePicker, getCategoryDisplay } = await import('./characterSheet.js');
     if (document.getElementById('character-creation-modal')) return;
@@ -150,7 +158,7 @@ export async function openCharacterCreation(lobbyId, onCreated) {
             const label = entry.type === 'skill' ? rules.skills[entry.skill.split('.')[0]][entry.skill.split('.')[1]] : entry.type === 'group' ? `${GROUPS[entry.group]} навыки` : { all_skills: 'Все навыки', points: 'Очки навыков', specializations: 'Специализации' }[entry.type];
             return `<span class="creation-bonus">${escape(label)} ${entry.amount > 0 ? '+' : ''}${entry.amount}</span>`;
         }).join('') || '';
-        find('[data-background-positive]').innerHTML = background ? `<p>Положительные бонусы</p><div class="creation-bonuses">${describe(true) || '<span class="creation-hint">Дополнительных бонусов к навыкам нет.</span>'}</div>` : '';
+        find('[data-background-positive]').innerHTML = background ? `<p>Положительные бонусы</p><div class="creation-bonuses">${describe(true) || '<span class="creation-hint">Дополнительных бонусов к навыкам нет.</span>'}</div><p>Штрафы предыстории</p><div class="creation-bonuses">${describe(false) || '<span class="creation-hint">Штрафов к навыкам и очкам нет.</span>'}</div>` : '';
         find('[data-background-negative]').innerHTML = `<div class="creation-bonuses">${describe(false) || '<span class="creation-hint">Понижений навыков нет.</span>'}</div>`;
     }
     function renderCart() {
@@ -268,7 +276,7 @@ export async function openCharacterCreation(lobbyId, onCreated) {
     }
     function traitDetails(index) {
         const trait = rules.traits.find(entry => entry.id === find(`[data-trait="${index}"]`).value);
-        find(`[data-trait-description="${index}"]`).textContent = trait ? ruleText([trait.effect,trait.limitText].filter(Boolean).join(' ')) : '';
+        find(`[data-trait-description="${index}"]`).textContent = traitDescription(trait);
         const plan = readPlan();
         const specialized = [...plan.specializations, ...plan.traits.filter(choice => rules.traits.find(entry => entry.id === choice.id)?.name === 'Специалист').map(choice => choice.skill).filter(Boolean)];
         find(`[data-trait-choice="${index}"]`).innerHTML = traitChoiceFields(rules, trait, { specialized });
@@ -302,7 +310,7 @@ export async function openCharacterCreation(lobbyId, onCreated) {
     modal.addEventListener('change', event => {
         const input = event.target;
         if (input.matches('[data-template-file]')) { void loadTemplate(input.files[0]); return; }
-        if (input.matches('[name=backgroundId]')) backgroundDetails();
+        if (input.matches('[name=backgroundId]')) { latestData = null; latestKey = ''; backgroundDetails(); }
         if (input.hasAttribute('data-trait')) traitDetails(input.dataset.trait);
         if (input.matches('[data-purchase-category]')) { selectedPurchase = null; find('[data-purchase-selection]').hidden = true; renderShop(); return; }
         if (input.matches('[data-cart-quantity]')) {

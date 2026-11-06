@@ -15135,7 +15135,7 @@ export function renderInventoryTemplatePicker(templates, query = '', options = {
             contents = Object.keys(sections)
                 .sort((a, b) => compareByFixedOrder(a, b, CONSUMABLE_SECTION_ORDER))
                 .map(section => `
-                    <details ${normalizedQuery ? 'open' : ''} style="border-left:2px solid rgba(174,165,120,.45); padding:6px 8px; margin-top:8px; background:rgba(255,255,255,.025);">
+                    <details ${normalizedQuery || options.open ? 'open' : ''} style="border-left:2px solid rgba(174,165,120,.45); padding:6px 8px; margin-top:8px; background:rgba(255,255,255,.025);">
                         <summary style="cursor:pointer; font-weight:600; display:flex; justify-content:space-between; gap:10px;">
                             <span>${escapeHtml(section)}</span><span style="opacity:.6; font-weight:400;">${sections[section].length}</span>
                         </summary>
@@ -15161,9 +15161,9 @@ export function renderInventoryTemplatePicker(templates, query = '', options = {
                         const classes = {};
                         sectionItems.forEach(item => (classes[String(item.item_class || 'Без класса')] ||= []).push(item));
                         cards = Object.keys(classes).sort((a, b) => a.localeCompare(b, 'ru', {numeric: true}))
-                            .map(key => `<details ${normalizedQuery ? 'open' : ''} style="margin:8px 0 0 12px; padding:6px; border-left:2px solid rgba(174,165,120,.45)"><summary>Класс ${escapeHtml(key)} · ${classes[key].length}</summary>${renderCards(classes[key])}</details>`).join('');
+                            .map(key => `<details ${normalizedQuery || options.open ? 'open' : ''} style="margin:8px 0 0 12px; padding:6px; border-left:2px solid rgba(174,165,120,.45)"><summary>Класс ${escapeHtml(key)} · ${classes[key].length}</summary>${renderCards(classes[key])}</details>`).join('');
                     }
-                    return `<details ${normalizedQuery ? 'open' : ''} style="border-left:2px solid rgba(174,165,120,.45); padding:6px 8px; margin-top:8px; background:rgba(255,255,255,.025);">
+                    return `<details ${normalizedQuery || options.open ? 'open' : ''} style="border-left:2px solid rgba(174,165,120,.45); padding:6px 8px; margin-top:8px; background:rgba(255,255,255,.025);">
                         <summary style="cursor:pointer; font-weight:600; display:flex; justify-content:space-between; gap:10px;"><span>${escapeHtml(section)}</span><span style="opacity:.6; font-weight:400;">${sectionItems.length}</span></summary>${cards}</details>`;
                 }).join('');
         }
