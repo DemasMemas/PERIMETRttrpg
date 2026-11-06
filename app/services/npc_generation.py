@@ -141,6 +141,24 @@ def _equip_rolled_protection(data):
     return equipped
 
 
+def _load_rolled_fixed_ammo(data):
+    """Зарядить несъёмные магазины по действующей проверке калибра и ёмкости."""
+    from app.services.ammo_loading import load_ammunition, validate_loading
+    from app.services.magazine import _attributes
+    loaded=[]
+    for weapon_index,weapon in enumerate(data.get('weapons') or []):
+        if not _attributes(weapon).get('fixedMagazine'):continue
+        for index,item in enumerate(data.get('inventory',{}).get('backpack',[])):
+            if item.get('category')!='ammo':continue
+            request={'weapon_index':weapon_index,'source_path':['inventory','backpack',index],'full':True}
+            try:validate_loading(data,request)
+            except ValidationError:continue
+            result=load_ammunition(data,request)
+            loaded.append({'weapon_id':weapon['id'],'ammo_name':item['name'],'quantity':result['quantity']})
+            break
+    return loaded
+
+
 def create_npc(lobby,user_id,payload):
     _gm(lobby,user_id)
     if not isinstance(payload,dict) or set(payload)!={'operation_id','name','danger_id','wealth_id'}:
@@ -178,6 +196,7 @@ def create_npc(lobby,user_id,payload):
         items, loot_receipt=roll_loot(profile,ItemTemplate.query.order_by(ItemTemplate.id).all())
         apply_rolled_loot(data,items,loot_receipt)
         loot_receipt['equipped']=_equip_rolled_protection(data)
+        loot_receipt['loaded_ammo']=_load_rolled_fixed_ammo(data)
         data['npcLoot']={'profile':profile,'initial_receipt':loot_receipt}
     character.data=data;flag_modified(character,'data')
     db.session.add(NpcCreationReceipt(operation_id=operation,lobby_id=lobby.id,character_id=character.id,

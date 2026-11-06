@@ -1,4 +1,5 @@
 """Структура генератора НПС не придумывает уровни и численные профили."""
+import pytest
 from app.extensions import db
 from app.models import NpcGenerationConfig, LobbyCharacter, NpcCreationReceipt, LocationCharacter
 from app.models.templates import ItemTemplate
@@ -220,6 +221,36 @@ def test_generated_glasses_and_gas_mask_conflict_rolls_back(client,create_user,a
     assert created.status_code==400,created.json
     assert 'очки нельзя носить' in created.json['error']['message'].casefold()
     assert LobbyCharacter.query.count()==before and NpcCreationReceipt.query.count()==0
+
+
+@pytest.mark.parametrize('ammo_caliber,loaded', [('9x18',True),('5x45',False)])
+def test_generated_fixed_magazine_accepts_only_matching_ammo(
+        client,create_user,auth_headers,ammo_caliber,loaded):
+    pair=_setup_pair(client,create_user,auth_headers)
+    db.session.add_all([
+        ItemTemplate(name='Проверочный пистолет',category='weapon',subcategory='Пистолеты',
+            item_class='1',price=90,attributes={'fixedMagazine':True,'magazine_size':8,'caliber':'9x18'}),
+        ItemTemplate(name='Проверочные патроны',category='ammo',item_class='1',price=10,
+            attributes={'caliber':ammo_caliber}),
+    ]);db.session.commit()
+    selected=profile(budget=190,money_min=0,money_max=0,pools=[
+        pool(category='weapon',subcategory='',draws=1,min_price=90,max_price=90),
+        pool(category='ammo',subcategory='',draws=1,quantity=10,min_price=10,max_price=10)])
+    url=f"/lobbies/{pair['lobby'].id}/npc-generation-config"
+    assert client.put(url,headers=auth_headers(pair['actor_user']),json=config(combinations=[
+        {'danger_id':'danger_low','wealth_id':'wealth_low','profile':selected}])).status_code==200
+    payload={'operation_id':'npc-fixed-'+ammo_caliber,'name':'Имя автора 1',
+        'danger_id':'danger_low','wealth_id':'wealth_low'}
+    created=client.post(url+'/create',headers=auth_headers(pair['actor_user']),json=payload)
+    assert created.status_code==201,created.json
+    data=db.session.get(LobbyCharacter,created.json['character']['id']).data
+    weapon=data['weapons'][0]
+    assert weapon['ammo']==(8 if loaded else 0)
+    assert sum(item['quantity'] for item in data['inventory']['backpack'] if item['category']=='ammo')==(2 if loaded else 10)
+    assert len(data['npcLoot']['initial_receipt']['loaded_ammo'])==int(loaded)
+    replay=client.post(url+'/create',headers=auth_headers(pair['actor_user']),json=payload)
+    assert replay.status_code==200 and replay.json['replayed']
+    assert db.session.get(LobbyCharacter,created.json['character']['id']).data['weapons'][0]['ammo']==weapon['ammo']
 
 
 def test_player_cannot_create_npc_even_through_old_route(client,create_user,auth_headers):
