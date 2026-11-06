@@ -131,8 +131,9 @@ def test_starting_purchase_uses_catalog_prices_and_rejects_restricted_templates(
     forbidden=ItemTemplate(name='Пистолет 2',category='weapon',item_class='2',price=1)
     special=ItemTemplate(name='9мм БП',category='ammo',price=1,attributes={'ammo_variant':'bp'})
     food=ItemTemplate(name='Еда',category='consumable',price=100,attributes={'section':'Еда'})
-    db.session.add_all([gun,forbidden,special,food]);db.session.flush()
-    assert eligible(gun) and eligible(food) and not eligible(forbidden) and not eligible(special)
+    knife=ItemTemplate(name='Нож',category='melee_weapon',price=300,attributes={'damage':10})
+    db.session.add_all([gun,forbidden,special,food,knife]);db.session.flush()
+    assert eligible(gun) and eligible(food) and eligible(knife) and not eligible(forbidden) and not eligible(special)
     data=build_character('Имя',plan('Бедный',purchases=[{'templateId':gun.id,'quantity':2},{'templateId':food.id,'quantity':3}]))
     assert data['inventory']['money']==2700
     assert len(data['weapons'])==2 and data['weapons'][0]['id']!=data['weapons'][1]['id']

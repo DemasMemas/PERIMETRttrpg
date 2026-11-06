@@ -15106,7 +15106,7 @@ export function renderInventoryTemplatePicker(templates, query = '', options = {
                 }
                 if (attrs.isLoader && t.category === 'magazine') chips.push('Спидлоадер');
                 return `
-                    <button type="button" data-item-template-id="${t.id}" ${options.purchase ? `data-purchase-select="${t.id}" aria-pressed="${Number(options.selectedId)===t.id}"` : `onclick="selectInventoryTemplate(${t.id})"`} style="text-align:left; width:100%; border:1px solid rgba(255,255,255,0.12); border-radius:8px; padding:10px; background: rgba(255,255,255,0.03); color:inherit; cursor:pointer;">
+                    <div style="display:flex; gap:6px; align-items:stretch; min-width:0;"><button type="button" data-item-template-id="${t.id}" ${options.purchase ? `data-purchase-select="${t.id}" aria-pressed="${Number(options.selectedId)===t.id}"` : `onclick="selectInventoryTemplate(${t.id})"`} style="text-align:left; flex:1; min-width:0; border:1px solid rgba(255,255,255,0.12); border-radius:8px; padding:10px; background: rgba(255,255,255,0.03); color:inherit; cursor:pointer;">
                         <div style="display:flex; justify-content:space-between; gap:8px;">
                             <div style="font-weight:600;">${escapeHtml(t.name)}</div>
                             <div style="opacity:0.75; font-size:12px; white-space:nowrap;">${options.purchase ? `${Number(t.price||0).toLocaleString('ru-RU')} ₽` : `ID ${t.id}`}</div>
@@ -15114,7 +15114,7 @@ export function renderInventoryTemplatePicker(templates, query = '', options = {
                         <div style="display:flex; flex-wrap:wrap; gap:5px; margin-top:6px;">
                             ${chips.map(chip => `<span style="font-size:11px; padding:2px 6px; border-radius:999px; background: rgba(255,255,255,0.08);">${chip}</span>`).join('')}
                         </div>
-                    </button>
+                    </button>${options.purchase ? `<button type="button" class="btn btn-sm btn-primary" data-purchase-quick-add="${t.id}" aria-label="Быстро добавить: ${escapeHtml(t.name)}" title="Добавить один предмет">+</button>` : ''}</div>
                     ${!options.purchase && t.source === 'local' && t.category === 'consumable' && window.isGM
                         ? `<button type="button" class="btn btn-sm btn-secondary" style="margin-top:4px" onclick="editInventoryConsumableTemplate(${t.id})">Настроить эффекты</button>` : ''}`;
             }).join('')}

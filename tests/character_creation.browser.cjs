@@ -101,12 +101,26 @@ module.exports=async({page,request,token,lobby,base,connect,debugPort,safeSessio
     await step(7);
     assert.equal(await page.evaluate(`document.querySelector('${root} [data-skill-meta="finalRaises:physical.agility"]').textContent`),'Следующее повышение: 3 очк. (как до 13)');
     await set(`${root} [name=cashPoints]`,3);
+    const weaponPrice=rules.startingPurchaseTemplates.find(item=>item.id===fixture.templates.weapon).price;
+    await set(`${root} [data-purchase-category]`,'weapon');
+    await click(`${root} [data-purchase-quick-add="${fixture.templates.weapon}"]`);
+    assert.equal(await value(`${root} [data-cart-quantity="${fixture.templates.weapon}"]`),'1');
+    assert.equal(await page.evaluate(`document.querySelector('${root} [data-purchase-total-cost]').textContent`),`${weaponPrice.toLocaleString('ru-RU')} ₽`);
+    await click(`${root} [data-cart-adjust="${fixture.templates.weapon}"][data-delta="1"]`);
+    assert.equal(await value(`${root} [data-cart-quantity="${fixture.templates.weapon}"]`),'2');
+    assert.equal(await page.evaluate(`document.querySelector('${root} [data-purchase-total-cost]').textContent`),`${(weaponPrice*2).toLocaleString('ru-RU')} ₽`);
+    await click(`${root} [data-cart-adjust="${fixture.templates.weapon}"][data-delta="-1"]`);
+    await click(`${root} [data-cart-adjust="${fixture.templates.weapon}"][data-delta="-1"]`);
+    assert.equal(await page.evaluate(`document.querySelectorAll('${root} [data-cart-quantity]').length`),0);
+    assert.equal(await page.evaluate(`document.querySelector('${root} [data-purchase-total-cost]').textContent`),'0 ₽');
     const buy=async(category,id,quantity)=>{
         await set(`${root} [data-purchase-category]`,category);
         if(category==='consumable'&&await page.evaluate(`document.querySelector('${root} [data-purchase-catalog] details details')?.open===false`))
             await click(`${root} [data-purchase-catalog] details details > summary`);
         await click(`${root} [data-purchase-select="${id}"]`);
         await set(`${root} [data-purchase-quantity]`,quantity);
+        const price=rules.startingPurchaseTemplates.find(item=>item.id===id).price;
+        assert.equal(await page.evaluate(`document.querySelector('${root} [data-purchase-selection-total]').textContent`),`${(price*quantity).toLocaleString('ru-RU')} ₽`);
         await click(`${root} [data-purchase-add]`);
     };
     await buy('weapon',fixture.templates.weapon,2);

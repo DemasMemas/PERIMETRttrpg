@@ -23,6 +23,8 @@ def eligible(template):
     if category=='ammo':
         variant=_text(attrs.get('ammo_variant') or attrs.get('ammo_kind') or attrs.get('special_version'))
         return variant in {'','base','standard','обычный','обычная','базовый','базовая'}
+    if category=='melee_weapon':
+        return True  # У оружия ближнего боя в авторском каталоге нет класса предмета.
     if category in {'headphones','glasses','gloves','jewelry','backpack','vest','belt','pouch','magazine','food','other','misc'}:
         return True
     section=_text(attrs.get('section') or template.subcategory)

@@ -70,10 +70,10 @@ export async function openCharacterCreation(lobbyId, onCreated) {
         `<div data-background-negative></div>${skillCards('background_negative', false)}`,
         [0, 1, 2].map(index => `<section class="creation-trait-card" data-trait-row="${index}"><label>Черта ${index + 1}<select data-trait="${index}" class="form-control"><option value="">Без черты</option>${rules.traits.map(trait => `<option value="${trait.id}">${escape(ruleText(trait.name))} · ${trait.cost} очк.</option>`).join('')}</select></label><p data-trait-description="${index}"></p><div data-trait-choice="${index}"></div></section>`).join(''),
         skillCards('finalRaises'),
-        `<div class="creation-shop-budget"><div><span>Доступно</span><strong data-purchase-balance>${money(10000)}</strong></div><label class="creation-exchange">Обмен очков<div class="creation-stepper"><button type="button" class="btn btn-sm" data-cash-adjust="-1" aria-label="Обменять меньше очков">−</button><input name="cashPoints" type="number" min="0" value="0" class="form-control" aria-label="Очки в деньги"><button type="button" class="btn btn-sm" data-cash-adjust="1" aria-label="Обменять больше очков">+</button></div><small>1 очко = 200 ₽</small></label></div>
+        `<div class="creation-shop-budget"><div><span>Доступно</span><strong data-purchase-balance>${money(10000)}</strong></div><div><span>Стоимость закупки</span><strong data-purchase-total-cost>${money(0)}</strong></div><label class="creation-exchange">Обмен очков<div class="creation-stepper"><button type="button" class="btn btn-sm" data-cash-adjust="-1" aria-label="Обменять меньше очков">−</button><input name="cashPoints" type="number" min="0" value="0" class="form-control" aria-label="Очки в деньги"><button type="button" class="btn btn-sm" data-cash-adjust="1" aria-label="Обменять больше очков">+</button></div><small>1 очко = 200 ₽</small></label></div>
         <div class="creation-shop-filters"><label>Категория<select data-purchase-category class="form-control">${categories.map(category => `<option value="${category}">${escape(getCategoryDisplay(category))}</option>`).join('')}</select></label><label>Поиск<input type="search" data-purchase-search class="form-control" placeholder="Название, калибр..." autocomplete="off"></label></div>
         <div class="creation-shop-columns"><div data-purchase-catalog></div><aside class="creation-cart"><h4>Выбранное снаряжение</h4><div data-purchase-list></div><p class="creation-hint">Неизрасходованные деньги сохранятся у персонажа.</p></aside></div>
-        <div data-purchase-selection hidden class="creation-purchase-selection"><strong data-purchase-title></strong><label>Количество<input data-purchase-quantity type="number" min="1" max="10000" value="1" class="form-control"></label><button type="button" data-purchase-add class="btn btn-primary">Добавить</button><button type="button" data-purchase-dismiss class="btn btn-secondary">Отмена</button></div>`,
+        <div data-purchase-selection hidden class="creation-purchase-selection"><strong data-purchase-title></strong><label>Количество<input data-purchase-quantity type="number" min="1" max="10000" value="1" class="form-control"></label><strong data-purchase-selection-total></strong><button type="button" data-purchase-add class="btn btn-primary">Добавить</button><button type="button" data-purchase-dismiss class="btn btn-secondary">Отмена</button></div>`,
         `<fieldset class="creation-history-choice"><legend>Персонаж уже жил в Зоне?</legend><label><input type="radio" name="zoneHistory" value="no" checked> Нет, только прибывает</label><label><input type="radio" name="zoneHistory" value="yes"> Да, жил в Зоне</label></fieldset><p data-history-description hidden>Будут определены срок жизни в Зоне и события, которые произошли с персонажем.</p><div data-creation-summary></div>`,
     ];
     modal.innerHTML = `<div class="modal-content creation-dialog" role="dialog" aria-modal="true" aria-labelledby="creation-title"><header class="creation-header"><div><p class="creation-eyebrow">Новый персонаж</p><h2 id="creation-title">Создание персонажа</h2></div><button type="button" data-creation-close class="btn btn-secondary creation-close" aria-label="Закрыть создание персонажа"><svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></button></header>
@@ -164,7 +164,7 @@ export async function openCharacterCreation(lobbyId, onCreated) {
     function renderCart() {
         find('[data-purchase-list]').innerHTML = purchases.size ? [...purchases].map(([id, quantity]) => {
             const template = shop.find(item => item.id === id);
-            return `<div class="creation-cart-row"><strong>${escape(template.name)}</strong><span>${money(template.price * quantity)}</span><label>Количество<input type="number" min="1" max="10000" value="${quantity}" data-cart-quantity="${id}" class="form-control"></label><button type="button" data-purchase-remove="${id}" class="btn btn-sm btn-secondary">Убрать</button></div>`;
+            return `<div class="creation-cart-row"><strong>${escape(template.name)}</strong><span>${money(template.price * quantity)}</span><label>Количество<div class="creation-stepper"><button type="button" class="btn btn-sm" data-cart-adjust="${id}" data-delta="-1" aria-label="Уменьшить количество: ${escape(template.name)}">−</button><input type="number" min="0" max="10000" value="${quantity}" data-cart-quantity="${id}" class="form-control"><button type="button" class="btn btn-sm" data-cart-adjust="${id}" data-delta="1" aria-label="Увеличить количество: ${escape(template.name)}">+</button></div></label><button type="button" data-purchase-remove="${id}" class="btn btn-sm btn-secondary">Убрать</button></div>`;
         }).join('') : '<p class="creation-hint">Выберите предмет в каталоге.</p>';
     }
     function renderShop() {
@@ -198,6 +198,7 @@ export async function openCharacterCreation(lobbyId, onCreated) {
         modal.querySelectorAll('[data-specialization]').forEach(input => { input.disabled = !input.checked && (remaining <= 0 || specialistSkills.includes(input.dataset.specialization)); });
         const budget = (background?.name === 'Бедный' ? 5000 : 10000) + plan.cashPoints * 200;
         const spent = [...purchases].reduce((sum, [id, quantity]) => sum + shop.find(template => template.id === id).price * quantity, 0);
+        find('[data-purchase-total-cost]').textContent = money(spent);
         find('[data-purchase-balance]').textContent = money(budget - spent);
         find('[data-purchase-balance]').classList.toggle('creation-negative', spent > budget);
         find('[data-creation-summary]').innerHTML = `<div class="creation-review"><strong>${escape(form.elements.characterAlias.value.trim() || 'Без имени')}</strong><span>${escape(background?.name || 'Предыстория не выбрана')}</span><span>Свободных очков: ${data?.skills.skillPoints ?? '—'}</span><span>Деньги после закупа: ${money(budget - spent)}</span><span>Предметов: ${[...purchases.values()].reduce((sum, value) => sum + value, 0)}</span></div>`;
@@ -303,20 +304,29 @@ export async function openCharacterCreation(lobbyId, onCreated) {
     modal.addEventListener('input', event => {
         const input = event.target;
         if (input.matches('[data-purchase-search]')) { renderShop(); return; }
-        if (input.matches('[data-purchase-quantity]')) return;
+        if (input.matches('[data-purchase-quantity]')) {
+            if (selectedPurchase) find('[data-purchase-selection-total]').textContent = money(selectedPurchase.price * Math.max(0, Number(input.value) || 0));
+            return;
+        }
         if (input.matches('[name=characterAlias]')) { refreshView(); return; }
         if (input.matches('[data-stage], [name=cashPoints]')) queuePreview();
     });
     modal.addEventListener('change', event => {
         const input = event.target;
+        if (input.matches('[data-purchase-quantity]')) {
+            if (selectedPurchase) find('[data-purchase-selection-total]').textContent = money(selectedPurchase.price * Math.max(0, Number(input.value) || 0));
+            return;
+        }
         if (input.matches('[data-template-file]')) { void loadTemplate(input.files[0]); return; }
         if (input.matches('[name=backgroundId]')) { latestData = null; latestKey = ''; backgroundDetails(); }
         if (input.hasAttribute('data-trait')) traitDetails(input.dataset.trait);
         if (input.matches('[data-purchase-category]')) { selectedPurchase = null; find('[data-purchase-selection]').hidden = true; renderShop(); return; }
         if (input.matches('[data-cart-quantity]')) {
             const quantity = Number(input.value);
-            if (!Number.isInteger(quantity) || quantity < 1 || quantity > 10000) { renderCart(); return; }
-            purchases.set(Number(input.dataset.cartQuantity), quantity);
+            if (!Number.isInteger(quantity) || quantity < 0 || quantity > 10000) { renderCart(); return; }
+            if (quantity) purchases.set(Number(input.dataset.cartQuantity), quantity);
+            else purchases.delete(Number(input.dataset.cartQuantity));
+            renderCart();
         }
         if (!input.matches('[data-purchase-search], [data-purchase-quantity]')) queuePreview();
     });
@@ -344,6 +354,16 @@ export async function openCharacterCreation(lobbyId, onCreated) {
             selectedPurchase = shop.find(template => template.id === Number(button.dataset.purchaseSelect));
             find('[data-purchase-title]').textContent = `${selectedPurchase.name} · ${money(selectedPurchase.price)}`;
             find('[data-purchase-selection]').hidden = false; find('[data-purchase-quantity]').value = '1';
+            find('[data-purchase-selection-total]').textContent = money(selectedPurchase.price);
+        } else if (button.hasAttribute('data-purchase-quick-add')) {
+            const id = Number(button.dataset.purchaseQuickAdd), quantity = purchases.get(id) || 0;
+            if (quantity >= 10000) { error('Слишком большое количество одного предмета.'); return; }
+            purchases.set(id, quantity + 1); renderCart(); queuePreview();
+        } else if (button.hasAttribute('data-cart-adjust')) {
+            const id = Number(button.dataset.cartAdjust), quantity = (purchases.get(id) || 0) + Number(button.dataset.delta);
+            if (quantity > 10000) { error('Слишком большое количество одного предмета.'); return; }
+            if (quantity > 0) purchases.set(id, quantity); else purchases.delete(id);
+            renderCart(); queuePreview();
         } else if (button.hasAttribute('data-purchase-dismiss')) { find('[data-purchase-selection]').hidden = true; selectedPurchase = null; }
         else if (button.hasAttribute('data-purchase-add') && selectedPurchase) {
             const quantity = Number(find('[data-purchase-quantity]').value);
