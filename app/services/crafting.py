@@ -44,6 +44,12 @@ def normalized(name):
 
 def item_names(item):
     names={normalized(item.get('name'))}
+    catalog_component_names={
+        'активированный уголь таблетка':'активированный уголь',
+        'веревка 10м':'веревка',
+    }
+    alias=catalog_component_names.get(normalized(item.get('name')))
+    if alias:names.add(alias)
     if item.get('category')=='tool':
         base=re.sub(r'\s+\d+\s*/\s*\d+\s*$','',str(item.get('name') or ''))
         names.add(normalized(base))

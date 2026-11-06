@@ -32,6 +32,42 @@ def call(client,workshop,auth_headers,operation,**payload):
 def units(data,name):return sum(_available_uses(i) for i in data['inventory']['pockets'] if i['name']==name)
 
 
+@pytest.mark.parametrize('recipe_id,ingredient,amount',[('recipe-aa30','Активированный уголь (Таблетка)',1),
+    ('recipe-aa44','Активированный уголь (Таблетка)',1),
+    ('recipe-aa45','Активированный уголь (Таблетка)',4),
+    ('recipe-aa46','Активированный уголь (Таблетка)',6),
+    ('recipe-m5','Веревка 10м',2),('recipe-m11','Веревка 10м',1)])
+def test_catalog_component_names_match_recipes(app,recipe_id,ingredient,amount):
+    from app.services.crafting import _allocate, recipe_by_id
+    recipe=recipe_by_id(recipe_id)
+    data={'inventory':{'pockets':[{'name':ingredient,'category':'consumable','quantity':amount}]}}
+    allocations,missing=_allocate(data,recipe)
+    assert any(entry['amount']==amount for entry in allocations)
+    assert not any(text.casefold().startswith(('активированный уголь:','веревка:')) for text in missing)
+    data['inventory']['pockets'][0]['quantity']=amount-1
+    assert any(text.casefold().startswith(('активированный уголь:','веревка:')) for text in _allocate(data,recipe)[1])
+
+
+def test_bark_tincture_spends_catalog_charcoal_tablet(client,workshop,auth_headers,monkeypatch):
+    data=deepcopy(workshop['actor_character'].data)
+    data['skills']['other']['medicine']={'base':13,'bonus':0}
+    data['inventory']['pockets']=[{'name':'Вода','category':'consumable','quantity':1},
+        {'name':'Активированный уголь (Таблетка)','category':'consumable','quantity':2}]
+    workshop['actor_character'].data=data
+    db.session.add(ItemTemplate(name='Очищенная настойка коры',category='consumable',price=300))
+    db.session.commit()
+    quoted=call(client,workshop,auth_headers,'quote',recipe_id='recipe-aa30')
+    assert quoted.status_code==200 and quoted.json['result']['missing']==[],quoted.json
+    started=call(client,workshop,auth_headers,'start',recipe_id='recipe-aa30')
+    assert started.status_code==200,started.json
+    workshop['lobby'].game_time_minutes+=5;db.session.commit()
+    monkeypatch.setattr('app.services.crafting.resolve_creation',lambda quote:{'success':True,'roll':100,'automatic':False})
+    finished=call(client,workshop,auth_headers,'finish',job_id=started.json['result']['id'],chosen_loss=[0])
+    assert finished.status_code==200,finished.json
+    assert units(finished.json['data'],'Активированный уголь (Таблетка)')==1
+    assert units(finished.json['data'],'Очищенная настойка коры')==1
+
+
 def test_grenade_recipe_chain_accepts_catalog_names_and_smoke_output(app):
     from app.services.crafting import _allocate, _template, recipe_by_id
     smoke=ItemTemplate(name='Дымовая граната РДГ-6',category='grenade',price=300)
