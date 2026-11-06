@@ -529,6 +529,8 @@ class CharacterService:
                 base_data = clean_snapshot(updates['_base_data'])
                 preserve_action_payment(character.data, base_data)
                 character_data = merge_sheet_data(base_data, character_data, character.data)
+            from app.services.world_factions import preserve_assignment
+            preserve_assignment(character.data,character_data)
             _preserve_server_medical_retry(character.data, character_data)
             _preserve_server_zombification(character.data,character_data)
             old_survival=(((character.data.get('health') or {}).get('combatMeta') or {}).get('toughNut'))

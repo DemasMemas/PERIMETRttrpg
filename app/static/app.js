@@ -206,6 +206,7 @@ async function createLobby() {
             const formData = new FormData();
             formData.append('name', name);
             formData.append('map_type', mapType);
+            formData.append('faction_source', document.getElementById('faction-source').value);
             const blob = new Blob([jsonStr], { type: 'application/json' });
             const fileName = file.name.replace(/\.gz$/, '') + '.json';
             formData.append('map_file', blob, fileName);
@@ -232,7 +233,8 @@ async function createLobby() {
                 chunksHeight = Math.min(32, Math.max(1, chunksHeight));
             }
 
-            const body = { name, map_type: mapType, chunks_width: chunksWidth, chunks_height: chunksHeight };
+            const body = { name, map_type: mapType, chunks_width: chunksWidth, chunks_height: chunksHeight,
+                faction_source: document.getElementById('faction-source').value };
             const response = await fetch('/lobbies/', {
                 method: 'POST',
                 headers: {

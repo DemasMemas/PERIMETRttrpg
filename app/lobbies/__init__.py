@@ -1251,7 +1251,8 @@ def create_lobby():
             user_id=user_id,
             name=name,
             map_type='imported',
-            import_data=import_data
+            import_data=import_data,
+            faction_source=request.form.get('faction_source','custom'),
         )
     else:
         schema = LobbyCreateSchema()
@@ -1261,7 +1262,8 @@ def create_lobby():
             name=data['name'],
             map_type=data['map_type'],
             chunks_width=data['chunks_width'],
-            chunks_height=data['chunks_height']
+            chunks_height=data['chunks_height'],
+            faction_source=data['faction_source'],
         )
 
     response_schema = LobbySchema()
@@ -1789,6 +1791,27 @@ def npc_generation_create(lobby_id,lobby):
             'owner_id':character.owner_id,'owner_username':character.owner.username if character.owner else None,
             'data':character.data_snapshot()},room=f'lobby_{lobby_id}')
     return jsonify({'character':CharacterSchema().dump(character),'replayed':replayed}),200 if replayed else 201
+
+
+@lobbies_bp.route('/<int:lobby_id>/world-factions',methods=['GET','PUT'])
+@jwt_required()
+@requires_gm
+def world_factions_config(lobby_id,lobby):
+    from app.services.world_factions import get_config,save_config
+    user_id=int(get_jwt_identity())
+    if request.method=='GET':return jsonify(get_config(lobby,user_id)),200
+    return jsonify(save_config(lobby,user_id,request.get_json(silent=True) or {})),200
+
+
+@lobbies_bp.route('/<int:lobby_id>/world-factions/characters/<int:character_id>',methods=['PUT'])
+@jwt_required()
+@requires_gm
+def world_faction_character(lobby_id,lobby,character_id):
+    from app.services.world_factions import assign_character
+    character=assign_character(lobby,int(get_jwt_identity()),character_id,request.get_json(silent=True) or {})
+    emit_character_update({'character_id':character.id,'updates':{'data':character.data_snapshot()},
+        'updated_by':lobby.gm_id,'source':'world_faction'})
+    return jsonify({'character':CharacterSchema().dump(character)}),200
 
 @lobbies_bp.route('/characters/<int:character_id>', methods=['GET'])
 @jwt_required()

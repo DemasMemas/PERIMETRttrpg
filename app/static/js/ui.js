@@ -1,6 +1,7 @@
 // static/js/ui.js
 import { showNotification } from './utils.js';
 import { Server } from './api.js';
+import { openWorldFactionSettings } from './worldFactions.js';
 import { loadLobbyCharacters } from './characters.js';
 import { chatMessageKind, chatMessageIdentity } from './chatPanel.js';
 import {
@@ -218,6 +219,8 @@ export function showSettingsTab(tab, btn) {
         if (window.loadWeatherSettings && window.weatherSettings) {
             window.loadWeatherSettings(window.weatherSettings);
         }
+    } else if (tab === 'factions') {
+        openWorldFactionSettings(currentLobbyId).catch(error=>showNotification(error.message||'Не удалось открыть группировки'));
     }
 }
 

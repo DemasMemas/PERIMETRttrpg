@@ -9,6 +9,7 @@ class LobbyCreateSchema(Schema):
     map_type = fields.Str(load_default='empty', validate=validate.OneOf(['empty', 'random', 'predefined', 'imported']))
     chunks_width = fields.Int(load_default=16, validate=validate.Range(min=1, max=MAX_CHUNKS_WIDTH))
     chunks_height = fields.Int(load_default=16, validate=validate.Range(min=1, max=MAX_CHUNKS_HEIGHT))
+    faction_source = fields.Str(load_default='custom', validate=validate.OneOf(['custom']))
 
 class LobbySchema(Schema):
     id = fields.Int(dump_only=True)

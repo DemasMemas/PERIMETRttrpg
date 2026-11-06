@@ -61,7 +61,7 @@ def test_npc_creation_uses_named_pair_without_numeric_profile_and_replays(client
     npc=LobbyCharacter.query.get(identifier)
     assert npc.data['basic']['is_npc'] is True
     assert npc.data['npcGenerator']=={'name_source':'gm_name_pool','danger_id':'danger_low',
-        'wealth_id':'wealth_low','numeric_profile_id':None}
+        'wealth_id':'wealth_low','numeric_profile_id':None,'group_id':None,'faction_id':None}
     assert npc.data['npcLoot']['profile']==profile()
     assert npc.data['npcLoot']['initial_receipt']['spent']==100
     assert npc.data['npcLoot']['initial_receipt']['money']==10

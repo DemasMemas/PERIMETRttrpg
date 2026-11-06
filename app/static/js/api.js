@@ -36,6 +36,11 @@ const characterSaver = createCharacterSaver((characterId, updates) => apiFetch(`
 
 export const Server = {
     getNpcGenerationConfig: lobbyId => apiFetch(`/lobbies/${lobbyId}/npc-generation-config`),
+    getWorldFactions: lobbyId => apiFetch(`/lobbies/${lobbyId}/world-factions`),
+    saveWorldFactions: (lobbyId,payload) => apiFetch(`/lobbies/${lobbyId}/world-factions`,{
+        method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}),
+    assignWorldFaction: (lobbyId,characterId,payload) => apiFetch(`/lobbies/${lobbyId}/world-factions/characters/${characterId}`,{
+        method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}),
     saveNpcGenerationConfig: (lobbyId,payload) => apiFetch(`/lobbies/${lobbyId}/npc-generation-config`,{
         method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}),
     previewNpcName: (lobbyId,exclude) => apiFetch(`/lobbies/${lobbyId}/npc-generation-config/name-preview`,{

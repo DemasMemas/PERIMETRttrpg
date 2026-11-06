@@ -14,7 +14,7 @@ def generate_invite_code():
 
 class LobbyService:
     @staticmethod
-    def create_lobby(user_id, name, map_type, chunks_width=16, chunks_height=16, import_data=None):
+    def create_lobby(user_id, name, map_type, chunks_width=16, chunks_height=16, import_data=None, faction_source='custom'):
         """
         Создаёт новую комнату.
         - user_id: ID создателя (GM)
@@ -27,6 +27,8 @@ class LobbyService:
             raise ValidationError("Lobby name is required")
         if map_type not in ['empty', 'random', 'predefined', 'imported']:
             raise ValidationError("Invalid map type")
+        if faction_source!='custom':
+            raise ValidationError('Готовый набор группировок пока не предоставлен автором')
 
         if map_type == 'imported':
             if not import_data:

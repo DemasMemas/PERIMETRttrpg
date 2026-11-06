@@ -144,7 +144,8 @@ def create_npc(lobby,user_id,payload):
     character=CharacterService.create_character(lobby.id,user_id,name,{'basic':{'is_npc':True}},commit=False)
     data=deepcopy(character.data or {})
     data['npcGenerator']={'name_source':'gm_name_pool' if config and name in config.names else 'manual',
-        'danger_id':danger_id,'wealth_id':wealth_id,'numeric_profile_id':None}
+        'danger_id':danger_id,'wealth_id':wealth_id,'numeric_profile_id':None,
+        'group_id':None,'faction_id':None}
     if profile:
         items, loot_receipt=roll_loot(profile,ItemTemplate.query.order_by(ItemTemplate.id).all())
         apply_rolled_loot(data,items,loot_receipt)
