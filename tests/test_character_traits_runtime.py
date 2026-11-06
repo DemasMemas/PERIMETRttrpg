@@ -168,6 +168,35 @@ def test_scout_binocular_bonus_comes_from_catalog_not_item_fields(grenade_game,m
         inspect(actor,{'item_path':['inventory','pockets',0]})
 
 
+def test_night_binocular_scouts_dark_targets_without_darkness_penalty(grenade_game,monkeypatch):
+    from app.services.location_scout import inspect
+    from app.models.templates import ItemTemplate
+    actor,target=grenade_game['actor_location'],grenade_game['target_location']
+    state=LocationCombatState.query.filter_by(location_id=actor.location_id).one();state.status='idle'
+    actor.pos_x,actor.pos_y=4,5;actor.facing_x,actor.facing_y=1,0
+    target.pos_x,target.pos_y=12,5;target.gm_hidden=False;target.cover_object_id=None
+    templates=[ItemTemplate(name=name,category='misc',price=100,attributes={'scouting_bonus':15})
+        for name in ('Бинокль','Бинокль Ночной')]
+    db.session.add_all(templates);db.session.flush()
+    data=deepcopy(actor.character.data)
+    data.setdefault('inventory',{})['pockets']=[{'id':f'binocular-{index}',
+        'templateId':template.id,'name':template.name,'category':'misc'}
+        for index,template in enumerate(templates)]
+    actor.character.data=data;db.session.commit()
+    monkeypatch.setattr(CombatService,'_is_dark_at_character',lambda *args:True)
+    monkeypatch.setattr('app.services.combat.random.randint',lambda *args:20)
+    darkness=[];original=CombatService._narrative_skill_check
+    def checked(*args,**kwargs):
+        darkness.append(kwargs['darkness'])
+        return original(*args,**kwargs)
+    monkeypatch.setattr(CombatService,'_narrative_skill_check',checked)
+    ordinary=inspect(actor,{'item_path':['inventory','pockets',0]},remote=True)
+    night=inspect(actor,{'item_path':['inventory','pockets',1]},remote=True)
+    assert darkness==[True,False]
+    assert ordinary['targets']==[]
+    assert [entry['character_id'] for entry in night['targets']]==[target.character_id]
+
+
 def test_hunter_daily_stress_accumulates_is_locked_and_does_not_duplicate():
     from app.services.character_rules import advance_hunter_days
     from app.services.effects import apply_effect_to_health,sync_health_derived_statuses

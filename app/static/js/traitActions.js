@@ -68,7 +68,7 @@ async function showScouting(characterId,data){
     const visit=(value,path)=>{
         if(Array.isArray(value)){value.forEach((item,index)=>visit(item,[...path,index]));return;}
         if(!value||typeof value!=='object')return;
-        if(/бинок/i.test(value.name||'')||[15,25].includes(Number(value.scouting_bonus||value.attributes?.scouting_bonus))){paths.push(path);select.add(new Option(value.name||'Бинокль',`item:${paths.length-1}`));}
+        if(value.templateId&&value.category==='misc'&&/^Бинокль/.test(value.name||'')){paths.push(path);select.add(new Option(value.name,`item:${paths.length-1}`));}
         for(const key of ['contents','pouches','storedItem'])visit(value[key],[...path,key]);
     };
     for(const root of ['inventory','equipment'])for(const [key,value] of Object.entries(data[root]||{}))visit(value,[root,key]);

@@ -74,6 +74,7 @@ def inspect(actor,choice,*,remote=False):
     weapon=(data.get('weapons') or [])[index] if type(index) is int and 0<=index<len(data.get('weapons') or []) else {}
     from app.services.weapon_modules import weapon_stat
     item_bonus=math.floor(weapon_stat(weapon,'range',C._coerce_float(weapon.get('range',(weapon.get('attributes') or {}).get('range')),0))/5)
+    night_optic=False
     if choice.get('item_path') is not None:
         from app.services.inventory_access import inventory_slot
         parent,index=inventory_slot(data,choice['item_path']);item=parent[index]
@@ -84,9 +85,12 @@ def inspect(actor,choice,*,remote=False):
             raise ValidationError('Выберите бинокль из каталога')
         item_bonus=(template.attributes or {}).get('scouting_bonus')
         if item_bonus not in {15,25}:raise ValidationError('Выберите бинокль с бонусом осмотра 15 или 25')
+        night_optic=template.name in {'Бинокль Ночной','Бинокль с дальномером и увеличенной кратностью'}
     awareness=C._base_skill_modifier(data,'skills.physical.awareness');tactics=C._base_skill_modifier(data,'skills.other.tactics')
     from app.services.weather_rules import at_character
-    check=C._narrative_skill_check(data,'skills.physical.awareness.visual',darkness=C._is_dark_at_character(actor.location,actor),weather=at_character(actor.location,actor))
+    check=C._narrative_skill_check(data,'skills.physical.awareness.visual',
+        darkness=C._is_dark_at_character(actor.location,actor) and not night_optic,
+        weather=at_character(actor.location,actor))
     difficulty=20-awareness-tactics-item_bonus
     total=check['total']-awareness
     success=not check.get('automatic_failure') and total>=difficulty
@@ -94,7 +98,7 @@ def inspect(actor,choice,*,remote=False):
     if success:
         for target in C._unique_location_characters(LocationCharacter.query.filter_by(location_id=actor.location_id).all()):
             if not target.character or target.character_id==actor.character_id or target.gm_hidden or target.cover_object_id:continue
-            if remote and (math.hypot(target.pos_x-actor.pos_x,target.pos_y-actor.pos_y)>25 or target.floor_level!=actor.floor_level or C._is_dark_at_character(actor.location,target)):continue
+            if remote and (math.hypot(target.pos_x-actor.pos_x,target.pos_y-actor.pos_y)>25 or target.floor_level!=actor.floor_level or C._is_dark_at_character(actor.location,target) and not night_optic):continue
             if C._can_see_location_character(actor,target,max_distance=max(actor.location.grid_width,actor.location.grid_height)) and C._cover_analysis(actor.location_id,actor,target).get('grade')=='none':
                 targets.append({'character_id':target.character_id,'name':C._display_name(target.character),'x':target.pos_x,'y':target.pos_y,'floor_level':target.floor_level})
     result={'check':{**check,'difficulty':difficulty,'total':total,'success':success,'item_bonus':item_bonus},'targets':targets,'location_id':actor.location_id}
