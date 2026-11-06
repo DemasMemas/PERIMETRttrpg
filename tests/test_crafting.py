@@ -92,6 +92,55 @@ def test_spirit_recipe_accepts_catalog_beer_and_moonshine_still(client,workshop,
     assert units(finished.json['data'],'Спирт')==30
 
 
+def test_beer_recipe_produces_eight_catalog_cans(client,workshop,auth_headers,monkeypatch):
+    data=deepcopy(workshop['actor_character'].data)
+    data['skills']['other']['survival']={'base':20,'bonus':0}
+    data['inventory']['pockets']=[
+        {'name':'Вода','category':'consumable','quantity':3},
+        {'name':'Хлеб','category':'food','quantity':1},
+        {'name':'Сахар','category':'food','quantity':1},
+        {'name':'Металлические детали','category':'crafting_material','quantity':2},
+        {'name':'Самогонный Аппарат','category':'tool','quantity':1},
+    ]
+    workshop['actor_character'].data=data
+    db.session.add(ItemTemplate(name='Банка пива',category='consumable',price=50))
+    db.session.commit()
+    quoted=call(client,workshop,auth_headers,'quote',recipe_id='recipe-aa13')
+    assert quoted.status_code==200 and quoted.json['result']['missing']==[],quoted.json
+    started=call(client,workshop,auth_headers,'start',recipe_id='recipe-aa13')
+    assert started.status_code==200,started.json
+    workshop['lobby'].game_day+=2;db.session.commit()
+    monkeypatch.setattr('app.services.crafting.resolve_creation',lambda quote:{'success':True,'roll':100,'automatic':False})
+    finished=call(client,workshop,auth_headers,'finish',job_id=started.json['result']['id'],chosen_loss=[])
+    assert finished.status_code==200,finished.json
+    assert units(finished.json['data'],'Банка пива')==8
+    assert units(finished.json['data'],'Самогонный Аппарат')==1
+
+
+def test_moonshine_recipe_spends_five_spirit_uses_and_keeps_still(client,workshop,auth_headers,monkeypatch):
+    data=deepcopy(workshop['actor_character'].data)
+    data['skills']['other']['medicine']={'base':20,'bonus':0}
+    data['inventory']['pockets']=[
+        {'name':'Спирт','category':'consumable','quantity':1,'uses':10,'maxUses':10},
+        {'name':'Сахар','category':'food','quantity':1},
+        {'name':'Самогонный Аппарат','category':'tool','quantity':1},
+    ]
+    workshop['actor_character'].data=data
+    db.session.add(ItemTemplate(name='Самогон',category='consumable',price=50))
+    db.session.commit()
+    quoted=call(client,workshop,auth_headers,'quote',recipe_id='recipe-aa48')
+    assert quoted.status_code==200 and quoted.json['result']['missing']==[],quoted.json
+    started=call(client,workshop,auth_headers,'start',recipe_id='recipe-aa48')
+    assert started.status_code==200,started.json
+    assert units(started.json['data'],'Спирт')==5
+    workshop['lobby'].game_day+=1;db.session.commit()
+    monkeypatch.setattr('app.services.crafting.resolve_creation',lambda quote:{'success':True,'roll':100,'automatic':False})
+    finished=call(client,workshop,auth_headers,'finish',job_id=started.json['result']['id'],chosen_loss=[])
+    assert finished.status_code==200,finished.json
+    assert units(finished.json['data'],'Самогон')==4
+    assert units(finished.json['data'],'Самогонный Аппарат')==1
+
+
 def test_glue_recipe_uses_catalog_pot_without_consuming_it(client,workshop,auth_headers,monkeypatch):
     from app.services.crafting import _allocate,recipe_by_id
     pot='Котелок (Объем 2 литра)(6 использований воды)'
