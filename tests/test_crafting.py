@@ -32,6 +32,28 @@ def call(client,workshop,auth_headers,operation,**payload):
 def units(data,name):return sum(_available_uses(i) for i in data['inventory']['pockets'] if i['name']==name)
 
 
+def test_depleted_workbench_does_not_satisfy_recipe_requirement(client,workshop,auth_headers,monkeypatch):
+    from app.services import crafting
+    original=crafting.recipe_by_id
+    def required_workbench(recipe_id):
+        recipe=deepcopy(original(recipe_id))
+        recipe['tools_text']='Станок Электрика'
+        return recipe
+    monkeypatch.setattr(crafting,'recipe_by_id',required_workbench)
+    data=deepcopy(workshop['actor_character'].data)
+    data['inventory']['pockets'].append({'name':'Станок Электрика','category':'tool',
+        'quantity':1,'maxUses':50,'uses':0})
+    workshop['actor_character'].data=data;db.session.commit()
+    depleted=call(client,workshop,auth_headers,'quote',recipe_id='recipe-f4')
+    assert depleted.status_code==200,depleted.json
+    assert 'Нужны: Станок Электрика' in depleted.json['result']['missing']
+    data['inventory']['pockets'][-1]['uses']=1
+    workshop['actor_character'].data=data;db.session.commit()
+    charged=call(client,workshop,auth_headers,'quote',recipe_id='recipe-f4')
+    assert charged.status_code==200,charged.json
+    assert 'Нужны: Станок Электрика' not in charged.json['result']['missing']
+
+
 @pytest.mark.parametrize('recipe_id,catalog_name',[
     ('recipe-aa21','Анальгин (Таблетка)'),
     ('recipe-aa24','Пенициллин (Таблетка)'),

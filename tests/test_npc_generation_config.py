@@ -4,7 +4,7 @@ from app.models import NpcGenerationConfig, LobbyCharacter, NpcCreationReceipt
 from app.models.templates import ItemTemplate
 from app.services.npc_generation import preview_name
 from test_character_interactions import _setup_pair
-from test_npc_loot import profile
+from test_npc_loot import pool, profile
 
 
 def config(**changes):
@@ -88,6 +88,71 @@ def test_npc_creation_with_unmatched_pool_rolls_back_entire_npc(client,create_us
         'danger_id':'danger_low','wealth_id':'wealth_low'})
     assert response.status_code==400,response.json
     assert LobbyCharacter.query.count()==before and NpcCreationReceipt.query.count()==0
+
+
+def test_generated_npc_wears_compatible_armor_and_helmet_once(client,create_user,auth_headers):
+    pair=_setup_pair(client,create_user,auth_headers)
+    db.session.add_all([
+        ItemTemplate(name='Защита А',category='armor',item_class='1',price=100,attributes={'max_durability':80}),
+        ItemTemplate(name='Шлем А',category='helmet',item_class='1',price=50,attributes={'max_durability':40}),
+    ]);db.session.commit()
+    selected=profile(budget=150,money_min=0,money_max=0,pools=[
+        pool(category='armor',subcategory='',draws=1),
+        pool(category='helmet',subcategory='',draws=1)])
+    settings=config(combinations=[{'danger_id':'danger_low','wealth_id':'wealth_low','profile':selected}])
+    url=f"/lobbies/{pair['lobby'].id}/npc-generation-config"
+    assert client.put(url,headers=auth_headers(pair['actor_user']),json=settings).status_code==200
+    payload={'operation_id':'npc-equipped-123','name':'Имя автора 1','danger_id':'danger_low','wealth_id':'wealth_low'}
+    created=client.post(url+'/create',headers=auth_headers(pair['actor_user']),json=payload)
+    assert created.status_code==201,created.json
+    npc=db.session.get(LobbyCharacter,created.json['character']['id'])
+    assert npc.data['equipment']['armor']['name']=='Защита А'
+    assert npc.data['equipment']['helmet']['name']=='Шлем А'
+    assert npc.data['npcLoot']['initial_receipt']['equipped']==[
+        {'slot':slot,'item_id':npc.data['equipment'][slot]['id']} for slot in ('armor','helmet')]
+    assert not npc.data['inventory']['backpack']
+    replay=client.post(url+'/create',headers=auth_headers(pair['actor_user']),json=payload)
+    assert replay.status_code==200 and replay.json['replayed']
+    assert not db.session.get(LobbyCharacter,npc.id).data['inventory']['backpack']
+
+
+def test_incompatible_generated_helmet_and_mask_cancel_npc(client,create_user,auth_headers):
+    pair=_setup_pair(client,create_user,auth_headers)
+    db.session.add_all([
+        ItemTemplate(name='Шлем с забралом А',category='helmet',item_class='1',price=50,
+            attributes={'integrated_visor':True,'max_durability':40}),
+        ItemTemplate(name='Противогаз А',category='gas_mask',item_class='1',price=50,attributes={}),
+    ]);db.session.commit()
+    selected=profile(budget=100,money_min=0,money_max=0,pools=[
+        pool(category='helmet',subcategory='',draws=1),
+        pool(category='gas_mask',subcategory='',draws=1)])
+    url=f"/lobbies/{pair['lobby'].id}/npc-generation-config"
+    assert client.put(url,headers=auth_headers(pair['actor_user']),json=config(combinations=[
+        {'danger_id':'danger_low','wealth_id':'wealth_low','profile':selected}])).status_code==200
+    before=LobbyCharacter.query.count()
+    created=client.post(url+'/create',headers=auth_headers(pair['actor_user']),json={
+        'operation_id':'npc-incompatible-123','name':'Имя автора 1',
+        'danger_id':'danger_low','wealth_id':'wealth_low'})
+    assert created.status_code==400,created.json
+    assert LobbyCharacter.query.count()==before and NpcCreationReceipt.query.count()==0
+
+
+def test_generated_exoskeleton_is_preconfigured_without_invented_tool_action(client,create_user,auth_headers):
+    pair=_setup_pair(client,create_user,auth_headers)
+    db.session.add(ItemTemplate(name='Экзоскелет',category='armor',item_class='4',price=500,
+        attributes={'is_exoskeleton':True,'max_durability':100}));db.session.commit()
+    selected=profile(budget=500,money_min=0,money_max=0,pools=[
+        pool(category='armor',subcategory='',item_class='4',max_price=500,draws=1)])
+    url=f"/lobbies/{pair['lobby'].id}/npc-generation-config"
+    assert client.put(url,headers=auth_headers(pair['actor_user']),json=config(combinations=[
+        {'danger_id':'danger_low','wealth_id':'wealth_low','profile':selected}])).status_code==200
+    created=client.post(url+'/create',headers=auth_headers(pair['actor_user']),json={
+        'operation_id':'npc-exoskeleton-123','name':'Имя автора 1',
+        'danger_id':'danger_low','wealth_id':'wealth_low'})
+    assert created.status_code==201,created.json
+    npc=db.session.get(LobbyCharacter,created.json['character']['id'])
+    assert npc.data['equipment']['armor']['isExoskeleton'] is True
+    assert npc.data['npcLoot']['initial_receipt']['equipped'][0]['slot']=='armor'
 
 
 def test_player_cannot_create_npc_even_through_old_route(client,create_user,auth_headers):

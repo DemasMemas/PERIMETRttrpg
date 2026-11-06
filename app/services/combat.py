@@ -11992,6 +11992,7 @@ class CombatService:
         item_path=None,
         retrieval_action_points=0,
         in_combat=False,
+        preconfigured=False,
     ):
         operation = str(operation or '').strip().lower()
         slot = str(slot or '').strip()
@@ -12045,7 +12046,11 @@ class CombatService:
                 ):
                     raise ValidationError('This gas mask cannot be worn with the current helmet')
         is_exoskeleton = slot == 'armor' and CombatService._is_exoskeleton_item(item, template)
-        if is_exoskeleton:
+        if is_exoskeleton and preconfigured:
+            # Генерация персонажа задаёт уже надетое снаряжение, а не игровое действие.
+            duration_minutes = 0
+            action_points = 0
+        elif is_exoskeleton:
             if in_combat:
                 raise ValidationError('The exoskeleton cannot be equipped or removed during combat')
             tool = CombatService._exoskeleton_tool_profile(

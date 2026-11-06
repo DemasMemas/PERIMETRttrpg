@@ -113,6 +113,22 @@ def preview_name(lobby,user_id,exclude=None,*,rng=None):
     return {'name':(rng or random.SystemRandom()).choice(available),'source':'gm_name_pool'}
 
 
+def _equip_rolled_protection(data):
+    """Надеть по одному предмету каждого защитного слота по обычным правилам совместимости."""
+    from app.services.combat import CombatService
+    categories={'armor':'armor','helmet':'helmet','gasMask':'gas_mask'}
+    equipped=[]
+    for slot,category in categories.items():
+        backpack=data.get('inventory',{}).get('backpack',[])
+        index=next((i for i,item in enumerate(backpack) if item.get('category')==category),None)
+        if index is None:continue
+        details=CombatService.equipment_action_details(data,'equip',slot,
+            item_path=['inventory','backpack',index],preconfigured=True)
+        CombatService.apply_equipment_action(data,details)
+        equipped.append({'slot':slot,'item_id':data['equipment'][slot]['id']})
+    return equipped
+
+
 def create_npc(lobby,user_id,payload):
     _gm(lobby,user_id)
     if not isinstance(payload,dict) or set(payload)!={'operation_id','name','danger_id','wealth_id'}:
@@ -149,6 +165,7 @@ def create_npc(lobby,user_id,payload):
     if profile:
         items, loot_receipt=roll_loot(profile,ItemTemplate.query.order_by(ItemTemplate.id).all())
         apply_rolled_loot(data,items,loot_receipt)
+        loot_receipt['equipped']=_equip_rolled_protection(data)
         data['npcLoot']={'profile':profile,'initial_receipt':loot_receipt}
     character.data=data;flag_modified(character,'data')
     db.session.add(NpcCreationReceipt(operation_id=operation,lobby_id=lobby.id,character_id=character.id,
