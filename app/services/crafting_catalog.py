@@ -97,7 +97,12 @@ def parse_recipes(rows):
                 'other.engineering' if '(Инженерия)' in name_m else 'other.survival',
                 'Ловушки' if column_m == 'traps' else 'Укрепления',
                 result_text=text(row.get('O')))
-        add('V', row.get('V'), row.get('W'), row.get('X'), 'Смесительный станок', '30 минут',
+        grenade_components=text(row.get('W'))
+        bench='Смесительный станок'
+        if re.search(r'\.\s*Станок не нужен\s*$',grenade_components,re.I):
+            grenade_components=re.sub(r'\.\s*Станок не нужен\s*$','',grenade_components,flags=re.I)
+            bench='Не нужен'
+        add('V', row.get('V'), grenade_components, row.get('X'), bench, '30 минут',
             'other.engineering', 'Боеприпасы')
         name_aa = text(row.get('AA'))
         if name_aa.startswith('Медицина.'):

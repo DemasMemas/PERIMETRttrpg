@@ -98,6 +98,13 @@ def test_integer_fuel_liters_use_one_liter_catalog_units():
     assert any('0.5л' in item['name'] for item in fractional['components'])
 
 
+def test_molotov_inline_station_override_is_not_an_ingredient():
+    recipe=next(item for item in catalog()['recipes'] if item['id']=='recipe-v11')
+    assert recipe['tools_text']=='Не нужен'
+    assert any(item['name']=='Тканные материалы' for item in recipe['components'])
+    assert not any('Станок' in item['name'] for item in recipe['components'])
+
+
 def test_published_creation_data_matches_unchanged_source_when_available():
     from app.services.crafting_catalog import parse_creation_catalog
     root = Path(__file__).resolve().parents[1]
