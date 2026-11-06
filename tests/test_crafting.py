@@ -156,6 +156,52 @@ def test_molotov_can_be_created_with_three_spirit_uses(client,workshop,auth_head
     assert units(finished.json['data'],'Коктейль Молотова')==1
 
 
+def test_water_purification_spends_one_tablet_from_chlorine_packet(client,workshop,auth_headers):
+    data=deepcopy(workshop['actor_character'].data)
+    data['skills']['other']['survival']={'base':13,'bonus':0}
+    data['inventory']['pockets']=[
+        {'name':'Дождевая вода','category':'consumable','quantity':2},
+        {'name':'Хлорные таблетки (10 штук)','category':'misc','quantity':1},
+    ]
+    workshop['actor_character'].data=data
+    db.session.add(ItemTemplate(name='Радиоактивная вода',category='consumable',price=0))
+    db.session.commit()
+    quoted=call(client,workshop,auth_headers,'quote',recipe_id='recipe-aa10')
+    assert quoted.status_code==200 and quoted.json['result']['missing']==[],quoted.json
+    started=call(client,workshop,auth_headers,'start',recipe_id='recipe-aa10')
+    assert started.status_code==200,started.json
+    packet=next(item for item in started.json['data']['inventory']['pockets'] if item['name']=='Хлорные таблетки (10 штук)')
+    assert packet['uses']==9 and packet['maxUses']==10 and packet['quantity']==1
+    workshop['lobby'].game_time_minutes+=1;db.session.commit()
+    finished=call(client,workshop,auth_headers,'finish',job_id=started.json['result']['id'],chosen_loss=[])
+    assert finished.status_code==200,finished.json
+    assert units(finished.json['data'],'Хлорные таблетки (10 штук)')==9
+    assert units(finished.json['data'],'Радиоактивная вода')==1
+
+
+def test_cancel_water_purification_restores_chlorine_tablet(client,workshop,auth_headers):
+    data=deepcopy(workshop['actor_character'].data)
+    data['skills']['other']['survival']={'base':13,'bonus':0}
+    data['inventory']['pockets']=[{'name':'Дождевая вода','category':'consumable','quantity':2},
+        {'name':'Хлорные таблетки (10 штук)','category':'misc','quantity':1}]
+    workshop['actor_character'].data=data
+    db.session.add(ItemTemplate(name='Радиоактивная вода',category='consumable',price=0));db.session.commit()
+    started=call(client,workshop,auth_headers,'start',recipe_id='recipe-aa10')
+    assert started.status_code==200,started.json
+    cancelled=call(client,workshop,auth_headers,'cancel',job_id=started.json['result']['id'])
+    assert cancelled.status_code==200,cancelled.json
+    assert units(cancelled.json['data'],'Хлорные таблетки (10 штук)')==10
+
+
+def test_empty_chlorine_packet_cannot_satisfy_water_recipe(app):
+    from app.services.crafting import _allocate,recipe_by_id
+    recipe=recipe_by_id('recipe-aa10')
+    data={'inventory':{'pockets':[{'name':'Дождевая вода','quantity':2},
+        {'name':'Хлорные таблетки (10 штук)','quantity':1,'uses':0,'maxUses':10}]}}
+    _,missing=_allocate(data,recipe)
+    assert any(text.startswith('Хлорные таблетки:') for text in missing)
+
+
 def test_grenade_recipe_chain_accepts_catalog_names_and_smoke_output(app):
     from app.services.crafting import _allocate, _template, recipe_by_id
     smoke=ItemTemplate(name='Дымовая граната РДГ-6',category='grenade',price=300)

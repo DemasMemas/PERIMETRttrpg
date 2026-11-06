@@ -51,6 +51,7 @@ def item_names(item):
         'пластиковая бутылка объем 1 литр 3 использования воды':'пластиковая бутылка',
         'канистра пустая объем 15 литров 45 использований воды':'канистра',
         'топливо 1 литр':'топливо',
+        'хлорные таблетки 10 штук':'хлорные таблетки',
     }
     alias=catalog_component_names.get(normalized(item.get('name')))
     if alias:names.add(alias)
@@ -100,6 +101,13 @@ def _template(name):
 def _environment(component):return normalized(component['name']).startswith('доступ к ')
 
 
+def _chlorine_uses(item):
+    if normalized(item.get('name'))!='хлорные таблетки 10 штук':return None
+    packet={**item,'maxUses':10}
+    if packet.get('uses') is None:packet['uses']=10
+    return _available_uses(packet)
+
+
 def _allocate(data,recipe):
     from app.services.trade import _contains_individual_items
     candidates=entries(data);spent={};allocations=[];missing=[]
@@ -126,7 +134,10 @@ def _allocate(data,recipe):
                 else:matches=(attrs.get('flamethrower_tank')==component.get('whole_tank') and charges(item)==0 if component.get('whole_tank')
                     else bool(attrs.get('flamethrower_air')) if component.get('whole_air') else matches_box or bool(item_names(item)&names))
                 if not matches or _contains_individual_items(item):continue
-                key=tuple(path);available=(item.get('quantity',1) if whole else _available_uses(item) if item.get('quantity',1)>0 else 0)-trial_spent.get(key,0)
+                packet_uses=_chlorine_uses(item)
+                key=tuple(path);available=(item.get('quantity',1) if whole else
+                    (packet_uses if packet_uses is not None else _available_uses(item))
+                    if item.get('quantity',1)>0 else 0)-trial_spent.get(key,0)
                 unit=10 if matches_box else 1
                 take=min(ceil(left/unit),available)
                 if take>0:
@@ -217,6 +228,9 @@ def _escrow(data,allocations):
         path=CharacterInteractionService._resolve_item_path(data,allocation['item'].get('id'),allocation['path'])
         parent,index=inventory_slot(data,path);item=parent[index]
         item.setdefault('id',original['id'])
+        if _chlorine_uses(item) is not None:
+            item['maxUses']=10
+            item.setdefault('uses',10)
         amount=allocation['amount'];piece=deepcopy(item)
         maximum=1 if allocation.get('whole') else max(1,int(item.get('maxUses') or (item.get('attributes') or {}).get('uses') or 1))
         if allocation.get('whole'):
