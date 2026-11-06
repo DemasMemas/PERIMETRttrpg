@@ -1,6 +1,6 @@
 """Структура генератора НПС не придумывает уровни и численные профили."""
 from app.extensions import db
-from app.models import NpcGenerationConfig, LobbyCharacter, NpcCreationReceipt
+from app.models import NpcGenerationConfig, LobbyCharacter, NpcCreationReceipt, LocationCharacter
 from app.models.templates import ItemTemplate
 from app.services.npc_generation import preview_name
 from test_character_interactions import _setup_pair
@@ -153,6 +153,31 @@ def test_generated_exoskeleton_is_preconfigured_without_invented_tool_action(cli
     npc=db.session.get(LobbyCharacter,created.json['character']['id'])
     assert npc.data['equipment']['armor']['isExoskeleton'] is True
     assert npc.data['npcLoot']['initial_receipt']['equipped'][0]['slot']=='armor'
+
+
+def test_generated_npc_can_be_placed_with_equipment_unchanged(client,create_user,auth_headers):
+    pair=_setup_pair(client,create_user,auth_headers)
+    db.session.add(ItemTemplate(name='Защита А',category='armor',item_class='1',price=100,
+        attributes={'max_durability':80}));db.session.commit()
+    selected=profile(budget=100,money_min=0,money_max=0,pools=[
+        pool(category='armor',subcategory='',draws=1)])
+    config_url=f"/lobbies/{pair['lobby'].id}/npc-generation-config"
+    assert client.put(config_url,headers=auth_headers(pair['actor_user']),json=config(combinations=[
+        {'danger_id':'danger_low','wealth_id':'wealth_low','profile':selected}])).status_code==200
+    created=client.post(config_url+'/create',headers=auth_headers(pair['actor_user']),json={
+        'operation_id':'npc-place-123','name':'Имя автора 1',
+        'danger_id':'danger_low','wealth_id':'wealth_low'})
+    assert created.status_code==201,created.json
+    npc_id=created.json['character']['id']
+    before=db.session.get(LobbyCharacter,npc_id).data['equipment']['armor']['id']
+    hidden=client.get(f'/lobbies/characters/{npc_id}',headers=auth_headers(pair['target_user']))
+    assert hidden.status_code==403
+    placed=client.post(f"/lobbies/{pair['lobby'].id}/locations/{pair['location'].id}/spawn_character",
+        headers=auth_headers(pair['actor_user']),json={'character_id':npc_id,'tile_x':3,'tile_y':2,'floor_level':0})
+    assert placed.status_code==200,placed.json
+    location=LocationCharacter.query.filter_by(location_id=pair['location'].id,character_id=npc_id).one()
+    assert (location.pos_x,location.pos_y,location.floor_level)==(3,2,0)
+    assert db.session.get(LobbyCharacter,npc_id).data['equipment']['armor']['id']==before
 
 
 def test_player_cannot_create_npc_even_through_old_route(client,create_user,auth_headers):
