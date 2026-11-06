@@ -122,7 +122,15 @@ module.exports=async({page,request,token,lobby,base,connect,debugPort,safeSessio
     const vestCatalog=await request(api+'/templates?category=vest',null,token,'GET');
     const readyVests=vestCatalog.global.filter(template=>template.attributes?.pouches?.length);
     assert.ok(readyVests.length>=2,'Каталог содержит готовые разгрузки');
+    const pouchCatalog=await request(api+'/templates?category=pouch',null,token,'GET');
+    const medical=pouchCatalog.global.find(template=>template.subcategory==='Медицинский'&&template.attributes.capacity===4);
+    const excessive=pouchCatalog.global.find(template=>template.volume>8&&template.subcategory!=='Медицинский');
+    assert.ok(medical&&excessive);
     const vestBefore=await read(b.id),vestTemplate=readyVests[0],nextVest=readyVests[1];
+    vestBefore.data.inventory.backpack.push(
+        {id:'medical-pouch-owned',templateId:medical.id,type:medical.id,name:medical.name,category:'pouch',subcategory:medical.subcategory,quantity:1,volume:medical.volume,weight:medical.weight,attributes:medical.attributes,capacity:medical.attributes.capacity,contents:[],isContainer:true},
+        {id:'oversize-pouch-owned',templateId:excessive.id,type:excessive.id,name:excessive.name,category:'pouch',subcategory:excessive.subcategory,quantity:1,volume:excessive.volume,weight:excessive.weight,attributes:excessive.attributes,capacity:excessive.attributes.capacity,contents:[],isContainer:true}
+    );
     const pouches=JSON.parse(JSON.stringify(vestTemplate.attributes.pouches));
     pouches[0].contents=[{id:'vest-preserved-bandage',templateId:bandage.id,name:'Бинт',category:'consumable',quantity:4,volume:.1,weight:.1}];
     vestBefore.data.equipment||={};
@@ -142,20 +150,20 @@ module.exports=async({page,request,token,lobby,base,connect,debugPort,safeSessio
     await page.evaluate(`(()=>{const select=document.querySelector('select[name="equipment.vest.model"]');select.value='${modular.id}';select.dispatchEvent(new Event('change',{bubbles:true}));return true})()`);
     await page.until(`document.querySelector('.vest-mount-usage')&&document.querySelector('button[onclick="addVestPouch()"]')`,'Каталожная модульная разгрузка позволяет добавлять подсумки');
     await page.evaluate(`document.querySelector('button[onclick="addVestPouch()"]').click();true`);
-    await page.until(`document.querySelector('#vest-pouches-container select')`,'Выбор подсумка открыт');
-    const pouchCatalog=await request(api+'/templates?category=pouch',null,token,'GET');
-    const medical=pouchCatalog.global.find(template=>template.subcategory==='Медицинский'&&template.attributes.capacity===4);
-    const excessive=pouchCatalog.global.find(template=>template.volume>8&&template.subcategory!=='Медицинский');
-    assert.ok(medical&&excessive);
-    const choosePouch=id=>page.evaluate(`(()=>{const select=document.querySelector('#vest-pouches-container select');select.value='${id}';select.dispatchEvent(new Event('change'));return true})()`);
-    await choosePouch(medical.id);
+    await page.until(`document.querySelector('#pouch-select-modal select')`,'Открыт выбор подсумка из инвентаря');
+    await page.evaluate(`(()=>{const modal=document.querySelector('#pouch-select-modal');modal.querySelector('select').value='0';modal.querySelector('.pouch-confirm').click();return true})()`);
     await page.until(`document.querySelector('.vest-mount-usage')?.textContent==='Объём подсумков: 2 / 8'`,'Профильная скидка 0,5 уменьшает занимаемый объём');
-    await choosePouch(excessive.id);
-    assert.equal(await page.evaluate(`document.querySelector('#vest-pouches-container select').value`),String(medical.id),'Превышение объёма не заменяет прежний подсумок');
+    assert.equal(await page.evaluate(`document.querySelector('#vest-pouches-container .container-item').dataset.widgetIdentity`),'\u007b"id":"medical-pouch-owned"\u007d');
+    await page.evaluate(`document.querySelector('button[onclick="addVestPouch()"]').click();true`);
+    await page.evaluate(`document.querySelector('#pouch-select-modal .pouch-confirm').click();true`);
+    assert.equal(await page.evaluate(`document.querySelectorAll('#vest-pouches-container .container-item').length`),1,'Превышение объёма не добавляет подсумок');
+    await page.evaluate(`document.querySelector('#pouch-select-modal .pouch-cancel').click();true`);
     await page.evaluate(`document.querySelector('.vest-mount-usage').scrollIntoView({block:'center'});true`);
     const modularShot=await page.call('Page.captureScreenshot',{format:'png'});
     fs.writeFileSync(path.join(safeSession.artifacts,'vest-modular.png'),Buffer.from(modularShot.data,'base64'));
-    await page.until(`(async()=>{const {Server}=await import('/static/js/api.js');const c=await Server.getCharacter(${b.id});return c.data.equipment.vest?.pouches?.[0]?.type===${medical.id}})()`,'Модульный подсумок сохранён');
+    await page.until(`(async()=>{const {Server}=await import('/static/js/api.js');const c=await Server.getCharacter(${b.id});return c.data.equipment.vest?.pouches?.[0]?.id==='medical-pouch-owned'&&!c.data.inventory.backpack?.some(item=>item.id==='medical-pouch-owned')})()`,'Модульный подсумок сохранён без дубликата');
+    await page.evaluate(`document.querySelector('#vest-pouches-container [data-widget-key="pouch-delete"]').click();true`);
+    await page.until(`(async()=>{const {Server}=await import('/static/js/api.js');const c=await Server.getCharacter(${b.id});return !c.data.equipment.vest?.pouches?.length&&c.data.inventory.backpack?.some(item=>item.id==='medical-pouch-owned')})()`,'Снятый подсумок вернулся в инвентарь');
     console.log(JSON.stringify({trade:true,items_and_money:true,money_only:true,merchant_configuration:true,merchant_net_purchase:125,filtered_selection_preserved:true,narrow_width:480}));
     console.log(JSON.stringify({npc_loot:true,filters:true,saved_profile:true,budget:80,idempotent:true}));
     console.log(JSON.stringify({vest_model_change:true,contents_preserved:true,quantity:4,normal_sheet_save:true}));

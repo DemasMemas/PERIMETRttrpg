@@ -53,27 +53,38 @@ test('масса на поясе и карманы совпадают с пра�
     data.equipment.armor.protectionDisabled=true;assert.equal(traits.pocketCapacity(data),10);
 });
 
-test('расширенный пояс открывает два дополнительных места для подсумков',async()=>{
+test('расширенный пояс переносит купленные подсумки без дублирования',async()=>{
     const api=await rules(),source=fs.readFileSync(path.join(__dirname,'../app/static/js/characterSheet.js'),'utf8');
-    const begin=source.indexOf('function beltPouchLimit('),end=source.indexOf('window.removeBeltPouch',begin);
-    const currentCharacterData={equipment:{belt:{templateId:1,pouches:[]}}},notifications=[];
+    const begin=source.indexOf('function beltPouchLimit('),end=source.indexOf('window.addBeltModification',begin);
+    const pouch={id:'owned-pouch',templateId:7,name:'Подсумок',category:'pouch',quantity:4,capacity:2,contents:[]};
+    const currentCharacterData={equipment:{belt:{templateId:1,pouches:[]}},inventory:{backpack:[pouch]}},notifications=[];
     const context=vm.createContext({modificationRule:api.modificationRule,
-        getInventoryItemTemplate:()=>({attributes:{max_pouches:2}}),currentCharacterData,
-        window:{},renderInventoryTab:()=>{},scheduleAutoSave:()=>{},showNotification:message=>notifications.push(message)});
+        getInventoryItemTemplate:()=>({attributes:{max_pouches:2}}),currentCharacterData,structuredClone,
+        window:{},document:{getElementById:()=>null},generateItemId:()=>`split-${currentCharacterData.equipment.belt.pouches.length}`,
+        collectInventoryEntries:()=>[],getItemByPath:path=>currentCharacterData.inventory.backpack[path[2]],
+        removeItemByPath:path=>Boolean(currentCharacterData.inventory.backpack.splice(path[2],1).length),
+        addToBackpack:item=>currentCharacterData.inventory.backpack.push(item),returnPouchContents:()=>{},
+        updateDataFromFields:()=>{},renderInventoryTab:()=>{},scheduleAutoSave:()=>{},forceSyncCharacter:()=>{},showNotification:message=>notifications.push(message)});
     vm.runInContext(source.slice(begin,end),context);
     const belt=currentCharacterData.equipment.belt;
     assert.equal(context.beltPouchLimit(belt),2);
-    for(let i=0;i<3;i++)context.window.addBeltPouch();
+    for(let i=0;i<3;i++)context.window.mountPouchFromInventory('belt',['inventory','backpack',0],'owned-pouch');
     assert.equal(belt.pouches.length,2);
     assert.equal(notifications.length,1);
+    assert.equal(pouch.quantity,2);
+    assert.deepEqual(belt.pouches.map(item=>item.id),['split-0','split-1']);
     belt.modifications=[{ruleId:'armor-g57',rules:{extra_belt_pouches:2}}];
     assert.equal(context.beltPouchLimit(belt),4);
-    for(let i=0;i<3;i++)context.window.addBeltPouch();
+    for(let i=0;i<2;i++)context.window.mountPouchFromInventory('belt',['inventory','backpack',0],'owned-pouch');
     assert.equal(belt.pouches.length,4);
+    assert.equal(currentCharacterData.inventory.backpack.length,0);
+    assert.equal(belt.pouches[3].id,'owned-pouch');
+    context.window.removeBeltPouch(3);
+    assert.equal(currentCharacterData.inventory.backpack[0].id,'owned-pouch');
     belt.pouches.length=2;
     belt.extraStoredItem={name:'Шлем',category:'helmet'};
     assert.equal(context.beltPouchLimit(belt),2);
-    context.window.addBeltPouch();
+    context.window.mountPouchFromInventory('belt',['inventory','backpack',0],'owned-pouch');
     assert.equal(belt.pouches.length,2);
 });
 

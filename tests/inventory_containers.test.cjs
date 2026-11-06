@@ -40,6 +40,17 @@ test('смена разгрузки и удаление подсумка воз�
     assert.deepEqual(template.attributes.pouches[0].contents,[]);
 });
 
+test('смена модели возвращает купленный подсумок целиком вместе с содержимым',async()=>{
+    const {applyVestTemplate}=await load();
+    const owned={id:'pouch-17',templateId:17,type:17,category:'pouch',quantity:1,contents:[{id:'medicine-8'}]};
+    const data={equipment:{vest:{id:'vest-1',pouches:[owned]}},inventory:{backpack:[]}};
+    applyVestTemplate(data,{id:8,name:'Новая',attributes:{pouches:[]}});
+    assert.equal(data.inventory.backpack.length,1);
+    assert.equal(data.inventory.backpack[0],owned);
+    assert.equal(data.inventory.backpack[0].contents[0].id,'medicine-8');
+    assert.equal(data.equipment.vest.pouches.length,0);
+});
+
 test('профильная скидка разгрузки меняет внешний объём только нужных подсумков',async()=>{
     const {vestMountVolume,applyPouchTemplate}=await load();
     const medical={id:10,name:'Медицинский',subcategory:'Медицинский',volume:2,attributes:{capacity:6,mount_volume:2}};

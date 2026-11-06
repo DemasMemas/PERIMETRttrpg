@@ -32,7 +32,13 @@ export function returnPouchContents(data, pouches) {
 export function applyVestTemplate(data, template) {
     data.equipment ||= {};
     const previous = data.equipment.vest || {};
-    returnPouchContents(data, previous.pouches);
+    for (const pouch of previous.pouches || []) {
+        if (pouch?.id && pouch.category === 'pouch') {
+            data.inventory ||= {};
+            data.inventory.backpack ||= [];
+            data.inventory.backpack.push(pouch);
+        } else returnPouchContents(data, [pouch]);
+    }
     data.equipment.vest = {
         ...previous, templateId: template.id, model: String(template.id), name: template.name,
         attributes: structuredClone(template.attributes || {}), description: template.description || '',

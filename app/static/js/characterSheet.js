@@ -12953,33 +12953,111 @@ function beltPouchLimit(belt) {
         + (belt?.extraStoredItem ? 0 : Math.max(0, Math.floor(modificationRule(belt, 'extra_belt_pouches'))));
 }
 
-window.addBeltPouch = function() {
-    if (!currentCharacterData.equipment) currentCharacterData.equipment = {};
-    if (!currentCharacterData.equipment.belt) currentCharacterData.equipment.belt = {};
-    if (!Array.isArray(currentCharacterData.equipment.belt.pouches)) {
-        currentCharacterData.equipment.belt.pouches = [];
+function availablePouchesForMount() {
+    return collectInventoryEntries(currentCharacterData, item =>
+        item?.category === 'pouch' && item.id && item.templateId != null && Number(item.quantity || 1) > 0);
+}
+
+function canMountPouch(slot, pouch, notify = true) {
+    const holder = currentCharacterData.equipment?.[slot];
+    if (!holder?.templateId) return false;
+    if (slot === 'belt' && (holder.pouches || []).length >= beltPouchLimit(holder)) {
+        if (notify) showNotification('На поясе больше нет мест для подсумков');
+        return false;
     }
-    if (currentCharacterData.equipment.belt.pouches.length >= beltPouchLimit(currentCharacterData.equipment.belt)) {
-        showNotification('На поясе больше нет мест для подсумков');
-        return;
+    if (slot === 'vest') {
+        const template = getInventoryItemTemplate(holder);
+        if (holder.model !== 'custom' && template?.attributes?.modular !== true && holder.attributes?.modular !== true) return false;
+        const templates = (allTemplatesCache || []).filter(item => item.category === 'pouch');
+        const vest = {...holder, attributes: {...template?.attributes, ...holder.attributes}};
+        const used = vestMountVolume(vest, templates);
+        const next = vestMountVolume({...vest, pouches: [...(vest.pouches || []), pouch]}, templates);
+        const limit = Number(vest.totalCapacity ?? vest.attributes.total_capacity ?? 0);
+        if (next > limit + 1e-9 && next > used + 1e-9) {
+            if (notify) showNotification('Недостаточно объёма разгрузки для этого подсумка');
+            return false;
+        }
     }
-    currentCharacterData.equipment.belt.pouches.push({
-        type: null,
-        capacity: 0,
-        contents: [],
-        isContainer: true
-    });
+    return true;
+}
+
+window.mountPouchFromInventory = function(slot, path, expectedId = null) {
+    const source = getItemByPath(path);
+    if (!source || source.category !== 'pouch' || !source.id || source.templateId == null ||
+        (expectedId !== null && String(source.id) !== String(expectedId))) {
+        showNotification('Подсумок изменился. Выберите его заново');
+        return false;
+    }
+    if (!canMountPouch(slot, source)) return false;
+    const pouch = structuredClone(source);
+    if (Number(source.quantity || 1) > 1) {
+        source.quantity -= 1;
+        pouch.id = generateItemId();
+    } else if (!removeItemByPath(path)) {
+        showNotification('Не удалось найти подсумок в инвентаре');
+        return false;
+    }
+    pouch.quantity = 1;
+    pouch.type = pouch.templateId;
+    pouch.internalVolume = pouch.internalVolume ?? pouch.capacity ?? pouch.attributes?.capacity ?? 0;
+    pouch.contents ||= [];
+    currentCharacterData.equipment[slot].pouches ||= [];
+    currentCharacterData.equipment[slot].pouches.push(pouch);
+    document.getElementById('pouch-select-modal')?.remove();
     renderInventoryTab(currentCharacterData);
     scheduleAutoSave();
+    forceSyncCharacter();
+    return true;
 };
+
+function openPouchMountPicker(slot) {
+    const entries = availablePouchesForMount();
+    if (!entries.length) {
+        showNotification('Нет подсумков в инвентаре');
+        return;
+    }
+    if (!canMountPouch(slot, entries[0].item) && slot === 'belt') return;
+    document.getElementById('pouch-select-modal')?.remove();
+    const modal = document.createElement('div');
+    modal.id = 'pouch-select-modal';
+    modal.className = 'modal';
+    modal.innerHTML = `<div class="modal-content">
+        <span class="close" aria-label="Закрыть">&times;</span>
+        <h3>Выберите подсумок из инвентаря</h3>
+        <select class="form-control" aria-label="Подсумок"></select>
+        <div class="form-actions" style="margin-top:15px;">
+            <button type="button" class="btn btn-primary pouch-confirm">Установить</button>
+            <button type="button" class="btn btn-secondary pouch-cancel">Отмена</button>
+        </div>
+    </div>`;
+    document.body.appendChild(modal);
+    const select = modal.querySelector('select');
+    entries.forEach((entry, index) => {
+        const option = document.createElement('option');
+        option.value = index;
+        option.textContent = `${entry.item.name} (объём ${entry.item.volume || 0}, ${entry.item.quantity || 1} шт.)`;
+        select.appendChild(option);
+    });
+    modal.querySelector('.close').onclick = modal.querySelector('.pouch-cancel').onclick = () => modal.remove();
+    modal.querySelector('.pouch-confirm').onclick = () => {
+        const entry = entries[Number(select.value)];
+        if (entry) window.mountPouchFromInventory(slot, entry.path, entry.item.id);
+    };
+    modal.style.display = 'block';
+}
+
+window.addBeltPouch = function() { openPouchMountPicker('belt'); };
 
 window.removeBeltPouch = function(index) {
     updateDataFromFields();
     if (!currentCharacterData.equipment?.belt?.pouches) return;
-    returnPouchContents(currentCharacterData, [currentCharacterData.equipment.belt.pouches[index]]);
-    currentCharacterData.equipment.belt.pouches.splice(index, 1);
+    const pouch = currentCharacterData.equipment.belt.pouches.splice(index, 1)[0];
+    if (!pouch) return;
+    if (pouch.id && pouch.category === 'pouch') addToBackpack(pouch);
+    else returnPouchContents(currentCharacterData, [pouch]);
     renderInventoryTab(currentCharacterData)
     scheduleAutoSave();
+    forceSyncCharacter();
 };
 
 window.addBeltModification = function() {
@@ -13002,31 +13080,18 @@ window.removeBeltModification = function(index) {
     scheduleAutoSave();
 };
 
-window.addVestPouch = function() {
-    if (!currentCharacterData.equipment) currentCharacterData.equipment = {};
-    if (!currentCharacterData.equipment.vest) {
-        currentCharacterData.equipment.vest = { model: 'custom', pouches: [], totalCapacity: 0 };
-    }
-    if (!Array.isArray(currentCharacterData.equipment.vest.pouches)) {
-        currentCharacterData.equipment.vest.pouches = [];
-    }
-    currentCharacterData.equipment.vest.pouches.push({
-        type: null,
-        capacity: 0,
-        contents: [],
-        isContainer: true
-    });
-    renderInventoryTab(currentCharacterData);
-    scheduleAutoSave();
-};
+window.addVestPouch = function() { openPouchMountPicker('vest'); };
 
 window.removeVestPouch = function(index) {
     updateDataFromFields();
     if (!currentCharacterData.equipment?.vest?.pouches) return;
-    returnPouchContents(currentCharacterData, [currentCharacterData.equipment.vest.pouches[index]]);
-    currentCharacterData.equipment.vest.pouches.splice(index, 1);
+    const pouch = currentCharacterData.equipment.vest.pouches.splice(index, 1)[0];
+    if (!pouch) return;
+    if (pouch.id && pouch.category === 'pouch') addToBackpack(pouch);
+    else returnPouchContents(currentCharacterData, [pouch]);
     renderInventoryTab(currentCharacterData);
     scheduleAutoSave();
+    forceSyncCharacter();
 };
 
 window.onVestModelChange = async function(select) {
@@ -14497,7 +14562,12 @@ function renderPouchItem(pouch, index, path, parentContainer, pouchTemplates, al
             scheduleAutoSave();
         }
     };
-    leftWrapper.appendChild(select);
+    if (pouch.id && pouch.category === 'pouch') {
+        const caption = document.createElement('strong');
+        caption.className = 'belt-pouch-name';
+        caption.textContent = pouch.name || pouchTemplates.find(t => t.id == pouch.type)?.name || 'Подсумок';
+        leftWrapper.appendChild(caption);
+    } else leftWrapper.appendChild(select);
     row.appendChild(leftWrapper);
 
     const infoSpan = document.createElement('span');
@@ -14512,11 +14582,7 @@ function renderPouchItem(pouch, index, path, parentContainer, pouchTemplates, al
     delBtn.className = 'btn btn-sm btn-danger';
     delBtn.textContent = '✕';
     delBtn.onclick = () => {
-        const parentArray = currentCharacterData.equipment.belt.pouches;
-        returnPouchContents(currentCharacterData, [parentArray[index]]);
-        parentArray.splice(index, 1);
-        renderInventoryTab(currentCharacterData);
-        scheduleAutoSave();
+        window.removeBeltPouch(index);
     };
     row.appendChild(delBtn);
     itemDiv.appendChild(row);
@@ -14610,7 +14676,7 @@ function renderVestPouchItem(pouch, index, path, parentContainer, pouchTemplates
     const select = document.createElement('select');
     select.dataset.widgetKey = 'pouch-type';
     select.className = 'form-control';
-    select.disabled = !isCustom;
+    select.disabled = !isCustom || Boolean(pouch.id && pouch.category === 'pouch');
     select.style.flex = '1';
     select.innerHTML = '<option value="">-- Выберите подсумок --</option>';
     pouchTemplates.forEach(t => {
@@ -14641,7 +14707,7 @@ function renderVestPouchItem(pouch, index, path, parentContainer, pouchTemplates
             scheduleAutoSave();
         }
     };
-    if (isCustom) leftWrapper.appendChild(select);
+    if (isCustom && !(pouch.id && pouch.category === 'pouch')) leftWrapper.appendChild(select);
     else {
         const caption = document.createElement('strong');
         caption.className = 'vest-pouch-name';
@@ -14667,11 +14733,7 @@ function renderVestPouchItem(pouch, index, path, parentContainer, pouchTemplates
         delBtn.textContent = '✕';
         delBtn.style.flexShrink = '0';
         delBtn.onclick = () => {
-            const parentArray = currentCharacterData.equipment.vest.pouches;
-            returnPouchContents(currentCharacterData, [parentArray[index]]);
-            parentArray.splice(index, 1);
-            renderInventoryTab(currentCharacterData);
-            scheduleAutoSave();
+            window.removeVestPouch(index);
         };
         row.appendChild(delBtn);
     }
