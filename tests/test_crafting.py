@@ -32,6 +32,17 @@ def call(client,workshop,auth_headers,operation,**payload):
 def units(data,name):return sum(_available_uses(i) for i in data['inventory']['pockets'] if i['name']==name)
 
 
+def test_grenade_recipe_chain_accepts_catalog_names_and_smoke_output(app):
+    from app.services.crafting import _allocate, _template, recipe_by_id
+    smoke=ItemTemplate(name='Дымовая граната РДГ-6',category='grenade',price=300)
+    db.session.add(smoke);db.session.flush()
+    assert _template('РДГ-6').id==smoke.id
+    for recipe_id,ingredient in [('recipe-v5','Граната Ф-1'),('recipe-v6','Граната РГД-5')]:
+        recipe=recipe_by_id(recipe_id)
+        _,missing=_allocate({'inventory':{'pockets':[{'name':ingredient,'category':'grenade','quantity':1}]}},recipe)
+        assert not any(text.startswith(recipe['components'][0]['name']+':') for text in missing)
+
+
 def test_depleted_workbench_does_not_satisfy_recipe_requirement(client,workshop,auth_headers,monkeypatch):
     from app.services import crafting
     original=crafting.recipe_by_id

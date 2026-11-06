@@ -70,6 +70,7 @@ def _template(name):
         'хирург набор крест':'Хирургический набор "Крест"',
         'хирург набор айболит':'Кустарный набор "Айболит"',
         'жаропонижающее мороз':'Жаропонижающее средство "Мороз"',
+        'рдг 6':'Дымовая граната РДГ-6',
     }
     if key in aliases:
         return next((t for t in templates if normalized(t.name)==normalized(aliases[key])),None)
@@ -86,6 +87,8 @@ def _allocate(data,recipe):
         if _environment(component):continue
         meat_component = index == 0 and recipe['id'] in {'recipe-aa15', 'recipe-aa16'}
         names={normalized(name) for name in component['name'].split('/')}
+        if 'ргд 5' in names:names.add('граната ргд 5')
+        if 'ф 1' in names:names.add('граната ф 1')
         left=component['quantity']
         for path,item in candidates:
             from app.services.flamethrower import charges
