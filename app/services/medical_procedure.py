@@ -45,6 +45,24 @@ def _scissors_medicine_bonus(actor_data, lobby_id, profile):
                 and item.get('name')==template.name and item.get('category')==template.category):
             return 2
     return 0
+
+
+def _doctor_tools_medicine_bonus(actor_data, lobby_id, direct):
+    if direct.get('application_form') == 'injectable' or direct.get('medical_difficulty') is not None:
+        return 0
+    from app.services.portable_lights import walk
+    for path, item in walk(actor_data, True):
+        if path[:2] not in (['inventory', 'pockets'], ['inventory', 'backpack']):
+            continue
+        template = resolve_item_template(item, lobby_id)
+        if not (template and template.name == 'Набор инструментов Врача 50/50'
+                and template.category == 'tool' and item.get('name') == template.name
+                and item.get('category') == template.category):
+            continue
+        uses = item.get('uses', item.get('maxUses', (template.attributes or {}).get('uses', 0)))
+        if isinstance(uses, (int, float)) and uses > 0:
+            return 2
+    return 0
 MINOR_RESTORABLE_PARTS = {'nose', 'jaw', 'leftEar', 'rightEar', 'ear'}
 GENERIC_MEDICAL_BLOCKED_FIELDS = {
     'applications', 'requires_injury', 'target_body_part', 'target_required',
@@ -1169,7 +1187,9 @@ class MedicalProcedureService:
             )
         except (TypeError, ValueError):
             medication_bonus = 0
-        skill_bonus = _medicine_skill(actor_data)+_scissors_medicine_bonus(actor_data,actor.lobby_id,profile)
+        skill_bonus = (_medicine_skill(actor_data)
+                       + _scissors_medicine_bonus(actor_data,actor.lobby_id,profile)
+                       + _doctor_tools_medicine_bonus(actor_data,actor.lobby_id,direct))
         if helper:skill_bonus+=_numeric(helper.get('roll_bonus'))
         patient_counts=((actor_data.get('health') or {}).get('combatMeta') or {}).get('patientTreatments') or {}
         if trait_count(actor_data,'Личный врач') and _numeric(patient_counts.get(str(target.id)))>10:skill_bonus+=3

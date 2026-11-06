@@ -147,6 +147,29 @@ def test_real_scissors_add_two_to_bandage_and_tourniquet_medicine(
     assert response.json['medical_result']['medicine_bonus']==_medicine_skill(data)+2
 
 
+def test_doctor_tools_help_non_injection_only_when_charged_and_genuine(client,pair,auth_headers,monkeypatch):
+    from app.services.medical_procedure import _doctor_tools_medicine_bonus, _medicine_skill
+    effect={'id':'bleed-doctor-tools','type':'bleeding_external_light','area':'leftArm','source':'cut'}
+    _,profile,item=install_item(pair,'Бинт','Останавливает Слабое кровотечение.',effects=[effect],medicine=5)
+    doctor_tools=ItemTemplate(name='Набор инструментов Врача 50/50',category='tool',price=100,attributes={'uses':50})
+    db.session.add(doctor_tools);db.session.flush()
+    data=deepcopy(pair['actor_character'].data)
+    data['inventory']['pockets']=[{'name':'Поддельный набор','category':'tool','templateId':doctor_tools.id,'uses':50}]
+    assert _doctor_tools_medicine_bonus(data,pair['lobby'].id,profile.get('direct') or {})==0
+    data['inventory']['pockets'][0]['name']=doctor_tools.name
+    data['inventory']['pockets'][0]['uses']=0
+    assert _doctor_tools_medicine_bonus(data,pair['lobby'].id,profile.get('direct') or {})==0
+    data['inventory']['pockets'][0]['uses']=20
+    assert _doctor_tools_medicine_bonus(data,pair['lobby'].id,profile.get('direct') or {})==2
+    assert _doctor_tools_medicine_bonus(data,pair['lobby'].id,{'application_form':'injectable'})==0
+    assert _doctor_tools_medicine_bonus(data,pair['lobby'].id,{'medical_difficulty':4})==0
+    pair['actor_character'].data=data;flag_modified(pair['actor_character'],'data');db.session.commit()
+    monkeypatch.setattr('app.services.medical_procedure.random.randint',lambda *_:20)
+    response=apply(client,pair,auth_headers,payload(pair,item,selected_bleeding(profile,effect)))
+    assert response.status_code==200,response.json
+    assert response.json['medical_result']['medicine_bonus']==_medicine_skill(data)+2
+
+
 def test_local_clone_of_bandage_can_treat_without_matching_name(client, pair, auth_headers, monkeypatch):
     effect = {'id': 'bleed-local', 'type': 'bleeding_external_light', 'area': 'leftArm', 'source': 'cut'}
     _, profile, item = install_item(pair, 'Бинт', 'Останавливает Слабое кровотечение.', effects=[effect])
