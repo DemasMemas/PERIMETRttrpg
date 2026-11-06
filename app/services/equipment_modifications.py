@@ -52,6 +52,7 @@ SPECIAL_ARMOR={
  'g35':({}, {'concussion_reduction':2}),'g36':({'ergonomics':3},{'hearing_advantage':True}),
  'g46':({'accuracy_penalty':-2},{}),'g47':({'charisma_penalty':-3},{}),
  'g48':({'movement_penalty':-1},{'filter_wear_reduction':.5}),'g58':({}, {'belt_weight_reduction':.5}),
+ 'g57':({}, {'extra_belt_pouches':2}),
  'g66':({}, {'medical_pouch_capacity_multiplier':2}),
  'g77':({}, {'belt_reload_ap_reduction':1}),'g78':({}, {'large_weapon_ergonomics':10}),
  'd27':({}, {'unpowered_weight_penalty_suppression':True}),
@@ -63,13 +64,17 @@ SPECIAL_ARMOR={
 
 def supported(rule):
     if rule['kind']=='weapon':return True
-    if rule['kind']=='belt':return rule['id'] in {'armor-g58','armor-g66','armor-g77','armor-g78'}
+    if rule['kind']=='belt':return rule['id'] in {'armor-g57','armor-g58','armor-g66','armor-g77','armor-g78'}
     return rule['id'] in DIRECT_ARMOR or rule['id'].removeprefix('armor-') in SPECIAL_ARMOR
 
 
 def install(item,record,replacing=None):
     previous=next((r for r in installed(item) if r['ruleId']==replacing),None)
     proposed=[m for m in item.get('modifications') or [] if not isinstance(m,dict) or m.get('ruleId')!=replacing]+[record]
+    if previous and (previous.get('rules') or {}).get('extra_belt_pouches') and not any(
+            (mod.get('rules') or {}).get('extra_belt_pouches') for mod in proposed if isinstance(mod,dict)):
+        if len(item.get('pouches') or [])>belt_pouch_limit({**item,'modifications':proposed}):
+            raise ValidationError('Сначала снимите дополнительные подсумки с пояса')
     if previous and (previous.get('rules') or {}).get('nvg_mount') and not any(
             (mod.get('rules') or {}).get('nvg_mount') for mod in proposed if isinstance(mod,dict)):
         from app.services.combat import CombatService
@@ -198,6 +203,30 @@ def rule(item,key,default=0):
     if not values:return default
     if key in {'ergonomics_tiers','burst_ap_delta','reload_ap_delta','aimed_accuracy','burst_accuracy_reduction'}:return sum(values)
     return max(values)
+
+
+def belt_pouch_limit(item,lobby_id=None):
+    from app.services.item_template_lookup import resolve_item_template
+    template=resolve_item_template(item,lobby_id)
+    attrs=(template.attributes or {}) if template else (item.get('attributes') or {})
+    base=attrs.get('max_pouches',2)
+    if type(base) is not int or not 0<=base<=20:base=2
+    return base+int(rule(item,'extra_belt_pouches'))
+
+
+def validate_belt_pouches(current,incoming,lobby_id):
+    previous=((current or {}).get('equipment') or {}).get('belt') or {}
+    belt=((incoming or {}).get('equipment') or {}).get('belt') or {}
+    if not belt.get('templateId'):return
+    pouches=belt.get('pouches') or []
+    if not isinstance(pouches,list):raise ValidationError('Подсумки пояса должны быть списком')
+    limit=belt_pouch_limit(belt,lobby_id)
+    if len(pouches)<=limit:return
+    old_pouches=previous.get('pouches') or []
+    same_belt=(belt.get('id') and belt.get('id')==previous.get('id')) or (
+        not belt.get('id') and not previous.get('id') and belt.get('templateId')==previous.get('templateId'))
+    if not same_belt or len(pouches)>len(old_pouches):
+        raise ValidationError(f'На поясе доступно не больше {limit} подсумков')
 
 
 def preserve(current,incoming):

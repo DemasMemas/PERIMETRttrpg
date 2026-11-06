@@ -584,6 +584,8 @@ class CharacterService:
             _preserve_server_medical_retry(character.data, character_data)
             _preserve_server_zombification(character.data,character_data)
             _preserve_intoxication_status(character.data, character_data)
+            from app.services.equipment_modifications import validate_belt_pouches
+            validate_belt_pouches(character.data,character_data,character.lobby_id)
             incoming_health = character_data.get('health') or {}
             try:
                 old_intoxication = float((character.data.get('health') or {}).get('intoxication') or 0)

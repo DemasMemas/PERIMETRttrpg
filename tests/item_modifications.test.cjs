@@ -53,6 +53,25 @@ test('масса на поясе и карманы совпадают с пра�
     data.equipment.armor.protectionDisabled=true;assert.equal(traits.pocketCapacity(data),10);
 });
 
+test('расширенный пояс открывает два дополнительных места для подсумков',async()=>{
+    const api=await rules(),source=fs.readFileSync(path.join(__dirname,'../app/static/js/characterSheet.js'),'utf8');
+    const begin=source.indexOf('function beltPouchLimit('),end=source.indexOf('window.removeBeltPouch',begin);
+    const currentCharacterData={equipment:{belt:{templateId:1,pouches:[]}}},notifications=[];
+    const context=vm.createContext({modificationRule:api.modificationRule,
+        getInventoryItemTemplate:()=>({attributes:{max_pouches:2}}),currentCharacterData,
+        window:{},renderInventoryTab:()=>{},scheduleAutoSave:()=>{},showNotification:message=>notifications.push(message)});
+    vm.runInContext(source.slice(begin,end),context);
+    const belt=currentCharacterData.equipment.belt;
+    assert.equal(context.beltPouchLimit(belt),2);
+    for(let i=0;i<3;i++)context.window.addBeltPouch();
+    assert.equal(belt.pouches.length,2);
+    assert.equal(notifications.length,1);
+    belt.modifications=[{ruleId:'armor-g57',rules:{extra_belt_pouches:2}}];
+    assert.equal(context.beltPouchLimit(belt),4);
+    for(let i=0;i<3;i++)context.window.addBeltPouch();
+    assert.equal(belt.pouches.length,4);
+});
+
 test('система распределения веса экзоскелета совпадает с серверным правилом',async()=>{
     const api=await rules(),source=fs.readFileSync(path.join(__dirname,'../app/static/js/characterSheet.js'),'utf8');
     const begin=source.indexOf('function getExoskeletonPowerProfile('),end=source.indexOf('function applyModifier(',begin);

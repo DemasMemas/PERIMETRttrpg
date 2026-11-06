@@ -55,6 +55,65 @@ def test_nvg_mount_can_be_installed_and_requires_removing_nvg_before_replacement
     assert not rule(helmet,'nvg_mount')
 
 
+def test_expanded_belt_adds_two_pouch_places_and_protects_filled_places(app):
+    from app.services.equipment_modifications import belt_pouch_limit,install,supported,definition,validate_belt_pouches
+    from app.services.exceptions import ValidationError
+    template=ItemTemplate(name='Пояс',category='belt',attributes={'max_pouches':2})
+    db.session.add(template);db.session.flush()
+    belt={'id':'belt-1','templateId':template.id,'category':'belt','pouches':[{},{}]}
+    assert supported(definition('armor-g57'))
+    assert belt_pouch_limit(belt)==2
+    with pytest.raises(ValidationError,match='не больше 2'):
+        validate_belt_pouches({'equipment':{'belt':belt}},
+            {'equipment':{'belt':{**belt,'pouches':[{}, {}, {}]}}},None)
+    install(belt,make_record('armor-g57'))
+    assert belt_pouch_limit(belt)==4
+    belt['pouches'].extend([{},{}])
+    validate_belt_pouches({'equipment':{'belt':belt}}, {'equipment':{'belt':belt}},None)
+    with pytest.raises(ValidationError,match='дополнительные подсумки'):
+        install(belt,make_record('armor-g58'),replacing='armor-g57')
+    assert rule(belt,'extra_belt_pouches')==2
+    belt['pouches']=belt['pouches'][:2]
+    install(belt,make_record('armor-g58'),replacing='armor-g57')
+    assert belt_pouch_limit(belt)==2
+
+
+def test_existing_overfilled_belt_is_preserved_without_adding_more_pouches(app):
+    from app.services.equipment_modifications import validate_belt_pouches
+    from app.services.exceptions import ValidationError
+    template=ItemTemplate(name='Пояс',category='belt',attributes={'max_pouches':2})
+    db.session.add(template);db.session.flush()
+    current={'equipment':{'belt':{'id':'legacy','templateId':template.id,'pouches':[{} for _ in range(5)]}}}
+    validate_belt_pouches(current,deepcopy(current),None)
+    incoming=deepcopy(current)
+    incoming['equipment']['belt']['pouches'].append({})
+    with pytest.raises(ValidationError,match='не больше 2'):
+        validate_belt_pouches(current,incoming,None)
+
+
+def test_character_save_enforces_belt_pouch_limit_after_preserving_upgrade(grenade_game):
+    from app.services.character import CharacterService
+    from app.services.exceptions import ValidationError
+    actor=grenade_game['actor_location'].character
+    template=ItemTemplate(name='Пояс',category='belt',attributes={'max_pouches':2})
+    db.session.add(template);db.session.flush()
+    data=deepcopy(actor.data)
+    data.setdefault('equipment',{})['belt']={'id':'belt-save','templateId':template.id,
+        'category':'belt','pouches':[{},{}]}
+    actor.data=data;db.session.commit()
+    incoming=actor.data_snapshot()
+    incoming['equipment']['belt']['pouches'].append({})
+    with pytest.raises(ValidationError,match='не больше 2'):
+        CharacterService.update_character(actor.id,grenade_game['lobby'].gm_id,{'data':incoming})
+    data=deepcopy(actor.data)
+    data['equipment']['belt']['modifications']=[make_record('armor-g57')]
+    actor.data=data;db.session.commit()
+    incoming=actor.data_snapshot()
+    incoming['equipment']['belt']['pouches'].extend([{},{}])
+    CharacterService.update_character(actor.id,grenade_game['lobby'].gm_id,{'data':incoming})
+    assert len(actor.data['equipment']['belt']['pouches'])==4
+
+
 def test_iron_grip_raises_real_disarm_difficulty(client,grenade_game,auth_headers,monkeypatch):
     case=grenade_game
     target=case['target_location']

@@ -8481,11 +8481,14 @@ window.equipBeltFromInventory = async function(itemPath) {
     }
 
     const beltToEquip = {
+        id: item.id,
         createdByPlayer: Boolean(item.createdByPlayer),
         templateId: template.id,
         name: template.name,
         weight: template.weight,
         volume: template.volume,
+        attributes: structuredClone(template.attributes || {}),
+        maxPouches: template.attributes?.max_pouches ?? 2,
         pouches: item.pouches || template.attributes?.pouches || [],
         modifications: item.modifications || [],
         storedItem: item.storedItem || null
@@ -8502,6 +8505,7 @@ window.equipBeltFromInventory = async function(itemPath) {
         const oldTemplate = oldTemplates.find(t => t.id === oldBelt.templateId);
         if (oldTemplate) {
             const oldItem = createItemFromTemplate(oldTemplate);
+            oldItem.id = oldBelt.id || oldItem.id;
             oldItem.pouches = oldBelt.pouches || [];
             oldItem.modifications = oldBelt.modifications || [];
             oldItem.storedItem = oldBelt.storedItem || null;
@@ -9471,6 +9475,7 @@ window.unequipBelt = async function() {
         return;
     }
     const restoredItem = createItemFromTemplate(template);
+    restoredItem.id = belt.id || restoredItem.id;
     restoredItem.pouches = belt.pouches || [];
     restoredItem.modifications = belt.modifications || [];
     restoredItem.storedItem = belt.storedItem || null;
@@ -12955,11 +12960,21 @@ window.removeArmorModification = function(index) {
 };
 
 // Функции для подсумков
+function beltPouchLimit(belt) {
+    const base = Number(belt?.maxPouches ?? getInventoryItemTemplate(belt)?.attributes?.max_pouches ?? 2);
+    return Math.max(0, Math.floor(Number.isFinite(base) ? base : 2))
+        + Math.max(0, Math.floor(modificationRule(belt, 'extra_belt_pouches')));
+}
+
 window.addBeltPouch = function() {
     if (!currentCharacterData.equipment) currentCharacterData.equipment = {};
     if (!currentCharacterData.equipment.belt) currentCharacterData.equipment.belt = {};
     if (!Array.isArray(currentCharacterData.equipment.belt.pouches)) {
         currentCharacterData.equipment.belt.pouches = [];
+    }
+    if (currentCharacterData.equipment.belt.pouches.length >= beltPouchLimit(currentCharacterData.equipment.belt)) {
+        showNotification('На поясе больше нет мест для подсумков');
+        return;
     }
     currentCharacterData.equipment.belt.pouches.push({
         type: null,
@@ -14046,8 +14061,8 @@ async function renderInventoryTab(data) {
                 </div>
             </div>
             <div style="display: flex; align-items: center;">
-                <h5 style="margin: 0;">Подсумки</h5>
-                <button type="button" class="btn btn-sm btn-secondary" onclick="addBeltPouch()" style="padding: 2px 8px;">➕</button>
+                <h5 style="margin: 0;">Подсумки (${eq.belt.pouches?.length || 0} / ${beltPouchLimit(eq.belt)})</h5>
+                <button type="button" class="btn btn-sm btn-secondary" onclick="addBeltPouch()" style="padding: 2px 8px;" ${(eq.belt.pouches?.length || 0) >= beltPouchLimit(eq.belt) ? 'disabled' : ''}>➕</button>
             </div>
             <div id="belt-pouches-container"></div>
             <div style="display: flex; align-items: center; margin-top: 15px;">
