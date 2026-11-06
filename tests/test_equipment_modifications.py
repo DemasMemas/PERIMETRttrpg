@@ -59,7 +59,8 @@ def test_expanded_belt_adds_two_pouch_places_and_protects_filled_places(app):
     from app.services.equipment_modifications import belt_pouch_limit,install,supported,definition,validate_belt_pouches
     from app.services.exceptions import ValidationError
     template=ItemTemplate(name='Пояс',category='belt',attributes={'max_pouches':2})
-    db.session.add(template);db.session.flush()
+    helmet=ItemTemplate(name='Шлем',category='helmet')
+    db.session.add_all([template,helmet]);db.session.flush()
     belt={'id':'belt-1','templateId':template.id,'category':'belt','pouches':[{},{}]}
     assert supported(definition('armor-g57'))
     assert belt_pouch_limit(belt)==2
@@ -68,6 +69,12 @@ def test_expanded_belt_adds_two_pouch_places_and_protects_filled_places(app):
             {'equipment':{'belt':{**belt,'pouches':[{}, {}, {}]}}},None)
     install(belt,make_record('armor-g57'))
     assert belt_pouch_limit(belt)==4
+    belt['extraStoredItem']={'id':'helmet-extra','name':'Шлем','category':'helmet','templateId':helmet.id}
+    assert belt_pouch_limit(belt)==2
+    validate_belt_pouches({'equipment':{'belt':belt}}, {'equipment':{'belt':belt}},None)
+    with pytest.raises(ValidationError,match='дополнительный шлем'):
+        install(belt,make_record('armor-g58'),replacing='armor-g57')
+    belt['extraStoredItem']=None
     belt['pouches'].extend([{},{}])
     validate_belt_pouches({'equipment':{'belt':belt}}, {'equipment':{'belt':belt}},None)
     with pytest.raises(ValidationError,match='дополнительные подсумки'):
@@ -96,7 +103,8 @@ def test_character_save_enforces_belt_pouch_limit_after_preserving_upgrade(grena
     from app.services.exceptions import ValidationError
     actor=grenade_game['actor_location'].character
     template=ItemTemplate(name='Пояс',category='belt',attributes={'max_pouches':2})
-    db.session.add(template);db.session.flush()
+    helmet=ItemTemplate(name='Шлем',category='helmet')
+    db.session.add_all([template,helmet]);db.session.flush()
     data=deepcopy(actor.data)
     data.setdefault('equipment',{})['belt']={'id':'belt-save','templateId':template.id,
         'category':'belt','pouches':[{},{}]}
@@ -112,6 +120,36 @@ def test_character_save_enforces_belt_pouch_limit_after_preserving_upgrade(grena
     incoming['equipment']['belt']['pouches'].extend([{},{}])
     CharacterService.update_character(actor.id,grenade_game['lobby'].gm_id,{'data':incoming})
     assert len(actor.data['equipment']['belt']['pouches'])==4
+    incoming=actor.data_snapshot()
+    incoming['equipment']['belt']['pouches']=incoming['equipment']['belt']['pouches'][:2]
+    incoming['equipment']['belt']['extraStoredItem']={'id':'helmet-extra','templateId':helmet.id,
+        'name':'Шлем','category':'helmet'}
+    CharacterService.update_character(actor.id,grenade_game['lobby'].gm_id,{'data':incoming})
+    assert actor.data['equipment']['belt']['extraStoredItem']['id']=='helmet-extra'
+    data=deepcopy(actor.data)
+    data['equipment']['belt']['extraStoredItem']['modifications']=[make_record('armor-g25')]
+    actor.data=data;db.session.commit()
+    incoming=actor.data_snapshot()
+    incoming['equipment']['belt']['extraStoredItem']['modifications']=[]
+    CharacterService.update_character(actor.id,grenade_game['lobby'].gm_id,{'data':incoming})
+    assert rule(actor.data['equipment']['belt']['extraStoredItem'],'nvg_mount')
+    incoming=actor.data_snapshot()
+    incoming['equipment']['belt']['pouches'].append({})
+    with pytest.raises(ValidationError,match='занимает места двух подсумков'):
+        CharacterService.update_character(actor.id,grenade_game['lobby'].gm_id,{'data':incoming})
+
+
+def test_helmet_upgrade_survives_belt_unequip_and_reequip():
+    from app.services.equipment_modifications import preserve
+    extra={'id':'helmet-saved','category':'helmet','modifications':[make_record('armor-g25')]}
+    belt={'id':'belt-saved','category':'belt','extraStoredItem':extra}
+    equipped={'equipment':{'belt':deepcopy(belt)}}
+    stored={'inventory':{'backpack':[deepcopy(belt)]}}
+    preserve(equipped,stored)
+    assert rule(stored['inventory']['backpack'][0]['extraStoredItem'],'nvg_mount')
+    reequip={'equipment':{'belt':deepcopy(stored['inventory']['backpack'][0])}}
+    preserve(stored,reequip)
+    assert rule(reequip['equipment']['belt']['extraStoredItem'],'nvg_mount')
 
 
 def test_iron_grip_raises_real_disarm_difficulty(client,grenade_game,auth_headers,monkeypatch):

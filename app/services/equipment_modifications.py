@@ -73,6 +73,8 @@ def install(item,record,replacing=None):
     proposed=[m for m in item.get('modifications') or [] if not isinstance(m,dict) or m.get('ruleId')!=replacing]+[record]
     if previous and (previous.get('rules') or {}).get('extra_belt_pouches') and not any(
             (mod.get('rules') or {}).get('extra_belt_pouches') for mod in proposed if isinstance(mod,dict)):
+        if item.get('extraStoredItem'):
+            raise ValidationError('Сначала снимите дополнительный шлем или противогаз с пояса')
         if len(item.get('pouches') or [])>belt_pouch_limit({**item,'modifications':proposed}):
             raise ValidationError('Сначала снимите дополнительные подсумки с пояса')
     if previous and (previous.get('rules') or {}).get('nvg_mount') and not any(
@@ -211,7 +213,7 @@ def belt_pouch_limit(item,lobby_id=None):
     attrs=(template.attributes or {}) if template else (item.get('attributes') or {})
     base=attrs.get('max_pouches',2)
     if type(base) is not int or not 0<=base<=20:base=2
-    return base+int(rule(item,'extra_belt_pouches'))
+    return base+(0 if item.get('extraStoredItem') else int(rule(item,'extra_belt_pouches')))
 
 
 def validate_belt_pouches(current,incoming,lobby_id):
@@ -221,6 +223,21 @@ def validate_belt_pouches(current,incoming,lobby_id):
     pouches=belt.get('pouches') or []
     if not isinstance(pouches,list):raise ValidationError('Подсумки пояса должны быть списком')
     limit=belt_pouch_limit(belt,lobby_id)
+    extra=belt.get('extraStoredItem')
+    if extra:
+        from app.services.item_template_lookup import resolve_item_template
+        extra_template=resolve_item_template(extra,lobby_id) if isinstance(extra,dict) else None
+        if not extra_template or extra_template.category not in {'helmet','gas_mask'} or extra.get('category')!=extra_template.category:
+            raise ValidationError('На дополнительном креплении должен быть шлем или противогаз')
+        if not isinstance(extra.get('id'),str) or not extra['id'] or extra.get('quantity',1)!=1:
+            raise ValidationError('На дополнительном креплении нужен один отдельный предмет')
+        from app.services.portable_lights import walk
+        if any(item is not belt and item.get('id')==extra['id'] for _,item in walk(incoming,True)):
+            raise ValidationError('Предмет на дополнительном креплении повторяется в инвентаре')
+        if not rule(belt,'extra_belt_pouches'):
+            raise ValidationError('Для второго предмета на поясе нужна модификация «Расширенный пояс»')
+        if len(pouches)>limit:
+            raise ValidationError('Дополнительный предмет занимает места двух подсумков')
     if len(pouches)<=limit:return
     old_pouches=previous.get('pouches') or []
     same_belt=(belt.get('id') and belt.get('id')==previous.get('id')) or (
@@ -231,8 +248,17 @@ def validate_belt_pouches(current,incoming,lobby_id):
 
 def preserve(current,incoming):
     from app.services.portable_lights import walk
-    previous={item.get('id'):item for _,item in walk(current or {},True) if item.get('id')}
-    for _,item in walk(incoming,True):
+    def items(data):
+        for path,item in walk(data or {},True):
+            yield item
+            if item.get('category')!='belt' and path!=['equipment','belt']:continue
+            stored=item.get('storedItem') or {}
+            primary=stored.get('savedAttributes') if isinstance(stored,dict) else None
+            if isinstance(primary,dict):yield primary
+            extra=item.get('extraStoredItem')
+            if isinstance(extra,dict):yield extra
+    previous={item.get('id'):item for item in items(current) if item.get('id')}
+    for item in items(incoming):
         old=previous.get(item.get('id'));canonical=deepcopy(installed(old)) if old else []
         manual=[m for m in item.get('modifications') or [] if not isinstance(m,dict) or not m.get('ruleId')]
         if canonical or item.get('modifications') is not None:item['modifications']=manual+canonical

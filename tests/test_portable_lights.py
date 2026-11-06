@@ -231,3 +231,15 @@ def test_his_uses_eight_meter_light_for_thirty_minutes(client,grenade_game,auth_
     assert ground_sources(actor.location_id)[0]['range']==8
     advance_ground(actor.location_id,1800)
     assert not ground_sources(actor.location_id)
+
+
+def test_nvg_charge_is_preserved_when_helmet_leaves_belt_mount():
+    from app.services.portable_lights import preserve
+    module={'id':'nvg-belt','slotType':'nvg','lightPower':{'uses_left':4,'elapsed_seconds':120}}
+    for stored in ({'extraStoredItem':{'id':'helmet-belt','category':'helmet','installedModules':[deepcopy(module)]}},
+            {'storedItem':{'savedAttributes':{'id':'helmet-belt','category':'helmet','installedModules':[deepcopy(module)]}}}):
+        current={'equipment':{'belt':stored}}
+        incoming={'inventory':{'backpack':[{'id':'helmet-belt','category':'helmet',
+            'installedModules':[{'id':'nvg-belt','slotType':'nvg','lightPower':{'uses_left':10,'elapsed_seconds':0}}]}]}}
+        preserve(current,incoming)
+        assert incoming['inventory']['backpack'][0]['installedModules'][0]['lightPower']==module['lightPower']

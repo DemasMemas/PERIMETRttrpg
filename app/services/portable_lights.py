@@ -102,6 +102,13 @@ def preserve(current,incoming):
             else:item['pdaState']=deepcopy(previous)
     def identity(path,item):return item.get('id') or (*path,item.get('templateId'),item.get('name'))
     previous={identity(path,item):item for path,item in nvg_items(current or {})}
+    belt=(((current or {}).get('equipment') or {}).get('belt') or {})
+    primary=(belt.get('storedItem') or {}).get('savedAttributes') or {}
+    for key,stored in (('storedItem',primary),('extraStoredItem',belt.get('extraStoredItem') or {})):
+        for index,module in enumerate(stored.get('installedModules') or []):
+            if isinstance(module,dict) and (module.get('slotType')=='nvg' or (module.get('attributes') or {}).get('night_vision')):
+                path=['equipment','belt',key,'installedModules',index]
+                previous[identity(path,module)]=module
     for path,item in nvg_items(incoming):
         old=previous.get(identity(path,item))
         if old:

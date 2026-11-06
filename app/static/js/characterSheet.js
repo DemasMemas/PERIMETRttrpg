@@ -8491,7 +8491,8 @@ window.equipBeltFromInventory = async function(itemPath) {
         maxPouches: template.attributes?.max_pouches ?? 2,
         pouches: item.pouches || template.attributes?.pouches || [],
         modifications: item.modifications || [],
-        storedItem: item.storedItem || null
+        storedItem: item.storedItem || null,
+        extraStoredItem: item.extraStoredItem || null
     };
 
     if (!removeItemByPath(itemPath)) {
@@ -8509,6 +8510,7 @@ window.equipBeltFromInventory = async function(itemPath) {
             oldItem.pouches = oldBelt.pouches || [];
             oldItem.modifications = oldBelt.modifications || [];
             oldItem.storedItem = oldBelt.storedItem || null;
+            oldItem.extraStoredItem = oldBelt.extraStoredItem || null;
             restoreItemToPath(oldItem, itemPath);
         }
     }
@@ -8706,11 +8708,31 @@ window.equipToBeltFromInventory = async function(itemPath) {
         showNotification('На пояс можно повесить только шлем или противогаз');
         return;
     }
+    if (Number(item.quantity || 1) !== 1) {
+        showNotification('Перед размещением на поясе разделите стопку');
+        return;
+    }
+    item.id ||= generateItemId();
 
     // Проверяем, надет ли пояс
     const belt = currentCharacterData.equipment?.belt;
     if (!belt || !belt.templateId) {
         showNotification('Сначала наденьте пояс');
+        return;
+    }
+
+    const basePouches = Math.max(0, Math.floor(Number(belt.maxPouches ?? getInventoryItemTemplate(belt)?.attributes?.max_pouches ?? 2)));
+    if (belt.storedItem && !belt.extraStoredItem && modificationRule(belt, 'extra_belt_pouches')
+        && (belt.pouches?.length || 0) <= basePouches) {
+        if (!removeItemByPath(itemPath)) {
+            showNotification('Не удалось найти предмет в инвентаре');
+            return;
+        }
+        belt.extraStoredItem = {...structuredClone(item), sourcePath: itemPath};
+        renderInventoryTab(currentCharacterData);
+        scheduleAutoSave();
+        forceSyncCharacter();
+        showNotification(`${item.name} помещён на дополнительное крепление пояса`, 'success');
         return;
     }
 
@@ -8738,13 +8760,7 @@ window.equipToBeltFromInventory = async function(itemPath) {
         type: item.category,
         templateId: item.templateId,
         name: item.name,
-        savedAttributes: {
-            durability: item.durability,
-            maxDurability: item.maxDurability,
-            modifications: item.modifications,
-            installedModules: item.installedModules
-            // добавьте другие важные поля при необходимости
-        },
+        savedAttributes: structuredClone(item),
         sourcePath: itemPath
     };
 
@@ -9216,8 +9232,24 @@ window.unequipBracelet = async function(slotNumber) {
     showNotification(`Браслет ${slotNumber} снят`, 'success');
 };
 
-window.unequipFromBelt = async function() {
+window.unequipFromBelt = async function(slot = 'primary') {
     const belt = currentCharacterData.equipment?.belt;
+    if (slot === 'extra' && belt?.extraStoredItem) {
+        const restoredItem = structuredClone(belt.extraStoredItem);
+        const path = restoredItem.sourcePath;
+        delete restoredItem.sourcePath;
+        if (!path || !restoreItemToPath(restoredItem, path)) {
+            currentCharacterData.inventory ||= {};
+            currentCharacterData.inventory.backpack ||= [];
+            currentCharacterData.inventory.backpack.push(restoredItem);
+        }
+        delete belt.extraStoredItem;
+        renderInventoryTab(currentCharacterData);
+        scheduleAutoSave();
+        forceSyncCharacter();
+        showNotification('Дополнительный предмет снят с пояса', 'success');
+        return;
+    }
     if (!belt || !belt.storedItem) {
         showNotification('На поясе ничего нет');
         return;
@@ -9479,6 +9511,7 @@ window.unequipBelt = async function() {
     restoredItem.pouches = belt.pouches || [];
     restoredItem.modifications = belt.modifications || [];
     restoredItem.storedItem = belt.storedItem || null;
+    restoredItem.extraStoredItem = belt.extraStoredItem || null;
     if (!currentCharacterData.inventory) currentCharacterData.inventory = {};
     if (!currentCharacterData.inventory.backpack) currentCharacterData.inventory.backpack = [];
     currentCharacterData.inventory.backpack.push(restoredItem);
@@ -12963,7 +12996,7 @@ window.removeArmorModification = function(index) {
 function beltPouchLimit(belt) {
     const base = Number(belt?.maxPouches ?? getInventoryItemTemplate(belt)?.attributes?.max_pouches ?? 2);
     return Math.max(0, Math.floor(Number.isFinite(base) ? base : 2))
-        + Math.max(0, Math.floor(modificationRule(belt, 'extra_belt_pouches')));
+        + (belt?.extraStoredItem ? 0 : Math.max(0, Math.floor(modificationRule(belt, 'extra_belt_pouches'))));
 }
 
 window.addBeltPouch = function() {
@@ -14060,6 +14093,16 @@ async function renderInventoryTab(data) {
                         `<button type="button" class="btn btn-sm btn-danger" onclick="unequipFromBelt()">Снять</button>` : ''}
                 </div>
             </div>
+            ${(modificationRule(eq.belt, 'extra_belt_pouches') || eq.belt?.extraStoredItem) ? `
+            <div style="margin-bottom: 10px;">
+                <label>Дополнительное крепление вместо двух подсумков</label>
+                <div style="display: flex; align-items: center; gap: 10px; margin-top: 5px;">
+                    <span style="flex: 1;">${eq.belt?.extraStoredItem
+                        ? escapeHtml(eq.belt.extraStoredItem.name || 'Шлем или противогаз')
+                        : '<span style="color: #aaa;">Пусто</span>'}</span>
+                    ${eq.belt?.extraStoredItem ? `<button type="button" class="btn btn-sm btn-danger" onclick="unequipFromBelt('extra')">Снять</button>` : ''}
+                </div>
+            </div>` : ''}
             <div style="display: flex; align-items: center;">
                 <h5 style="margin: 0;">Подсумки (${eq.belt.pouches?.length || 0} / ${beltPouchLimit(eq.belt)})</h5>
                 <button type="button" class="btn btn-sm btn-secondary" onclick="addBeltPouch()" style="padding: 2px 8px;" ${(eq.belt.pouches?.length || 0) >= beltPouchLimit(eq.belt) ? 'disabled' : ''}>➕</button>

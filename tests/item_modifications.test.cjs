@@ -70,6 +70,35 @@ test('расширенный пояс открывает два дополнит
     assert.equal(context.beltPouchLimit(belt),4);
     for(let i=0;i<3;i++)context.window.addBeltPouch();
     assert.equal(belt.pouches.length,4);
+    belt.pouches.length=2;
+    belt.extraStoredItem={name:'Шлем',category:'helmet'};
+    assert.equal(context.beltPouchLimit(belt),2);
+    context.window.addBeltPouch();
+    assert.equal(belt.pouches.length,2);
+});
+
+test('дополнительное крепление пояса сохраняет экземпляр шлема при снятии',async()=>{
+    const api=await rules(),source=fs.readFileSync(path.join(__dirname,'../app/static/js/characterSheet.js'),'utf8');
+    const helmet={id:'helmet-1',name:'Шлем',category:'helmet',templateId:7,installedModules:[{id:'nvg-1'}],
+        modifications:[{ruleId:'armor-g25',rules:{nvg_mount:true}}]};
+    const belt={templateId:5,maxPouches:2,pouches:[{},{}],storedItem:{name:'Противогаз'},
+        modifications:[{ruleId:'armor-g57',rules:{extra_belt_pouches:2}}]};
+    const currentCharacterData={equipment:{belt},inventory:{backpack:[helmet]}};
+    const context=vm.createContext({window:{},currentCharacterData,modificationRule:api.modificationRule,structuredClone,
+        getItemByPath:()=>currentCharacterData.inventory.backpack[0],removeItemByPath:()=>Boolean(currentCharacterData.inventory.backpack.splice(0,1).length),
+        getInventoryItemTemplate:()=>({attributes:{max_pouches:2}}),restoreItemToPath:item=>{currentCharacterData.inventory.backpack.push(item);return true;},
+        renderInventoryTab:()=>{},scheduleAutoSave:()=>{},forceSyncCharacter:()=>{},showNotification:()=>{}});
+    let begin=source.indexOf('window.equipToBeltFromInventory ='),end=source.indexOf('window.equipHeadphonesFromInventory',begin);
+    vm.runInContext(source.slice(begin,end),context);
+    begin=source.indexOf('window.unequipFromBelt =');end=source.indexOf('window.unequipArmor',begin);
+    vm.runInContext(source.slice(begin,end),context);
+    await context.window.equipToBeltFromInventory(['inventory','backpack',0]);
+    assert.equal(belt.extraStoredItem.id,'helmet-1');
+    assert.equal(currentCharacterData.inventory.backpack.length,0);
+    await context.window.unequipFromBelt('extra');
+    assert.equal(currentCharacterData.inventory.backpack[0].id,'helmet-1');
+    assert.equal(currentCharacterData.inventory.backpack[0].installedModules[0].id,'nvg-1');
+    assert.equal(currentCharacterData.inventory.backpack[0].modifications[0].ruleId,'armor-g25');
 });
 
 test('система распределения веса экзоскелета совпадает с серверным правилом',async()=>{
