@@ -53,6 +53,8 @@ def item_names(item):
         'топливо 1 литр':'топливо',
         'хлорные таблетки 10 штук':'хлорные таблетки',
         'банка пива':'пиво любое',
+        'котелок объем 2 литра 6 использований воды':'котелок',
+        'кастрюля объем 5 литров 15 использований воды':'кастрюля',
     }
     alias=catalog_component_names.get(normalized(item.get('name')))
     if alias:names.add(alias)
@@ -126,7 +128,7 @@ def _allocate(data,recipe):
             for path,item in candidates:
                 from app.services.flamethrower import charges
                 attrs=item.get('attributes') or {};whole=bool(meat_component or component.get('whole_tank') or component.get('whole_air')
-                    or normalized(variant['name']) in {'стеклянная бутылка','пластиковая бутылка','канистра'})
+                    or normalized(variant['name']) in {'стеклянная бутылка','пластиковая бутылка','канистра','кастрюля','котелок'})
                 matches_box=(recipe['id']=='recipe-aa4' and variant['name']=='Спички'
                     and normalized(item.get('name'))=='спички 10 штук')
                 if meat_component:

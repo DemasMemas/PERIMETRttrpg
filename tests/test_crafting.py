@@ -2,7 +2,7 @@
 from copy import deepcopy
 import pytest
 from app.extensions import db
-from app.models import LocationCombatState
+from app.models import LocationCombatState,LocationObject,LocationCharacter
 from app.models.templates import ItemTemplate
 from app.services.crafting_rules import resolve_creation
 from app.services.general_consumable import _available_uses
@@ -90,6 +90,36 @@ def test_spirit_recipe_accepts_catalog_beer_and_moonshine_still(client,workshop,
     finished=call(client,workshop,auth_headers,'finish',job_id=started.json['result']['id'],chosen_loss=[])
     assert finished.status_code==200,finished.json
     assert units(finished.json['data'],'Спирт')==30
+
+
+def test_glue_recipe_uses_catalog_pot_without_consuming_it(client,workshop,auth_headers,monkeypatch):
+    from app.services.crafting import _allocate,recipe_by_id
+    pot='Котелок (Объем 2 литра)(6 использований воды)'
+    pan='Кастрюля (Объем 5 литров) (15 использований воды)'
+    data=deepcopy(workshop['actor_character'].data)
+    data['skills']['other']['survival']={'base':20,'bonus':0}
+    data['inventory']['pockets']=[{'name':'Жир','category':'misc','quantity':3},
+        {'name':pot,'category':'misc','quantity':1,'uses':6,'maxUses':6}]
+    workshop['actor_character'].data=data
+    placed=LocationCharacter.query.filter_by(character_id=workshop['actor_character'].id).first()
+    db.session.add(LocationObject(location_id=placed.location_id,name='Костёр',type='campfire',
+        tile_x=round(placed.pos_x),tile_y=round(placed.pos_y),properties={'is_lit':True}))
+    db.session.add(ItemTemplate(name='Клей',category='crafting_material',price=100))
+    db.session.commit()
+    quoted=call(client,workshop,auth_headers,'quote',recipe_id='recipe-aa9')
+    assert quoted.status_code==200 and quoted.json['result']['missing']==[],quoted.json
+    started=call(client,workshop,auth_headers,'start',recipe_id='recipe-aa9')
+    assert started.status_code==200,started.json
+    workshop['lobby'].game_time_minutes+=60;db.session.commit()
+    monkeypatch.setattr('app.services.crafting.resolve_creation',lambda quote:{'success':True,'roll':100,'automatic':False})
+    finished=call(client,workshop,auth_headers,'finish',job_id=started.json['result']['id'],chosen_loss=[])
+    assert finished.status_code==200,finished.json
+    assert units(finished.json['data'],'Жир')==0
+    assert units(finished.json['data'],pot)==6
+    assert units(finished.json['data'],'Клей')==1
+    pan_data={'inventory':{'pockets':[{'name':pan,'category':'misc','quantity':1,'uses':15,'maxUses':15}]}}
+    allocations,_=_allocate(pan_data,recipe_by_id('recipe-m40'))
+    assert any(entry['item']['name']==pan and entry['whole'] for entry in allocations)
 
 
 @pytest.mark.parametrize('recipe_id,name,amount',[('recipe-m33','Стеклянная бутылка (Объем 1 литр) (3 использования воды)',3),
