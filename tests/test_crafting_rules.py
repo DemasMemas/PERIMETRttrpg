@@ -100,6 +100,13 @@ def test_integer_fuel_liters_use_one_liter_catalog_units():
         {'name':'Топливо(0.5л)','quantity':1}]
 
 
+def test_aeration_requires_ten_filter_charges_not_ten_filters():
+    recipe=next(item for item in catalog()['recipes'] if item['id']=='recipe-aa12')
+    assert recipe['components'][1]=={'name':'Фильтр для противогаза','quantity':10,
+        'source_text':'Фильтр для противогаза(10 зарядов)','filter_charges':True}
+    assert recipe['output_count']==8
+
+
 def test_molotov_inline_station_override_is_not_an_ingredient():
     recipe=next(item for item in catalog()['recipes'] if item['id']=='recipe-v11')
     assert recipe['tools_text']=='Не нужен'

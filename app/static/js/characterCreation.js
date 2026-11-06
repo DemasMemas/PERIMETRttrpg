@@ -47,7 +47,8 @@ export async function openCharacterCreation(lobbyId, onCreated) {
         <output data-result="${path}" data-result-stage="${stage}">5</output>
         ${stage === 'specializations' ? `<label class="creation-spec"><input type="checkbox" data-specialization="${path}" aria-label="Специализация: ${escape(label)}"> +3</label>` : editable ? `<div class="creation-stepper"><button type="button" class="btn btn-sm" data-adjust="-1" data-target="${stage}:${path}" aria-label="Уменьшить: ${escape(label)}">−</button><input type="number" min="0" max="${stage === 'lowers' ? 5 : 19}" value="0" data-stage="${stage}" data-skill="${path}" aria-label="${stage === 'lowers' ? 'Понижений на 3' : 'Добавить уровней'}: ${escape(label)}" class="form-control"><button type="button" class="btn btn-sm" data-adjust="1" data-target="${stage}:${path}" aria-label="Увеличить: ${escape(label)}">+</button></div>` : ''}
     </div>`).join('')}</div></section>`).join('');
-    const categories = [...new Set(shop.map(template => template.category))].sort((a, b) => getCategoryDisplay(a).localeCompare(getCategoryDisplay(b), 'ru'));
+    const purchaseCategory = template => template.attributes?.book_kind ? 'books' : template.category;
+    const categories = [...new Set(shop.map(purchaseCategory))].sort((a, b) => getCategoryDisplay(a).localeCompare(getCategoryDisplay(b), 'ru'));
     const contents = [
         `<div class="creation-intro-fields"><label>Имя персонажа<input name="characterAlias" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="100" class="form-control" placeholder="Имя или прозвище в игре"></label>
         <label>Предыстория<select name="backgroundId" class="form-control"><option value="">Выберите предысторию</option>${rules.backgrounds.filter(background => background.available).map(background => `<option value="${background.id}">${escape(ruleText(background.name))}</option>`).join('')}</select></label></div>
@@ -160,7 +161,7 @@ export async function openCharacterCreation(lobbyId, onCreated) {
     }
     function renderShop() {
         if (step !== 7) return;
-        const templates = shop.filter(template => template.category === find('[data-purchase-category]').value);
+        const templates = shop.filter(template => purchaseCategory(template) === find('[data-purchase-category]').value);
         find('[data-purchase-catalog]').innerHTML = renderInventoryTemplatePicker(templates, find('[data-purchase-search]').value, { purchase: true, selectedId: selectedPurchase?.id, open: true });
     }
     function refreshView() {

@@ -230,8 +230,9 @@ def build_character(name,plan,*,roll_history=True,finalize=True):
           'creation':{'version':c['version'],'plan':deepcopy(plan),'ledger':ledger,'initialCapital':initial_cash+cash*200,
                       'entryMoney':entry_money,'worldEntryGranted':False,'completed':finalize,
                       'finalRaisePricing':{'levels':final_price_levels,'nextCosts':{p:max(1,v+1-10) for p,v in final_price_levels.items()}}}}
-    from app.services.character_starting_purchase import apply_purchase
+    from app.services.character_starting_purchase import apply_purchase, grant_starting_pda
     apply_purchase(data,plan.get('purchases',[]),initial_cash+cash*200,allow_debt=not finalize)
+    if finalize:grant_starting_pda(data)
     data['skills'].update(skillPoints=points,specializations=specialization_limit-len(specs),specialized=specialized)
     from app.services.character_traits import passive_profile
     data['inventory']['pocketMaxVolume']=max(0,10+passive_profile(data)['pocket_cells'])

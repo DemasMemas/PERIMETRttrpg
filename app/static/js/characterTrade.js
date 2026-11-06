@@ -256,7 +256,7 @@ export function renderProfessionalRepairEditor(modal,{entries,balance,onQuote,on
     else {itemSelect.innerHTML='<option>Нет подходящих предметов</option>';modal.querySelector('.repair-check').disabled=true;}
 }
 
-export function renderProfessionalModificationEditor(modal,{targets,rules,balance,onQuote,onSubmit,onClose}) {
+export function renderProfessionalModificationEditor(modal,{targets,rules,balance,onQuote,onSubmit,onUnlockQuote,onUnlockSubmit,onClose}) {
     const options=(targets||[]).filter(entry=>entry?.item && entry?.slots?.family);
     modal.innerHTML=`<div class="modal-content character-trade modification-service">
         <div class="character-trade-heading"><div><h3>Установка модификации</h3><small>Услуга специалиста · сразу после оплаты</small></div>
@@ -264,7 +264,8 @@ export function renderProfessionalModificationEditor(modal,{targets,rules,balanc
         <div class="modification-service-grid">
             <section class="modification-service-panel"><label>Ваш предмет<select class="form-control modification-item">${options.map((entry,index)=>
                 `<option value="${index}">${escape(entry.item.name||entry.item.model||'Предмет')}</option>`).join('')}</select></label>
-                <div class="modification-item-card"></div></section>
+                <div class="modification-item-card"></div>
+                ${onUnlockQuote?'<button type="button" class="btn btn-secondary modification-unlock">Открыть слот у механика · 2500 ₽</button>':''}</section>
             <section class="modification-service-panel"><label>Улучшение<select class="form-control modification-rule"></select></label>
                 <div class="modification-rule-details"></div>
                 <label>Заменить установленное улучшение<select class="form-control modification-replace"></select></label>
@@ -276,6 +277,7 @@ export function renderProfessionalModificationEditor(modal,{targets,rules,balanc
     const replaceSelect=modal.querySelector('.modification-replace'),card=modal.querySelector('.modification-item-card');
     const details=modal.querySelector('.modification-rule-details'),price=modal.querySelector('.modification-price-value');
     const error=modal.querySelector('.modification-error'),confirm=modal.querySelector('.modification-confirm');
+    const unlock=modal.querySelector('.modification-unlock');
     let quoted=null,operationId=null,busy=false;
     const reset=()=>{quoted=null;operationId=null;confirm.disabled=true;price.textContent='Выберите улучшение';error.textContent='';};
     const current=()=>options[Number(itemSelect.value)];
@@ -290,6 +292,7 @@ export function renderProfessionalModificationEditor(modal,{targets,rules,balanc
     const renderItem=()=>{
         reset();const entry=current();if(!entry)return;
         const item=entry.item,slots=entry.slots,installed=(item.modifications||[]).filter(value=>value?.ruleId);
+        if(unlock)unlock.disabled=slots.available>=slots.maximum;
         const glyph=entry.path?.[0]==='weapons'||item.category==='weapon'?'⌖':'◇';
         card.innerHTML=`<div class="modification-item-heading"><span class="modification-item-glyph" aria-hidden="true">${glyph}</span>
             <div><strong>${escape(item.name||item.model||'Предмет')}</strong><small>${escape(slots.family)} · Класс ${escape(slots.factor??'—')}</small></div></div>
@@ -305,6 +308,18 @@ export function renderProfessionalModificationEditor(modal,{targets,rules,balanc
     };
     itemSelect.onchange=renderItem;ruleSelect.onchange=renderRule;replaceSelect.onchange=reset;
     modal.querySelector('.modification-close').onclick=()=>{if(!busy)onClose();};
+    if(unlock)unlock.onclick=async()=>{
+        const entry=current();if(busy||!entry)return;
+        busy=true;unlock.disabled=true;error.textContent='';
+        try{
+            const plan=await onUnlockQuote(entry);
+            if(plan.price>balance)throw Error('Не хватает денег на открытие слота');
+            if(window.confirm(`Открыть слот на «${entry.item.name||entry.item.model}» у механика за ${rubles(plan.price)}?`)){
+                await onUnlockSubmit(entry,crypto.randomUUID());
+            }
+        }catch(reason){error.textContent=reason.message||'Не удалось открыть слот';}
+        finally{busy=false;unlock.disabled=current()?.slots.available>=current()?.slots.maximum;}
+    };
     modal.querySelector('.modification-check').onclick=async()=>{
         const entry=current(),selected=rule();if(!entry||!selected)return;
         busy=true;error.textContent='';confirm.disabled=true;

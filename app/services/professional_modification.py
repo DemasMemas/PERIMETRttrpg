@@ -10,8 +10,8 @@ from app.models import LocationCombatState
 from app.services.character_interaction import CharacterInteractionService
 from app.services.character_roles import is_npc
 from app.services.combat import CombatService
-from app.services.crafting import modification_target_plan
-from app.services.equipment_modifications import install, make_record
+from app.services.crafting import modification_target_plan, modification_targets
+from app.services.equipment_modifications import install, make_record, slots as item_slots
 from app.services.exceptions import ConflictError, ValidationError
 from app.services.professional_repair import markup_value
 from app.services.trade import balance, money
@@ -21,7 +21,7 @@ from app.services.transaction import atomic_operation
 def _prepare(location_id, user_id, payload):
     if not isinstance(payload, dict) or set(payload) - {
         'actor_location_character_id', 'specialist_character_id', 'target_path', 'item_id',
-        'rule_id', 'replace_rule_id', 'actor_revision', 'specialist_revision', 'operation_id', 'execute',
+        'rule_id', 'replace_rule_id', 'actor_revision', 'specialist_revision', 'operation_id', 'execute', 'action',
     }:
         raise ValidationError('Некорректные параметры платной установки')
     _, actor, specialist = CharacterInteractionService._pair(location_id, user_id,
@@ -36,13 +36,31 @@ def _prepare(location_id, user_id, payload):
     path = payload.get('target_path')
     if not isinstance(path, list) or not path or path[0] not in {'weapons', 'equipment', 'inventory'}:
         raise ValidationError('Выберите своё оружие или снаряжение')
+    settings = (specialist.character.data or {}).get('merchant') or {}
+    if payload.get('action') == 'unlock_slot':
+        if payload.get('rule_id') is not None or payload.get('replace_rule_id') is not None:
+            raise ValidationError('Для открытия слота не выбирают модификацию')
+        if settings.get('repair_enabled') is not True:
+            raise ValidationError('Открыть слот можно только у НПС-механика')
+        target = next((entry['item'] for entry in modification_targets(actor.character.data or {})
+                       if entry['path'] == path), None)
+        if not target or not isinstance(payload.get('item_id'), str) or target.get('id') != payload['item_id']:
+            raise ConflictError('Предмет перемещён. Откройте услугу заново.')
+        if type(target.get('quantity', 1)) is not int or target.get('quantity', 1) != 1:
+            raise ValidationError('Перед открытием слота разделите стопку')
+        status = item_slots(target)
+        if status['available'] >= status['maximum']:
+            raise ValidationError('Все слоты уже открыты')
+        return actor, specialist, {'action': 'unlock_slot', 'item_name': target.get('name') or target.get('model'),
+            'target_path': path, 'price': 2500, 'slots': status}
+    if payload.get('action') not in {None, 'install'}:
+        raise ValidationError('Неизвестная услуга специалиста')
     common = modification_target_plan(actor.character.data or {}, payload)
     target, rule, slots = common['target'], common['rule'], common['slots']
     if payload.get('item_id') is not None and target.get('id') != payload['item_id']:
         raise ConflictError('Предмет перемещён. Откройте установку заново.')
     if type(target.get('quantity', 1)) is not int or target.get('quantity', 1) != 1:
         raise ValidationError('Перед установкой разделите стопку')
-    settings = (specialist.character.data or {}).get('merchant') or {}
     scientist = rule.get('scientist_only') is True
     if settings.get('scientist_enabled' if scientist else 'modification_enabled') is not True:
         raise ValidationError('Этот НПС не устанавливает выбранные модификации')
@@ -83,27 +101,37 @@ def perform(location_id, user_id, payload):
         raise ConflictError('Предмет или деньги изменились. Откройте установку заново.')
     actor_data, specialist_data = deepcopy(actor.character.data or {}), deepcopy(specialist.character.data or {})
     if balance(actor_data) < plan['price']:
-        raise ValidationError('Не хватает денег на установку')
-    common = modification_target_plan(actor_data, payload)
-    target = common['target']
-    from app.services.character_traits import background_is
-    record = make_record(plan['rule_id'], gunsmith=background_is(specialist_data, 'Оружейник'),
-                         installer_id=specialist.character_id)
-    install(target, record, plan['replace_rule_id'])
+        raise ValidationError('Не хватает денег на услугу')
+    if plan.get('action') == 'unlock_slot':
+        target = next(entry['item'] for entry in modification_targets(actor_data)
+                      if entry['path'] == plan['target_path'])
+        target['unlockedModificationSlots'] = int(target.get('unlockedModificationSlots') or 0) + 1
+        label = 'Открытие слота у механика'
+        outcome = f"{plan['item_name']}: открыт слот, {plan['price']} ₽"
+    else:
+        common = modification_target_plan(actor_data, payload)
+        target = common['target']
+        from app.services.character_traits import background_is
+        record = make_record(plan['rule_id'], gunsmith=background_is(specialist_data, 'Оружейник'),
+                             installer_id=specialist.character_id)
+        install(target, record, plan['replace_rule_id'])
+        label = 'Установка модификации у НПС'
+        outcome = f"{plan['item_name']}: {plan['rule_name']}, {plan['price']} ₽"
     actor_data.setdefault('inventory', {})['money'] = balance(actor_data) - plan['price']
     specialist_data.setdefault('inventory', {})['money'] = money(balance(specialist_data) + plan['price'])
     journal = actor_data.setdefault('health', {}).setdefault('combatMeta', {}).setdefault('actionJournal', [])
     journal.append({'id': 'professional-modification:' + operation_id,
         'timestamp': datetime.now(timezone.utc).isoformat(), 'action': 'professional_modification',
-        'kind': 'professional_modification', 'label': 'Установка модификации у НПС',
+        'kind': 'professional_modification', 'label': label,
         'status': 'completed', 'location_id': location_id, 'action_points': 0,
         'movement_points': 0, 'free_actions': 0,
-        'outcome': f"{plan['item_name']}: {plan['rule_name']}, {plan['price']} ₽"})
+        'outcome': outcome})
     actor_data['health']['combatMeta']['actionJournal'] = journal[-100:]
     actor.character.data, specialist.character.data = actor_data, specialist_data
     flag_modified(actor.character, 'data')
     flag_modified(specialist.character, 'data')
     db.session.flush()
-    return {'duplicate': False, 'price': plan['price'], 'rule_id': plan['rule_id'],
-        'item_name': plan['item_name'], 'rule_name': plan['rule_name'],
+    return {'duplicate': False, 'price': plan['price'], 'action': plan.get('action', 'install'),
+        'rule_id': plan.get('rule_id'), 'item_name': plan['item_name'], 'rule_name': plan.get('rule_name'),
+        'slots': item_slots(target),
         'actor_character_id': actor.character_id, 'specialist_character_id': specialist.character_id}

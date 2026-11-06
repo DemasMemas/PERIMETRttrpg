@@ -69,6 +69,7 @@ module.exports=async({page,request,token,lobby,base,connect,debugPort,safeSessio
     await page.call('Emulation.setDeviceMetricsOverride',{width:480,height:900,deviceScaleFactor:1,mobile:false});
     assert.ok(await page.evaluate(`(()=>{const row=document.querySelector('.merchant-price-row');return row.scrollWidth<=row.clientWidth})()`),'Прайс помещается в узкое окно');
     assert.ok(await page.evaluate(`(()=>{const box=document.querySelector('.merchant-save').getBoundingClientRect();return box.top>=0&&box.bottom<=innerHeight})()`),'Сохранение прайса доступно без прокрутки всего окна');
+    assert.ok(await page.evaluate(`(()=>{const box=document.querySelector('.merchant-save').getBoundingClientRect();const modal=document.querySelector('.merchant-editor').getBoundingClientRect();return box.bottom<=modal.bottom-8})()`),'Кнопка сохранения целиком видна внутри прайса');
     const merchantNarrow=await page.call('Page.captureScreenshot',{format:'png'});
     fs.writeFileSync(path.join(safeSession.artifacts,'merchant-prices-narrow.png'),Buffer.from(merchantNarrow.data,'base64'));
     await page.call('Emulation.clearDeviceMetricsOverride');
@@ -242,4 +243,16 @@ module.exports=async({page,request,token,lobby,base,connect,debugPort,safeSessio
     assert.equal(afterModification.data.inventory.money,24000);
     assert.ok(afterModification.data.weapons[0].modifications.some(value=>value.ruleId));
     console.log(JSON.stringify({professional_modification_ui:true,slots_visible:true,server_quote:true,money_spent:true,weapon_modified:true}));
+    await page.evaluate(`import('/static/js/locationScene.js').then(m=>m.showCharacterTradeMenu(${actorId},${a.id},${b.id})).then(()=>true)`);
+    await page.evaluate(`document.querySelector('.trade-modification').click();true`);
+    await page.until(`document.querySelector('.modification-unlock')`,'Открытие слота доступно у механика');
+    assert.equal(await page.evaluate(`document.querySelector('.modification-unlock').disabled`),false);
+    await page.evaluate(`window.confirm=()=>true;document.querySelector('.modification-unlock').click();true`);
+    await page.until(`document.querySelector('.modification-service').parentElement.style.display==='none'||document.querySelector('.modification-error').textContent`,'Механик обработал открытие слота');
+    assert.equal(await page.evaluate(`document.querySelector('.modification-error').textContent`),'');
+    const afterSlot=await read(a.id);
+    assert.equal(afterSlot.data.inventory.money,21500);
+    assert.equal(afterSlot.data.weapons[0].unlockedModificationSlots,1);
+    assert.equal(afterSlot.data.weapons[0].modifications.length,1);
+    console.log(JSON.stringify({mechanic_slot_ui:true,slot_persisted:true,exact_price:true}));
 };

@@ -45,7 +45,8 @@ def catalog():
     return [{'id':t.id,'name':t.name,'category':t.category,'subcategory':t.subcategory,
              'item_class':t.item_class,'price':max(0,t.price or 0),'description':t.description or '',
              'attributes':{key:value for key,value in (t.attributes or {}).items() if key in {
-                 'section','caliber','ammo_group','ammo_kind','ammo_variant','capacity','damage','penetration','range','isLoader'}}}
+                 'section','caliber','ammo_group','ammo_kind','ammo_variant','capacity','damage','penetration','range','isLoader',
+                 'book_kind','book_subject'}}}
             for t in available_templates()]
 
 
@@ -96,6 +97,24 @@ def apply_purchase(data,selection,budget,*,allow_debt=False):
             else:data['inventory']['pockets'].append(item_from_template(template,quantity))
     data['inventory']['money']=budget-spent
     data['creation']['startingPurchase']={'budget':budget,'spent':spent,'remaining':budget-spent,'items':receipt,'completed':not allow_debt}
+
+
+def grant_starting_pda(data):
+    """Один бесплатный КПК при завершении создания; закуп учитывается отдельно."""
+    if data['creation'].get('startingPdaGranted'):
+        return False
+    from flask import has_app_context
+    from app.models.templates import ItemTemplate
+    candidates = ItemTemplate.query.filter_by(name='КПК', category='misc').all() if has_app_context() else []
+    template = next((entry for entry in candidates
+        if (entry.attributes or {}).get('import_source') == 'equipment_workbook'), None)
+    if template is None:
+        from app.services.equipment_catalog import load_catalog
+        template = ItemTemplate(**next(item for item in load_catalog()
+            if item['name'] == 'КПК' and item['category'] == 'misc'))
+    data['inventory']['pockets'].append(item_from_template(template))
+    data['creation']['startingPdaGranted'] = True
+    return True
 
 
 def grant_creation_money(data):

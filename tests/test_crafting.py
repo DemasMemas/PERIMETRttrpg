@@ -32,6 +32,67 @@ def call(client,workshop,auth_headers,operation,**payload):
 def units(data,name):return sum(_available_uses(i) for i in data['inventory']['pockets'] if i['name']==name)
 
 
+@pytest.mark.parametrize('recipe_id,name,count,price', [
+    ('recipe-v38','Форма для патронов',1,200),
+    ('recipe-v41','Форма гранаты',2,650),
+])
+def test_craft_molds_have_approved_catalog_properties_and_are_created(
+        client,workshop,auth_headers,monkeypatch,recipe_id,name,count,price):
+    from app.services.equipment_catalog import load_catalog
+
+    template_data=next(item for item in load_catalog() if item['name']==name)
+    assert (template_data['price'],template_data['weight'],template_data['volume'])==(price,.25,.25)
+    assert template_data['attributes']['consumed_on_use']
+    db.session.add(ItemTemplate(**template_data))
+    character=workshop['actor_character']
+    data=deepcopy(character.data)
+    data['skills']['other']['engineering']={'base':20,'bonus':0}
+    data['inventory']['pockets']=[{'name':material,'category':'crafting_material','quantity':amount}
+        for material,amount in [('Металлические детали',3),('Взрыватель',1),('Запал',1)]]
+    character.data=data
+    placement=LocationCharacter.query.filter_by(character_id=character.id).first()
+    db.session.add(LocationObject(location_id=placement.location_id,name='Смесительный станок',type='workbench',
+        tile_x=round(placement.pos_x),tile_y=round(placement.pos_y),properties={}))
+    db.session.commit()
+    started=call(client,workshop,auth_headers,'start',recipe_id=recipe_id)
+    assert started.status_code==200,started.json
+    workshop['lobby'].game_time_minutes+=30;db.session.commit()
+    monkeypatch.setattr('app.services.crafting.resolve_creation',lambda quote:{'success':True,'roll':100,'automatic':False})
+    finished=call(client,workshop,auth_headers,'finish',job_id=started.json['result']['id'],chosen_loss=[])
+    assert finished.status_code==200,finished.json
+    assert units(finished.json['data'],name)==count
+
+
+def test_grenade_molds_are_reserved_as_consumed_items(app):
+    from app.services.crafting import _allocate, _escrow, recipe_by_id
+
+    recipe=recipe_by_id('recipe-v12')
+    mold_index=next(i for i,part in enumerate(recipe['components']) if part['name']=='Форма гранаты')
+    assert recipe['components'][mold_index]['quantity']==2
+    data={'inventory':{'pockets':[{'name':'Форма гранаты','category':'crafting_material','quantity':2}]}}
+    allocations,_=_allocate(data,recipe)
+    mold_allocations=[entry for entry in allocations if entry['component']==mold_index]
+    assert sum(entry['amount'] for entry in mold_allocations)==2
+    reserved=_escrow(data,mold_allocations)
+    assert reserved[0]['amount']==2
+    assert data['inventory']['pockets']==[]
+
+
+def test_crafting_quote_reports_inventory_counts_for_alternative_materials(app):
+    from app.services.crafting import _allocate, recipe_by_id
+
+    recipe=recipe_by_id('recipe-m8')
+    data={'inventory':{'pockets':[{'name':'Тканные материалы','category':'crafting_material','quantity':2}]}}
+    allocations,missing,statuses=_allocate(data,recipe,with_status=True)
+    assert missing == ['Граната: не хватает 1']
+    assert statuses[0]['alternatives']==[{'name':'Граната','available':0,'required':1}]
+    assert statuses[1]['alternatives']==[
+        {'name':'Электронные материалы','available':0,'required':1},
+        {'name':'Тканные материалы','available':2,'required':1},
+    ]
+    assert allocations[0]['item']['name']=='Тканные материалы'
+
+
 @pytest.mark.parametrize('recipe_id,ingredient,amount',[('recipe-aa30','Активированный уголь (Таблетка)',1),
     ('recipe-aa44','Активированный уголь (Таблетка)',1),
     ('recipe-aa45','Активированный уголь (Таблетка)',4),
@@ -330,6 +391,52 @@ def test_empty_chlorine_packet_cannot_satisfy_water_recipe(app):
         {'name':'Хлорные таблетки (10 штук)','quantity':1,'uses':0,'maxUses':10}]}}
     _,missing=_allocate(data,recipe)
     assert any(text.startswith('Хлорные таблетки:') for text in missing)
+
+
+@pytest.mark.parametrize('cancel', [True, False])
+def test_aeration_spends_charges_across_filters_and_produces_eight_water_portions(
+        client,workshop,auth_headers,cancel):
+    from app.services.character_starting_purchase import item_from_template
+    from app.services.equipment_catalog import load_catalog
+    from app.services.gas_mask_filters import filter_charges
+    from app.services.crafting import recipe_by_id
+
+    templates={item['name']:ItemTemplate(**item) for item in load_catalog()
+        if item['name'] in {'Вода','Радиоактивная вода','Фильтр для противогаза'}}
+    db.session.add_all(templates.values());db.session.flush()
+    data=deepcopy(workshop['actor_character'].data)
+    data['skills']['other']['survival']={'base':20,'bonus':0}
+    filters=[]
+    for remaining in (6,7):
+        item=item_from_template(templates['Фильтр для противогаза'])
+        item['durability']=remaining
+        item['attributes']['durability']=remaining
+        filters.append(item)
+    radioactive=item_from_template(templates['Радиоактивная вода'],4)
+    data['inventory']['pockets']=[radioactive,*filters]
+    workshop['actor_character'].data=data
+    placement=LocationCharacter.query.filter_by(character_id=workshop['actor_character'].id).first()
+    db.session.add(LocationObject(location_id=placement.location_id,
+        name=recipe_by_id('recipe-aa12')['tools_text'],type='workbench',
+        tile_x=round(placement.pos_x),tile_y=round(placement.pos_y),properties={}))
+    db.session.commit()
+    started=call(client,workshop,auth_headers,'start',recipe_id='recipe-aa12')
+    assert started.status_code==200,started.json
+    inventory=started.json['data']['inventory']['pockets']
+    assert sum(filter_charges(i) for i in inventory if i['name']=='Фильтр для противогаза')==3
+    assert units(started.json['data'],'Радиоактивная вода')==2
+    if cancel:
+        result=call(client,workshop,auth_headers,'cancel',job_id=started.json['result']['id'])
+        assert result.status_code==200,result.json
+        inventory=result.json['data']['inventory']['pockets']
+        assert sum(filter_charges(i) for i in inventory if i['name']=='Фильтр для противогаза')==13
+        assert units(result.json['data'],'Радиоактивная вода')==12
+    else:
+        workshop['lobby'].game_time_minutes+=30;db.session.commit()
+        result=call(client,workshop,auth_headers,'finish',job_id=started.json['result']['id'],chosen_loss=[])
+        assert result.status_code==200,result.json
+        assert units(result.json['data'],'Вода')==8
+        assert units(result.json['data'],'Радиоактивная вода')==2
 
 
 def test_grenade_recipe_chain_accepts_catalog_names_and_smoke_output(app):

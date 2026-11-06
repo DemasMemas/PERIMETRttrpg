@@ -42,6 +42,58 @@ def test_paid_npc_installation_requires_no_player_book_tools_or_roll(client, sho
     assert shop['actor_character'].data['inventory']['money'] == 4000
 
 
+def test_only_adjacent_mechanic_opens_slot_once_for_exact_price(client, shop, auth_headers):
+    LocationCombatState.query.filter_by(location_id=shop['location'].id).one().status = 'inactive'
+    data = deepcopy(shop['actor_character'].data)
+    data['inventory']['money'] = 5000
+    data['weapons'] = [{'id':'service-weapon','name':'Пистолет','category':'weapon',
+        'subcategory':'Пистолеты','itemClass':'1','modifications':[]}]
+    shop['actor_character'].data = data
+    db.session.commit()
+    args = {'action':'unlock_slot', 'rule_id':None}
+    assert request(client, shop, auth_headers, **args).status_code == 400
+    configured = configure(client, shop, auth_headers, repair_enabled=True,
+        modification_enabled=False, repair_markup=1.8)
+    assert configured.status_code == 200, configured.json
+    quoted = request(client, shop, auth_headers, **args)
+    assert quoted.status_code == 200 and quoted.json['price'] == 2500
+    result = request(client, shop, auth_headers, **args, execute=True, operation_id='open-slot',
+        actor_revision=shop['actor_character'].revision,
+        specialist_revision=shop['target_character'].revision)
+    assert result.status_code == 200, result.json
+    assert result.json['slots']['available'] == 2
+    assert shop['actor_character'].data['inventory']['money'] == 2500
+    assert shop['target_character'].data['inventory']['money'] == 3000
+    replay = request(client, shop, auth_headers, **args, execute=True, operation_id='open-slot',
+        actor_revision=0, specialist_revision=0)
+    assert replay.status_code == 200 and replay.json['duplicate']
+    assert shop['actor_character'].data['inventory']['money'] == 2500
+    assert request(client, shop, auth_headers, **args, item_id='other').status_code == 409
+    data = deepcopy(shop['actor_character'].data)
+    data['inventory']['money'] = 2499
+    shop['actor_character'].data = data
+    db.session.commit()
+    assert request(client, shop, auth_headers, **args, execute=True, operation_id='no-money',
+        actor_revision=shop['actor_character'].revision,
+        specialist_revision=shop['target_character'].revision).status_code == 400
+    assert shop['actor_character'].data['inventory']['money'] == 2499
+    assert shop['actor_character'].data['weapons'][0]['unlockedModificationSlots'] == 1
+
+
+def test_slot_service_rejects_distant_or_unqualified_npc(client, shop, auth_headers):
+    LocationCombatState.query.filter_by(location_id=shop['location'].id).one().status = 'inactive'
+    data = deepcopy(shop['actor_character'].data)
+    data['weapons'] = [{'id':'service-weapon','name':'Пистолет','category':'weapon',
+        'subcategory':'Пистолеты','itemClass':'1','modifications':[]}]
+    shop['actor_character'].data = data
+    db.session.commit()
+    args = {'action':'unlock_slot', 'rule_id':None}
+    assert configure(client, shop, auth_headers, repair_enabled=True).status_code == 200
+    shop['target_location'].pos_x = 10
+    db.session.commit()
+    assert request(client, shop, auth_headers, **args).status_code == 400
+
+
 def test_paid_installation_rejects_distant_specialist(client, shop, auth_headers):
     LocationCombatState.query.filter_by(location_id=shop['location'].id).one().status = 'inactive'
     shop['target_location'].pos_x = 10

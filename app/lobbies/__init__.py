@@ -4110,7 +4110,9 @@ def professional_modification(lobby_id, location_id, lobby, participant):
                 emit_character_update({'character_id': character_id, 'updates': {'data': character.data_snapshot()},
                                        'updated_by': participant.user_id})
             _emit_lobby_chat_message(lobby_id, participant.user_id,
-                f"Установка модификации: «{result['rule_name']}» на «{result['item_name']}», {result['price']} ₽.",
+                (f"Открыт слот модификации на «{result['item_name']}», {result['price']} ₽."
+                 if result.get('action') == 'unlock_slot' else
+                 f"Установка модификации: «{result['rule_name']}» на «{result['item_name']}», {result['price']} ₽."),
                 username='Система')
     else:
         result = quote(location_id, participant.user_id, payload)

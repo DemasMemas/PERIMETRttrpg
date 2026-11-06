@@ -9867,7 +9867,7 @@ export async function showCharacterTradeMenu(actorLocationCharacterId, actorChar
                 onClose:()=>showCharacterTradeMenu(actorLocationCharacterId,actorCharacterId,targetCharacterId),
             });
         } : null,
-        onModification:npc && (targetData.merchant?.modification_enabled || targetData.merchant?.scientist_enabled) ? async () => {
+        onModification:npc && (targetData.merchant?.repair_enabled || targetData.merchant?.modification_enabled || targetData.merchant?.scientist_enabled) ? async () => {
             try {
                 const snapshot=await Server.getCrafting(actorCharacterId);
                 const rules=(snapshot.catalog?.modifications||[]).filter(rule=>rule.scientist_only
@@ -9877,8 +9877,20 @@ export async function showCharacterTradeMenu(actorLocationCharacterId, actorChar
                     target_path:entry.path,item_id:entry.item.id,rule_id:rule.id,
                     ...(replace?{replace_rule_id:replace}:{}),...extra,
                 });
+                const unlockRequest=(entry,extra={})=>Server.professionalModification(window.currentLobbyId,getCurrentLocationId(),{
+                    actor_location_character_id:actorLocationCharacterId,specialist_character_id:targetCharacterId,
+                    target_path:entry.path,item_id:entry.item.id,action:'unlock_slot',...extra,
+                });
                 renderProfessionalModificationEditor(modal,{
                     targets:snapshot.targets,rules,balance:Number(actorCharacter?.data?.inventory?.money||0),
+                    onUnlockQuote:targetData.merchant?.repair_enabled?entry=>unlockRequest(entry):null,
+                    onUnlockSubmit:targetData.merchant?.repair_enabled?async(entry,operationId)=>{
+                        const result=await unlockRequest(entry,{execute:true,operation_id:operationId,
+                            actor_revision:actorCharacter?.data?._revision??actorCharacter.revision,
+                            specialist_revision:targetData._revision});
+                        modal.style.display='none';
+                        showNotification(result.duplicate?'Слот уже открыт':`Слот открыт за ${result.price} ₽`,'success');
+                    }:null,
                     onQuote:(entry,rule,replace)=>request(entry,rule,replace),
                     onSubmit:async(entry,rule,replace,operationId)=>{
                         const result=await request(entry,rule,replace,{execute:true,operation_id:operationId,

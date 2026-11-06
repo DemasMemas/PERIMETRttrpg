@@ -2219,6 +2219,31 @@ input[type="number"] {
 #character-sheet-modal {
   z-index: 1000;
 }
+.pda-shell-modal { z-index: 1100; background: rgba(3, 9, 7, .82); padding: 12px; box-sizing: border-box; }
+.modal-content.pda-shell { width: min(940px, 100%); max-width: 100%; max-height: min(760px, 96vh); overflow: auto; padding: 0; border: 0; background: transparent; box-shadow: none; color: #cce7c0; }
+.pda-shell-bezel { background: linear-gradient(140deg, #434b43, #202a25 36%, #3b4038); border: 3px solid #778173; border-radius: 25px; padding: 20px; box-shadow: 0 25px 80px #000b, inset 0 0 0 3px #1b211e; }
+.pda-shell-brand { display: flex; align-items: center; gap: 10px; margin: 0 4px 14px; color: #e1e7d8; font-size: .82rem; font-weight: 800; letter-spacing: .16em; }
+.pda-shell-model { margin-left: auto; opacity: .55; font-size: .7rem; }
+.pda-shell-light { width: 9px; height: 9px; background: #a7df76; border-radius: 50%; box-shadow: 0 0 12px #a7df76; }
+.pda-shell-screen { min-height: 460px; background: radial-gradient(circle at 85% 0, #243d29, #0d1d17 60%, #091510); border: 6px solid #111b15; border-radius: 11px; box-shadow: inset 0 0 36px #0008; display: flex; flex-direction: column; }
+.pda-shell-header, .pda-shell-footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 13px 18px; border-bottom: 1px solid #8eb87844; }
+.pda-shell-header small { display: block; color: #8bab83; font-size: .64rem; letter-spacing: .16em; }
+.pda-shell-header strong { font-size: 1.35rem; }
+.pda-shell-power { display: flex; align-items: center; gap: 12px; font-size: .72rem; letter-spacing: .1em; }
+.pda-shell-power button, .pda-shell-nav button { color: #cce7c0; background: #213c29; border: 1px solid #68905b88; border-radius: 6px; cursor: pointer; font: inherit; }
+.pda-shell-power button { padding: 7px 12px; }
+.pda-shell-power button:disabled, .pda-shell-nav button:disabled { opacity: .45; cursor: default; }
+.pda-shell-content { display: grid; grid-template-columns: 220px minmax(0, 1fr); flex: 1; min-height: 0; }
+.pda-shell-nav { display: flex; flex-direction: column; gap: 5px; padding: 14px; border-right: 1px solid #8eb87844; overflow: auto; max-height: 520px; }
+.pda-shell-nav button { text-align: left; padding: 8px 11px; }
+.pda-shell-nav button.active, .pda-shell-nav button:not(:disabled):hover { background: #456739; border-color: #acd48e; }
+.pda-shell-main { padding: 24px; line-height: 1.55; }
+.pda-shell-lead { font-size: 1.25rem; color: #ecf9da; margin: 0 0 18px; }
+.pda-shell-note { display: inline-block; padding: 9px 13px; border: 1px solid #a1bc744d; border-radius: 6px; color: #bdd1af; }
+.pda-shell-mod { display: flex; flex-direction: column; margin: 8px 0; padding: 8px 12px; border-left: 3px solid #91b973; background: #ffffff0a; }
+.pda-shell-footer { border-top: 1px solid #8eb87844; border-bottom: 0; color: #8bab83; font-size: .67rem; letter-spacing: .12em; }
+.pda-shell-close { display: block; margin: 14px auto 0; }
+@media (max-width: 620px) { .pda-shell-bezel { padding: 11px; } .pda-shell-screen { min-height: 0; } .pda-shell-content { grid-template-columns: 1fr; } .pda-shell-nav { flex-direction: row; border-right: 0; border-bottom: 1px solid #8eb87844; max-height: none; overflow-x: auto; } .pda-shell-nav button { white-space: nowrap; } .pda-shell-main { min-height: 180px; padding: 18px; } .pda-shell-model { display: none; } }
 .sheet-tab-content {
   display: none;
   padding: 15px;
@@ -3920,8 +3945,11 @@ input[type=range]::-webkit-slider-thumb {
 .character-trade .form-actions { flex-wrap: wrap; }
 .merchant-editor { display: flex; flex-direction: column; box-sizing: border-box; }
 .merchant-editor > * { flex-shrink: 0; }
-.merchant-editor p { margin: 8px 0; }
+.merchant-editor p { margin: 5px 0; }
 .merchant-enable { display: flex; gap: 10px; align-items: center; margin: 16px 0; }
+.merchant-editor .merchant-enable { margin: 4px 0; }
+.merchant-editor .trade-error { min-height: 0; margin: 4px 0; }
+.merchant-editor .form-actions { margin-top: 4px; }
 .character-trade .merchant-money { width: 124px; max-width: 124px; }
 .merchant-columns, .merchant-price-row { display: grid; grid-template-columns: minmax(0,1fr) 104px 104px; gap: 10px; align-items: center; }
 .merchant-columns { padding: 8px 0; font-size: 13px; opacity: .7; }

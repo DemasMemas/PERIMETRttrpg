@@ -83,10 +83,17 @@ export async function showCrafting({characterId,lobbyId,onSaved}){
                     if(quoteGeneration!==generation||!modal.isConnected)return;
                     const plan=response.result;preview.replaceChildren(el('p',`Итоговая СЛ ${plan.difficulty}${plan.automatic_success?' · автоуспех':''}`));
                     if(approval)preview.append(el('p',`ГМ одобрил: ${approval.tool_name||'условия'} · СЛ ${approval.modifier}`));
-                    for(const c of recipe.components)preview.append(el('p',c.alternatives?.length
-                        ? c.alternatives.map(option=>`${option.name} × ${option.quantity}`).join(' или ')
-                        : `${c.name} × ${c.quantity}`));
-                    for(const missing of plan.missing)preview.append(el('p',missing,'error-message'));
+                    let statusIndex=0;
+                    for(const component of recipe.components){
+                        if(component.name.toLocaleLowerCase().startsWith('доступ к ')){
+                            preview.append(el('p',component.name));continue;
+                        }
+                        const status=plan.component_status?.[statusIndex++];
+                        const options=status?.alternatives || component.alternatives || [component];
+                        preview.append(el('p',options.map(option=>
+                            `${option.name} ${option.available ?? 0}/${option.required ?? option.quantity}`).join(' или ')));
+                    }
+                    for(const missing of plan.other_missing || plan.missing)preview.append(el('p',missing,'error-message'));
                     const start=button('Начать создание',()=>act('start',{recipe_id:recipe.id,tool_option:Number(tool.value),approval_id:approval?.id}));
                     start.disabled=plan.missing.length>0;preview.append(start);
                 }catch(error){if(quoteGeneration===generation)preview.replaceChildren(el('p',error.message));}
@@ -198,7 +205,6 @@ export async function showCrafting({characterId,lobbyId,onSaved}){
             const rules=select('Модификация',choices.map(r=>[r.id,`Ур. ${r.level||1} · ${r.name||r.description}`]));
             if(choices.some(r=>r.id===modSelection.rule))rules.value=modSelection.rule;
             form.append(rules,el('p',`Открыто слотов: ${target.slots.available} / ${target.slots.maximum}`));
-            if(target.slots.available<target.slots.maximum)form.append(button('Открыть слот · 2500 ₽',()=>act('unlock_slot',{target_path:target.path})));
             const tool=select('Инструменты для модификации',snapshot.inventory.map((entry,i)=>[i,`${entry.item.name} · ${entry.item.uses??entry.item.maxUses??entry.item.attributes?.uses??'—'} зарядов`]));
             if(snapshot.inventory[modSelection.tool])tool.value=modSelection.tool;
             form.append(el('label','Набор инструментов или станок'),tool);

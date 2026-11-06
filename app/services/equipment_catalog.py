@@ -20,6 +20,23 @@ WATER_VARIANTS = (
     ('Радиоактивная вода', 3, 0.5),
 )
 
+CRAFT_MOLD_PRICES = {'recipe-v38': 200, 'recipe-v41': 650}
+
+
+def craft_mold_templates(creation):
+    """Формы из книги создания с параметрами, утверждёнными автором."""
+    from app.services.catalog_import import template
+
+    recipes = {item['id']: item for item in creation['recipes']}
+    result = []
+    for recipe_id, price in CRAFT_MOLD_PRICES.items():
+        name = recipes[recipe_id]['output_name']
+        result.append(template(name, 'crafting_material', price, .25, .25,
+            'Расходуемая форма для изготовления боеприпасов.', 'Материалы для создания',
+            {'import_source': 'creation_workbook', 'craft_material': True,
+             'consumed_on_use': True, 'source_recipe_id': recipe_id}))
+    return result
+
 
 def retired_catalog_template(template):
     return (template.category if hasattr(template, 'category') else template.get('category')) == 'gloves' and (
@@ -84,6 +101,7 @@ def parse_catalog(workbook_path):
                 'Рабочий станок. Ремонт и модификация занимают вдвое меньше времени; имеется расширенный набор инструментов. Аренда: %s ₽/ч.' % bench['hourly_rent'],
                 'Станки', {'craft_workbench': True, 'uses': 50, 'max_uses': 50, 'hourly_rent': bench['hourly_rent'],
                            'unspecified_fields': ['weight', 'volume']}))
+        entries.extend(craft_mold_templates(creation))
     entries.extend(additional_water_templates(entries))
     from app.services.cooked_meat import templates as cooked_meat_templates
     entries.extend(cooked_meat_templates())
@@ -134,6 +152,9 @@ def load_catalog(path=None):
     if payload.get('version') != 1 or not isinstance(payload.get('templates'), list):
         raise ValueError('Неизвестный формат каталога снаряжения')
     entries = payload['templates']
+    creation_path = Path(__file__).resolve().parents[1] / 'data' / 'creation_rules.json'
+    if creation_path.is_file():
+        entries = [*entries, *craft_mold_templates(json.loads(creation_path.read_text(encoding='utf-8')))]
     from app.services.cooked_meat import templates as cooked_meat_templates
     return prepare_catalog([*entries, *additional_water_templates(entries), *cooked_meat_templates()])
 

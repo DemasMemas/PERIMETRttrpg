@@ -28,6 +28,11 @@ def components(value):
         if fuel_liters:
             result.append({'name':fuel_liters[1], 'quantity':int(fuel_liters[2]),'source_text':part.strip()})
             continue
+        filter_charges=re.fullmatch(r'(Фильтр для противогаза)\s*\(\s*(\d+)\s*заряд(?:ов|а)?\s*\)',part,re.I)
+        if filter_charges:
+            result.append({'name':filter_charges[1], 'quantity':int(filter_charges[2]),
+                           'source_text':part.strip(),'filter_charges':True})
+            continue
         if '/' in part:
             alternatives=[]
             for option in part.split('/'):

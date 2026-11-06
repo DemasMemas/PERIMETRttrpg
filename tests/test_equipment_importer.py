@@ -46,6 +46,35 @@ def test_missing_catalog_import_preserves_customized_records_and_is_idempotent(a
     assert ItemTemplate.query.count() == 2
 
 
+def test_pda_volume_migration_updates_only_unchanged_catalog_template(monkeypatch):
+    import importlib
+    import sqlalchemy as sa
+
+    migration = importlib.import_module('migrations.versions.c84f2d6a1e09_reduce_pda_volume')
+    engine = sa.create_engine('sqlite:///:memory:')
+    metadata = sa.MetaData()
+    table = sa.Table('item_templates', metadata,
+        sa.Column('id', sa.Integer, primary_key=True), sa.Column('name', sa.String),
+        sa.Column('category', sa.String), sa.Column('price', sa.Integer),
+        sa.Column('weight', sa.Float), sa.Column('volume', sa.Float),
+        sa.Column('attributes', sa.JSON))
+    metadata.create_all(engine)
+    with engine.begin() as connection:
+        connection.execute(table.insert(), [
+            {'name':'КПК','category':'misc','price':1500,'weight':.25,'volume':1,
+             'attributes':{'import_source':'equipment_workbook'}},
+            {'name':'КПК','category':'misc','price':1500,'weight':.25,'volume':1,
+             'attributes':{'custom_rule':True}},
+            {'name':'КПК','category':'misc','price':1500,'weight':.25,'volume':.75,
+             'attributes':{'import_source':'equipment_workbook'}},
+        ])
+        monkeypatch.setattr(migration.op, 'get_bind', lambda: connection)
+        migration.upgrade()
+        migration.upgrade()
+        volumes = connection.execute(sa.select(table.c.volume).order_by(table.c.id)).scalars().all()
+    assert volumes == [.5, 1, .75]
+
+
 def test_new_equipment_book_includes_side_tables_and_all_rig_variants():
     import pytest
 
@@ -183,6 +212,30 @@ def test_published_equipment_matches_current_book_and_accepted_builtin_rules():
     if not source.exists():
         pytest.skip('Книга приватна и не включена в репозиторий')
     assert parse_catalog(source) == load_catalog()
+
+
+def test_craft_mold_migration_preserves_existing_template_and_is_repeatable(app, monkeypatch):
+    import importlib.util
+    from pathlib import Path
+    from app.extensions import db
+    from app.models.templates import ItemTemplate
+
+    path = Path(__file__).resolve().parents[1] / 'migrations/versions/b72e6a1c4f90_add_craft_molds.py'
+    spec = importlib.util.spec_from_file_location('craft_mold_migration', path)
+    migration = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(migration)
+    existing = ItemTemplate(name='Форма для патронов', category='crafting_material',
+        price=175, attributes={'gm_note': 'сохранить'})
+    db.session.add(existing)
+    db.session.flush()
+    monkeypatch.setattr(migration.op, 'get_bind', lambda: db.session.connection())
+    migration.upgrade()
+    migration.upgrade()
+    db.session.expire_all()
+    assert ItemTemplate.query.filter_by(name='Форма для патронов', category='crafting_material').count() == 1
+    assert existing.price == 175 and existing.attributes == {'gm_note': 'сохранить'}
+    grenade = ItemTemplate.query.filter_by(name='Форма гранаты', category='crafting_material').one()
+    assert (grenade.price, grenade.weight, grenade.volume) == (650, .25, .25)
 
 
 def test_water_variants_have_author_effects_without_price_or_trade(app, monkeypatch):

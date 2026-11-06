@@ -3,6 +3,7 @@ import { applyPouchTemplate, applyVestTemplate, returnPouchContents, vestMountVo
 import { rollQuickSkill } from './quickSkillCheck.js';
 import {modificationStat,wornModificationStat,modificationRule,wornModificationRule,modifiedFireProfile} from './itemModifications.js';
 import { renderPortableLights,usesNightVision } from './portableLights.js';
+import { openPdaShell } from './pdaShell.js';
 import { renderProstheses,prostheticLimb } from './prostheses.js';
 import { pairedFireOptions } from './pairedFire.js';
 import { hearingModifier } from './hearingRules.js';
@@ -270,6 +271,7 @@ let allTemplatesCache = null;
 
 export function getCategoryDisplay(cat) {
     const map = {
+        'books': 'Книги',
         'weapon': 'Оружие',
         'melee_weapon': 'Оружие ближнего боя',
         'armor': 'Броня',
@@ -524,7 +526,7 @@ const ITEM_CATEGORY_ORDER = [
     'Магазины', 'Патроны', 'Гранаты', 'Оружейные модули', 'Бронеплиты',
     'Рюкзаки', 'Разгрузки', 'Пояс', 'Подсумки', 'Контейнеры',
     'Расходники', 'Приборы', 'Детекторы', 'Фильтры противогазов',
-    'Модули шлемов', 'Артефакты', 'Материалы', 'Инструменты', 'Прочее',
+    'Модули шлемов', 'Артефакты', 'Материалы', 'Инструменты', 'Книги', 'Прочее',
 ];
 const CONSUMABLE_SECTION_ORDER = [
     'Продукты', 'Кровь', 'Обезболивающее', 'Стимуляторы',
@@ -740,7 +742,7 @@ async function getAllItemTemplates(forceRefresh = false) {
         'consumable', 'crafting_material', 'artifact', 'backpack', 'vest', 'pouch',
         'weapon_module', 'magazine', 'ammo', 'gas_mask_module', 'helmet_module', 'visor', 'belt',
         'exoskeleton_module', 'grenade', 'device', 'armor_plate', 'melee_weapon',
-        'headphones', 'glasses', 'gloves', 'jewelry', 'tool'
+        'headphones', 'glasses', 'gloves', 'jewelry', 'tool', 'misc', 'other', 'food'
     ];
 
     let all = [];
@@ -769,7 +771,7 @@ function clearAllTemplatesCache() {
     allTemplatesCache = null;
     const categories = ['weapon', 'armor', 'helmet', 'gas_mask', 'detector', 'container',
                         'consumable', 'crafting_material', 'artifact', 'modification', 'backpack', 'vest', 'pouch',
-                        'weapon_module', 'ammo', 'exoskeleton_module', 'tool'];
+                        'weapon_module', 'ammo', 'exoskeleton_module', 'tool', 'misc', 'other', 'food'];
     categories.forEach(cat => clearTemplatesCache(cat));
 }
 
@@ -4429,7 +4431,6 @@ async function renderEquipmentTab(data) {
             <div class="modifications-block">
                 <div style="display:flex; align-items:center;">
                     <h5 style="margin:0;">Модификации шлема</h5>
-                    <button type="button" class="btn btn-sm btn-secondary" onclick="addHelmetModification()" style="padding:2px 8px;">➕</button>
                 </div>
                 <div id="helmet-modifications-container">${renderHelmetModifications(helmet.modifications, groupedHelmetMods)}</div>
             </div>
@@ -4477,7 +4478,6 @@ async function renderEquipmentTab(data) {
             <div class="modifications-block">
                 <div style="display:flex; align-items:center;">
                     <h5 style="margin:0;">Модификации противогаза</h5>
-                    <button type="button" class="btn btn-sm btn-secondary" onclick="addGasMaskModification()" style="padding:2px 8px;">➕</button>
                 </div>
                 <div id="gasMask-modifications-container">${renderGasMaskModifications(gasMask.modifications, groupedGasMaskMods)}</div>
             </div>
@@ -4579,7 +4579,6 @@ async function renderEquipmentTab(data) {
             <div class="modifications-block">
                 <div style="display:flex; align-items:center;">
                     <h5 style="margin:0;">Модификации брони</h5>
-                    <button type="button" class="btn btn-sm btn-secondary" onclick="addArmorModification()" style="padding:2px 8px;">➕</button>
                 </div>
                 <div id="armor-modifications-container">${renderArmorModifications(armor.modifications, groupedArmorMods)}</div>
             </div>
@@ -4721,7 +4720,6 @@ async function renderEquipmentTab(data) {
         <div class="equipment-group" data-equipment-group="pda">
             <div style="display:flex; align-items:center;">
                 <h4 style="margin:0;">Модификации КПК</h4>
-                <button type="button" class="btn btn-sm btn-secondary" onclick="addPdaItem()" style="padding:2px 8px;">➕</button>
             </div>
             <div id="pda-modifications-container">${renderPdaModifications(data.modifications?.pda?.items || [], groupedPdaMods)}</div>
         </div>
@@ -5188,24 +5186,16 @@ function renderRuleModification(mod) {
     return `<div class="installed-rule-modification"><strong>${escapeHtml(mod.name)}</strong> · уровень ${mod.level}${mod.gunsmith?' · Оружейник ×1,5':''}${mod.description!==mod.name?`<div>${escapeHtml(mod.description)}</div>`:''}</div>`;
 }
 
+function renderLegacyModification(mod) {
+    return `<div class="installed-rule-modification"><strong>${escapeHtml(mod.name || 'Модификация')}</strong>${mod.description || mod.effect ? `<div>${escapeHtml(mod.description || mod.effect)}</div>` : ''}</div>`;
+}
+
 function renderBeltModifications(mods, modTemplates) {
     if (!mods || mods.length === 0) return '<p>Нет модификаций</p>';
     let html = '';
-    mods.forEach((mod, index) => {
+    mods.forEach(mod => {
         if(mod.ruleId){html+=renderRuleModification(mod);return;}
-        const options = modTemplates.map(t =>
-            `<option value="${t.id}" ${mod.name === t.name ? 'selected' : ''}>${t.name}</option>`
-        ).join('');
-        html += `
-            <div style="display: flex; gap: 5px; margin-bottom: 5px; align-items: center;">
-                <select name="equipment.belt.modifications.${index}.name" class="form-control" style="width: 200px;">
-                    <option value="">-- Выберите модификацию --</option>
-                    ${options}
-                </select>
-                <input type="text" class="form-control" name="equipment.belt.modifications.${index}.description" value="${escapeHtml(mod.description || '')}" placeholder="Описание" style="flex:1;">
-                <button type="button" class="btn btn-sm btn-danger" onclick="removeBeltModification(${index})">✕</button>
-            </div>
-        `;
+        html += renderLegacyModification(mod);
     });
     return html;
 }
@@ -5213,23 +5203,9 @@ function renderBeltModifications(mods, modTemplates) {
 function renderHelmetModifications(mods, groupedTemplates) {
     if (!mods || mods.length === 0) return '';
     let html = '';
-    mods.forEach((mod, index) => {
+    mods.forEach(mod => {
         if(mod.ruleId){html+=renderRuleModification(mod);return;}
-        const options = Object.entries(groupedTemplates).map(([cat, items]) => `
-            <optgroup label="${cat}">
-                ${items.map(t => `<option value="${t.id}" ${mod.name === t.name ? 'selected' : ''}>${t.name}</option>`).join('')}
-            </optgroup>
-        `).join('');
-        html += `
-            <div style="display: flex; gap: 5px; margin-bottom: 5px; align-items: center;">
-                <select name="equipment.helmet.modifications.${index}.name" class="form-control" style="width: 200px;">
-                    <option value="">-- Выберите модификацию --</option>
-                    ${options}
-                </select>
-                <input type="text" class="form-control" name="equipment.helmet.modifications.${index}.description" value="${escapeHtml(mod.description || '')}" placeholder="Описание" style="flex:1;">
-                <button type="button" class="btn btn-sm btn-danger" onclick="removeHelmetModification(${index})">✕</button>
-            </div>
-        `;
+        html += renderLegacyModification(mod);
     });
     return html;
 }
@@ -5237,23 +5213,9 @@ function renderHelmetModifications(mods, groupedTemplates) {
 function renderGasMaskModifications(mods, groupedTemplates) {
     if (!mods || mods.length === 0) return '';
     let html = '';
-    mods.forEach((mod, index) => {
+    mods.forEach(mod => {
         if(mod.ruleId){html+=renderRuleModification(mod);return;}
-        const options = Object.entries(groupedTemplates).map(([cat, items]) => `
-            <optgroup label="${cat}">
-                ${items.map(t => `<option value="${t.id}" ${mod.name === t.name ? 'selected' : ''}>${t.name}</option>`).join('')}
-            </optgroup>
-        `).join('');
-        html += `
-            <div style="display: flex; gap: 5px; margin-bottom: 5px; align-items: center;">
-                <select name="equipment.gasMask.modifications.${index}.name" class="form-control" style="width: 200px;">
-                    <option value="">-- Выберите модификацию --</option>
-                    ${options}
-                </select>
-                <input type="text" class="form-control" name="equipment.gasMask.modifications.${index}.description" value="${escapeHtml(mod.description || '')}" placeholder="Описание" style="flex:1;">
-                <button type="button" class="btn btn-sm btn-danger" onclick="removeGasMaskModification(${index})">✕</button>
-            </div>
-        `;
+        html += renderLegacyModification(mod);
     });
     return html;
 }
@@ -5261,23 +5223,9 @@ function renderGasMaskModifications(mods, groupedTemplates) {
 function renderArmorModifications(mods, groupedTemplates) {
     if (!mods || mods.length === 0) return '';
     let html = '';
-    mods.forEach((mod, index) => {
+    mods.forEach(mod => {
         if(mod.ruleId){html+=renderRuleModification(mod);return;}
-        const options = Object.entries(groupedTemplates).map(([cat, items]) => `
-            <optgroup label="${cat}">
-                ${items.map(t => `<option value="${t.id}" ${mod.name === t.name ? 'selected' : ''}>${t.name}</option>`).join('')}
-            </optgroup>
-        `).join('');
-        html += `
-            <div style="display: flex; gap: 5px; margin-bottom: 5px; align-items: center;">
-                <select name="equipment.armor.modifications.${index}.name" class="form-control" style="width: 200px;">
-                    <option value="">-- Выберите модификацию --</option>
-                    ${options}
-                </select>
-                <input type="text" class="form-control" name="equipment.armor.modifications.${index}.description" value="${escapeHtml(mod.description || '')}" placeholder="Описание" style="flex:1;">
-                <button type="button" class="btn btn-sm btn-danger" onclick="removeArmorModification(${index})">✕</button>
-            </div>
-        `;
+        html += renderLegacyModification(mod);
     });
     return html;
 }
@@ -5300,23 +5248,7 @@ function renderArmorContainers(containers) {
 function renderPdaModifications(items, groupedTemplates) {
     if (!items || items.length === 0) return '';
     let html = '';
-    items.forEach((item, index) => {
-        const options = Object.entries(groupedTemplates).map(([cat, items]) => `
-            <optgroup label="${cat}">
-                ${items.map(t => `<option value="${t.id}" ${item.name === t.name ? 'selected' : ''}>${t.name}</option>`).join('')}
-            </optgroup>
-        `).join('');
-        html += `
-            <div style="display: flex; gap: 5px; margin-bottom: 5px; align-items: center;">
-                <select name="modifications.pda.items.${index}.name" class="form-control" style="width: 200px;">
-                    <option value="">-- Выберите модификацию --</option>
-                    ${options}
-                </select>
-                <input type="text" class="form-control" name="modifications.pda.items.${index}.effect" value="${escapeHtml(item.effect || '')}" placeholder="Эффект" style="flex:1;">
-                <button type="button" class="btn btn-sm btn-danger" onclick="removePdaItem(${index})">✕</button>
-            </div>
-        `;
-    });
+    items.forEach(item => { html += renderLegacyModification(item); });
     return html;
 }
 
@@ -6264,23 +6196,9 @@ async function renderWeapons(weapons, weaponTemplates, moduleTemplates, weaponMo
         }
 
         let modificationsHtml = '';
-        modifications.forEach((mod, mi) => {
+        modifications.forEach(mod => {
             if(mod.ruleId){modificationsHtml+=renderRuleModification(mod);return;}
-            const modOptions = Object.entries(groupedMods).map(([cat, items]) => `
-                <optgroup label="${cat}">
-                    ${items.map(t => `<option value="${t.id}" ${mod.name === t.name ? 'selected' : ''}>${t.name}</option>`).join('')}
-                </optgroup>
-            `).join('');
-            modificationsHtml += `
-                <div style="display: flex; gap: 5px; margin-bottom: 3px; align-items: center;">
-                    <select name="weapons.${index}.modifications.${mi}.name" class="form-control" style="width: 150px;">
-                        <option value="">-- Выберите модификацию --</option>
-                        ${modOptions}
-                    </select>
-                    <input type="text" class="form-control" name="weapons.${index}.modifications.${mi}.description" value="${escapeHtml(mod.description || '')}" placeholder="Описание" style="flex:1;">
-                    <button type="button" class="btn btn-sm btn-danger" onclick="removeWeaponModification(${index}, ${mi})">✕</button>
-                </div>
-            `;
+            modificationsHtml += renderLegacyModification(mod);
         });
 
         weaponsHtml.push(`
@@ -6302,7 +6220,6 @@ async function renderWeapons(weapons, weaponTemplates, moduleTemplates, weaponMo
                     <div style="margin-top:10px;">
                         <div style="display: flex; align-items: center;">
                             <label style="margin: 0;">Модификации</label>
-                            <button type="button" class="btn btn-sm" onclick="addWeaponModification(${index})" title="Добавить модификацию" style="padding: 2px 8px;">➕</button>
                         </div>
                         <div id="modifications-${index}">${modificationsHtml}</div>
                     </div>
@@ -10046,7 +9963,13 @@ window.reloadGrenadeLauncher = async function(weaponIndex) {
 
 // Использование предмета из инвентаря (для расходников, гранат и т.д.)
 async function useItem(item, itemPath, options = {}) {
-    if (item.category === 'consumable') {
+    if (item.category === 'misc' && item.name === 'КПК') {
+        return openPdaShell({item, findItem: id => id
+                ? findInventoryItemById(currentCharacterData, id)
+                : (getItemByPath(itemPath)?.name === 'КПК' ? {item: getItemByPath(itemPath), path: itemPath} : null),
+            getData: () => currentCharacterData, operate: payload => window.operatePortableLight(payload),
+            canEdit: currentCharacterCanEdit});
+    } else if (item.category === 'consumable') {
         if (!options.consumableSideEffects) {
             return useCharacterInventoryItem(currentCharacterId, itemPath, options);
         }
@@ -14110,7 +14033,6 @@ async function renderInventoryTab(data) {
             <div id="belt-pouches-container"></div>
             <div style="display: flex; align-items: center; margin-top: 15px;">
                 <h5 style="margin: 0;">Модификации пояса</h5>
-                <button type="button" class="btn btn-sm btn-secondary" onclick="addBeltModification()" title="Добавить модификацию" style="padding: 2px 8px;">➕</button>
             </div>
             <div id="belt-modifications-container">
                 ${renderBeltModifications(eq.belt?.modifications || [], modificationTemplates.filter(t => t.attributes?.type === 'belt'))}
@@ -15098,7 +15020,8 @@ export function renderInventoryTemplatePicker(templates, query = '', options = {
                 t.attributes?.caliber,
                 t.attributes?.ammo_group,
                 t.attributes?.ammo_kind,
-                t.attributes?.purchase_category
+                t.attributes?.purchase_category,
+                t.attributes?.book_kind ? 'книга книги чтение' : ''
             ].filter(Boolean).join(' ').toLowerCase();
             return haystack.includes(normalizedQuery);
         })
@@ -15110,7 +15033,7 @@ export function renderInventoryTemplatePicker(templates, query = '', options = {
 
     const grouped = {};
     filtered.forEach(t => {
-        const group = t.categoryDisplay || getCategoryDisplay(t.category) || 'Прочее';
+        const group = t.attributes?.book_kind ? 'Книги' : t.categoryDisplay || getCategoryDisplay(t.category) || 'Прочее';
         if (!grouped[group]) grouped[group] = [];
         grouped[group].push(t);
     });
@@ -15120,6 +15043,7 @@ export function renderInventoryTemplatePicker(templates, query = '', options = {
             ${items.map(t => {
                 const attrs = t.attributes || {};
                 const chips = [];
+                if (attrs.book_kind) chips.push(attrs.book_kind === 'skill' ? 'Книга навыков' : 'Книга снаряжения');
                 if (attrs.caliber) chips.push(`Калибр: ${escapeHtml(String(attrs.caliber))}`);
                 if (attrs.damage !== undefined && attrs.damage !== null && t.category === 'ammo') chips.push(`Урон: ${escapeHtml(String(attrs.damage))}`);
                 if (attrs.penetration !== undefined && attrs.penetration !== null && t.category === 'ammo') chips.push(`Пробитие: ${escapeHtml(formatAmmoPenetration(attrs.penetration))}`);
@@ -16255,7 +16179,8 @@ function renderBackpackItem(item, index, parentPath, parentContainer, allTemplat
     // Использовать
     const usableCategories = ['consumable', 'grenade', 'device'];
     const isBattery = (item.category === 'device' && item.subcategory === 'battery');
-    if ((usableCategories.includes(item.category) || item.attributes?.usable) && !isBattery) {
+    if ((usableCategories.includes(item.category) || item.attributes?.usable ||
+        (item.category === 'misc' && item.name === 'КПК')) && !isBattery) {
         const useBtn = document.createElement('button');
         useBtn.dataset.widgetKey = 'use';
         useBtn.type = 'button';

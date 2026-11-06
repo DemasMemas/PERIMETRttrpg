@@ -12,6 +12,27 @@ from test_grenade_rules import grenade_game
 from test_flamethrower import flame_game
 
 
+def test_player_cannot_assign_free_modifications_but_existing_records_remain(app):
+    from app.services.equipment_modifications import preserve
+    from app.services.exceptions import ValidationError
+
+    current={'weapons':[{'id':'gun','name':'Пистолет','category':'weapon',
+        'modifications':[{'name':'Старая ручная модификация','description':'Сохранить'}]}],
+        'modifications':{'pda':{'items':[{'name':'Старая запись','effect':'Сохранить'}]}}}
+    unchanged=deepcopy(current)
+    preserve(current,unchanged,is_gm=False)
+    assert unchanged['weapons'][0]['modifications']==current['weapons'][0]['modifications']
+    added=deepcopy(current)
+    added['weapons'][0]['modifications'].append({'name':'Новая модификация'})
+    with pytest.raises(ValidationError,match='через игровой процесс'):
+        preserve(current,added,is_gm=False)
+    pda_changed=deepcopy(current)
+    pda_changed['modifications']['pda']['items'].append({'name':'Новая запись'})
+    with pytest.raises(ValidationError,match='через игровой процесс'):
+        preserve(current,pda_changed,is_gm=False)
+    preserve(current,added,is_gm=True)
+
+
 def test_exoskeleton_run_upgrade_changes_actual_movement(grenade_game):
     actor=grenade_game['actor_location'];location=grenade_game['location']
     data=deepcopy(actor.character.data)
@@ -247,12 +268,37 @@ def test_same_level_replacement_removes_old_effect_without_gaining_an_extra_slot
     assert weapon['maxDurability']==115 and weapon['durability']==115
 
 
-def test_unlock_is_paid_once_and_cannot_exceed_maximum(client,gunsmith,auth_headers):
+def test_crafting_endpoint_cannot_buy_slot_without_mechanic(client,gunsmith,auth_headers):
     response=call(client,gunsmith,auth_headers,'unlock_slot',target_path=['weapons',0])
-    assert response.status_code==200,response.json
-    assert response.json['result']['slots']['available']==2 and response.json['data']['inventory']['money']==2500
-    repeated=call(client,gunsmith,auth_headers,'unlock_slot',target_path=['weapons',0],character_revision=0)
-    assert repeated.status_code==200 and repeated.json['data']['inventory']['money']==2500
+    assert response.status_code==400,response.json
+    assert gunsmith['actor_character'].data['inventory']['money']==5000
+    assert not gunsmith['actor_character'].data['weapons'][0].get('unlockedModificationSlots')
+
+
+def test_weapon_levels_require_every_previous_level_even_with_open_slots(client,gunsmith,auth_headers):
+    data=deepcopy(gunsmith['actor_character'].data)
+    data['weapons'][0]['itemClass']='3'
+    gunsmith['actor_character'].data=data;db.session.commit()
+    second=modify(client,gunsmith,auth_headers,'weapon-b24')
+    assert second.status_code==400 and 'последовательно' in str(second.json)
+    data=deepcopy(gunsmith['actor_character'].data)
+    data['weapons'][0]['modifications']=[make_record('weapon-b23')]
+    gunsmith['actor_character'].data=data;db.session.commit()
+    assert modify(client,gunsmith,auth_headers,'weapon-b25').status_code==400
+    data=deepcopy(gunsmith['actor_character'].data)
+    data['weapons'][0]['modifications'].append(make_record('weapon-b24'))
+    gunsmith['actor_character'].data=data;db.session.commit()
+    quote=call(client,gunsmith,auth_headers,'quote_modification',rule_id='weapon-b25',
+        target_path=['weapons',0],tool_path=['inventory','pockets',4])
+    assert quote.status_code==200,quote.json
+
+
+def test_weapon_slot_counts_follow_item_class(app):
+    from app.services.equipment_modifications import slots
+    for item_class,expected in [('1',1),('2',2),('3',3),('Н',3)]:
+        item={'name':'Пистолет','category':'weapon','subcategory':'Пистолеты',
+              'itemClass':item_class,'modifications':[]}
+        assert slots(item)['available']==expected
 
 
 @pytest.mark.parametrize('rule_id,effect,expected',[

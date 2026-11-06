@@ -17,11 +17,11 @@ from app.services.character_roles import follows_world_time
 logger = logging.getLogger(__name__)
 
 
-def _preserve_intoxication_status(current_data, incoming_data):
+def _preserve_intoxication_status(current_data, incoming_data, *, is_gm=True):
     from app.services.flamethrower import preserve as preserve_flame_resources
     preserve_flame_resources(current_data,incoming_data)
     from app.services.equipment_modifications import preserve as preserve_modifications
-    preserve_modifications(current_data,incoming_data)
+    preserve_modifications(current_data,incoming_data,is_gm=is_gm)
     from app.services.crafting import preserve as preserve_crafting
     preserve_crafting(current_data,incoming_data)
     from app.services.consumable_effects import normalize_owl_modifiers
@@ -583,7 +583,7 @@ class CharacterService:
             # Нормализация предметов не должна менять внутренний снимок процедуры.
             _preserve_server_medical_retry(character.data, character_data)
             _preserve_server_zombification(character.data,character_data)
-            _preserve_intoxication_status(character.data, character_data)
+            _preserve_intoxication_status(character.data, character_data, is_gm=is_gm)
             from app.services.equipment_modifications import validate_belt_pouches
             validate_belt_pouches(character.data,character_data,character.lobby_id)
             incoming_health = character_data.get('health') or {}

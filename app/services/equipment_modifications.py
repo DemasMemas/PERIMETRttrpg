@@ -246,8 +246,12 @@ def validate_belt_pouches(current,incoming,lobby_id):
         raise ValidationError(f'На поясе доступно не больше {limit} подсумков')
 
 
-def preserve(current,incoming):
+def preserve(current,incoming,*,is_gm=True):
     from app.services.portable_lights import walk
+    if not is_gm:
+        previous_pda=(((current or {}).get('modifications') or {}).get('pda') or {}).get('items') or []
+        next_pda=(((incoming or {}).get('modifications') or {}).get('pda') or {}).get('items') or []
+        if next_pda!=previous_pda:raise ValidationError('Модификации КПК устанавливаются через игровой процесс')
     def items(data):
         for path,item in walk(data or {},True):
             yield item
@@ -261,6 +265,9 @@ def preserve(current,incoming):
     for item in items(incoming):
         old=previous.get(item.get('id'));canonical=deepcopy(installed(old)) if old else []
         manual=[m for m in item.get('modifications') or [] if not isinstance(m,dict) or not m.get('ruleId')]
+        if not is_gm:
+            old_manual=[m for m in old.get('modifications') or [] if not isinstance(m,dict) or not m.get('ruleId')] if old else []
+            if manual!=old_manual:raise ValidationError('Модификации снаряжения устанавливаются через игровой процесс')
         if canonical or item.get('modifications') is not None:item['modifications']=manual+canonical
         if old and 'unlockedModificationSlots' in old:item['unlockedModificationSlots']=old['unlockedModificationSlots']
         else:item.pop('unlockedModificationSlots',None)

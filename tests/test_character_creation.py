@@ -59,6 +59,35 @@ def test_all_specializations_are_required_only_at_final_creation():
     with pytest.raises(ValidationError,match='все 11'):build_character('Имя',partial)
 
 
+def test_completed_creation_grants_one_free_pda_without_changing_budget(app):
+    from app.services.character_starting_purchase import grant_starting_pda
+    draft = build_character('Черновик', plan(), finalize=False)
+    assert not any(item['name'] == 'КПК' for item in draft['inventory']['pockets'])
+    data = build_character('Имя', plan())
+    pda = [item for item in data['inventory']['pockets'] if item['name'] == 'КПК']
+    assert len(pda) == 1
+    assert (pda[0]['price'], pda[0]['weight'], pda[0]['volume'], pda[0]['quantity']) == (1500, .25, .5, 1)
+    assert data['inventory']['money'] == data['creation']['startingPurchase']['remaining']
+    assert data['creation']['startingPdaGranted']
+    assert not grant_starting_pda(data)
+    assert len(data['inventory']['pockets']) == 1
+
+
+def test_skill_and_equipment_books_keep_their_kind_in_starting_purchase(app):
+    from app.extensions import db
+    from app.models.templates import ItemTemplate
+    from app.services.character_starting_purchase import catalog as purchase_catalog
+
+    skill=ItemTemplate(name='Книга навыка',category='misc',subcategory='Книги',price=100,
+        attributes={'book_kind':'skill','book_subject':'Физические'})
+    equipment=ItemTemplate(name='Книга снаряжения',category='misc',subcategory='Книги',price=100,
+        attributes={'book_kind':'equipment','book_subject':'Броня'})
+    db.session.add_all([skill,equipment]);db.session.flush()
+    books={entry['name']:entry for entry in purchase_catalog() if entry['id'] in {skill.id,equipment.id}}
+    assert books['Книга навыка']['attributes']['book_kind']=='skill'
+    assert books['Книга снаряжения']['attributes']['book_kind']=='equipment'
+
+
 def test_background_capital_is_separate_from_purchase_and_granted_once(creation_case):
     from app.services.character import CharacterService
     from app.services.character_starting_purchase import grant_world_entry
@@ -576,7 +605,7 @@ def test_pockets_and_launcher_weight_are_not_reapplied_on_save(app):
     data=build_character('Имя',plan(traits=[trait('Узкие карманы')]*2+[trait('Да не такой и тяжелый')]))
     assert data['inventory']['pocketMaxVolume']==0
     data['inventory']['backpack']=[{'name':'Кейс','weight':1,'contents':[{'name':'Гранатомёт','subcategory':'Гранатометы','weight':7,'quantity':1}]}]
-    assert CombatService._inventory_weight_details(data)['total_weight']==5
+    assert CombatService._inventory_weight_details(data)['total_weight']==5.25
     updated=deepcopy(data);sync_pocket_capacity(data,updated)
     assert updated['inventory']['pocketMaxVolume']==0
     updated['features']['specialTraits']=[];sync_pocket_capacity(data,updated)

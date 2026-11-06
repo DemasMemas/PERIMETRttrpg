@@ -60,7 +60,7 @@ def misc_templates(rows):
         result.append(item)
     # КПК и книги находятся в отдельных таблицах, не в основной колонке цен.
     if any(text(r.get('G'))=='КПК' for r in rows):
-        result.append(template('КПК','misc',1500,.25,1,'КПК для связи и хранения электронных книг. Включённый КПК расходует 0,5% заряда батарейки за игровой час.','Электроника',{'uses_battery':True,'battery_duration_seconds':200*3600,'battery_drain_percent_per_hour':.5}))
+        result.append(template('КПК','misc',1500,.25,.5,'КПК для связи и хранения электронных книг. Включённый КПК расходует 0,5% заряда батарейки за игровой час.','Электроника',{'uses_battery':True,'battery_duration_seconds':200*3600,'battery_drain_percent_per_hour':.5}))
     mode=None
     for row in rows:
         name=text(row.get('A'));price=text(row.get('B'))

@@ -11432,7 +11432,7 @@
       "item_class": null,
       "price": 1500,
       "weight": 0.25,
-      "volume": 1.0,
+      "volume": 0.5,
       "description": "КПК для связи и хранения электронных книг. Включённый КПК расходует 0,5% заряда батарейки за игровой час.",
       "attributes": {
         "import_source": "equipment_workbook",
