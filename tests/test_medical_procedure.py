@@ -123,6 +123,30 @@ def test_bandage_closes_light_bleeding_and_creates_untreated_wound(client, pair,
     assert ConsumableUse.query.count() == 1
 
 
+@pytest.mark.parametrize('name,description,stage',[
+    ('Бинт','Останавливает Слабое кровотечение.','light'),
+    ('Жгут','Останавливает Среднее кровотечение.','medium'),
+])
+def test_real_scissors_add_two_to_bandage_and_tourniquet_medicine(
+        client,pair,auth_headers,monkeypatch,name,description,stage):
+    from app.services.medical_procedure import _scissors_medicine_bonus, _medicine_skill
+    effect={'id':'bleed-scissors','type':f'bleeding_external_{stage}','area':'leftArm','source':'cut'}
+    _,profile,item=install_item(pair,name,description,effects=[effect],medicine=5)
+    scissors=ItemTemplate(name='Ножницы',category='tool',price=100,attributes={})
+    db.session.add(scissors);db.session.flush()
+    data=deepcopy(pair['actor_character'].data)
+    assert _scissors_medicine_bonus(data,pair['lobby'].id,profile)==0
+    data['inventory']['pockets']=[{'name':'Поддельные ножницы','category':'tool','templateId':scissors.id}]
+    assert _scissors_medicine_bonus(data,pair['lobby'].id,profile)==0
+    data['inventory']['pockets'][0]['name']='Ножницы'
+    pair['actor_character'].data=data;flag_modified(pair['actor_character'],'data');db.session.commit()
+    assert _scissors_medicine_bonus(data,pair['lobby'].id,profile)==2
+    monkeypatch.setattr('app.services.medical_procedure.random.randint',lambda *_:20)
+    response=apply(client,pair,auth_headers,payload(pair,item,selected_bleeding(profile,effect)))
+    assert response.status_code==200,response.json
+    assert response.json['medical_result']['medicine_bonus']==_medicine_skill(data)+2
+
+
 def test_local_clone_of_bandage_can_treat_without_matching_name(client, pair, auth_headers, monkeypatch):
     effect = {'id': 'bleed-local', 'type': 'bleeding_external_light', 'area': 'leftArm', 'source': 'cut'}
     _, profile, item = install_item(pair, 'Бинт', 'Останавливает Слабое кровотечение.', effects=[effect])

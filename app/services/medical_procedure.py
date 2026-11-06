@@ -30,6 +30,21 @@ from app.services.transaction import atomic_operation
 BLEEDING_STAGE_RANK = {'light': 1, 'medium': 2, 'severe': 3, 'extreme': 4}
 BLEEDING_DIFFICULTY = {'light': 8, 'medium': 10, 'severe': 12, 'extreme': 14}
 LIMB_AREAS = {'leftArm', 'rightArm', 'leftLeg', 'rightLeg'}
+
+
+def _scissors_medicine_bonus(actor_data, lobby_id, profile):
+    direct=profile.get('direct') or {}
+    if not direct.get('tourniquet') and 'bandage_bleeding_stop' not in (profile.get('notes') or []):
+        return 0
+    from app.services.portable_lights import walk
+    for path,item in walk(actor_data,True):
+        if path[:2] not in (['inventory','pockets'],['inventory','backpack']):
+            continue
+        template=resolve_item_template(item,lobby_id)
+        if (template and template.name=='Ножницы' and template.category=='tool'
+                and item.get('name')==template.name and item.get('category')==template.category):
+            return 2
+    return 0
 MINOR_RESTORABLE_PARTS = {'nose', 'jaw', 'leftEar', 'rightEar', 'ear'}
 GENERIC_MEDICAL_BLOCKED_FIELDS = {
     'applications', 'requires_injury', 'target_body_part', 'target_required',
@@ -1154,7 +1169,7 @@ class MedicalProcedureService:
             )
         except (TypeError, ValueError):
             medication_bonus = 0
-        skill_bonus = _medicine_skill(actor_data)
+        skill_bonus = _medicine_skill(actor_data)+_scissors_medicine_bonus(actor_data,actor.lobby_id,profile)
         if helper:skill_bonus+=_numeric(helper.get('roll_bonus'))
         patient_counts=((actor_data.get('health') or {}).get('combatMeta') or {}).get('patientTreatments') or {}
         if trait_count(actor_data,'Личный врач') and _numeric(patient_counts.get(str(target.id)))>10:skill_bonus+=3
