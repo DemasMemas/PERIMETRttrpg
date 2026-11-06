@@ -5158,7 +5158,7 @@ class CombatService:
         return bool(state and state.status=='active' and target.id in (state.turn_order or []))
 
     @staticmethod
-    def _target_armor(target_data, zone, head_protection_zone=None,*,target=None,limb_hit=None,explosive=False):
+    def _target_armor(target_data, zone, head_protection_zone=None,*,target=None,limb_hit=None,explosive=False,plate_side=None):
         if head_protection_zone is None and isinstance(target_data, dict):
             head_protection_zone = target_data.get('_headProtectionZone')
         equipment = target_data.get('equipment') if isinstance(target_data, dict) else {}
@@ -5231,6 +5231,28 @@ class CombatService:
                     'is_gas_mask': is_gas_mask,
                     **({'wear_multiplier':max(0,1-modification_rule(item,'explosion_wear_reduction'))} if explosive else {}),
                 })
+        if zone in {'chest','abdomen'} and plate_side in {'front','back'}:
+            vest=equipment.get('vest')
+            if isinstance(vest,dict) and not vest.get('protectionDisabled'):
+                plate_pouches=[pouch for pouch in vest.get('pouches') or [] if isinstance(pouch,dict)
+                    and any(isinstance(slot,dict) and slot.get('type')=='armor_plate'
+                        for slot in (pouch.get('attributes') or {}).get('slots') or [])]
+                side_index=0 if plate_side=='front' else 1
+                if len(plate_pouches)>side_index:
+                    plate=next((module for module in plate_pouches[side_index].get('installedModules') or []
+                        if isinstance(module,dict) and module.get('slotType')=='armor_plate'
+                        and module.get('category')=='armor_plate'),None)
+                    if plate and CombatService._coerce_float(plate.get('durability'),0)>0:
+                        attrs=CombatService._template_attributes(plate)
+                        protection=(plate.get('protection') if isinstance(plate.get('protection'),dict) else attrs.get('protection') or {})
+                        value=max(0,min(100,CombatService._protection_percent(protection.get('physical'),0)))
+                        stage=max(1,min(5,CombatService._coerce_int(plate.get('stage'),1)))
+                        if stage>=3:value=math.floor(value*.9)
+                        if stage>=4:value=math.floor(value*.9)
+                        if stage>=5:value=math.floor(value*.75)
+                        total=max(total,value)
+                        details.append({'slot':'armorPlate','item':plate,'attributes':attrs,
+                            'protection':value,'is_gas_mask':False})
         mutant = target_data.get('mutant') if isinstance(target_data, dict) else None
         if isinstance(mutant, dict):
             innate = max(0, min(100, CombatService._coerce_float(
@@ -8409,8 +8431,17 @@ class CombatService:
         if head_impact:
             armor_target_data = dict(target_data)
             armor_target_data['_headProtectionZone'] = head_impact.get('armor_zone')
+        plate_kwargs={}
+        if zone in {'chest','abdomen'}:
+            vest=((armor_target_data.get('equipment') or {}).get('vest') or {})
+            if isinstance(vest,dict) and any(isinstance(pouch,dict) and
+                any(isinstance(slot,dict) and slot.get('type')=='armor_plate'
+                    for slot in (pouch.get('attributes') or {}).get('slots') or [])
+                for pouch in vest.get('pouches') or []):
+                plate_kwargs={'plate_side':'back' if CombatService._is_behind(attacker,target) else 'front'}
         armor, armor_layers = CombatService._target_armor(armor_target_data, zone,
-            **({'limb_hit':limb_hit} if limb_hit else {}),**({'target':target} if background_is(armor_target_data,'Стойкий') else {}))
+            **({'limb_hit':limb_hit} if limb_hit else {}),**({'target':target} if background_is(armor_target_data,'Стойкий') else {}),
+            **plate_kwargs)
         back_protection = (
             CombatService._mutant_back_torso_protection(armor_target_data)
             if zone in {'chest', 'abdomen'}
