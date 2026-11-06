@@ -12709,7 +12709,7 @@
       "compatible_ids": []
     },
     {
-      "name": "Контейнер для артефактов 1 ур",
+      "name": "Блок-А",
       "category": "container",
       "subcategory": "Использование",
       "item_class": null,
@@ -12727,7 +12727,7 @@
       "compatible_ids": []
     },
     {
-      "name": "Контейнер для артефактов 2 ур",
+      "name": "Барьер",
       "category": "container",
       "subcategory": "Использование",
       "item_class": null,
@@ -12745,7 +12745,7 @@
       "compatible_ids": []
     },
     {
-      "name": "Контейнер для артефактов 3 ур",
+      "name": "Щит",
       "category": "container",
       "subcategory": "Использование",
       "item_class": null,
@@ -12763,7 +12763,7 @@
       "compatible_ids": []
     },
     {
-      "name": "Контейнер для артефактов 4 ур",
+      "name": "Стена",
       "category": "container",
       "subcategory": "Использование",
       "item_class": null,

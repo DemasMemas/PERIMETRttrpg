@@ -194,7 +194,8 @@ def devices_templates(rows):
                 continue
             attrs = {'radiation_limit': _as_int(row.get('N')), 'artifact_container_kind': container_kind,
                      'unspecified_fields': ['volume']}
-            container_name = f'Контейнер для артефактов {name.strip()}' if re.fullmatch(r'\d+ ур', name.strip()) else name
+            equipped_names = {'1 ур': 'Блок-А', '2 ур': 'Барьер', '3 ур': 'Щит', '4 ур': 'Стена'}
+            container_name = equipped_names.get(name.strip(), name) if container_kind == 'equipped' else name
             result.append(template(container_name, 'container', row['M'], 2.5, 0,
                 'Радиация артефакта до %s. Положить артефакт: 4 ОД; вынуть: 8 ОД.' % attrs['radiation_limit'],
                 'Использование' if container_kind == 'equipped' else 'Хранение', attrs))

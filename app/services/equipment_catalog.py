@@ -44,7 +44,9 @@ def retired_catalog_template(template):
     attributes = template.attributes if hasattr(template, 'attributes') else template.get('attributes')
     return ((category == 'gloves' and name == 'Спортивные')
             or (category == 'weapon_module' and (
-                name == 'Укорочение ствола' or (attributes or {}).get('moduleRuleId') == 'short_barrel')))
+                name == 'Укорочение ствола' or (attributes or {}).get('moduleRuleId') == 'short_barrel'))
+            or (category == 'container' and name in {'Блок-А', 'Барьер', 'Щит', 'Стена'}
+                and (attributes or {}).get('artifact_container_kind') == 'storage'))
 
 
 def additional_water_templates(entries):
