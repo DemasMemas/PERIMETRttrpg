@@ -148,6 +148,26 @@ def test_remote_scout_works_before_placement_and_does_not_allow_points_during_ba
     assert result['point']==point and LocationCharacter.query.filter_by(character_id=character.id).count()==0
 
 
+def test_scout_binocular_bonus_comes_from_catalog_not_item_fields(grenade_game,monkeypatch):
+    from app.services.location_scout import inspect
+    from app.models.templates import ItemTemplate
+    actor=grenade_game['actor_location']
+    state=LocationCombatState.query.filter_by(location_id=actor.location_id).one();state.status='idle'
+    template=ItemTemplate(name='Бинокль с дальномером и увеличенной кратностью',category='misc',
+        price=100,attributes={'scouting_bonus':25})
+    db.session.add(template);db.session.flush()
+    data=deepcopy(actor.character.data)
+    data.setdefault('inventory',{})['pockets']=[{'id':'binocular','templateId':template.id,
+        'name':template.name,'category':'misc','scouting_bonus':100,'attributes':{'scouting_bonus':100}}]
+    actor.character.data=data;db.session.commit()
+    monkeypatch.setattr('app.services.combat.random.randint',lambda *a:20)
+    result=inspect(actor,{'item_path':['inventory','pockets',0]})
+    assert result['check']['item_bonus']==25
+    actor.character.data['inventory']['pockets'][0]['name']='Поддельный бинокль'
+    with pytest.raises(ValidationError,match='из каталога'):
+        inspect(actor,{'item_path':['inventory','pockets',0]})
+
+
 def test_hunter_daily_stress_accumulates_is_locked_and_does_not_duplicate():
     from app.services.character_rules import advance_hunter_days
     from app.services.effects import apply_effect_to_health,sync_health_derived_statuses

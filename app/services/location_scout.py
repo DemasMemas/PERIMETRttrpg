@@ -77,8 +77,12 @@ def inspect(actor,choice,*,remote=False):
     if choice.get('item_path') is not None:
         from app.services.inventory_access import inventory_slot
         parent,index=inventory_slot(data,choice['item_path']);item=parent[index]
-        attrs=C._template_attributes(item)
-        item_bonus=C._coerce_int(item.get('scouting_bonus',attrs.get('scouting_bonus')),15 if 'бинок' in str(item.get('name','')).casefold() else 0)
+        from app.models.templates import ItemTemplate
+        template=db.session.get(ItemTemplate,item.get('templateId')) if type(item.get('templateId')) is int else None
+        if not (template and template.category=='misc' and template.name.startswith('Бинокль')
+                and item.get('name')==template.name and item.get('category')==template.category):
+            raise ValidationError('Выберите бинокль из каталога')
+        item_bonus=(template.attributes or {}).get('scouting_bonus')
         if item_bonus not in {15,25}:raise ValidationError('Выберите бинокль с бонусом осмотра 15 или 25')
     awareness=C._base_skill_modifier(data,'skills.physical.awareness');tactics=C._base_skill_modifier(data,'skills.other.tactics')
     from app.services.weather_rules import at_character
