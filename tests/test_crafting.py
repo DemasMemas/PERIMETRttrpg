@@ -68,6 +68,30 @@ def test_bark_tincture_spends_catalog_charcoal_tablet(client,workshop,auth_heade
     assert units(finished.json['data'],'Очищенная настойка коры')==1
 
 
+def test_spirit_recipe_accepts_catalog_beer_and_moonshine_still(client,workshop,auth_headers,monkeypatch):
+    data=deepcopy(workshop['actor_character'].data)
+    data['skills']['other']['survival']={'base':20,'bonus':0}
+    data['inventory']['pockets']=[
+        {'name':'Вода','category':'consumable','quantity':5},
+        {'name':'Банка пива','category':'consumable','quantity':1},
+        {'name':'Хлеб','category':'food','quantity':2},
+        {'name':'Самогонный Аппарат','category':'tool','quantity':1},
+    ]
+    workshop['actor_character'].data=data
+    db.session.add(ItemTemplate(name='Спирт',category='consumable',price=100,attributes={'uses':10}))
+    db.session.commit()
+    quoted=call(client,workshop,auth_headers,'quote',recipe_id='recipe-aa7')
+    assert quoted.status_code==200 and quoted.json['result']['missing']==[],quoted.json
+    started=call(client,workshop,auth_headers,'start',recipe_id='recipe-aa7')
+    assert started.status_code==200,started.json
+    assert units(started.json['data'],'Банка пива')==0
+    workshop['lobby'].game_day+=1;db.session.commit()
+    monkeypatch.setattr('app.services.crafting.resolve_creation',lambda quote:{'success':True,'roll':100,'automatic':False})
+    finished=call(client,workshop,auth_headers,'finish',job_id=started.json['result']['id'],chosen_loss=[])
+    assert finished.status_code==200,finished.json
+    assert units(finished.json['data'],'Спирт')==30
+
+
 @pytest.mark.parametrize('recipe_id,name,amount',[('recipe-m33','Стеклянная бутылка (Объем 1 литр) (3 использования воды)',3),
     ('recipe-m40','Стеклянная бутылка (Объем 1 литр) (3 использования воды)',2),
     ('recipe-m44','Стеклянная бутылка (Объем 1 литр) (3 использования воды)',10),

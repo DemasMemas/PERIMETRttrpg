@@ -52,6 +52,7 @@ def item_names(item):
         'канистра пустая объем 15 литров 45 использований воды':'канистра',
         'топливо 1 литр':'топливо',
         'хлорные таблетки 10 штук':'хлорные таблетки',
+        'банка пива':'пиво любое',
     }
     alias=catalog_component_names.get(normalized(item.get('name')))
     if alias:names.add(alias)
@@ -174,6 +175,7 @@ def _tools(character,data,recipe,option):
     missing=[]
     for part in required:
         if normalized(part) in {'не нужен','не нужна','не обязателен','не обязательна','не обязателен станок',''} or part in {'---','-'}:continue
+        if normalized(part)=='самогонный апарат':part='Самогонный Аппарат'
         choices=part.split('/')
         chosen=choices[option] if len(choices)==count and count>1 else part
         if not any(normalized(choice) in names for choice in (chosen.split('/') if count==1 else [chosen])):missing.append(chosen)
