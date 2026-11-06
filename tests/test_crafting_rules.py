@@ -95,7 +95,9 @@ def test_integer_fuel_liters_use_one_liter_catalog_units():
         fuel=next(item for item in recipe['components'] if item['name']=='Топливо')
         assert fuel['quantity']==quantity
     fractional=next(item for item in data['recipes'] if item['id']=='recipe-v11')
-    assert any('0.5л' in item['name'] for item in fractional['components'])
+    spirit=next(item for item in fractional['components'] if 'Спирт' in item['name'])
+    assert spirit['alternatives']==[{'name':'Спирт','quantity':3},
+        {'name':'Топливо(0.5л)','quantity':1}]
 
 
 def test_molotov_inline_station_override_is_not_an_ingredient():

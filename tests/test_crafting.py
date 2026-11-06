@@ -133,6 +133,29 @@ def test_three_liters_of_fuel_are_reserved_as_three_catalog_units(client,worksho
     assert started.json['result']['escrow'][0]['amount']==3
 
 
+def test_molotov_can_be_created_with_three_spirit_uses(client,workshop,auth_headers,monkeypatch):
+    data=deepcopy(workshop['actor_character'].data)
+    data['inventory']['pockets']=[
+        {'name':'Спирт','category':'consumable','quantity':1,'uses':10,'maxUses':10},
+        {'name':'Стеклянная бутылка (Объем 1 литр) (3 использования воды)','category':'misc','quantity':1},
+        {'name':'Тканные материалы','category':'crafting_material','quantity':1},
+    ]
+    workshop['actor_character'].data=data
+    db.session.add(ItemTemplate(name='Коктейль Молотова',category='grenade',price=300))
+    db.session.commit()
+    quoted=call(client,workshop,auth_headers,'quote',recipe_id='recipe-v11')
+    assert quoted.status_code==200 and quoted.json['result']['missing']==[],quoted.json
+    started=call(client,workshop,auth_headers,'start',recipe_id='recipe-v11')
+    assert started.status_code==200,started.json
+    assert units(started.json['data'],'Спирт')==7
+    assert units(started.json['data'],'Стеклянная бутылка (Объем 1 литр) (3 использования воды)')==0
+    workshop['lobby'].game_time_minutes+=30;db.session.commit()
+    monkeypatch.setattr('app.services.crafting.resolve_creation',lambda quote:{'success':True,'roll':100,'automatic':False})
+    finished=call(client,workshop,auth_headers,'finish',job_id=started.json['result']['id'],chosen_loss=[0])
+    assert finished.status_code==200,finished.json
+    assert units(finished.json['data'],'Коктейль Молотова')==1
+
+
 def test_grenade_recipe_chain_accepts_catalog_names_and_smoke_output(app):
     from app.services.crafting import _allocate, _template, recipe_by_id
     smoke=ItemTemplate(name='Дымовая граната РДГ-6',category='grenade',price=300)

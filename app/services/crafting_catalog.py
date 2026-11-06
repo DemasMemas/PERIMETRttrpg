@@ -33,7 +33,8 @@ def components(value):
             for option in part.split('/'):
                 option=option.strip()
                 count=re.search(r'\(\s*(\d+)\s*\)\s*$',option)
-                if not count and re.search(r'\([^)]*\)\s*$',option):
+                unresolved_fractional_fuel=bool(re.fullmatch(r'Топливо\s*\(\s*\d+[.,]\d+\s*л\s*\)',option,re.I))
+                if not count and re.search(r'\([^)]*\)\s*$',option) and not unresolved_fractional_fuel:
                     alternatives=[]
                     break
                 alternatives.append({'name':option[:count.start()].strip() if count else option,
