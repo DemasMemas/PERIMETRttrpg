@@ -11,7 +11,8 @@ from sqlalchemy.orm.exc import StaleDataError
 from app.extensions import db
 from app.models import NpcGenerationConfig, NpcCreationReceipt
 from app.services.exceptions import ConflictError, PermissionDenied, ValidationError
-from app.services.npc_loot import validate_profile
+from app.services.npc_loot import apply_rolled_loot, roll_loot, validate_profile
+from app.models.templates import ItemTemplate
 
 
 def _gm(lobby,user_id):
@@ -144,7 +145,10 @@ def create_npc(lobby,user_id,payload):
     data=deepcopy(character.data or {})
     data['npcGenerator']={'name_source':'gm_name_pool' if config and name in config.names else 'manual',
         'danger_id':danger_id,'wealth_id':wealth_id,'numeric_profile_id':None}
-    if profile:data['npcLoot']={'profile':profile}
+    if profile:
+        items, loot_receipt=roll_loot(profile,ItemTemplate.query.order_by(ItemTemplate.id).all())
+        apply_rolled_loot(data,items,loot_receipt)
+        data['npcLoot']={'profile':profile,'initial_receipt':loot_receipt}
     character.data=data;flag_modified(character,'data')
     db.session.add(NpcCreationReceipt(operation_id=operation,lobby_id=lobby.id,character_id=character.id,
         payload_hash=signature))

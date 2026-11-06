@@ -1,5 +1,7 @@
 """Структура генератора НПС не придумывает уровни и численные профили."""
+from app.extensions import db
 from app.models import NpcGenerationConfig, LobbyCharacter, NpcCreationReceipt
+from app.models.templates import ItemTemplate
 from app.services.npc_generation import preview_name
 from test_character_interactions import _setup_pair
 from test_npc_loot import profile
@@ -46,6 +48,9 @@ def test_config_is_private_and_invalid_pair_cannot_replace_it(client,create_user
 
 def test_npc_creation_uses_named_pair_without_numeric_profile_and_replays(client,create_user,auth_headers):
     pair=_setup_pair(client,create_user,auth_headers)
+    db.session.add(ItemTemplate(name='Бинт',category='consumable',subcategory='Медицина',
+        item_class='1',price=50,attributes={}))
+    db.session.commit()
     url=f"/lobbies/{pair['lobby'].id}/npc-generation-config"
     assert client.put(url,headers=auth_headers(pair['actor_user']),json=config()).status_code==200
     create={'operation_id':'npc-create-123','name':'Имя автора 1',
@@ -58,13 +63,31 @@ def test_npc_creation_uses_named_pair_without_numeric_profile_and_replays(client
     assert npc.data['npcGenerator']=={'name_source':'gm_name_pool','danger_id':'danger_low',
         'wealth_id':'wealth_low','numeric_profile_id':None}
     assert npc.data['npcLoot']['profile']==profile()
+    assert npc.data['npcLoot']['initial_receipt']['spent']==100
+    assert npc.data['npcLoot']['initial_receipt']['money']==10
+    assert [item['name'] for item in npc.data['inventory']['backpack']]==['Бинт','Бинт']
+    assert len({item['id'] for item in npc.data['inventory']['backpack']})==2
+    assert npc.data['inventory']['money']==10
     assert NpcCreationReceipt.query.count()==1
+    assert len(npc.data['inventory']['backpack'])==2 and npc.data['inventory']['money']==10
     replay=client.post(url+'/create',headers=auth_headers(pair['actor_user']),json=create)
     assert replay.status_code==200 and replay.json['replayed']
     assert replay.json['character']['id']==identifier
     assert NpcCreationReceipt.query.count()==1
     changed=client.post(url+'/create',headers=auth_headers(pair['actor_user']),json={**create,'name':'Другое имя'})
     assert changed.status_code==409
+
+
+def test_npc_creation_with_unmatched_pool_rolls_back_entire_npc(client,create_user,auth_headers):
+    pair=_setup_pair(client,create_user,auth_headers)
+    url=f"/lobbies/{pair['lobby'].id}/npc-generation-config"
+    assert client.put(url,headers=auth_headers(pair['actor_user']),json=config()).status_code==200
+    before=LobbyCharacter.query.count()
+    response=client.post(url+'/create',headers=auth_headers(pair['actor_user']),json={
+        'operation_id':'npc-missing-loot','name':'Имя автора 1',
+        'danger_id':'danger_low','wealth_id':'wealth_low'})
+    assert response.status_code==400,response.json
+    assert LobbyCharacter.query.count()==before and NpcCreationReceipt.query.count()==0
 
 
 def test_player_cannot_create_npc_even_through_old_route(client,create_user,auth_headers):

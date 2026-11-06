@@ -102,6 +102,17 @@ def roll_loot(profile, templates, *, rng=None):
                    'money': rng.randint(profile['money_min'], profile['money_max']), 'skipped_pools': sorted(set(skipped))}
 
 
+def apply_rolled_loot(data, items, receipt):
+    """Добавить результат розыгрыша в лист без повторного выбора предметов."""
+    inventory = data.setdefault('inventory', {})
+    inventory['money'] = money(balance(data) + receipt['money'], label='Итоговые деньги НПС')
+    for item in items:
+        if item['category'] in {'weapon', 'melee_weapon'}:
+            data.setdefault('weapons', []).append(item)
+        else:
+            inventory.setdefault('backpack', []).append(item)
+
+
 def _character(lobby_id, character_id, user_id):
     lobby = db.session.get(Lobby, lobby_id)
     if not lobby or lobby.gm_id != user_id:
@@ -157,14 +168,7 @@ def generate(lobby_id, character_id, user_id, payload):
     if active:
         raise ValidationError('Наполнять инвентарь НПС можно вне активного боя')
     items, receipt = roll_loot(config.get('profile'), ItemTemplate.query.order_by(ItemTemplate.id).all())
-    funds = money(balance(data) + receipt['money'], label='Итоговые деньги НПС')
-    inventory = data.setdefault('inventory', {})
-    inventory['money'] = funds
-    for item in items:
-        if item['category'] in {'weapon', 'melee_weapon'}:
-            data.setdefault('weapons', []).append(item)
-        else:
-            inventory.setdefault('backpack', []).append(item)
+    apply_rolled_loot(data, items, receipt)
     receipt['operation_id'] = operation
     config['receipts'] = [*config.get('receipts', []), receipt][-50:]
     data['npcLoot'] = config
