@@ -175,7 +175,7 @@ export async function openNpcGeneratorConfig(lobbyId,characters=[]) {
 
 export async function openNpcCreation(lobbyId,onCreated) {
     const config=await Server.getNpcGenerationConfig(lobbyId);
-    const root=modal('Создать НПС','Имя можно переписать или перебросить. По выбранным уровням предметы и деньги выдаются сразу; после создания ГМ настраивает числа, надевание экипировки и размещение.');
+    const root=modal('Создать НПС','Имя можно переписать или перебросить. По выбранным уровням предметы и деньги выдаются сразу; броня, шлем и противогаз надеваются, если совместимы. После создания ГМ настраивает числа и размещение.');
     const body=root.querySelector('.npc-generator-body');
     body.innerHTML=`<label>Имя НПС<input class="form-control npc-generator-name" maxlength="100"></label>
         <button type="button" class="btn btn-sm btn-secondary npc-generator-reroll" ${config.names.length?'':'disabled'}>Перебросить имя</button>

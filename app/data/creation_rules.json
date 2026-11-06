@@ -2897,8 +2897,8 @@
       "output_count": 1,
       "components": [
         {
-          "name": "Металлические детали. 3 Использования",
-          "quantity": 1,
+          "name": "Металлические детали",
+          "quantity": 3,
           "source_text": "Металлические детали. 3 Использования"
         }
       ],
@@ -3630,121 +3630,6 @@
       "tools_text": "Смесительный Станок",
       "duration_text": "2 часа",
       "duration_seconds": 7200
-    },
-    {
-      "id": "recipe-v51",
-      "name": "651.605",
-      "skill": "other.engineering",
-      "group": "Боеприпасы",
-      "output_name": "651.605",
-      "output_count": 1,
-      "components": [
-        {
-          "name": "0.3",
-          "quantity": 1,
-          "source_text": "0.3"
-        }
-      ],
-      "components_text": "0.3",
-      "difficulty_options": [
-        400.0
-      ],
-      "automatic": false,
-      "tools_text": "Смесительный станок",
-      "duration_text": "30 минут",
-      "duration_seconds": 1800
-    },
-    {
-      "id": "recipe-v52",
-      "name": "685.9",
-      "skill": "other.engineering",
-      "group": "Боеприпасы",
-      "output_name": "685.9",
-      "output_count": 1,
-      "components": [
-        {
-          "name": "0.35",
-          "quantity": 1,
-          "source_text": "0.35"
-        }
-      ],
-      "components_text": "0.35",
-      "difficulty_options": [
-        500.0
-      ],
-      "automatic": false,
-      "tools_text": "Смесительный станок",
-      "duration_text": "30 минут",
-      "duration_seconds": 1800
-    },
-    {
-      "id": "recipe-v53",
-      "name": "722",
-      "skill": "other.engineering",
-      "group": "Боеприпасы",
-      "output_name": "722",
-      "output_count": 1,
-      "components": [
-        {
-          "name": "0.4",
-          "quantity": 1,
-          "source_text": "0.4"
-        }
-      ],
-      "components_text": "0.4",
-      "difficulty_options": [
-        600.0
-      ],
-      "automatic": false,
-      "tools_text": "Смесительный станок",
-      "duration_text": "30 минут",
-      "duration_seconds": 1800
-    },
-    {
-      "id": "recipe-v54",
-      "name": "760",
-      "skill": "other.engineering",
-      "group": "Боеприпасы",
-      "output_name": "760",
-      "output_count": 1,
-      "components": [
-        {
-          "name": "0.45",
-          "quantity": 1,
-          "source_text": "0.45"
-        }
-      ],
-      "components_text": "0.45",
-      "difficulty_options": [
-        700.0
-      ],
-      "automatic": false,
-      "tools_text": "Смесительный станок",
-      "duration_text": "30 минут",
-      "duration_seconds": 1800
-    },
-    {
-      "id": "recipe-v55",
-      "name": "800.0",
-      "skill": "other.engineering",
-      "group": "Боеприпасы",
-      "output_name": "800.0",
-      "output_count": 1,
-      "components": [
-        {
-          "name": "0.5",
-          "quantity": 1,
-          "source_text": "0.5"
-        }
-      ],
-      "components_text": "0.5",
-      "difficulty_options": [
-        800.0
-      ],
-      "automatic": false,
-      "tools_text": "Смесительный станок",
-      "duration_text": "30 минут",
-      "duration_seconds": 1800
     },
     {
       "id": "recipe-flame-37",

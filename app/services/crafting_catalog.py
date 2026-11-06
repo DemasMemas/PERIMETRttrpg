@@ -20,6 +20,10 @@ def components(value):
     for part in re.split(r',\s*(?![^()]*\))', text(value)):
         if not part:
             continue
+        uses = re.fullmatch(r'(.+?)\.\s*(\d+)\s+Использования', part, re.I)
+        if uses:
+            result.append({'name': uses[1].strip(), 'quantity': int(uses[2]), 'source_text': part.strip()})
+            continue
         count = re.search(r'\(\s*(\d+)\s*\)\s*$', part)
         result.append({'name': part[:count.start()].strip() if count else part.strip(),
                        'quantity': int(count[1]) if count else 1, 'source_text': part.strip()})
@@ -28,7 +32,7 @@ def components(value):
 
 def recipe(cell, name, ingredients, difficulty, bench, duration, skill, group, **extra):
     raw = text(difficulty)
-    if not name or not ingredients or not (raw == 'Автоуспех' or re.fullmatch(r'\d+(?:\.\d+)?(?:/\d+)*', raw)):
+    if not name or re.fullmatch(r'\d+(?:\.\d+)?', text(name)) or not ingredients or not (raw == 'Автоуспех' or re.fullmatch(r'\d+(?:\.\d+)?(?:/\d+)*', raw)):
         return None
     output = re.search(r'\(\s*(\d+)\s*\)\s*$', text(name))
     label = text(name)

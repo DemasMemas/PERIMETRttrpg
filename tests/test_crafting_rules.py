@@ -77,6 +77,15 @@ def test_catalog_contains_all_variants_and_preserves_recipe_choices():
     assert {item['name']:item['price'] for item in data['workbenches']}['Станок Электрика'] == 80000
 
 
+def test_ingredient_uses_and_numeric_table_rows_are_not_false_recipes():
+    data=catalog()
+    ids={item['id'] for item in data['recipes']}
+    assert not ids.intersection({f'recipe-v{row}' for row in range(51,56)})
+    mold=next(item for item in data['recipes'] if item['id']=='recipe-v38')
+    assert mold['components']==[{'name':'Металлические детали','quantity':3,
+        'source_text':'Металлические детали. 3 Использования'}]
+
+
 def test_published_creation_data_matches_unchanged_source_when_available():
     from app.services.crafting_catalog import parse_creation_catalog
     root = Path(__file__).resolve().parents[1]
