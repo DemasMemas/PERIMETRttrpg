@@ -253,6 +253,40 @@ def test_generated_fixed_magazine_accepts_only_matching_ammo(
     assert db.session.get(LobbyCharacter,created.json['character']['id']).data['weapons'][0]['ammo']==weapon['ammo']
 
 
+@pytest.mark.parametrize('magazine_caliber,installed', [('9x18',True),('5x45',False)])
+def test_generated_detachable_magazine_keeps_spare_and_checks_caliber(
+        client,create_user,auth_headers,magazine_caliber,installed):
+    pair=_setup_pair(client,create_user,auth_headers)
+    db.session.add_all([
+        ItemTemplate(name='Проверочный пистолет',category='weapon',subcategory='Пистолеты',
+            item_class='1',price=90,attributes={'caliber':'9x18'}),
+        ItemTemplate(name='Проверочный магазин',category='magazine',item_class='1',price=20,
+            attributes={'capacity':8,'caliber':magazine_caliber}),
+        ItemTemplate(name='Проверочные патроны',category='ammo',item_class='1',price=10,
+            attributes={'caliber':'9x18'}),
+    ]);db.session.commit()
+    selected=profile(budget=230,money_min=0,money_max=0,pools=[
+        pool(category='weapon',subcategory='',draws=1,min_price=90,max_price=90),
+        pool(category='magazine',subcategory='',draws=1,quantity=2,min_price=20,max_price=20),
+        pool(category='ammo',subcategory='',draws=1,quantity=10,min_price=10,max_price=10)])
+    url=f"/lobbies/{pair['lobby'].id}/npc-generation-config"
+    assert client.put(url,headers=auth_headers(pair['actor_user']),json=config(combinations=[
+        {'danger_id':'danger_low','wealth_id':'wealth_low','profile':selected}])).status_code==200
+    created=client.post(url+'/create',headers=auth_headers(pair['actor_user']),json={
+        'operation_id':'npc-detachable-'+magazine_caliber,'name':'Имя автора 1',
+        'danger_id':'danger_low','wealth_id':'wealth_low'})
+    assert created.status_code==201,created.json
+    data=db.session.get(LobbyCharacter,created.json['character']['id']).data
+    weapon=data['weapons'][0];magazine=weapon['installedMagazine']
+    assert bool(magazine)==installed
+    assert weapon['ammo']==(8 if installed else 0)
+    spare=next(item for item in data['inventory']['backpack'] if item['category']=='magazine')
+    assert spare['quantity']==(1 if installed else 2)
+    if installed:assert spare['id']!=magazine['id']
+    assert sum(item['quantity'] for item in data['inventory']['backpack'] if item['category']=='ammo')==(2 if installed else 10)
+    assert len(data['npcLoot']['initial_receipt']['installed_magazines'])==int(installed)
+
+
 def test_player_cannot_create_npc_even_through_old_route(client,create_user,auth_headers):
     pair=_setup_pair(client,create_user,auth_headers)
     lobby_id=pair['lobby'].id

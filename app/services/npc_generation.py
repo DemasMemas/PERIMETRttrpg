@@ -159,6 +159,44 @@ def _load_rolled_fixed_ammo(data):
     return loaded
 
 
+def _install_rolled_magazines(data):
+    """Подобрать съёмный магазин, зарядить его и установить без расхода боевого действия."""
+    from app.services.ammo_loading import load_ammunition, validate_loading
+    from app.services.magazine import install_magazine, validate_magazine_selection, _attributes
+    installed=[];loaded=[]
+    def split_magazine(sheet,index):
+        backpack=sheet['inventory']['backpack'];item=backpack[index]
+        if item.get('quantity',1)>1:
+            item['quantity']-=1
+            single=deepcopy(item);single['quantity']=1;single['id']=uuid4().hex
+            backpack.insert(index,single)
+        return backpack[index]
+    for weapon_index,weapon in enumerate(data.get('weapons') or []):
+        if weapon.get('category')!='weapon' or _attributes(weapon).get('fixedMagazine'):continue
+        backpack=data.get('inventory',{}).get('backpack',[])
+        for index,item in enumerate(backpack):
+            if item.get('category')!='magazine':continue
+            trial=deepcopy(data)
+            split_magazine(trial,index)
+            try:validate_magazine_selection(trial,weapon_index,['inventory','backpack',index])
+            except ValidationError:continue
+            magazine=split_magazine(data,index);magazine_id=magazine['id']
+            for ammo_index,ammo in enumerate(data['inventory']['backpack']):
+                if ammo.get('category')!='ammo':continue
+                request={'target_path':['inventory','backpack',index],
+                    'source_path':['inventory','backpack',ammo_index],'full':True}
+                try:validate_loading(data,request)
+                except ValidationError:continue
+                result=load_ammunition(data,request)
+                loaded.append({'weapon_id':weapon['id'],'ammo_name':ammo['name'],'quantity':result['quantity']})
+                break
+            magazine_index=next(i for i,value in enumerate(data['inventory']['backpack']) if value.get('id')==magazine_id)
+            install_magazine(data,weapon_index,['inventory','backpack',magazine_index])
+            installed.append({'weapon_id':weapon['id'],'magazine_id':magazine_id})
+            break
+    return installed,loaded
+
+
 def create_npc(lobby,user_id,payload):
     _gm(lobby,user_id)
     if not isinstance(payload,dict) or set(payload)!={'operation_id','name','danger_id','wealth_id'}:
@@ -197,6 +235,8 @@ def create_npc(lobby,user_id,payload):
         apply_rolled_loot(data,items,loot_receipt)
         loot_receipt['equipped']=_equip_rolled_protection(data)
         loot_receipt['loaded_ammo']=_load_rolled_fixed_ammo(data)
+        loot_receipt['installed_magazines'],magazine_ammo=_install_rolled_magazines(data)
+        loot_receipt['loaded_ammo'].extend(magazine_ammo)
         data['npcLoot']={'profile':profile,'initial_receipt':loot_receipt}
     character.data=data;flag_modified(character,'data')
     db.session.add(NpcCreationReceipt(operation_id=operation,lobby_id=lobby.id,character_id=character.id,
