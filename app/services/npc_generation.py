@@ -4,6 +4,7 @@ import hashlib
 import json
 import random
 import re
+from uuid import uuid4
 
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm.exc import StaleDataError
@@ -114,7 +115,7 @@ def preview_name(lobby,user_id,exclude=None,*,rng=None):
 
 
 def _equip_rolled_protection(data):
-    """Надеть по одному предмету каждого защитного слота по обычным правилам совместимости."""
+    """Надеть по одному предмету каждого слота с сохранением остатка стопки."""
     from app.services.combat import CombatService
     categories={'armor':'armor','helmet':'helmet','gasMask':'gas_mask'}
     equipped=[]
@@ -126,6 +127,17 @@ def _equip_rolled_protection(data):
             item_path=['inventory','backpack',index],preconfigured=True)
         CombatService.apply_equipment_action(data,details)
         equipped.append({'slot':slot,'item_id':data['equipment'][slot]['id']})
+    for slot in ('gloves','glasses','headphones','vest','belt','backpack'):
+        backpack=data.get('inventory',{}).get('backpack',[])
+        index=next((i for i,item in enumerate(backpack) if item.get('category')==slot),None)
+        if index is None:continue
+        stacked=backpack[index].get('quantity',1)>1
+        worn=CombatService._take_inventory_item(data,['inventory','backpack',index],1)
+        if stacked:worn['id']=uuid4().hex
+        data.setdefault('equipment',{})[slot]=worn
+        equipped.append({'slot':slot,'item_id':worn['id']})
+    from app.services.equipment_passives import validate_glasses
+    validate_glasses(data)
     return equipped
 
 

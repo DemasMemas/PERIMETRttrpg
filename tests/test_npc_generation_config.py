@@ -180,6 +180,48 @@ def test_generated_npc_can_be_placed_with_equipment_unchanged(client,create_user
     assert db.session.get(LobbyCharacter,npc_id).data['equipment']['armor']['id']==before
 
 
+def test_generated_npc_equips_one_glove_pair_from_stack(client,create_user,auth_headers):
+    pair=_setup_pair(client,create_user,auth_headers)
+    db.session.add(ItemTemplate(name='Рабочие',category='gloves',price=50,attributes={
+        'craft_difficulty_modifier':-5}));db.session.commit()
+    selected=profile(budget=100,money_min=0,money_max=0,pools=[
+        pool(category='gloves',subcategory='',item_class='',draws=1,quantity=2)])
+    url=f"/lobbies/{pair['lobby'].id}/npc-generation-config"
+    assert client.put(url,headers=auth_headers(pair['actor_user']),json=config(combinations=[
+        {'danger_id':'danger_low','wealth_id':'wealth_low','profile':selected}])).status_code==200
+    created=client.post(url+'/create',headers=auth_headers(pair['actor_user']),json={
+        'operation_id':'npc-gloves-123','name':'Имя автора 1',
+        'danger_id':'danger_low','wealth_id':'wealth_low'})
+    assert created.status_code==201,created.json
+    data=db.session.get(LobbyCharacter,created.json['character']['id']).data
+    assert data['equipment']['gloves']['name']=='Рабочие'
+    assert data['equipment']['gloves']['quantity']==1
+    assert data['inventory']['backpack'][0]['quantity']==1
+    assert data['equipment']['gloves']['id']!=data['inventory']['backpack'][0]['id']
+
+
+def test_generated_glasses_and_gas_mask_conflict_rolls_back(client,create_user,auth_headers):
+    pair=_setup_pair(client,create_user,auth_headers)
+    db.session.add_all([
+        ItemTemplate(name='Очки А',category='glasses',price=50,
+            attributes={'incompatible_with_gasmask':True}),
+        ItemTemplate(name='Противогаз А',category='gas_mask',item_class='1',price=50,attributes={}),
+    ]);db.session.commit()
+    selected=profile(budget=100,money_min=0,money_max=0,pools=[
+        pool(category='glasses',subcategory='',item_class='',draws=1),
+        pool(category='gas_mask',subcategory='',draws=1)])
+    url=f"/lobbies/{pair['lobby'].id}/npc-generation-config"
+    assert client.put(url,headers=auth_headers(pair['actor_user']),json=config(combinations=[
+        {'danger_id':'danger_low','wealth_id':'wealth_low','profile':selected}])).status_code==200
+    before=LobbyCharacter.query.count()
+    created=client.post(url+'/create',headers=auth_headers(pair['actor_user']),json={
+        'operation_id':'npc-glasses-123','name':'Имя автора 1',
+        'danger_id':'danger_low','wealth_id':'wealth_low'})
+    assert created.status_code==400,created.json
+    assert 'очки нельзя носить' in created.json['error']['message'].casefold()
+    assert LobbyCharacter.query.count()==before and NpcCreationReceipt.query.count()==0
+
+
 def test_player_cannot_create_npc_even_through_old_route(client,create_user,auth_headers):
     pair=_setup_pair(client,create_user,auth_headers)
     lobby_id=pair['lobby'].id
