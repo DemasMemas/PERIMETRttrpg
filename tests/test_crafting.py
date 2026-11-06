@@ -136,8 +136,12 @@ def test_three_liters_of_fuel_are_reserved_as_three_catalog_units(client,worksho
 def test_grenade_recipe_chain_accepts_catalog_names_and_smoke_output(app):
     from app.services.crafting import _allocate, _template, recipe_by_id
     smoke=ItemTemplate(name='Дымовая граната РДГ-6',category='grenade',price=300)
-    db.session.add(smoke);db.session.flush()
+    napalm=ItemTemplate(name='Зажигательная граната Napalm-AN',category='grenade',price=300)
+    thermobaric=ItemTemplate(name='Термобарическая граната РГ-60ТБ',category='grenade',price=300)
+    db.session.add_all([smoke,napalm,thermobaric]);db.session.flush()
     assert _template('РДГ-6').id==smoke.id
+    assert _template(recipe_by_id('recipe-v12')['output_name']).id==napalm.id
+    assert _template(recipe_by_id('recipe-v13')['output_name']).id==thermobaric.id
     for recipe_id,ingredient in [('recipe-v5','Граната Ф-1'),('recipe-v6','Граната РГД-5')]:
         recipe=recipe_by_id(recipe_id)
         _,missing=_allocate({'inventory':{'pockets':[{'name':ingredient,'category':'grenade','quantity':1}]}},recipe)

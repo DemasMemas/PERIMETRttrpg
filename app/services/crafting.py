@@ -89,6 +89,8 @@ def _template(name):
         'хирург набор айболит':'Кустарный набор "Айболит"',
         'жаропонижающее мороз':'Жаропонижающее средство "Мороз"',
         'рдг 6':'Дымовая граната РДГ-6',
+        'napalm an':'Зажигательная граната Napalm-AN',
+        'рг 60тб':'Термобарическая граната РГ-60ТБ',
     }
     if key in aliases:
         return next((t for t in templates if normalized(t.name)==normalized(aliases[key])),None)
