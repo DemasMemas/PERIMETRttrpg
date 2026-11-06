@@ -39,8 +39,12 @@ def craft_mold_templates(creation):
 
 
 def retired_catalog_template(template):
-    return (template.category if hasattr(template, 'category') else template.get('category')) == 'gloves' and (
-        template.name if hasattr(template, 'name') else template.get('name')) == 'Спортивные'
+    category = template.category if hasattr(template, 'category') else template.get('category')
+    name = template.name if hasattr(template, 'name') else template.get('name')
+    attributes = template.attributes if hasattr(template, 'attributes') else template.get('attributes')
+    return ((category == 'gloves' and name == 'Спортивные')
+            or (category == 'weapon_module' and (
+                name == 'Укорочение ствола' or (attributes or {}).get('moduleRuleId') == 'short_barrel')))
 
 
 def additional_water_templates(entries):

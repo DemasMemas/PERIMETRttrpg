@@ -44,7 +44,8 @@ def missing_templates(existing,subcategory=None):
     existing=[t for t in existing if t.get('category')=='weapon_module']
     names={str(t.get('name','')).casefold().replace('ё','е') for t in existing}
     keys={(t.get('attributes') or {}).get('moduleRuleId') for t in existing}
-    return [t for t in builtin_templates() if (not subcategory or t['subcategory']==subcategory)
+    return [t for t in builtin_templates() if t['attributes']['moduleRuleId'] != 'short_barrel'
+            and (not subcategory or t['subcategory']==subcategory)
             and t['name'].casefold().replace('ё','е') not in names and t['attributes']['moduleRuleId'] not in keys]
 
 

@@ -34,7 +34,8 @@ def test_existing_modules_and_same_named_melee_weapon_do_not_duplicate_or_hide_c
     existing=[{'name':'Сошки','category':'weapon_module','attributes':{}},
               {'name':'Штык-нож','category':'melee_weapon','attributes':{}}]
     missing=missing_templates(existing)
-    assert len(missing)==12 and any(t['name']=='Штык-нож' for t in missing)
+    assert len(missing)==11 and any(t['name']=='Штык-нож' for t in missing)
+    assert all(t['attributes']['moduleRuleId']!='short_barrel' for t in missing)
     assert len(missing_templates(existing,'scope'))==3
 
 
@@ -51,7 +52,8 @@ def test_templates_api_exposes_modules_without_running_data_migrations(creation_
     c=creation_case;url=f'/lobbies/{c["lobby"].id}/templates'
     response=client.get(url+'?category=weapon_module',headers=c['headers'][c['player'].id])
     assert response.status_code==200
-    assert len(response.json['global'])==13
+    assert len(response.json['global'])==12
+    assert all(t['attributes'].get('moduleRuleId')!='short_barrel' for t in response.json['global'])
     response=client.get(url+'?category=weapon_module&subcategory=scope',headers=c['headers'][c['player'].id])
     assert len(response.json['global'])==3
 

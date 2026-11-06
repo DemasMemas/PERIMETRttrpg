@@ -51,6 +51,7 @@ module.exports=async({page,request,token,lobby,safeSession})=>{
     remote.weapons[0].customNote='Внешнее обновление оружия';
     await request(`/lobbies/characters/${character.id}`,{data:remote},token,'PUT');
     await page.until('document.querySelector("#sheet-tab-basic")?.textContent.includes("Проверка синхронизации")','внешнее обновление доставлено в лист');
+    await page.until(`document.getElementById("weapon-model-select-0")?.value===${JSON.stringify(String(gun.id+1000000))}`,'незавершённый выбор восстановлен после внешнего обновления');
     assert.equal(await page.evaluate('document.getElementById("weapon-model-select-0").value'),String(gun.id+1000000),'Выбор пережил внешнее обновление');
     await click('[onclick="selectWeaponModel(0)"]');
     await waitSaved(d=>d.weapons[0]?.templateId===gun.id+1000000);
@@ -98,7 +99,7 @@ module.exports=async({page,request,token,lobby,safeSession})=>{
     assert.equal(await page.evaluate('Boolean(document.querySelector(`[onclick="equipModuleToWeapon(1, \'barrel\')"]`))'),false);
     // Проверяем установку каждого встроенного модуля обычными кнопками листа.
     const catalog=(await request(`/lobbies/${lobby.id}/templates?category=weapon_module`,null,token,'GET')).global.filter(t=>t.attributes?.moduleRuleId);
-    assert.equal(catalog.length,13);
+    assert.equal(catalog.length,12);
     const baseline=(await read()).data;
     baseline.weapons=[{...weapon,installedModules:[]}];
     baseline.inventory.backpack=catalog.map((t,i)=>({...t,id:`catalog-module-${i}`,templateId:t.id,quantity:1,contents:[],installedModules:[]}));
@@ -126,6 +127,15 @@ module.exports=async({page,request,token,lobby,safeSession})=>{
             assert.equal(saved.inventory.backpack.filter(m=>m.attributes?.moduleRuleId===t.attributes.moduleRuleId).length,1,'модуль возвращается без дубля');
         }
     }
+    await openStats();
+    await page.evaluate('window.confirm=()=>true');
+    await click('[onclick="shortenWeaponBarrel(0)"]');
+    const shortened=await waitSaved(d=>d.weapons[0]?.installedModules?.some(m=>m.attributes?.moduleRuleId==='short_barrel'));
+    assert.equal(shortened.weapons[0].volume,6,'действие уменьшает размер оружия на 2');
+    assert.equal(shortened.weapons[0].installedModules.length,1,'действие записывает изменение в экземпляр');
+    assert.equal(await page.evaluate('Boolean(document.querySelector(`[onclick="unequipModuleFromWeapon(0, \'barrel\')"]`))'),false);
+    await page.evaluate('window.shortenWeaponBarrel(0)');
+    assert.equal((await read()).data.weapons[0].installedModules.length,1,'повторное действие не дублирует изменение');
     fs.writeFileSync(path.join(safeSession.artifacts,'weapon-loadout.json'),JSON.stringify({modelSurvivesSave:true,threeSlots:true,launcherTwoSlots:true,
         oneModuleFromStack:true,weaponIdPreserved:true,volume:8,loadedLauncherPreserved:true,reloadPreserved:true,detachedModuleStatePreserved:true,allCatalogModules:checked,shortBarrelVolume:6},null,2));
 };

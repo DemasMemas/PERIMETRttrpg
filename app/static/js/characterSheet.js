@@ -6060,6 +6060,7 @@ async function renderWeapons(weapons, weaponTemplates, moduleTemplates, weaponMo
                         } else slotsHtml += '<span class="badge">Несъёмный</span>';
                     } else {
                         slotsHtml += `<button type="button" class="btn btn-sm btn-primary" onclick="equipModuleToWeapon(${index}, '${slot.type}')">Установить</button>`;
+                        if (slot.type === 'barrel') slotsHtml += ` <button type="button" class="btn btn-sm btn-secondary" onclick="shortenWeaponBarrel(${index})">Укоротить ствол</button>`;
                     }
                     slotsHtml += `</div>`;
                 });
@@ -6366,6 +6367,36 @@ window.equipModuleToWeapon = async function(weaponIndex, slotType) {
     };
 
     modal.style.display = 'flex';
+};
+
+window.shortenWeaponBarrel = async function(weaponIndex) {
+    const weapon = currentCharacterData.weapons?.[weaponIndex];
+    if (!weapon?.templateId) return showNotification('Выберите оружие из каталога');
+    const templates = await loadTemplatesForLobby('weapon');
+    const template = templates.find(item => item.id == weapon.templateId);
+    if (!template || !weaponAttachmentSlots(template).some(slot => slot.type === 'barrel'))
+        return showNotification('У этого оружия нет слота ствола');
+    const modules = weapon.installedModules || [];
+    if (modules.some(item => item.slotType === 'barrel' || item.attributes?.shortened_barrel
+        || item.attributes?.moduleRuleId === 'short_barrel' || /укорочение ствола/i.test(item.name || '')))
+        return showNotification('Ствол уже изменён или слот занят');
+    if (!window.confirm('Укоротить ствол этого оружия? Изменение нельзя отменить.')) return;
+    if (currentCharacterData.weapons?.[weaponIndex] !== weapon || (weapon.installedModules || []).some(item => item.slotType === 'barrel'))
+        return showNotification('Оружие изменилось. Повторите действие');
+    weapon.installedModules = [...modules, {
+        id: generateItemId(), name: 'Укорочение ствола', category: 'weapon_module', slotType: 'barrel',
+        attributes: {moduleRuleId: 'short_barrel', slot_type: 'barrel', shortened_barrel: true,
+            weapon_size_reduction: 2, removable: false, modifiers: {ergonomics: 25, accuracy: -2, min_strength: -2}},
+        modifiers: {ergonomics: 25, accuracy: -2, min_strength: -2},
+    }];
+    weapon.volume = Math.max(0, Number(weapon.volume ?? template.volume ?? 0) - 2);
+    if (weapon.size != null) weapon.size = Math.max(0, Number(weapon.size) - 2);
+    if (weapon.attributes?.size != null) weapon.attributes.size = Math.max(0, Number(weapon.attributes.size) - 2);
+    renderEquipmentTab(currentCharacterData);
+    renderInventoryTab(currentCharacterData);
+    scheduleAutoSave();
+    forceSyncCharacter();
+    showNotification('Ствол укорочен', 'success');
 };
 
 window.confirmEquipModule = function(weaponIndex, slotType) {
