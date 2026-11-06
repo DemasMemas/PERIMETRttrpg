@@ -42,6 +42,14 @@ def normalized(name):
     return re.sub(r'[^\w]+',' ',text).strip()
 
 
+def item_names(item):
+    names={normalized(item.get('name'))}
+    if item.get('category')=='tool':
+        base=re.sub(r'\s+\d+\s*/\s*\d+\s*$','',str(item.get('name') or ''))
+        names.add(normalized(base))
+    return names
+
+
 def entries(data):
     result=[]
     for path,item in walk(data,True):
@@ -97,7 +105,7 @@ def _allocate(data,recipe):
                 from app.services.cooked_meat import ingredient_matches
                 matches=ingredient_matches(recipe['id'],item)
             else:matches=(attrs.get('flamethrower_tank')==component.get('whole_tank') and charges(item)==0 if component.get('whole_tank')
-                else bool(attrs.get('flamethrower_air')) if component.get('whole_air') else normalized(item['name']) in names)
+                else bool(attrs.get('flamethrower_air')) if component.get('whole_air') else bool(item_names(item)&names))
             if not matches or _contains_individual_items(item):continue
             key=tuple(path);available=(item.get('quantity',1) if whole else _available_uses(item) if item.get('quantity',1)>0 else 0)-spent.get(key,0)
             take=min(left,available)
@@ -116,7 +124,7 @@ def _tools(character,data,recipe,option):
     if normalized(raw)=='обязателен' and recipe['group']=='Электроника':raw='Станок Электрика'
     if normalized(raw) in {'да','нужна'} and recipe['group']=='Ловушки':raw='Печь'
     required=[part.strip() for part in raw.split(',') if part.strip()]
-    names={normalized(item['name']) for _,item in entries(data) if _available_uses(item)>0}
+    names={name for _,item in entries(data) if _available_uses(item)>0 for name in item_names(item)}
     # Станки/костёр на сцене доступны только рядом и на текущем этаже.
     placement=LocationCharacter.query.filter_by(character_id=character.id).order_by(LocationCharacter.last_action.desc().nullslast(),LocationCharacter.id.desc()).first()
     if placement:

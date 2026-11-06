@@ -43,6 +43,27 @@ def test_grenade_recipe_chain_accepts_catalog_names_and_smoke_output(app):
         assert not any(text.startswith(recipe['components'][0]['name']+':') for text in missing)
 
 
+def test_tool_charge_suffix_matches_recipe_and_multiple_sets_cover_fifty_uses(workshop):
+    from app.services.crafting import _allocate, _tools, recipe_by_id
+    for recipe_id,name,maximum in [
+        ('recipe-m42','Набор инструментов Оружейника (Расширенные) 40/40',40),
+        ('recipe-m43','Набор инструментов Бронника (Расширенные) 35/35',35),
+    ]:
+        recipe=recipe_by_id(recipe_id)
+        data={'inventory':{'pockets':[{'name':name,'category':'tool','quantity':2,
+            'uses':maximum,'maxUses':maximum}]}}
+        allocations,missing=_allocate(data,recipe)
+        assert not any(text.startswith(recipe['components'][-1]['name']+':') for text in missing)
+        assert sum(a['amount'] for a in allocations if a['component']==len(recipe['components'])-1)==50
+    recipe={**recipe_by_id('recipe-flame-41'),'tools_text':'Смесительные инструменты',
+        'difficulty_options':[50]}
+    data={'inventory':{'pockets':[{'name':'Смесительные инструменты 50/50',
+        'category':'tool','quantity':1,'uses':1,'maxUses':50}]}}
+    assert _tools(workshop['actor_character'],data,recipe,0)==[]
+    data['inventory']['pockets'][0]['uses']=0
+    assert _tools(workshop['actor_character'],data,recipe,0)==['Смесительные инструменты']
+
+
 def test_depleted_workbench_does_not_satisfy_recipe_requirement(client,workshop,auth_headers,monkeypatch):
     from app.services import crafting
     original=crafting.recipe_by_id
