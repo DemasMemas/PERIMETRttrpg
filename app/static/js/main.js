@@ -4,7 +4,7 @@ import { initWorldNumericInputs, getWorldNumericValue, bindNumericInput, readNum
 
 import { addTerrainMaterialOptions } from './terrainMaterialCatalog.js';
 import { initSocket } from './socketHandlers.js';
-import { initCharacters, initMutantForm, loadLobbyCharacters, showCreateCharacterForm, showCreateMutantForm } from './characters.js';
+import { initCharacters, initMutantForm, loadLobbyCharacters, showCreateCharacterForm, showCreateMutantForm, showNpcGeneratorSettings } from './characters.js';
 import { initCommonMapTools } from './commonMapTools.js';
 import { initLobbyData, loadLobbyInfo, loadAllChunks } from './lobbyData.js';
 import { setCurrentLobbyId, toggleParticipants, toggleSettings, showSettingsTab, closeVisibilityModal,
@@ -2227,6 +2227,7 @@ window.exportCharacter = exportCharacter;
 window.importCharacter = importCharacter;
 
 window.showCreateCharacterForm = showCreateCharacterForm;
+window.showNpcGeneratorSettings = showNpcGeneratorSettings;
 window.showCreateMutantForm = showCreateMutantForm;
 window.openLobbyRestModal = openLobbyRestModal;
 window.closeLobbyRestModal = closeLobbyRestModal;

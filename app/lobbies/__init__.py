@@ -1736,6 +1736,8 @@ def get_lobby_characters(lobby_id, lobby, participant):
 def create_lobby_character(lobby_id, lobby, participant):
     schema = CharacterCreateSchema()
     data = schema.load(request.get_json())
+    if is_npc(data.get('data') or {}) and lobby.gm_id!=participant.user_id:
+        raise PermissionDenied('НПС создаёт только ГМ')
     character = CharacterService.create_character(
         lobby_id=lobby_id,
         owner_id=participant.user_id,
@@ -1753,6 +1755,40 @@ def create_lobby_character(lobby_id, lobby, participant):
 
     response_schema = CharacterSchema()
     return jsonify(response_schema.dump(character)), 201
+
+
+@lobbies_bp.route('/<int:lobby_id>/npc-generation-config',methods=['GET','PUT'])
+@jwt_required()
+@requires_gm
+def npc_generation_config(lobby_id,lobby):
+    from app.services.npc_generation import get_config,save_config
+    user_id=int(get_jwt_identity())
+    if request.method=='GET':return jsonify(get_config(lobby,user_id)),200
+    return jsonify(save_config(lobby,user_id,request.get_json(silent=True) or {})),200
+
+
+@lobbies_bp.route('/<int:lobby_id>/npc-generation-config/name-preview',methods=['POST'])
+@jwt_required()
+@requires_gm
+def npc_generation_name_preview(lobby_id,lobby):
+    from app.services.npc_generation import preview_name
+    payload=request.get_json(silent=True) or {}
+    if not isinstance(payload,dict) or set(payload)-{'exclude'}:
+        raise ValidationError('Некорректный запрос имени НПС')
+    return jsonify(preview_name(lobby,int(get_jwt_identity()),payload.get('exclude'))),200
+
+
+@lobbies_bp.route('/<int:lobby_id>/npc-generation-config/create',methods=['POST'])
+@jwt_required()
+@requires_gm
+def npc_generation_create(lobby_id,lobby):
+    from app.services.npc_generation import create_npc
+    character,replayed=create_npc(lobby,int(get_jwt_identity()),request.get_json(silent=True) or {})
+    if not replayed:
+        socketio.emit('character_created',{'id':character.id,'name':character.name,
+            'owner_id':character.owner_id,'owner_username':character.owner.username if character.owner else None,
+            'data':character.data_snapshot()},room=f'lobby_{lobby_id}')
+    return jsonify({'character':CharacterSchema().dump(character),'replayed':replayed}),200 if replayed else 201
 
 @lobbies_bp.route('/characters/<int:character_id>', methods=['GET'])
 @jwt_required()
@@ -4611,7 +4647,7 @@ def apply_location_gm_event(lobby_id, location_id, lobby):
             outcome = 'успех' if result.get('success') else 'провал'
             fall_lines.append(
                 f"{item['name'] or 'Персонаж'}: d20 {result.get('roll')} "
-                f"{result.get('agility_bonus', 0):+d} = {result.get('total')} против {result.get('difficulty')} ({outcome})"
+                    f"{result.get('agility_bonus', 0):+} = {result.get('total')} против {result.get('difficulty')} ({outcome})"
             )
     if event_type == 'stress':
         for item in changed:

@@ -5,6 +5,7 @@ import { createCharacterFolderPanel, createCharacterFolderStore } from './charac
 import { openCharacterCreation } from './characterCreation.js';
 import { openNpcLoot } from './npcLoot.js';
 import { openNpcMerchant } from './merchantEditor.js';
+import { openNpcCreation, openNpcGeneratorConfig } from './npcGenerator.js';
 
 let currentLobbyId;
 let mutantCatalog = [];
@@ -43,6 +44,8 @@ function displayLobbyCharacters(characters) {
     if (!container) return;
     const npcButton = document.getElementById('create-npc-btn');
     if (npcButton) npcButton.style.display = window.isGM ? 'inline-block' : 'none';
+    const generatorButton=document.getElementById('npc-generator-config-btn');
+    if(generatorButton)generatorButton.style.display=window.isGM?'inline-block':'none';
     const creationButtons = [...document.querySelectorAll('[data-character-create]')];
     const expandedMutantGroups = new Set(
         [...container.querySelectorAll('details.mutant-group[open]')]
@@ -405,9 +408,14 @@ export async function showCreateCharacterForm(isNpc = false) {
         catch(error) { showNotification(error.message,'error'); }
         return;
     }
-    const name = prompt('Введите имя персонажа:');
-    if (!name) return;
-    createCharacter(name, isNpc ? { basic: { is_npc: true } } : {});
+    try{await openNpcCreation(currentLobbyId,loadLobbyCharacters);}
+    catch(error){showNotification(error.message,'error');}
+}
+
+export async function showNpcGeneratorSettings(){
+    if(!window.isGM)return;
+    try{await openNpcGeneratorConfig(currentLobbyId,lobbyCharacters);}
+    catch(error){showNotification(error.message,'error');}
 }
 
 function escapeHtml(value) {

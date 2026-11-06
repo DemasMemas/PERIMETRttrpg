@@ -28,3 +28,4 @@ from .deferred_action import DeferredCombatAction
 from .consumable_use import ConsumableUse
 from .world_travel import WorldGroup, WorldMapEvent, WorldTravelEvent
 from .time_planning import TimePlanRequest, TimePlan
+from .npc_generation import NpcGenerationConfig, NpcCreationReceipt

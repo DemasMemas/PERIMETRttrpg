@@ -35,6 +35,13 @@ const characterSaver = createCharacterSaver((characterId, updates) => apiFetch(`
 }), getCharacterBase);
 
 export const Server = {
+    getNpcGenerationConfig: lobbyId => apiFetch(`/lobbies/${lobbyId}/npc-generation-config`),
+    saveNpcGenerationConfig: (lobbyId,payload) => apiFetch(`/lobbies/${lobbyId}/npc-generation-config`,{
+        method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}),
+    previewNpcName: (lobbyId,exclude) => apiFetch(`/lobbies/${lobbyId}/npc-generation-config/name-preview`,{
+        method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({exclude})}),
+    createGeneratedNpc: (lobbyId,payload) => apiFetch(`/lobbies/${lobbyId}/npc-generation-config/create`,{
+        method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}),
     getTimePlans: lobbyId => apiFetch(`/lobbies/${lobbyId}/time-plans`),
     createTimePlanRequest: (lobbyId,payload) => apiFetch(`/lobbies/${lobbyId}/time-plans`,{
         method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}),

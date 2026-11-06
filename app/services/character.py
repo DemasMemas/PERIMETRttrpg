@@ -410,7 +410,7 @@ class CharacterService:
         return updated_data
 
     @staticmethod
-    def create_character(lobby_id, owner_id, name, data=None):
+    def create_character(lobby_id, owner_id, name, data=None, *, commit=True):
         CharacterService.require_membership(lobby_id, owner_id)
 
         character_data = clean_snapshot(data or {})
@@ -458,7 +458,8 @@ class CharacterService:
             time_active=follows_world_time(character_data),
         )
         db.session.add(character)
-        db.session.commit()
+        if commit:db.session.commit()
+        else:db.session.flush()
         db.session.refresh(character, attribute_names=['owner'])
         logger.info(f"Character '{name}' (id={character.id}) created by user {owner_id} in lobby {lobby_id}")
         return character
