@@ -40,6 +40,21 @@ def test_iron_grip_reduces_burst_penalty_only_while_worn():
     assert worn_rule(data,'snatch_difficulty_bonus')==0
 
 
+def test_nvg_mount_can_be_installed_and_requires_removing_nvg_before_replacement():
+    from app.services.equipment_modifications import install
+    from app.services.exceptions import ValidationError
+    helmet={'name':'Шлем','category':'helmet','attributes':{'slots':[]},'installedModules':[]}
+    install(helmet,make_record('armor-g25'))
+    assert rule(helmet,'nvg_mount')
+    helmet['installedModules']=[{'slotType':'nvg','name':'ПНВ'}]
+    with pytest.raises(ValidationError,match='снимите ПНВ'):
+        install(helmet,make_record('armor-g26'),replacing='armor-g25')
+    assert rule(helmet,'nvg_mount')
+    helmet['installedModules'].clear()
+    install(helmet,make_record('armor-g26'),replacing='armor-g25')
+    assert not rule(helmet,'nvg_mount')
+
+
 def test_iron_grip_raises_real_disarm_difficulty(client,grenade_game,auth_headers,monkeypatch):
     case=grenade_game
     target=case['target_location']

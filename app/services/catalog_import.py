@@ -95,7 +95,6 @@ def cosmetic_templates(rows):
             if name in {'Военные','Военные М2'}:attrs['anomaly_protection_bonus']=5 if name.endswith('М2') else 3
             if name=='Медицинские':attrs.update(patient_infection_multiplier=.5,sterile_duration_seconds=3600)
             if name=='Обвязки на руки':attrs.update(unarmed_damage_factor=15,unarmed_damage_minimum=25)
-            if name=='Спортивные':attrs['melee_strength_learning_multiplier']=1.5
             result.append(template(name,'gloves',row['J'],0,row.get('K'),row.get('C'),'Перчатки',attrs))
         elif section=='Очки' and re.fullmatch(r'[\d.,]+',text(row.get('F'))):
             attrs={'charisma_bonus':number(row.get('C')),'flash_protection':number(text(row.get('D')).replace('х','').replace('x',''),1),'eye_physical_protection':number(row.get('E'))*100,'unspecified_fields':['weight']}

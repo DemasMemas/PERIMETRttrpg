@@ -1425,10 +1425,9 @@ function generateItemId() {
 // Получить доступные слоты предмета на основе его шаблона.
 function getItemSlots(item) {
     if (!item) return [];
-    if (Array.isArray(item.attributes?.slots)) return item.attributes.slots;
+    let slots = Array.isArray(item.attributes?.slots) ? item.attributes.slots : null;
     const templateId = item.templateId || item.type; // подсумки используют type
-    if (!templateId) return [];
-    const cachedGroups = [
+    const cachedGroups = slots || !templateId ? [] : [
         allTemplatesCache,
         ...Object.entries(templatesCache)
             .filter(([key]) => key.startsWith(`${currentLobbyId}_`))
@@ -1437,9 +1436,17 @@ function getItemSlots(item) {
     for (const templates of cachedGroups) {
         if (!Array.isArray(templates)) continue;
         const template = templates.find(candidate => candidate.id == templateId);
-        if (template) return template.attributes?.slots || [];
+        if (template) {
+            slots = template.attributes?.slots || [];
+            break;
+        }
     }
-    return [];
+    slots = [...(slots || [])];
+    if ((item.modifications || []).some(record => record?.ruleId === 'armor-g25')
+        && !slots.some(slot => slot?.type === 'nvg')) {
+        slots.push({ type: 'nvg', label: 'ПНВ', maxItems: 1 });
+    }
+    return slots;
 }
 
 function getEffectiveTorsoProtection() {

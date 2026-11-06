@@ -63,7 +63,9 @@ def validate_profile(profile):
 
 
 def candidates(templates, pool):
+    from app.services.equipment_catalog import retired_catalog_template
     return [template for template in templates
+            if not retired_catalog_template(template)
             if template.category == pool['category']
             and not (template.attributes or {}).get('not_for_sale')
             and (not pool['subcategory'] or template.subcategory == pool['subcategory'])

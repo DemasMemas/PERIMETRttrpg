@@ -78,6 +78,9 @@ def configure(lobby_id, character_id, user_id, payload):
         template = templates.get(int(key)) if int(key) > 0 else virtual.get(int(key))
         if template is None:
             raise ValidationError('В прайсе есть товар, которого нет в общем каталоге')
+        from app.services.equipment_catalog import retired_catalog_template
+        if retired_catalog_template(template):
+            raise ValidationError('Этот предмет выведен из каталога')
         attrs = template.attributes if isinstance(template, ItemTemplate) else template['attributes']
         category = template.category if isinstance(template, ItemTemplate) else template['category']
         if category in {'background', 'special_trait', 'modification'} or (attrs or {}).get('not_for_sale') or (attrs or {}).get('craft_only'):
@@ -110,6 +113,9 @@ def tool_price(item, full_price):
 
 
 def price_for(data, item, side):
+    from app.services.equipment_catalog import retired_catalog_template
+    if retired_catalog_template(item):
+        raise ValidationError('Этот предмет выведен из каталога')
     if (item.get('attributes') or {}).get('not_for_sale'):
         raise ValidationError('Этот предмет нельзя продать или купить у торговца')
     if (item.get('attributes') or {}).get('craft_only'):

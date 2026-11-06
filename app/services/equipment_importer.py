@@ -962,7 +962,7 @@ def parse_equipment_templates(workbook_path: Path) -> List[Dict[str, Any]]:
             known.add(key)
     for source_order, template in enumerate(templates):
         template.setdefault("attributes", {})["source_order"] = source_order
-    return templates
+    return [template for template in templates if not (template['category']=='gloves' and template['name']=='Спортивные')]
 
 
 def insert_missing_templates(templates, session=None):

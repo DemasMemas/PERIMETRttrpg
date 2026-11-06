@@ -57,6 +57,7 @@ SPECIAL_ARMOR={
  'd27':({}, {'unpowered_weight_penalty_suppression':True}),
  'd28':({'movement_penalty':'=3'},{}),
  'a49':({}, {'spare_plates':True}),
+ 'g25':({}, {'nvg_mount':True}),
  'd32':({}, {'exoskeleton_run':True})}
 
 
@@ -69,6 +70,13 @@ def supported(rule):
 def install(item,record,replacing=None):
     previous=next((r for r in installed(item) if r['ruleId']==replacing),None)
     proposed=[m for m in item.get('modifications') or [] if not isinstance(m,dict) or m.get('ruleId')!=replacing]+[record]
+    if previous and (previous.get('rules') or {}).get('nvg_mount') and not any(
+            (mod.get('rules') or {}).get('nvg_mount') for mod in proposed if isinstance(mod,dict)):
+        from app.services.combat import CombatService
+        native_slots=CombatService._template_attributes(item).get('slots') or []
+        if not any(isinstance(slot,dict) and slot.get('type')=='nvg' for slot in native_slots) and any(
+                isinstance(module,dict) and module.get('slotType')=='nvg' for module in item.get('installedModules') or []):
+            raise ValidationError('Сначала снимите ПНВ с крепления')
     from math import floor
     container_delta=floor(stat({**item,'modifications':proposed},'container_slots',0))-floor(stat(item,'container_slots',0))
     containers=list(item.get('containers') or [])

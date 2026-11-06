@@ -13106,24 +13106,6 @@
       "compatible_ids": []
     },
     {
-      "name": "Спортивные",
-      "category": "gloves",
-      "subcategory": "Перчатки",
-      "item_class": null,
-      "price": 3500,
-      "weight": 0,
-      "volume": 2.0,
-      "description": "Коэффицент прокачки силы при атаках ближнего боя 1.5х.",
-      "attributes": {
-        "import_source": "equipment_workbook",
-        "charisma_bonus": 0.5,
-        "melee_strength_learning_multiplier": 1.5,
-        "source_order": 399,
-        "source_description": "Коэффицент прокачки силы при атаках ближнего боя 1.5х"
-      },
-      "compatible_ids": []
-    },
-    {
       "name": "Без пальцев",
       "category": "gloves",
       "subcategory": "Перчатки",

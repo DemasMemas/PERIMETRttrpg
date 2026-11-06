@@ -53,6 +53,24 @@ def test_loot_filters_class_type_price_and_stays_within_budget(prepared):
     assert all(not item.get('createdByPlayer') for item in items)
 
 
+def test_retired_sport_gloves_are_not_offered_or_generated(client,prepared,auth_headers):
+    from app.services.equipment_catalog import load_catalog
+    from app.services.character_starting_purchase import eligible
+    from app.services.npc_loot import candidates
+
+    sport=ItemTemplate(name='Спортивные',category='gloves',subcategory='Перчатки',price=3500,attributes={})
+    working=ItemTemplate(name='Рабочие',category='gloves',subcategory='Перчатки',price=1500,attributes={})
+    db.session.add_all([sport,working]);db.session.commit()
+    assert not any(t['category']=='gloves' and t['name']=='Спортивные' for t in load_catalog())
+    assert not eligible(sport) and eligible(working)
+    available=candidates([sport,working],pool(category='gloves',subcategory='Перчатки',item_class='',max_price=5000))
+    assert available==[working]
+    response=client.get(f"/lobbies/{prepared['lobby'].id}/templates?category=gloves",
+        headers=auth_headers(prepared['actor_user']))
+    assert response.status_code==200,response.json
+    assert [entry['name'] for entry in response.json['global']]==['Рабочие']
+
+
 def test_budget_exhaustion_and_zero_chance_are_visible_without_exceeding_cost(prepared):
     items,result=roll_loot(profile(budget=50,pools=[pool(draws=3),pool(category='no-items',chance=0)]),prepared['templates'])
     assert len(items)==1 and result['spent']==50 and result['skipped_pools']==[1]

@@ -11,6 +11,8 @@ def _text(value):
 
 
 def eligible(template):
+    from app.services.equipment_catalog import retired_catalog_template
+    if retired_catalog_template(template):return False
     category=template.category
     attrs=template.attributes or {}
     if attrs.get('craft_only') or 'price' in (attrs.get('unspecified_fields') or []):return False

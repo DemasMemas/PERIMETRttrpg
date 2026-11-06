@@ -21,6 +21,11 @@ WATER_VARIANTS = (
 )
 
 
+def retired_catalog_template(template):
+    return (template.category if hasattr(template, 'category') else template.get('category')) == 'gloves' and (
+        template.name if hasattr(template, 'name') else template.get('name')) == 'Спортивные'
+
+
 def additional_water_templates(entries):
     """Утверждённые виды воды используют тару и число порций обычной воды."""
     base = next(item for item in entries if item['category'] == 'consumable' and item['name'] == 'Вода')
@@ -90,6 +95,8 @@ def prepare_catalog(entries):
     result = []
     known = set()
     for original in entries:
+        if retired_catalog_template(original):
+            continue
         item = deepcopy(original)
         item.pop('id', None)
         key = item['category'], _normalize_equipment_name(item['name'])
