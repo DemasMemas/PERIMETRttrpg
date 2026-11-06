@@ -68,6 +68,44 @@ def test_bark_tincture_spends_catalog_charcoal_tablet(client,workshop,auth_heade
     assert units(finished.json['data'],'Очищенная настойка коры')==1
 
 
+@pytest.mark.parametrize('recipe_id,name,amount',[('recipe-m33','Стеклянная бутылка (Объем 1 литр) (3 использования воды)',3),
+    ('recipe-m40','Стеклянная бутылка (Объем 1 литр) (3 использования воды)',2),
+    ('recipe-m44','Стеклянная бутылка (Объем 1 литр) (3 использования воды)',10),
+    ('recipe-m34','Пластиковая бутылка (Объем 1 литр) (3 использования воды)',8),
+    ('recipe-m40','Канистра(Пустая)(Объем 15 литров)(45 использований воды)',1)])
+def test_catalog_vessels_cover_recipe_components(app,recipe_id,name,amount):
+    from app.services.crafting import _allocate, item_names, recipe_by_id
+    recipe=recipe_by_id(recipe_id)
+    data={'inventory':{'pockets':[{'name':name,'category':'misc','quantity':amount,'uses':3,'maxUses':3}]}}
+    component=next((i for i,c in enumerate(recipe['components']) if c['name'].casefold() in item_names(data['inventory']['pockets'][0])),None)
+    assert component is not None
+    allocations,missing=_allocate(data,recipe)
+    assert sum(entry['amount'] for entry in allocations if entry['component']==component)==amount
+    assert all(entry['whole'] for entry in allocations if entry['component']==component)
+    assert not any(text.startswith(recipe['components'][component]['name']+':') for text in missing)
+    data['inventory']['pockets'][0]['quantity']=amount-1
+    assert any(text.startswith(recipe['components'][component]['name']+':') for text in _allocate(data,recipe)[1])
+
+
+def test_vessel_reservation_takes_entire_bottle_and_cancel_restores_it(client,workshop,auth_headers,monkeypatch):
+    from app.services.crafting import recipe_by_id
+    recipe={**recipe_by_id('recipe-f4'),'id':'test-bottle',
+        'components':[{'name':'Стеклянная бутылка','quantity':1}],
+        'tools_text':'Не нужен'}
+    monkeypatch.setattr('app.services.crafting.recipe_by_id',lambda _:recipe)
+    data=deepcopy(workshop['actor_character'].data)
+    name='Стеклянная бутылка (Объем 1 литр) (3 использования воды)'
+    data['inventory']['pockets']=[{'name':name,'category':'misc','quantity':2,'uses':3,'maxUses':3}]
+    workshop['actor_character'].data=data;db.session.commit()
+    started=call(client,workshop,auth_headers,'start',recipe_id='test-bottle')
+    assert started.status_code==200,started.json
+    assert started.json['data']['inventory']['pockets'][0]['quantity']==1
+    assert started.json['data']['inventory']['pockets'][0]['uses']==3
+    cancelled=call(client,workshop,auth_headers,'cancel',job_id=started.json['result']['id'])
+    assert cancelled.status_code==200,cancelled.json
+    assert sum(item['quantity'] for item in cancelled.json['data']['inventory']['pockets'] if item['name']==name)==2
+
+
 def test_grenade_recipe_chain_accepts_catalog_names_and_smoke_output(app):
     from app.services.crafting import _allocate, _template, recipe_by_id
     smoke=ItemTemplate(name='Дымовая граната РДГ-6',category='grenade',price=300)
