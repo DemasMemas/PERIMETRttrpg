@@ -106,6 +106,33 @@ def test_vessel_reservation_takes_entire_bottle_and_cancel_restores_it(client,wo
     assert sum(item['quantity'] for item in cancelled.json['data']['inventory']['pockets'] if item['name']==name)==2
 
 
+@pytest.mark.parametrize('recipe_id,liters',[('recipe-v12',3),('recipe-v13',1)])
+def test_grenade_fuel_uses_catalog_one_liter_units(app,recipe_id,liters):
+    from app.services.crafting import _allocate, recipe_by_id
+    recipe=recipe_by_id(recipe_id)
+    data={'inventory':{'pockets':[{'name':'Топливо(1 Литр)','category':'misc','quantity':liters}]}}
+    allocations,missing=_allocate(data,recipe)
+    component=next(i for i,c in enumerate(recipe['components']) if c['name']=='Топливо')
+    assert sum(entry['amount'] for entry in allocations if entry['component']==component)==liters
+    assert not any(text.startswith('Топливо:') for text in missing)
+    data['inventory']['pockets'][0]['quantity']=liters-1
+    assert any(text.startswith('Топливо:') for text in _allocate(data,recipe)[1])
+
+
+def test_three_liters_of_fuel_are_reserved_as_three_catalog_units(client,workshop,auth_headers,monkeypatch):
+    from app.services.crafting import recipe_by_id
+    recipe={**recipe_by_id('recipe-f4'),'id':'test-fuel',
+        'components':[{'name':'Топливо','quantity':3}], 'tools_text':'Не нужен'}
+    monkeypatch.setattr('app.services.crafting.recipe_by_id',lambda _:recipe)
+    data=deepcopy(workshop['actor_character'].data)
+    data['inventory']['pockets']=[{'name':'Топливо(1 Литр)','category':'misc','quantity':4}]
+    workshop['actor_character'].data=data;db.session.commit()
+    started=call(client,workshop,auth_headers,'start',recipe_id='test-fuel')
+    assert started.status_code==200,started.json
+    assert units(started.json['data'],'Топливо(1 Литр)')==1
+    assert started.json['result']['escrow'][0]['amount']==3
+
+
 def test_grenade_recipe_chain_accepts_catalog_names_and_smoke_output(app):
     from app.services.crafting import _allocate, _template, recipe_by_id
     smoke=ItemTemplate(name='Дымовая граната РДГ-6',category='grenade',price=300)

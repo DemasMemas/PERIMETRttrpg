@@ -88,6 +88,16 @@ def test_ingredient_uses_and_numeric_table_rows_are_not_false_recipes():
     assert lockpick['output_name']=='Отмычка' and lockpick['output_count']==2
 
 
+def test_integer_fuel_liters_use_one_liter_catalog_units():
+    data=catalog()
+    for recipe_id,quantity in [('recipe-v12',3),('recipe-v13',1)]:
+        recipe=next(item for item in data['recipes'] if item['id']==recipe_id)
+        fuel=next(item for item in recipe['components'] if item['name']=='Топливо')
+        assert fuel['quantity']==quantity
+    fractional=next(item for item in data['recipes'] if item['id']=='recipe-v11')
+    assert any('0.5л' in item['name'] for item in fractional['components'])
+
+
 def test_published_creation_data_matches_unchanged_source_when_available():
     from app.services.crafting_catalog import parse_creation_catalog
     root = Path(__file__).resolve().parents[1]

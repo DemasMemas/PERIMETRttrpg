@@ -24,6 +24,10 @@ def components(value):
         if uses:
             result.append({'name': uses[1].strip(), 'quantity': int(uses[2]), 'source_text': part.strip()})
             continue
+        fuel_liters=re.fullmatch(r'(Топливо)\s*\(\s*(\d+)\s*л\s*\)',part,re.I)
+        if fuel_liters:
+            result.append({'name':fuel_liters[1], 'quantity':int(fuel_liters[2]),'source_text':part.strip()})
+            continue
         if '/' in part:
             alternatives=[]
             for option in part.split('/'):
