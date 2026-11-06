@@ -5185,7 +5185,7 @@ function renderVestPouches(pouches, pouchTemplates, isBase, totalCapacity) {
 }
 
 function renderRuleModification(mod) {
-    return `<div class="installed-rule-modification"><strong>${escapeHtml(mod.name)}</strong> · уровень ${mod.level}${mod.gunsmith?' · Оружейник ×1,5':''}${mod.description!==mod.name?`<div>${escapeHtml(mod.description)}</div>`:''}<small>Заменить можно в окне «Создание и модификации».</small></div>`;
+    return `<div class="installed-rule-modification"><strong>${escapeHtml(mod.name)}</strong> · уровень ${mod.level}${mod.gunsmith?' · Оружейник ×1,5':''}${mod.description!==mod.name?`<div>${escapeHtml(mod.description)}</div>`:''}</div>`;
 }
 
 function renderBeltModifications(mods, modTemplates) {
