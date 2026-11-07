@@ -2253,6 +2253,10 @@ input[type="number"] {
 .pda-shell-note { display: inline-block; padding: 9px 13px; border: 1px solid #a1bc744d; border-radius: 6px; color: #bdd1af; }
 .pda-shell-mod { display: flex; flex-direction: column; margin: 8px 0; padding: 8px 12px; border-left: 3px solid #91b973; background: #ffffff0a; }
 .pda-shell-footer { border-top: 1px solid #8eb87844; border-bottom: 0; color: #8bab83; font-size: .67rem; letter-spacing: .12em; }
+.pda-shell-account { border: 0; padding: 0; background: none; color: inherit; font: inherit; letter-spacing: inherit; cursor: pointer; text-align: left; }
+.pda-shell-account:hover, .pda-shell-account:focus-visible { color: #cce7c0; text-decoration: underline; }
+.pda-account-form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; max-width: 520px; margin-top: 18px; }
+.pda-account-form .form-control { min-width: 0; }
 .pda-shell-close { display: block; margin: 14px auto 0; }
 @media (max-width: 620px) { .pda-shell-bezel { padding: 11px; } .pda-shell-screen { min-height: 0; } .pda-shell-content { grid-template-columns: 1fr; } .pda-shell-nav { flex-direction: row; border-right: 0; border-bottom: 1px solid #8eb87844; max-height: none; overflow-x: auto; } .pda-shell-nav button { white-space: nowrap; } .pda-shell-main { min-height: 180px; padding: 18px; } .pda-shell-model { display: none; } }
 .sheet-tab-content {

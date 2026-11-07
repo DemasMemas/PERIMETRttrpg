@@ -5172,6 +5172,23 @@ def character_crafting(character_id):
     return jsonify({'result':result,'data':character.data_snapshot()}),200
 
 
+@lobbies_bp.route('/characters/<int:character_id>/pda-account', methods=['GET'])
+@jwt_required()
+def character_pda_account(character_id):
+    from app.services.pda_accounts import account_status
+
+    return jsonify(account_status(character_id, int(get_jwt_identity()))), 200
+
+
+@lobbies_bp.route('/characters/<int:character_id>/pda-account/<operation>', methods=['POST'])
+@jwt_required()
+def change_character_pda_account(character_id, operation):
+    from app.services.pda_accounts import account_action
+
+    return jsonify(account_action(character_id, int(get_jwt_identity()), operation,
+        request.get_json(silent=True) or {})), 200
+
+
 @lobbies_bp.route('/<int:lobby_id>/crafting-requests',methods=['GET'])
 @jwt_required()
 @requires_gm

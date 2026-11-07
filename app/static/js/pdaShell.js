@@ -33,11 +33,11 @@ export function openPdaShell({ item, findItem, getData, operate, canEdit, charac
     modal.innerHTML = `
         <div class="modal-content pda-shell" role="dialog" aria-modal="true" aria-label="КПК">
             <div class="pda-shell-bezel">
-                <div class="pda-shell-brand"><span class="pda-shell-light"></span> PERIMETR / КПК <span class="pda-shell-model">FIELD TERMINAL · 01</span></div>
+                <div class="pda-shell-brand"><span class="pda-shell-light"></span> PERIMETR / КПК <span class="pda-shell-model">ZOKIA HIKING PHONE</span></div>
                 <div class="pda-shell-screen">
-                    <header class="pda-shell-header"><div><small>ПЕРСОНАЛЬНЫЙ ТЕРМИНАЛ</small><strong data-pda-heading>Главная</strong></div><div class="pda-shell-power"><span data-pda-status></span><button type="button" data-pda-power aria-label="Переключить питание"></button></div></header>
+                    <header class="pda-shell-header"><div><strong data-pda-heading>Главная</strong></div><div class="pda-shell-power"><span data-pda-status></span><button type="button" data-pda-power aria-label="Переключить питание"></button></div></header>
                     <div class="pda-shell-content"><nav class="pda-shell-nav" aria-label="Разделы КПК"></nav><main class="pda-shell-main" data-pda-content></main></div>
-                    <footer class="pda-shell-footer"><span>КПК / ПЕРВЫЙ ЭТАП</span><span data-pda-charge></span></footer>
+                    <footer class="pda-shell-footer"><button type="button" class="pda-shell-account" data-pda-account></button><span data-pda-charge></span></footer>
                 </div>
                 <button type="button" class="btn btn-secondary pda-shell-close" data-pda-close>Закрыть КПК</button>
             </div>
@@ -55,7 +55,24 @@ export function openPdaShell({ item, findItem, getData, operate, canEdit, charac
     let selectedMod = '';
     let selectedTool = '';
     let pdaQuote = null;
+    let accountSnapshot = null;
+    let accountLoading = true;
     const selectedBookSkills = new Map();
+
+    async function loadAccount() {
+        try { accountSnapshot = await Server.getPdaAccount(characterId); }
+        catch (error) { showNotification(error.message, 'system'); }
+        finally { accountLoading = false; if (modal.isConnected) render(); }
+    }
+
+    async function accountAction(operation, payload = {}) {
+        if (busy || !canEdit) return;
+        busy = true;
+        render();
+        try { accountSnapshot = await Server.changePdaAccount(characterId, operation, payload); }
+        catch (error) { showNotification(error.message, 'system'); }
+        finally { busy = false; if (modal.isConnected) render(); }
+    }
 
     async function loadFiles() {
         if (filesLoading) return;
@@ -85,6 +102,13 @@ export function openPdaShell({ item, findItem, getData, operate, canEdit, charac
         const current = findItem(item.id)?.item || item;
         const state = powerState(current);
         const power = modal.querySelector('[data-pda-power]');
+        const accountButton = modal.querySelector('[data-pda-account]');
+        const guestName = getData()?.basic?.name || getData()?.name || 'Персонаж';
+        accountButton.textContent = accountSnapshot?.account
+            ? `АККАУНТ: ${accountSnapshot.account.login}`
+            : `АККАУНТ: ${guestName} (гость)${canEdit ? ' · Войти' : ''}`;
+        accountButton.disabled = !state.on;
+        accountButton.onclick = () => { selected = 'home'; render(); };
         modal.querySelector('[data-pda-status]').textContent = state.on ? 'ВКЛЮЧЁН' : 'ВЫКЛЮЧЕН';
         modal.querySelector('[data-pda-charge]').textContent = `ЗАРЯД ${state.charge.toFixed(1)}%`;
         power.textContent = state.on ? 'Выключить' : 'Включить';
@@ -113,10 +137,61 @@ export function openPdaShell({ item, findItem, getData, operate, canEdit, charac
             heading.textContent = 'Главная';
             const lead = document.createElement('p');
             lead.className = 'pda-shell-lead';
-            lead.textContent = 'Личный терминал сталкера';
+            lead.textContent = 'Добро пожаловать!';
             const hint = document.createElement('p');
-            hint.textContent = 'Выберите раздел слева. Функции разделов появятся в следующих этапах.';
+            hint.textContent = 'Выберите раздел слева.';
             content.append(lead, hint);
+            if (accountLoading) {
+                const loading = document.createElement('p');
+                loading.textContent = 'Загрузка аккаунта…';
+                content.append(loading);
+            } else if (accountSnapshot?.account) {
+                const name = document.createElement('p');
+                name.textContent = `Вы вошли как ${accountSnapshot.account.login}. Аккаунт доступен с другого КПК в этом мире.`;
+                content.append(name);
+                if (canEdit) {
+                    const logout = document.createElement('button');
+                    logout.type = 'button';
+                    logout.className = 'btn btn-secondary';
+                    logout.textContent = 'Выйти из аккаунта';
+                    logout.disabled = busy;
+                    logout.onclick = () => accountAction('logout');
+                    content.append(logout);
+                }
+            } else if (canEdit) {
+                const form = document.createElement('form');
+                form.className = 'pda-account-form';
+                const login = document.createElement('input');
+                login.className = 'form-control';
+                login.name = 'login';
+                login.autocomplete = 'username';
+                login.maxLength = 32;
+                login.placeholder = 'Логин';
+                login.setAttribute('aria-label', 'Логин КПК');
+                const password = document.createElement('input');
+                password.className = 'form-control';
+                password.type = 'password';
+                password.name = 'password';
+                password.autocomplete = 'current-password';
+                password.placeholder = 'Пароль';
+                password.setAttribute('aria-label', 'Пароль КПК');
+                const submit = operation => {
+                    const payload = { login: login.value, password: password.value };
+                    void accountAction(operation, payload);
+                };
+                for (const [operation, label] of [['login', 'Войти'], ['register', 'Создать аккаунт']]) {
+                    const button = document.createElement('button');
+                    button.type = operation === 'login' ? 'submit' : 'button';
+                    button.className = 'btn btn-secondary';
+                    button.textContent = label;
+                    button.disabled = busy;
+                    if (operation === 'register') button.onclick = () => submit(operation);
+                    form.append(button);
+                }
+                form.onsubmit = event => { event.preventDefault(); submit('login'); };
+                form.prepend(login, password);
+                content.append(form);
+            }
             return;
         }
         const section = sections.find(([id]) => id === selected);
@@ -408,5 +483,6 @@ export function openPdaShell({ item, findItem, getData, operate, canEdit, charac
     modal.querySelector('[data-pda-close]').onclick = close;
     modal.onclick = event => { if (event.target === modal) close(); };
     render();
+    void loadAccount();
     return modal;
 }

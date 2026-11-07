@@ -57,6 +57,10 @@ export const Server = {
     rollTimePlan: (lobbyId,planId,payload) => apiFetch(`/lobbies/${lobbyId}/time-plans/${planId}/roll`,{
         method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}),
     getCrafting: characterId => apiFetch(`/lobbies/characters/${characterId}/crafting`),
+    getPdaAccount: characterId => apiFetch(`/lobbies/characters/${characterId}/pda-account`),
+    changePdaAccount: (characterId, operation, payload = {}) => apiFetch(`/lobbies/characters/${characterId}/pda-account/${operation}`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+    }),
     craft: (characterId,payload) => apiFetch(`/lobbies/characters/${characterId}/crafting`,{
         method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}),
     getCraftingRequests: lobbyId => apiFetch(`/lobbies/${lobbyId}/crafting-requests`),

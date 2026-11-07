@@ -4,7 +4,7 @@ import pytest
 from flask_jwt_extended import create_access_token
 
 from app.extensions import db, socketio
-from app.models import User, Lobby, LobbyParticipant, LobbyCharacter, Location, LocationCharacter
+from app.models import User, Lobby, LobbyParticipant, LobbyCharacter, Location, LocationCharacter, PdaAccount
 
 
 @pytest.fixture
@@ -52,6 +52,48 @@ def access_case(app):
 
 def headers(case, user):
     return {'Authorization': f"Bearer {case['tokens'][user.id]}"}
+
+
+def test_pda_accounts_are_world_scoped_and_available_to_other_characters(client, access_case):
+    case = access_case
+    world = case['lobby']
+    owner = case['owner']
+    first = case['character']
+    second = LobbyCharacter(lobby_id=world.id, owner_id=owner.id, name='Второй', data={})
+    other_world = Lobby(name='Другой мир', gm_id=case['gm'].id, invite_code='PDA002')
+    db.session.add_all([second, other_world])
+    db.session.flush()
+    db.session.add(LobbyParticipant(lobby_id=other_world.id, user_id=owner.id))
+    db.session.add(LobbyParticipant(lobby_id=other_world.id, user_id=case['gm'].id))
+    third = LobbyCharacter(lobby_id=other_world.id, owner_id=owner.id, name='Третий', data={})
+    db.session.add(third)
+    db.session.commit()
+
+    def account_url(character, action=''):
+        return f'/lobbies/characters/{character.id}/pda-account{action}'
+
+    auth = headers(case, owner)
+    created = client.post(account_url(first, '/register'), headers=auth,
+                          json={'login': 'Stalker', 'password': 'secret-one'})
+    assert created.status_code == 200
+    assert client.get(account_url(first), headers=auth).json == created.json
+    account = db.session.get(PdaAccount, created.json['account']['id'])
+    assert account.lobby_id == world.id and account.password_hash != 'secret-one'
+    assert client.post(account_url(second, '/register'), headers=auth,
+                       json={'login': 'STALKER', 'password': 'secret-two'}).status_code == 409
+    assert client.post(account_url(second, '/login'), headers=auth,
+                       json={'login': 'stalker', 'password': 'secret-two'}).status_code == 401
+    assert client.post(account_url(second, '/login'), headers=auth,
+                       json={'login': 'stalker', 'password': 'secret-one'}).json == created.json
+    assert client.post(account_url(first, '/logout'), headers=auth).json['account'] is None
+    assert client.get(account_url(second), headers=auth).json == created.json
+    assert client.get(account_url(first), headers=headers(case, case['viewer'])).status_code == 403
+    separate = client.post(account_url(third, '/register'), headers=auth,
+                           json={'login': 'Stalker', 'password': 'secret-two'})
+    assert separate.status_code == 200
+    assert separate.json['account']['id'] != created.json['account']['id']
+    assert client.post(account_url(third, '/login'), headers=auth,
+                       json={'login': 'Stalker', 'password': 'secret-one'}).status_code == 401
 
 
 def test_sheet_cannot_forge_intoxication_check_or_cancel_saved_coma(client, access_case, monkeypatch):
