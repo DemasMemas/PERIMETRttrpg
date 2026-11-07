@@ -258,7 +258,7 @@ def test_skill_books_have_one_fixed_section_per_skill():
     assert {item['attributes']['book_skill_path'] for item in books} == expected
     assert len(books) == len(expected) == 16
     for item in books:
-        assert item['name'].endswith(f". Раздел: {item['attributes']['book_skill_name']}")
+        assert item['name'].endswith(f"? Раздел: {item['attributes']['book_skill_name']}")
         assert item['volume'] == 0
 
 
@@ -281,8 +281,43 @@ def test_skill_book_migration_preserves_old_books_and_is_repeatable(app, monkeyp
     migration.upgrade()
     db.session.expire_all()
     assert ItemTemplate.query.filter_by(category='misc').filter(
-        ItemTemplate.name.like('%. Раздел: %')).count() == 16
+        ItemTemplate.name.like('%? Раздел: %')).count() == 16
     assert old.price == 99 and old.attributes['saved'] is True
+
+
+def test_skill_book_title_migration_removes_only_extra_dot(app, monkeypatch):
+    import importlib.util
+    from pathlib import Path
+    from app.extensions import db
+    from app.models.templates import ItemTemplate
+    from app.models import User, Lobby, LobbyCharacter
+    from app.services.equipment_catalog import load_catalog
+
+    book=next(item for item in load_catalog() if item['attributes'].get('book_skill_path'))
+    original=ItemTemplate(name=book['name'].replace('? Раздел:', '?. Раздел:'),
+        category='misc',price=book['price'],attributes=book['attributes'])
+    user=User(username='book-title-owner',email='book-title@example.test',password_hash='unused')
+    db.session.add(user)
+    db.session.flush()
+    lobby=Lobby(name='Книги',gm_id=user.id,invite_code='BOOKTITLE')
+    db.session.add(lobby)
+    db.session.flush()
+    character=LobbyCharacter(lobby_id=lobby.id,owner_id=user.id,name='Читатель',data={
+        'inventory':{'pockets':[{'name':original.name,'attributes':book['attributes']}]},
+        'crafting':{'library':[{'name':original.name,'book_kind':'skill'}]}})
+    db.session.add_all([original,character])
+    db.session.flush()
+    path=Path(__file__).resolve().parents[1] / 'migrations/versions/c8e67d40a291_remove_skill_book_title_dot.py'
+    spec=importlib.util.spec_from_file_location('skill_book_title_migration',path)
+    migration=importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(migration)
+    monkeypatch.setattr(migration.op,'get_bind',lambda:db.session.connection())
+    migration.upgrade()
+    migration.upgrade()
+    db.session.expire_all()
+    assert original.name==book['name']
+    assert character.data['inventory']['pockets'][0]['name']==book['name']
+    assert character.data['crafting']['library'][0]['name']==book['name']
 
 
 def test_craft_mold_migration_preserves_existing_template_and_is_repeatable(app, monkeypatch):

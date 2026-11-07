@@ -36,6 +36,40 @@ def preserve(current,incoming):
 def now(character):return ((character.lobby.game_day or 1)*1440+(character.lobby.game_time_minutes or 0))*60
 
 
+def complete_ready_book(character):
+    source=character.data or {}
+    job=(source.get('crafting') or {}).get('current')
+    if not job or job.get('kind')!='book' or now(character)<job['ready_at']:
+        return False
+    data=deepcopy(source)
+    state=data['crafting']
+    from app.services.portable_lights import pda_ready
+    if not pda_ready(data) or not any(item.get('id')==job['book_id'] for _,item in entries(data)):
+        return False
+    learned={key:job[key] for key in ('book_kind','book_subject','skill_path','name')}
+    library=state.setdefault('library',[])
+    if not any(entry['book_kind']==learned['book_kind']
+               and entry.get('skill_path')==learned['skill_path']
+               and entry.get('book_subject')==learned['book_subject'] for entry in library):
+        library.append(learned)
+    result={'job_id':job['id'],'kind':'book','name':job['name'],'cancelled':False,
+            'success':True,'roll':None,'difficulty':0,'lost':[],'lost_items':[],
+            'output_count':0}
+    state.pop('current')
+    state.setdefault('history',[]).append(result)
+    state['history']=state['history'][-30:]
+    from app.services.action_journal import append_work
+    append_work(data,'auto-book:'+job['id'],'finish',result)
+    character.data=data
+    flag_modified(character,'data')
+    return True
+
+
+def complete_lobby_books(lobby):
+    return [character for character in LobbyCharacter.query.filter_by(lobby_id=lobby.id).all()
+            if complete_ready_book(character)]
+
+
 def normalized(name):
     text=str(name or '').casefold().replace('ё','е').replace('металические','металлические')
     text=re.sub(r'\(\s*\d+\s*\)','',text)

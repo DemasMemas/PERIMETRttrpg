@@ -2243,6 +2243,13 @@ input[type="number"] {
 .pda-shell-nav button.active, .pda-shell-nav button:not(:disabled):hover { background: #456739; border-color: #acd48e; }
 .pda-shell-main { padding: 24px; line-height: 1.55; }
 .pda-shell-lead { font-size: 1.25rem; color: #ecf9da; margin: 0 0 18px; }
+.pda-file-list { display: grid; gap: 9px; margin: 8px 0 18px; }
+.pda-file-card { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px 16px; align-items: center; padding: 12px 14px; border: 1px solid #8eb87855; border-radius: 9px; background: #ffffff0a; }
+.pda-file-card strong { min-width: 0; overflow-wrap: anywhere; }
+.pda-file-card > button { white-space: nowrap; }
+.pda-file-skills { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 6px; }
+.pda-file-skills button { color: #cce7c0; background: #213c29; border: 1px solid #68905b88; border-radius: 6px; padding: 5px 9px; cursor: pointer; }
+.pda-file-skills button.active { background: #456739; border-color: #acd48e; }
 .pda-shell-note { display: inline-block; padding: 9px 13px; border: 1px solid #a1bc744d; border-radius: 6px; color: #bdd1af; }
 .pda-shell-mod { display: flex; flex-direction: column; margin: 8px 0; padding: 8px 12px; border-left: 3px solid #91b973; background: #ffffff0a; }
 .pda-shell-footer { border-top: 1px solid #8eb87844; border-bottom: 0; color: #8bab83; font-size: .67rem; letter-spacing: .12em; }

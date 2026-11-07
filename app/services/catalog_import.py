@@ -83,7 +83,7 @@ def misc_templates(rows):
             if group is None:
                 raise ValueError(f'Неизвестная категория книги навыков: {name}')
             for key, label in _catalog()['skills'][group].items():
-                result.append(template(f"{row['C']}. Раздел: {label}", 'misc', price, 0, 0,
+                result.append(template(f"{row['C']} Раздел: {label}", 'misc', price, 0, 0,
                     description, 'Книги', {**attrs, 'book_skill_path': f'{group}.{key}',
                                            'book_skill_name': label}))
         else:

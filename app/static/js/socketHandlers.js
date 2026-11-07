@@ -219,6 +219,7 @@ export function initSocket(lobbyId, token) {
     socket.on('lobby_time_updated', (data) => {
         updateDisplayedLobbyTime(data);
         applyLocationLighting();
+        window.dispatchEvent(new Event('pda-game-time-updated'));
     });
 
     socket.on('location_updated', data => {

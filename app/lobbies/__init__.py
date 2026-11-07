@@ -547,7 +547,9 @@ def _advance_world_time(lobby, minutes):
         character.data = character_data
         flag_modified(character, 'data')
         updated_characters.append(character)
-    return list({character.id:character for character in [*portable_updated,*updated_characters]}.values())
+    from app.services.crafting import complete_lobby_books
+    return list({character.id:character for character in
+        [*portable_updated,*updated_characters,*complete_lobby_books(lobby)]}.values())
 
 
 def _world_group_submitted_for_current_turn(group, lobby):
@@ -1332,6 +1334,8 @@ def update_lobby_time(lobby_id, lobby):
             character.data = character_data
             flag_modified(character, 'data')
             updated_characters.append(character)
+    from app.services.crafting import complete_lobby_books
+    updated_characters.extend(complete_lobby_books(lobby))
     db.session.commit()
     payload = {'game_day': game_day, 'game_time_minutes': game_time_minutes}
     from app.services.weather_rules import emit as emit_weather
@@ -1579,6 +1583,8 @@ def start_lobby_rest(lobby_id, lobby):
         if selected:
             summaries.append({'character_id': character.id, 'name': character.name, 'healed': round(healed)})
 
+    from app.services.crafting import complete_lobby_books
+    book_updated=complete_lobby_books(lobby)
     db.session.commit()
     time_payload = {
         'game_day': lobby.game_day,
@@ -1587,7 +1593,7 @@ def start_lobby_rest(lobby_id, lobby):
     socketio.emit('lobby_time_updated', time_payload, room=f"lobby_{lobby_id}")
     from app.services.weather_rules import emit as emit_weather
     emit_weather(lobby)
-    for character in {item.id:item for item in [*characters,*portable_updated]}.values():
+    for character in {item.id:item for item in [*characters,*portable_updated,*book_updated]}.values():
         emit_character_update(
             {
                 'character_id': character.id,
@@ -5148,11 +5154,18 @@ def recharge_liquid_crystal_armor(character_id):
 @lobbies_bp.route('/characters/<int:character_id>/crafting',methods=['GET','POST'])
 @jwt_required()
 def character_crafting(character_id):
-    from app.services.crafting import snapshot,operate
+    from app.services.crafting import snapshot,operate,complete_ready_book
     user_id=int(get_jwt_identity())
     character=db.session.get(LobbyCharacter,character_id)
     if not character:raise NotFoundError('Персонаж не найден')
-    if request.method=='GET':return jsonify(snapshot(character,user_id)),200
+    if request.method=='GET':
+        from app.services.character import CharacterService
+        CharacterService.check_access(character,user_id)
+        if complete_ready_book(character):
+            db.session.commit()
+            emit_character_update({'character_id':character.id,
+                'updates':{'data':character.data_snapshot()},'source':'crafting'})
+        return jsonify(snapshot(character,user_id)),200
     character,result=operate(character_id,user_id,request.get_json() or {})
     if (request.get_json() or {}).get('operation') not in {'quote','quote_modification','quote_salvage'}:
         emit_character_update({'character_id':character.id,'updates':{'data':character.data_snapshot()},'source':'crafting'})

@@ -1337,6 +1337,55 @@ def test_skill_book_cannot_be_read_as_another_skill(client,workshop,auth_headers
     assert accepted.status_code==200,accepted.json
 
 
+def test_book_finishes_automatically_when_game_time_advances(client,workshop,auth_headers):
+    from app.services.character_starting_purchase import item_from_template
+
+    book=ItemTemplate(name='Книга? Раздел: Сила',category='misc',price=100,weight=0,volume=0,
+        attributes={'book_kind':'skill','book_subject':'Физические',
+                    'book_skill_path':'physical.strength','reading_seconds':60})
+    db.session.add(book);db.session.flush()
+    character=workshop['actor_character']
+    data=deepcopy(character.data)
+    data['inventory']['pockets'].append(item_from_template(book))
+    character.data=data;db.session.commit()
+    started=call(client,workshop,auth_headers,'read_book',path=['inventory','pockets',4],
+                 skill_path='physical.strength')
+    assert started.status_code==200,started.json
+    advanced=client.patch(f"/lobbies/{workshop['lobby'].id}/time",
+        headers=auth_headers(workshop['actor_user']),
+        json={'game_day':1,'game_time_minutes':1})
+    assert advanced.status_code==200,advanced.json
+    state=character.data['crafting']
+    assert state.get('current') is None
+    assert len(state['library'])==1
+    assert state['library'][0]['skill_path']=='physical.strength'
+    snapshot=client.get(f'/lobbies/characters/{character.id}/crafting',
+        headers=auth_headers(workshop['actor_user']))
+    assert snapshot.status_code==200,snapshot.json
+    assert len(snapshot.json['state']['library'])==1
+
+
+def test_old_ready_book_is_recorded_when_files_are_opened(client,workshop,auth_headers):
+    from app.services.character_starting_purchase import item_from_template
+
+    book=ItemTemplate(name='Старая электронная книга',category='misc',price=100,weight=0,volume=0,
+        attributes={'book_kind':'equipment','book_subject':'Пистолеты','reading_seconds':60})
+    db.session.add(book);db.session.flush()
+    character=workshop['actor_character']
+    data=deepcopy(character.data)
+    data['inventory']['pockets'].append(item_from_template(book))
+    character.data=data;db.session.commit()
+    started=call(client,workshop,auth_headers,'read_book',path=['inventory','pockets',4])
+    assert started.status_code==200,started.json
+    workshop['lobby'].game_time_minutes+=1
+    db.session.commit()
+    fetched=client.get(f'/lobbies/characters/{character.id}/crafting',
+        headers=auth_headers(workshop['actor_user']))
+    assert fetched.status_code==200,fetched.json
+    assert fetched.json['state'].get('current') is None
+    assert len(fetched.json['state']['library'])==1
+
+
 def test_electronic_book_requires_powered_pda_at_start_and_finish(client,workshop,auth_headers):
     from app.services.character_starting_purchase import item_from_template
     book=ItemTemplate(name='Проверочная электронная книга',category='misc',price=100,weight=0,volume=1,

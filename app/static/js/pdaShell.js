@@ -22,8 +22,11 @@ function powerState(item) {
     return { on: saved.on !== false, charge: Number.isFinite(charge) ? Math.max(0, Math.min(100, charge)) : 0 };
 }
 
+const bookTitle = name => String(name || '').replace('?. Раздел:', '? Раздел:');
+
 export function openPdaShell({ item, findItem, getData, operate, canEdit, characterId, onSaved }) {
-    document.getElementById('pda-shell-modal')?.remove();
+    const previous = document.getElementById('pda-shell-modal');
+    if (previous) (previous.pdaClose || (() => previous.remove()))();
     const modal = document.createElement('div');
     modal.id = 'pda-shell-modal';
     modal.className = 'modal pda-shell-modal';
@@ -52,6 +55,7 @@ export function openPdaShell({ item, findItem, getData, operate, canEdit, charac
     let selectedMod = '';
     let selectedTool = '';
     let pdaQuote = null;
+    const selectedBookSkills = new Map();
 
     async function loadFiles() {
         if (filesLoading) return;
@@ -131,24 +135,18 @@ export function openPdaShell({ item, findItem, getData, operate, canEdit, charac
             const job = filesSnapshot.state?.current;
             if (job?.kind === 'book') {
                 const title = document.createElement('strong');
-                title.textContent = job.name;
+                title.textContent = bookTitle(job.name);
                 const status = document.createElement('p');
                 status.textContent = job.remaining_seconds > 0
                     ? `Чтение идёт. Осталось ${Math.ceil(job.remaining_seconds / 60)} мин игрового времени.`
-                    : 'Чтение можно завершить.';
-                const finish = document.createElement('button');
-                finish.type = 'button';
-                finish.className = 'btn btn-secondary';
-                finish.textContent = 'Завершить чтение';
-                finish.disabled = busy || !canEdit || job.remaining_seconds > 0;
-                finish.onclick = () => fileAction('finish', { job_id: job.id });
+                    : 'Чтение завершится автоматически при обновлении игрового времени.';
                 const cancel = document.createElement('button');
                 cancel.type = 'button';
                 cancel.className = 'btn btn-secondary';
                 cancel.textContent = 'Прервать чтение';
                 cancel.disabled = busy || !canEdit;
                 cancel.onclick = () => fileAction('cancel', { job_id: job.id });
-                content.append(title, status, finish, cancel);
+                content.append(title, status, cancel);
             } else if (job) {
                 const status = document.createElement('p');
                 status.textContent = 'Сначала завершите текущую работу.';
@@ -160,83 +158,87 @@ export function openPdaShell({ item, findItem, getData, operate, canEdit, charac
                     && pdaPath.every((part, index) => entry.path[index] === part));
                 const available = filesSnapshot.inventory.filter(entry => entry.item.attributes?.book_kind
                     && !books.some(stored => stored.item.id === entry.item.id));
+                const cardList = document.createElement('div');
+                cardList.className = 'pda-file-list';
                 if (available.length && canEdit) {
-                    const upload = document.createElement('select');
-                    upload.className = 'form-control';
-                    upload.setAttribute('aria-label', 'Книга для записи в КПК');
-                    available.forEach((entry, index) => {
-                        const option = document.createElement('option');
-                        option.value = String(index);
-                        option.textContent = entry.item.name;
-                        upload.append(option);
-                    });
-                    const importButton = document.createElement('button');
-                    importButton.type = 'button';
-                    importButton.className = 'btn btn-secondary';
-                    importButton.textContent = 'Записать в КПК';
-                    importButton.disabled = busy;
-                    importButton.onclick = async () => {
-                        if (busy) return;
-                        busy = true;
-                        render();
-                        try {
-                            const current = findItem(item.id);
-                            await operate({ operation: 'pda_import_book', path: current.path,
-                                source_id: current.item.id, book_path: available[Number(upload.value)].path });
-                            filesSnapshot = await Server.getCrafting(characterId);
-                        } finally { busy = false; if (modal.isConnected) render(); }
-                    };
-                    content.append(upload, importButton);
+                    const label = document.createElement('h4');
+                    label.textContent = 'Книги в инвентаре';
+                    content.append(label);
+                    for (const entry of available) {
+                        const card = document.createElement('article');
+                        card.className = 'pda-file-card';
+                        const name = document.createElement('strong');
+                        name.textContent = bookTitle(entry.item.name);
+                        const importButton = document.createElement('button');
+                        importButton.type = 'button';
+                        importButton.className = 'btn btn-secondary';
+                        importButton.textContent = 'Записать в КПК';
+                        importButton.disabled = busy;
+                        importButton.onclick = async () => {
+                            if (busy) return;
+                            busy = true;
+                            render();
+                            try {
+                                const current = findItem(item.id);
+                                await operate({ operation: 'pda_import_book', path: current.path,
+                                    source_id: current.item.id, book_path: entry.path });
+                                filesSnapshot = await Server.getCrafting(characterId);
+                            } catch (error) { showNotification(error.message, 'system'); }
+                            finally { busy = false; if (modal.isConnected) render(); }
+                        };
+                        card.append(name, importButton);
+                        cardList.append(card);
+                    }
+                    content.append(cardList);
                 }
                 if (!books.length) {
                     const empty = document.createElement('p');
                     empty.textContent = 'В КПК пока нет книг.';
                     content.append(empty);
                 } else {
-                    const book = document.createElement('select');
-                    book.className = 'form-control';
-                    book.setAttribute('aria-label', 'Электронная книга');
-                    books.forEach((entry, index) => {
-                        const option = document.createElement('option');
-                        option.value = String(index);
-                        option.textContent = entry.item.name;
-                        book.append(option);
-                    });
-                    const skill = document.createElement('select');
-                    skill.className = 'form-control';
-                    skill.setAttribute('aria-label', 'Навык книги');
-                    const updateSkill = () => {
-                        const entry = books[Number(book.value)];
-                        const attrs = entry.item.attributes;
-                        skill.replaceChildren();
-                        skill.hidden = attrs.book_kind !== 'skill';
-                        if (skill.hidden) return;
-                        const subject = String(attrs.book_subject || '').toLowerCase();
-                        const group = subject.includes('физическ') ? 'physical'
-                            : subject.includes('социальн') ? 'social' : 'other';
-                        for (const row of filesSnapshot.skills.filter(row =>
-                            attrs.book_skill_path ? row.path === attrs.book_skill_path : row.path.startsWith(group + '.'))) {
-                            const option = document.createElement('option');
-                            option.value = row.path;
-                            option.textContent = row.label;
-                            skill.append(option);
-                        }
+                    const label = document.createElement('h4');
+                    label.textContent = 'Файлы КПК';
+                    content.append(label);
+                    const storedList = document.createElement('div');
+                    storedList.className = 'pda-file-list';
+                    for (const entry of books) {
+                        const attrs = entry.item.attributes || {};
+                        const card = document.createElement('article');
+                        card.className = 'pda-file-card';
+                        const name = document.createElement('strong');
+                        name.textContent = bookTitle(entry.item.name);
+                        card.append(name);
                         const assigned = filesSnapshot.state.book_assignments?.[entry.item.id];
-                        if (assigned) skill.value = assigned;
-                        skill.disabled = busy || !canEdit || Boolean(assigned) || Boolean(attrs.book_skill_path);
-                    };
-                    book.onchange = updateSkill;
-                    updateSkill();
-                    const read = document.createElement('button');
-                    read.type = 'button';
-                    read.className = 'btn btn-secondary';
-                    read.textContent = 'Читать · 4 часа';
-                    read.disabled = busy || !canEdit;
-                    read.onclick = () => fileAction('read_book', {
-                        path: books[Number(book.value)].path,
-                        skill_path: skill.hidden ? null : skill.value,
-                    });
-                    content.append(book, skill, read);
+                        let skillPath = attrs.book_skill_path || assigned || null;
+                        if (attrs.book_kind === 'skill' && !skillPath) {
+                            const subject = String(attrs.book_subject || '').toLowerCase();
+                            const group = subject.includes('физическ') ? 'physical'
+                                : subject.includes('социальн') ? 'social' : 'other';
+                            const skills = filesSnapshot.skills.filter(row => row.path.startsWith(group + '.'));
+                            const choices = document.createElement('div');
+                            choices.className = 'pda-file-skills';
+                            const selectedPath = selectedBookSkills.get(entry.item.id) || skills[0]?.path;
+                            skillPath = selectedPath;
+                            for (const row of skills) {
+                                const choice = document.createElement('button');
+                                choice.type = 'button';
+                                choice.className = row.path === selectedPath ? 'active' : '';
+                                choice.textContent = row.label;
+                                choice.onclick = () => { selectedBookSkills.set(entry.item.id, row.path); render(); };
+                                choices.append(choice);
+                            }
+                            card.append(choices);
+                        }
+                        const read = document.createElement('button');
+                        read.type = 'button';
+                        read.className = 'btn btn-secondary';
+                        read.textContent = 'Читать · 4 часа';
+                        read.disabled = busy || !canEdit || (attrs.book_kind === 'skill' && !skillPath);
+                        read.onclick = () => fileAction('read_book', { path: entry.path, skill_path: skillPath });
+                        card.append(read);
+                        storedList.append(card);
+                    }
+                    content.append(storedList);
                 }
             }
             const learned = filesSnapshot.state.library || [];
@@ -246,7 +248,8 @@ export function openPdaShell({ item, findItem, getData, operate, canEdit, charac
                 content.append(label);
                 for (const entry of learned) {
                     const row = document.createElement('p');
-                    row.textContent = entry.name + (entry.skill_path
+                    const title = bookTitle(entry.name);
+                    row.textContent = title + (entry.skill_path && !title.includes('Раздел:')
                         ? ' · ' + (filesSnapshot.skills.find(skill => skill.path === entry.skill_path)?.label || '') : '');
                     content.append(row);
                 }
@@ -387,9 +390,21 @@ export function openPdaShell({ item, findItem, getData, operate, canEdit, charac
         busy = true;
         render();
         try { await operate({ operation: 'pda_toggle', path: current.path, source_id: current.item.id ?? null }); }
-        finally { busy = false; if (modal.isConnected) render(); }
+        finally {
+            busy = false;
+            if (modal.isConnected) {
+                render();
+                if (selected === 'files') void loadFiles();
+            }
+        }
     };
-    const close = () => modal.remove();
+    const onTimeUpdated = () => { if (selected === 'files' && modal.isConnected) void loadFiles(); };
+    window.addEventListener('pda-game-time-updated', onTimeUpdated);
+    const close = () => {
+        window.removeEventListener('pda-game-time-updated', onTimeUpdated);
+        modal.remove();
+    };
+    modal.pdaClose = close;
     modal.querySelector('[data-pda-close]').onclick = close;
     modal.onclick = event => { if (event.target === modal) close(); };
     render();

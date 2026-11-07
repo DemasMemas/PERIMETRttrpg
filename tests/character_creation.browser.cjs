@@ -366,11 +366,11 @@ module.exports=async({page,request,token,lobby,base,connect,debugPort,safeSessio
         : `#backpack-container > [data-path="inventory,backpack,${pdaBag}"] [data-widget-key=use]`);
     await page.until('document.querySelector("#pda-shell-modal .pda-shell-nav button")','КПК открыт после выдачи книги');
     await click('#pda-shell-modal .pda-shell-nav button:nth-child(4)');
-    await page.until(`document.querySelector('#pda-shell-modal [aria-label="Книга для записи в КПК"] option')?.textContent.includes(${JSON.stringify(books[0].name)})`,'книга доступна для записи');
-    await click('#pda-shell-modal [data-pda-content] button');
-    await page.until(`document.querySelector('#pda-shell-modal [aria-label="Электронная книга"] option')?.textContent.includes(${JSON.stringify(books[0].name)})`,'книга появилась в файлах КПК');
+    await page.until(`[...document.querySelectorAll('#pda-shell-modal .pda-file-card strong')].some(node=>node.textContent.includes(${JSON.stringify(books[0].name)}))`,'книга доступна для записи');
+    await click('#pda-shell-modal .pda-file-card button');
+    await page.until(`[...document.querySelectorAll('#pda-shell-modal .pda-file-card strong')].some(node=>node.textContent.includes(${JSON.stringify(books[0].name)}))&&document.querySelector('#pda-shell-modal .pda-file-card button')?.textContent.includes('Читать')`,'книга появилась в файлах КПК');
     await screenshot('pda-files');
-    await click('#pda-shell-modal [data-pda-content] button');
+    await click('#pda-shell-modal .pda-file-card button');
     await page.until(`(async()=>{const r=await fetch('/lobbies/characters/${character.id}/crafting',{headers:{Authorization:'Bearer '+localStorage.getItem('access_token')}});return (await r.json()).state?.current?.kind==='book'})()`,'чтение началось из КПК');
     fs.writeFileSync(path.join(safeSession.artifacts,'character-creation.json'),JSON.stringify({catalogBackgrounds:56,catalogTraits:90,serverPoints:14,initialAgility:10,health:840,capital:3960,threeTraits:true,templateFileRoundtrip:true,unplacedInventoryVisible:true,backpackEquipPreservesItems:true,rewardBothClients:true,rewardAgility:11,rewardHalfXp:.5,reloadStable:true},null,2));
 };
