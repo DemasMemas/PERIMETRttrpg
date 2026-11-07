@@ -57,6 +57,8 @@ export function openPdaShell({ item, findItem, getData, operate, canEdit, charac
     let pdaQuote = null;
     let accountSnapshot = null;
     let accountLoading = true;
+    let accountError = '';
+    const accountDraft = { login: '', password: '' };
     const selectedBookSkills = new Map();
 
     async function loadAccount() {
@@ -68,12 +70,17 @@ export function openPdaShell({ item, findItem, getData, operate, canEdit, charac
     async function accountAction(operation, payload = {}) {
         if (busy || !canEdit) return;
         busy = true;
+        accountError = '';
         render();
         try {
             accountSnapshot = await Server.changePdaAccount(characterId, operation, payload);
+            if (operation === 'login' || operation === 'register') accountDraft.password = '';
             if (operation === 'save_notes') showNotification('Заметки сохранены в аккаунте КПК', 'system');
         }
-        catch (error) { showNotification(error.message, 'system'); }
+        catch (error) {
+            accountError = error.message;
+            if (operation !== 'login' && operation !== 'register') showNotification(error.message, 'system');
+        }
         finally { busy = false; if (modal.isConnected) render(); }
     }
 
@@ -169,20 +176,41 @@ export function openPdaShell({ item, findItem, getData, operate, canEdit, charac
                 login.className = 'form-control';
                 login.name = 'pda-account-alias';
                 login.autocomplete = 'off';
+                login.readOnly = true;
+                login.onfocus = () => { login.readOnly = false; };
                 login.maxLength = 32;
                 login.placeholder = 'Логин';
                 login.setAttribute('aria-label', 'Логин КПК');
+                login.value = accountDraft.login;
+                login.oninput = () => { accountDraft.login = login.value; accountError = ''; };
                 const password = document.createElement('input');
                 password.className = 'form-control';
                 password.type = 'password';
                 password.name = 'pda-account-secret';
                 password.autocomplete = 'off';
+                password.readOnly = true;
+                password.onfocus = () => { password.readOnly = false; };
                 password.placeholder = 'Пароль';
                 password.setAttribute('aria-label', 'Пароль КПК');
+                password.value = accountDraft.password;
+                password.oninput = () => { accountDraft.password = password.value; accountError = ''; };
                 const submit = operation => {
-                    const payload = { login: login.value, password: password.value };
+                    accountDraft.login = login.value;
+                    accountDraft.password = password.value;
+                    const payload = { ...accountDraft };
                     void accountAction(operation, payload);
                 };
+                const rules = document.createElement('p');
+                rules.className = 'pda-account-help';
+                rules.textContent = 'Логин: 3–32 буквы, цифры, точки, дефисы или подчёркивания. Пароль: 6–128 символов. Для первого входа создайте аккаунт.';
+                content.append(rules);
+                if (accountError) {
+                    const error = document.createElement('p');
+                    error.className = 'error-message';
+                    error.setAttribute('role', 'alert');
+                    error.textContent = accountError;
+                    content.append(error);
+                }
                 for (const [operation, label] of [['login', 'Войти'], ['register', 'Создать аккаунт']]) {
                     const button = document.createElement('button');
                     button.type = operation === 'login' ? 'submit' : 'button';

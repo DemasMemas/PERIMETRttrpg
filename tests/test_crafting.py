@@ -1263,19 +1263,32 @@ def test_cancel_restores_all_units_and_stale_save_cannot_erase_job(client,worksh
     for name in ['Металлические детали','Электронные материалы','КПК']:assert units(result.json['data'],name)==units(before,name)
 
 
-def test_player_cannot_approve_tool_but_gm_approval_changes_quote(client,workshop,auth_headers):
-    # Создатель здесь ГМ; второй пользователь не должен одобрять его заявку.
-    request=call(client,workshop,auth_headers,'request_tool',recipe_id='recipe-f4',tool_path=['inventory','pockets',3])
+def test_only_scene_condition_can_be_approved_without_changing_difficulty(client,workshop,auth_headers):
+    data=deepcopy(workshop['actor_character'].data)
+    data['skills']['other']['medicine']={'base':5,'bonus':0}
+    data['skills']['other']['survival']={'base':5,'bonus':0}
+    workshop['actor_character'].data=data
+    db.session.commit()
+    arbitrary=call(client,workshop,auth_headers,'request_tool',recipe_id='recipe-f4',tool_path=['inventory','pockets',3])
+    assert arbitrary.status_code==400
+    before=call(client,workshop,auth_headers,'quote',recipe_id='recipe-aa29')
+    assert before.status_code==200,before.json
+    assert any('Нужно подтверждение условий ГМом' in part for part in before.json['result']['missing'])
+    barrier=call(client,workshop,auth_headers,'quote',recipe_id='recipe-m19')
+    assert barrier.status_code==200,barrier.json
+    assert any('мебель из дерева' in part for part in barrier.json['result']['missing'])
+    request=call(client,workshop,auth_headers,'request_tool',recipe_id='recipe-aa29')
     assert request.status_code==200,request.json
     character=workshop['actor_character']
     response=client.post(f'/lobbies/characters/{character.id}/crafting',headers=auth_headers(workshop['target_user']),json={
-        'operation':'approve_tool','operation_id':'forged','character_revision':character.revision,'request_id':request.json['result']['id'],'modifier':-15,'approved':True})
+        'operation':'approve_tool','operation_id':'forged','character_revision':character.revision,'request_id':request.json['result']['id'],'modifier':0,'approved':True})
     assert response.status_code==403,response.json
-    approved=call(client,workshop,auth_headers,'approve_tool',request_id=request.json['result']['id'],modifier=-15,approved=True)
+    approved=call(client,workshop,auth_headers,'approve_tool',request_id=request.json['result']['id'],modifier=0,approved=True)
     assert approved.status_code==200,approved.json
-    quote=call(client,workshop,auth_headers,'quote',recipe_id='recipe-f4',approval_id=request.json['result']['id'])
-    assert quote.json['result']['difficulty']==0
-    assert not quote.json['result']['automatic_success']
+    quote=call(client,workshop,auth_headers,'quote',recipe_id='recipe-aa29',approval_id=request.json['result']['id'])
+    assert quote.status_code==200,quote.json
+    assert quote.json['result']['difficulty']==before.json['result']['difficulty']
+    assert not any('Нужно подтверждение условий ГМом' in part for part in quote.json['result']['missing'])
 
 
 def test_multi_use_component_spends_uses_instead_of_bottles(client,workshop,auth_headers,monkeypatch):

@@ -45,7 +45,7 @@ export async function showCrafting({characterId,lobbyId,onSaved}){
         snapshot=await Server.getCrafting(characterId);if(!modal.isConnected)return;
         body.replaceChildren();
         body.append(button('Обновить',refresh));
-        if(snapshot.is_gm)body.append(button('Заявки на инструменты',showRequests));
+        if(snapshot.is_gm)body.append(button('Подтверждения условий сцены',showRequests));
         const job=snapshot.state.current;
         if(job){
             body.append(el('h4',job.name),el('p',job.remaining_seconds>0?`Работа идёт. Осталось ${Math.ceil(job.remaining_seconds/60)} мин игрового времени.`:'Время работы прошло. Можно завершить создание.'));
@@ -128,7 +128,7 @@ export async function showCrafting({characterId,lobbyId,onSaved}){
             const parts=recipe.tools_text.split(',').at(-1).split('/');
             const tool=select('Вариант приготовления',(ammoCategory===2?[65]:recipe.difficulty_options.length?recipe.difficulty_options:[0]).map((difficulty,i)=>[i,`${parts[i]?.trim()||'По рецепту'} · исходная СЛ ${difficulty}`]));
             if(recipe.difficulty_options.length>1)detail.append(tool);
-            const approval=snapshot.state.tool_requests?.filter(r=>r.recipe_id===recipe.id&&r.status==='approved'&&!r.used).at(-1);
+            const approval=snapshot.state.tool_requests?.filter(r=>r.recipe_id===recipe.id&&r.environment&&r.status==='approved'&&!r.used).at(-1);
             const preview=el('div');detail.append(preview);
             const updateQuote=async()=>{
                 const quoteGeneration=++generation;preview.replaceChildren(el('p','Считаем компоненты…'));
@@ -138,10 +138,10 @@ export async function showCrafting({characterId,lobbyId,onSaved}){
                     if(quoteGeneration!==generation||!modal.isConnected)return;
                     const plan=response.result;preview.replaceChildren(el('p',`Результат: ${plan.recipe.output_name} × ${plan.recipe.output_count}`),
                         el('p',`Итоговая СЛ ${plan.difficulty}${plan.automatic_success?' · автоуспех':''}`));
-                    if(approval)preview.append(el('p',`ГМ одобрил: ${approval.tool_name||'условия'} · СЛ ${approval.modifier}`));
+                    if(approval)preview.append(el('p','ГМ подтвердил условие сцены. СЛ не меняется.'));
                     let statusIndex=0;
                     for(const component of plan.recipe.components){
-                        if(component.name.toLocaleLowerCase().startsWith('доступ к ')){
+                        if(/^доступ к |^в округе должна быть мебель из дерева или готовые доски$/i.test(component.name)){
                             preview.append(el('p',component.name));continue;
                         }
                         const status=plan.component_status?.[statusIndex++];
@@ -158,11 +158,12 @@ export async function showCrafting({characterId,lobbyId,onSaved}){
             if(ammo){ammo.onchange=()=>{fillAmmoVariants();void updateQuote();};ammoVariant.onchange=updateQuote;}
             await updateQuote();
             if(!modal.isConnected||selectedRecipe!==recipe.id)return;
-            const extra=select('Дополнительный инструмент',[['','Без дополнительного инструмента'],...snapshot.inventory.map((e,i)=>[i,e.item.name])]);
-            detail.append(el('h4','Дополнительный инструмент'),extra);
-            detail.append(el('p','Необязательно: ГМ может одобрить дополнительный инструмент и снизить СЛ на 5–15 либо подтвердить условия сцены. Одобрение действует для одной работы; предмет не передаётся и не расходуется.'));
-            detail.append(button('Запросить одобрение ГМа',()=>act('request_tool',{recipe_id:recipe.id,tool_path:extra.value===''?null:snapshot.inventory[Number(extra.value)].path})));
-            for(const request of snapshot.state.tool_requests||[])if(request.recipe_id===recipe.id)detail.append(el('p',`${request.tool_name||'Условия создания'}: ${{pending:'ожидает ГМа',approved:'одобрено',rejected:'отклонено'}[request.status]}${request.used?' · использовано':''}`));
+            if(recipe.components.some(component=>/^доступ к |^в округе должна быть мебель из дерева или готовые доски$/i.test(component.name))){
+                detail.append(el('h4','Условие сцены'),el('p','ГМ подтверждает доступ к указанному в рецепте условию. Это не меняет СЛ и действует для одной работы.'));
+                detail.append(button('Попросить подтверждение ГМа',()=>act('request_tool',{recipe_id:recipe.id})));
+                for(const request of snapshot.state.tool_requests||[])if(request.recipe_id===recipe.id&&request.environment)
+                    detail.append(el('p',`Условие сцены: ${{pending:'ожидает ГМа',approved:'подтверждено',rejected:'отклонено'}[request.status]}${request.used?' · использовано':''}`));
+            }
         };
         recipes.onchange=()=>{void show();paintCards();};
         filter.oninput=()=>{
@@ -275,9 +276,8 @@ export async function showCrafting({characterId,lobbyId,onSaved}){
                 if([...replacement.options].some(o=>o.value===selectedReplacement))replacement.value=selectedReplacement;
                 preview.replaceChildren(el('p',rule.description));
                 if(!rule.automatic_installation){preview.append(el('p','Автоматическая установка этого улучшения пока недоступна.'));return;}
-                const approval=snapshot.state.tool_requests?.filter(r=>r.recipe_id===rule.id&&r.status==='approved'&&!r.used).at(-1);
                 const payload={rule_id:rule.id,target_path:target.path,tool_path:snapshot.inventory[Number(tool.value)]?.path,
-                    double_charges:double.checked,replace_rule_id:replacement.value||null,approval_id:approval?.id,
+                    double_charges:double.checked,replace_rule_id:replacement.value||null,
                     material_contributions:rule.kind==='weapon'?[]:materialInputs.filter(r=>Number(r.input.value)>0).map(r=>({path:r.entry.path,quantity:Number(r.input.value)}))};
                 try{
                     const response=await Server.craft(characterId,{operation:'quote_modification',...payload});
@@ -290,20 +290,16 @@ export async function showCrafting({characterId,lobbyId,onSaved}){
             };
             rules.onchange=update;tool.onchange=update;double.onchange=update;replacement.onchange=update;void update();
             for(const row of materialInputs)row.input.onchange=update;
-            const extra=select('Дополнительный инструмент для улучшения',[['','Выберите инструмент'],...snapshot.inventory.map((e,i)=>[i,e.item.name])]);form.append(extra);
-            form.append(el('p','Необязательное одобрение ГМа снижает СЛ этой установки на 5–15. Дополнительный инструмент остаётся у персонажа.'));
-            form.append(button('Запросить инструмент у ГМа',()=>act('request_tool',{recipe_id:rules.value,tool_path:extra.value===''?null:snapshot.inventory[Number(extra.value)].path})));
         };
         targets.onchange=redraw;redraw();
     };
     const showRequests=async()=>{
-        const response=await Server.getCraftingRequests(lobbyId);body.replaceChildren(button('Назад',refresh),el('h4','Заявки на инструменты'));
-        body.append(el('p','Одобрение дополнительного инструмента снижает СЛ на 5–15 для одной работы. Подтверждение условий сцены даёт допуск к рецепту без бонуса СЛ. Предмет остаётся у персонажа.'));
+        const response=await Server.getCraftingRequests(lobbyId);body.replaceChildren(button('Назад',refresh),el('h4','Подтверждения условий сцены'));
+        body.append(el('p','Подтверждение открывает рецепт с условием сцены для одной работы и не меняет СЛ.'));
         if(!response.requests.length)body.append(el('p','Ожидающих заявок нет.'));
         for(const request of response.requests){
-            const row=el('div',null,'loadout-group');row.append(el('strong',request.character_name),el('p',`${request.recipe_name}: ${request.tool_name||'Подтвердить условия рецепта'}`));
-            const modifier=select('Снижение СЛ',request.tool_id?Array.from({length:11},(_,i)=>[-5-i,`СЛ −${5+i}`]):[[0,'Условия выполнены']]);row.append(modifier);
-            for(const [label,approved] of [['Одобрить',true],['Отклонить',false]])row.append(button(label,async()=>{await act('approve_tool',{request_id:request.id,modifier:Number(modifier.value),approved},request.character_id,request.revision);await showRequests();}));
+            const row=el('div',null,'loadout-group');row.append(el('strong',request.character_name),el('p',`${request.recipe_name}: проверить условие сцены`));
+            for(const [label,approved] of [['Подтвердить',true],['Отклонить',false]])row.append(button(label,async()=>{await act('approve_tool',{request_id:request.id,modifier:0,approved},request.character_id,request.revision);await showRequests();}));
             body.append(row);
         }
     };

@@ -5196,7 +5196,8 @@ def crafting_requests(lobby_id,lobby):
     result=[]
     for character in LobbyCharacter.query.filter_by(lobby_id=lobby_id).all():
         for entry in (character.data.get('crafting') or {}).get('tool_requests',[]):
-            if entry['status']=='pending':result.append({**entry,'character_id':character.id,'character_name':character.name,'revision':character.revision})
+            if entry['status']=='pending' and entry.get('environment'):
+                result.append({**entry,'character_id':character.id,'character_name':character.name,'revision':character.revision})
     return jsonify({'requests':result}),200
 
 

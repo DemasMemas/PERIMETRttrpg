@@ -136,7 +136,9 @@ def _template(name):
     return next((t for t in templates if t.category=='grenade' and normalized(t.name).removeprefix('граната ')==key),None)
 
 
-def _environment(component):return normalized(component['name']).startswith('доступ к ')
+def _environment(component):
+    name=normalized(component['name'])
+    return name.startswith('доступ к ') or name=='в округе должна быть мебель из дерева или готовые доски'
 
 
 def _chlorine_uses(item):
@@ -277,16 +279,14 @@ def quote(character,data,payload):
     allocations,missing,component_status=_allocate(data,recipe,with_status=True)
     component_missing_count=len(missing)
     state=data.get('crafting') or {};approval=next((r for r in state.get('tool_requests',[]) if r['id']==payload.get('approval_id')
-        and r['recipe_id']==recipe['id'] and r['status']=='approved' and not r.get('used')),None)
-    if approval and approval.get('tool_id'):
-        if not any(item.get('id')==approval['tool_id'] for _,item in entries(data)):raise ConflictError('Одобренный инструмент больше не доступен')
+        and r['recipe_id']==recipe['id'] and r['status']=='approved' and r.get('environment') and not r.get('used')),None)
     environment=[c['name'] for c in recipe['components'] if _environment(c)]
     if environment and not (approval and approval.get('environment')):missing.append('Нужно подтверждение условий ГМом: '+', '.join(environment))
     level=CombatService._skill_value(data,'skills.'+recipe['skill'])
     difficulty=recipe['difficulty_options'][option] if recipe['difficulty_options'] else 0
     result=({'difficulty':0,'automatic_success':True,'failure_loss':{'random':0,'chosen':0,'all':False}}
         if recipe.get('maintenance') else creation_quote(level,difficulty,base_automatic=recipe['automatic'],
-            difficulty_modifier=(approval.get('modifier',0) if approval else 0)+craft_difficulty_modifier(data)))
+            difficulty_modifier=craft_difficulty_modifier(data)))
     tool_output=CRAFTED_TOOLS.get(recipe['id'])
     output=ammo_template or _template(tool_output[0] if tool_output else recipe['output_name'])
     if not output:missing.append('В каталоге нет шаблона результата: '+recipe['output_name'])
@@ -502,12 +502,7 @@ def modification_plan(character,data,payload):
     if actual<grade:raise ValidationError('Нужен более высокий набор инструментов')
     uses=tool.get('uses',tool.get('maxUses',(tool.get('attributes') or {}).get('uses',0)))
     if type(uses) not in {int,float} or uses<plan['tool_uses']:raise ValidationError('Не хватает зарядов инструментов')
-    approval=next((r for r in (data.get('crafting') or {}).get('tool_requests',[]) if r['id']==payload.get('approval_id') and r['recipe_id']==rule['id'] and r['status']=='approved' and not r.get('used')),None)
-    if approval:
-        if not any(item.get('id')==approval['tool_id'] for _,item in entries(data)):raise ConflictError('Дополнительный инструмент больше не доступен')
-        if any(entry['item'].get('id')==approval['tool_id'] for entry in allocations):raise ValidationError('Дополнительный инструмент нельзя одновременно потратить как материал')
-        plan['difficulty']+=approval['modifier']
-    return {**plan,'rule':rule,'target':target,'tool':tool,'target_id':target.get('id'),'slots':slot,'approval_id':approval['id'] if approval else None,
+    return {**plan,'rule':rule,'target':target,'tool':tool,'target_id':target.get('id'),'slots':slot,'approval_id':None,
         'material_value':material_value,'material_allocations':allocations}
 
 
@@ -545,21 +540,21 @@ def operate(character_id,user_id,payload):
         from app.services.equipment_modifications import definition
         subject_id=payload.get('recipe_id')
         recipe=recipe_by_id(subject_id) if str(subject_id).startswith('recipe-') else definition(subject_id)
-        path=payload.get('tool_path')
-        tool=next((item for p,item in entries(data) if p==path),None) if path else None
         environment=any(_environment(c) for c in recipe.get('components',[]))
-        if not tool and not environment:raise ValidationError('Выберите дополнительный инструмент')
-        if tool:tool.setdefault('id',str(uuid4()))
+        if not environment or payload.get('tool_path'):
+            raise ValidationError('Заявка нужна только для подтверждения условия сцены')
         result={'id':str(uuid4()),'recipe_id':recipe['id'],'recipe_name':recipe.get('name') or recipe.get('description'),'status':'pending',
-            'tool_id':tool.get('id') if tool else None,'tool_name':tool.get('name') if tool else None,'environment':environment}
+            'tool_id':None,'tool_name':None,'environment':True}
         state.setdefault('tool_requests',[]).append(result)
         state['tool_requests']=state['tool_requests'][-50:]
     elif action=='approve_tool':
         pending=next((r for r in state.get('tool_requests',[]) if r['id']==payload.get('request_id')),None)
         if not pending or pending['status']!='pending':raise ConflictError('Заявка уже рассмотрена')
+        if not pending.get('environment'):
+            raise ValidationError('Заявка на дополнительный инструмент устарела')
         modifier=payload.get('modifier')
-        if type(payload.get('approved')) is not bool:raise ValidationError('Одобрите или отклоните инструмент')
-        if type(modifier) is not int or (not -15<=modifier<=-5 if pending['tool_id'] else modifier!=0):raise ValidationError('Скидка инструмента: от −5 до −15')
+        if type(payload.get('approved')) is not bool:raise ValidationError('Одобрите или отклоните условие')
+        if modifier != 0:raise ValidationError('Подтверждение условия не меняет сложность')
         pending.update(status='approved' if payload.get('approved') is True else 'rejected',modifier=modifier)
         result=deepcopy(pending)
     elif action=='install_pda_modification':
