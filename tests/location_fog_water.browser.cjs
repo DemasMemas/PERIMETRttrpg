@@ -94,8 +94,9 @@ module.exports=async({page,request,token,lobby,base,connect,debugPort,safeSessio
         await page.evaluate('L.levelLocationWaterBody(52,44,"exact",1.5);true');
         await peer.until(`fogCheckScene.children.some(mesh=>mesh.renderOrder===4&&mesh.visible&&mesh.uuid!==${JSON.stringify(fogBeforeHeight)}&&mesh.geometry.drawRange.count<=mesh.geometry.index.array.length)`,'туман обновлён после высоты воды');
         await peer.until(`(async()=>{const r=await fetch(${JSON.stringify(url)},{headers:{Authorization:'Bearer '+localStorage.getItem('access_token')}});const d=await r.json();return d.tiles_data?.[44]?.[52]?.height===1.5})()`,'новая высота воды сохранена');
+        await peer.evaluate('window.fogBeforeReload=true;true');
         await peer.call('Page.reload',{ignoreCache:true});
-        await peer.until('window.enterLocation&&window.isGM===false','игрок перезагрузил страницу');
+        await peer.until('!window.fogBeforeReload&&typeof enterLocation==="function"&&window.isGM===false','игрок перезагрузил страницу');
         await peer.evaluate(`(async()=>{window.T=await import('three');const add=T.Scene.prototype.add;T.Scene.prototype.add=function(...objects){if(objects.some(o=>o.renderOrder===4))window.fogCheckScene=this;return add.apply(this,objects)};await enterLocation(${location.id});true})()`);
         await peer.until('window.fogCheckScene&&document.getElementById("scene-loading-screen").classList.contains("is-hidden")','туман восстановлен после перезагрузки');
         assert.equal(await peer.evaluate(`fogCheckScene.children.find(mesh=>mesh.userData?.locationObjectId===${hiddenId})?.visible??null`),false);

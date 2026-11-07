@@ -82,5 +82,7 @@ module.exports=async({page,request,token,lobby,base,connect,debugPort,safeSessio
  result.checks.push({stage:'fog-visual-polygon-2',deepWater:true,noIndexTruncation:true});
  await require('./location_swamp_pools.browser.cjs')({page,request,token,lobby,safeSession});
  result.checks.push({stage:'swamp-pools',maximumPerThreeMeters:2});
+ await require('./location_grass_variations.browser.cjs')({page,request,token,lobby,safeSession});
+ result.checks.push({stage:'grass-variations',models:2});
  result.status='READY_FOR_REVIEW';save();
 };
