@@ -2400,6 +2400,12 @@ input[type="number"] {
 .equipment-workspace .loadout-cosmetics-grid .loadout-slot { min-height: 48px; }
 .equipment-workspace .loadout-resources { margin-top: 8px; }
 .equipment-workspace .loadout-resources span { padding: 4px 7px; }
+.equipment-workspace .equipment-loadout > .portable-lights,
+.equipment-workspace .equipment-loadout > .prostheses {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid var(--loadout-line);
+}
 #sheet-tab-equipment { max-height: calc(100vh - 190px); }
 @media (max-width: 1350px) {
   .equipment-workspace { grid-template-columns: minmax(480px, 520px) minmax(0, 1fr); gap: 8px; }

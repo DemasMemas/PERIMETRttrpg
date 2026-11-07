@@ -86,9 +86,11 @@ def test_legacy_catalog_duplicates_are_hidden_from_new_issuance(client,prepared,
     nvg=catalog_item('device','Очки ПНВ-1п')
     grenade=catalog_item('grenade','Граната РГД-5')
     old=[ItemTemplate(name=pouch.name,category='pouch',price=1,attributes={}),
+         ItemTemplate(name='Вещевой подсумок (старый)',category='pouch',price=1,attributes={'capacity': 8}),
          ItemTemplate(name=glove.name,category='gloves',price=1,attributes={}),
          ItemTemplate(name=detector.name,category='device',price=1,attributes={}),
          ItemTemplate(name=nvg.name,category='helmet_module',price=1,attributes={}),
+         ItemTemplate(name='Налобный фонарик',category='helmet_module',price=1,attributes={}),
          ItemTemplate(name=grenade.name,category='ammo',price=1,attributes={})]
     db.session.add_all([*old,pouch,glove,detector,nvg,grenade]);db.session.commit()
     all_templates=ItemTemplate.query.all()
@@ -115,6 +117,18 @@ def test_legacy_catalog_duplicates_are_hidden_from_new_issuance(client,prepared,
             headers=auth_headers(prepared['actor_user']))
         assert response.status_code==200,response.json
         assert not any(entry['name']==name for entry in response.json['global'])
+    response=client.get(f"/lobbies/{prepared['lobby'].id}/templates?category=pouch",
+        headers=auth_headers(prepared['actor_user']))
+    assert response.status_code==200,response.json
+    assert [entry['name'] for entry in response.json['global'] if 'Вещевой подсумок' in entry['name']]==[pouch.name]
+    response=client.get(f"/lobbies/{prepared['lobby'].id}/templates?category=helmet_module",
+        headers=auth_headers(prepared['actor_user']))
+    assert response.status_code==200,response.json
+    assert response.json['global']==[]
+    response=client.get(f"/lobbies/{prepared['lobby'].id}/templates?category=misc",
+        headers=auth_headers(prepared['actor_user']))
+    assert response.status_code==200,response.json
+    assert [entry['name'] for entry in response.json['global'] if entry['name']=='Налобный фонарик']==['Налобный фонарик']
 
 
 def test_old_catalog_aliases_do_not_reappear_in_item_picker():

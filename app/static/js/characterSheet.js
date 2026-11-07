@@ -291,7 +291,6 @@ export function getCategoryDisplay(cat) {
         'ammo': 'Патроны',
         'gas_mask_module': 'Фильтры противогазов',
         'exoskeleton_module': 'Приборы',
-        'helmet_module': 'Модули шлемов',
         'visor': 'Забрала',
         'belt': 'Разгрузки',
         'grenade': 'Гранаты',
@@ -527,7 +526,7 @@ const ITEM_CATEGORY_ORDER = [
     'Магазины', 'Патроны', 'Гранаты', 'Оружейные модули',
     'Рюкзаки', 'Разгрузки', 'Подсумки', 'Контейнеры',
     'Расходники', 'Приборы', 'Фильтры противогазов',
-    'Модули шлемов', 'Артефакты', 'Материалы', 'Инструменты', 'Книги', 'Прочее',
+    'Артефакты', 'Материалы', 'Инструменты', 'Книги', 'Прочее',
 ];
 const CONSUMABLE_SECTION_ORDER = [
     'Продукты', 'Кровь', 'Обезболивающее', 'Стимуляторы',
@@ -741,7 +740,7 @@ async function getAllItemTemplates(forceRefresh = false) {
     const categories = [
         'weapon', 'armor', 'helmet', 'gas_mask', 'detector', 'container',
         'consumable', 'crafting_material', 'artifact', 'backpack', 'vest', 'pouch',
-        'weapon_module', 'magazine', 'ammo', 'gas_mask_module', 'helmet_module', 'visor', 'belt',
+        'weapon_module', 'magazine', 'ammo', 'gas_mask_module', 'visor', 'belt',
         'exoskeleton_module', 'grenade', 'device', 'armor_plate', 'melee_weapon',
         'headphones', 'glasses', 'gloves', 'jewelry', 'tool', 'misc', 'other', 'food'
     ];
@@ -4801,9 +4800,10 @@ async function renderEquipmentTab(data) {
     container.innerHTML = html;
     await renderWeapons(weapons, weaponTemplates, weaponModuleTemplates, weaponModTemplates);
     renderEquipmentLoadout(container, data, weaponTemplates, helmetTemplates, gasMaskTemplates, armorTemplates);
-    await renderPortableLights(container,currentCharacterId,data,window.operatePortableLight,
+    const loadout = container.querySelector('.equipment-loadout') || container;
+    await renderPortableLights(loadout,currentCharacterId,data,window.operatePortableLight,
         ()=>renderVersion===equipmentRenderVersion,currentCharacterCanEdit&&!medicalOperationInProgress).catch(error=>console.warn('Не удалось загрузить фонари:',error));
-    if(renderVersion===equipmentRenderVersion)renderProstheses(container,data,window.operateProsthesis,currentCharacterCanEdit&&!medicalOperationInProgress,currentCharacterId);
+    if(renderVersion===equipmentRenderVersion)renderProstheses(loadout,data,window.operateProsthesis,currentCharacterCanEdit&&!medicalOperationInProgress,currentCharacterId);
     if(renderVersion===equipmentRenderVersion){
         const craftingButton=document.createElement('button');craftingButton.type='button';craftingButton.className='btn btn-secondary';
         craftingButton.id='character-crafting-open';craftingButton.textContent='Создание и модификации';craftingButton.disabled=!currentCharacterCanEdit;

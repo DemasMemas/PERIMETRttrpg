@@ -20,7 +20,8 @@ module.exports = async ({ page, request, token, lobby, login, profile, base, con
         inventory: { backpack: [], pockets: [{ id: 'widget-ammo', templateId: 999001, name: '9x19',
             category: 'ammo', quantity: 6, volume: .02, attributes: { caliber: '9x19', damage: 25 } },
             { id: 'widget-medicine', templateId: medicine.id + 1000000, name: 'Проверочный препарат', category: 'consumable', quantity: 3, volume: .1, contents: [],
-                attributes: { consumable: { direct: { pain: -1 } } } }] },
+                attributes: { consumable: { direct: { pain: -1 } } } },
+            { id: 'widget-pda', name: 'КПК', category: 'device', contents: [], pdaState: { on: true, charge_percent: 100 } }] },
     } }, token);
     const other = await request(`/lobbies/${lobby.id}/characters`, { name: 'Виджеты — второй', data: {
         health: { current: 100, max: 100, painLevel: 2, effects: [] },
@@ -138,6 +139,12 @@ module.exports = async ({ page, request, token, lobby, login, profile, base, con
             noVerticalScroll:tab.scrollHeight<=tab.clientHeight+2};
     })()`);
     assert.deepEqual(loadoutLayout,{allSlotsVisible:true,figureVisible:true,noVerticalScroll:true},'1920×1080: все слоты и силуэт видны без прокрутки');
+    await page.until(`document.querySelector('.equipment-loadout .portable-light-row')`, 'КПК в левой панели экипировки');
+    const leftHeight = await page.evaluate(`document.querySelector('.equipment-loadout').getBoundingClientRect().height`);
+    await page.evaluate(`document.querySelector('[data-equipment-panel="weapon-0"]').open=false`);
+    const collapsedHeight = await page.evaluate(`document.querySelector('.equipment-loadout').getBoundingClientRect().height`);
+    assert.ok(Math.abs(leftHeight-collapsedHeight)<2,'левая панель не меняет высоту при сворачивании оружия справа');
+    await page.evaluate(`document.querySelector('[data-equipment-panel="weapon-0"]').open=true`);
     await page.evaluate(`document.querySelector('.equipment-panel-tab[data-panel="helmet"]').click()`);
     const helmetLayout = await page.evaluate(`(()=>{
         const tab=document.querySelector('#sheet-tab-equipment');

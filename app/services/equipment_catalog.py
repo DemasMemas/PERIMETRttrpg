@@ -44,6 +44,7 @@ def retired_catalog_template(template):
     name = template.name if hasattr(template, 'name') else template.get('name')
     attributes = template.attributes if hasattr(template, 'attributes') else template.get('attributes')
     return (((attributes or {}).get('craft_workbench') is True)
+            or category == 'helmet_module'
             or (category == 'gloves' and name == 'Спортивные')
             or (category == 'misc' and (name or '').casefold().startswith(('лента на ', 'спидлоадер для ', 'подавач')))
             or (category == 'ammo' and _is_legacy_grenade_ammo(name))
@@ -72,17 +73,6 @@ def _canonical_identity():
 def canonical_catalog_templates(templates):
     """Скрыть старые дубли при новых выдачах, сохранив записи и существующие вещи."""
     by_key, known_names = _canonical_identity()
-    def pouch_signature(attributes):
-        try:
-            capacity = float(attributes.get('capacity') or 0)
-        except (TypeError, ValueError):
-            return None
-        return capacity, tuple(attributes.get('allowed_categories') or [])
-    canonical_pouches = {
-        pouch_signature(item['attributes'])
-        for item in by_key.values() if item['category'] == 'pouch'
-    }
-    canonical_pouches.discard(None)
     canonical_grenades = {
         item['attributes'].get('explosive_key') for item in by_key.values()
         if item['category'] == 'grenade' and item['attributes'].get('explosive_key')
@@ -98,9 +88,10 @@ def canonical_catalog_templates(templates):
         name = field(item, 'name')
         key = category, _normalize_equipment_name(name)
         attrs = field(item, 'attributes') or {}
+        # Старые варианты подсумков остаются в сохранениях, но новые выдачи идут по каталогу.
+        if category == 'pouch' and key not in by_key:
+            continue
         if key not in by_key:
-            if category == 'pouch' and pouch_signature(attrs) in canonical_pouches:
-                continue
             if category == 'grenade' and attrs.get('explosive_key') in canonical_grenades:
                 continue
             if category == 'container' and any(name == f'Контейнер для ношения {alias}' for alias in ('Блок-А', 'Барьер', 'Щит', 'Стена')):
