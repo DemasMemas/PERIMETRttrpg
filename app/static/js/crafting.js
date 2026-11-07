@@ -1,5 +1,6 @@
 import {Server} from './api.js';
 import {showNotification} from './utils.js';
+import {fillModificationOptions} from './modificationOptions.js';
 
 const el=(tag,text,css)=>{const e=document.createElement(tag);if(text!=null)e.textContent=text;if(css)e.className=css;return e;};
 const button=(text,action)=>{const b=el('button',text,'btn btn-secondary');b.type='button';b.onclick=action;return b;};
@@ -202,7 +203,7 @@ export async function showCrafting({characterId,lobbyId,onSaved}){
         const redraw=()=>{
             modSelection.target=Number(targets.value);const target=snapshot.targets[modSelection.target];form.replaceChildren();
             const choices=snapshot.catalog.modifications.filter(r=>r.family===target.slots.family);
-            const rules=select('Модификация',choices.map(r=>[r.id,`Ур. ${r.level||1} · ${r.name||r.description}`]));
+            const rules=select('Модификация',[]);fillModificationOptions(rules,choices);
             if(choices.some(r=>r.id===modSelection.rule))rules.value=modSelection.rule;
             form.append(rules,el('p',`Открыто слотов: ${target.slots.available} / ${target.slots.maximum}`));
             const tool=select('Инструменты для модификации',snapshot.inventory.map((entry,i)=>[i,`${entry.item.name} · ${entry.item.uses??entry.item.maxUses??entry.item.attributes?.uses??'—'} зарядов`]));

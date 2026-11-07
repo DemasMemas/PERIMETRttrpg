@@ -1,3 +1,5 @@
+import {fillModificationOptions} from './modificationOptions.js';
+
 const escape = value => String(value ?? '').replace(/[&<>"']/g, char => ({
     '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
 })[char]);
@@ -301,7 +303,7 @@ export function renderProfessionalModificationEditor(modal,{targets,rules,balanc
             <small>${installed.length} занято · ${Math.max(0,slots.available-installed.length)} свободно · ${slots.maximum-slots.available} закрыто</small>
             <div class="modification-installed">${installed.length?installed.map(value=>`<span>${escape(value.name||value.ruleId)}</span>`).join(''):'Пока нет улучшений'}</div>`;
         const available=(rules||[]).filter(value=>value.automatic_installation && value.family===slots.family);
-        ruleSelect.innerHTML=available.map(value=>`<option value="${escape(value.id)}">Ур. ${value.level} · ${escape(value.name||value.description)}</option>`).join('');
+        fillModificationOptions(ruleSelect,available);
         if(!available.length)ruleSelect.innerHTML='<option value="">Нет доступных улучшений</option>';
         modal.querySelector('.modification-check').disabled=!available.length;
         renderRule();

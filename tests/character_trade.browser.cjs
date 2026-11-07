@@ -383,6 +383,47 @@ module.exports=async({page,request,token,lobby,base,connect,debugPort,safeSessio
     assert.equal(savedMaskAndHelmet.data.equipment.helmet.templateId,helmetTemplate.id);
     assert.equal(savedMaskAndHelmet.data.equipment.gasMask.templateId,maskTemplate.id);
     console.log(JSON.stringify({bareHelmetWithGasMaskUi:true,compatibleAfterReload:true}));
+    const mediumTemplate=armorCatalog.global.find(template=>template.attributes?.modification_category==='Средняя');
+    assert.ok(mediumTemplate,'Средняя броня присутствует в каталоге');
+    const branchOwner=await read(a.id);
+    branchOwner.data.inventory.pockets.push({id:'browser-medium-armor',templateId:mediumTemplate.id,
+        name:mediumTemplate.name,category:'armor',quantity:1,weight:mediumTemplate.weight,
+        volume:mediumTemplate.volume,attributes:mediumTemplate.attributes});
+    await request('/lobbies/characters/'+a.id,{data:branchOwner.data},token,'PUT');
+    const branches={
+        [armorTemplate.name]:['Физический','Аномальный','Удобство'],
+        [mediumTemplate.name]:['Упрочнение','Физический','Аномальный','Удобство'],
+    };
+    await page.evaluate(`import('/static/js/locationScene.js')
+        .then(module=>module.showCharacterTradeMenu(${actorId},${a.id},${b.id})).then(()=>true)`);
+    await page.until(`document.querySelector('.trade-modification')`,'Платная установка доступна');
+    await page.evaluate(`document.querySelector('.trade-modification').click();true`);
+    await page.until(`document.querySelector('.modification-item')`,'Список предметов мастера загружен');
+    for(const [name,expected] of Object.entries(branches)){
+        const actual=await page.evaluate(`(()=>{const items=document.querySelector('.modification-item');
+            const option=[...items.options].find(row=>row.textContent.includes(${JSON.stringify(name)}));
+            if(!option)throw Error('Броня отсутствует в списке мастера');
+            items.value=option.value;items.dispatchEvent(new Event('change'));
+            return [...document.querySelectorAll('.modification-rule optgroup')].map(group=>group.label)})()`);
+        assert.deepEqual(actual,expected);
+    }
+    await page.evaluate(`document.querySelector('.modification-close').click();true`);
+    await page.evaluate(`import('/static/js/crafting.js')
+        .then(module=>module.showCrafting({characterId:${a.id},lobbyId:${lobby.id}})).then(()=>true)`);
+    await page.until(`document.querySelector('#crafting-modal select[aria-label="Предмет для модификации"]')`,
+        'Самостоятельная установка доступна');
+    for(const [name,expected] of Object.entries(branches)){
+        const actual=await page.evaluate(`(()=>{const items=document.querySelector('#crafting-modal select[aria-label="Предмет для модификации"]');
+            const option=[...items.options].find(row=>row.textContent.includes(${JSON.stringify(name)}));
+            if(!option)throw Error('Броня отсутствует в самостоятельной установке');
+            items.value=option.value;items.dispatchEvent(new Event('change'));
+            return [...document.querySelectorAll('#crafting-modal select[aria-label="Модификация"] optgroup')]
+                .map(group=>group.label)})()`);
+        assert.deepEqual(actual,expected);
+    }
+    await page.evaluate(`document.querySelector('#crafting-modal .block-header button').click();true`);
+    console.log(JSON.stringify({armorBranchesGrouped:true,families:['Лёгкая','Средняя'],
+        selfCrafting:true,professionalInstallation:true}));
     await page.evaluate(`(async()=>{const generator=await import('/static/js/npcGenerator.js');
         await generator.openNpcCreation(${lobby.id});return true})()`);
     await page.until(`document.querySelector('.npc-generator-name')?.value.includes(' ')
