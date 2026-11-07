@@ -24,9 +24,10 @@ def components(value):
         if uses:
             result.append({'name': uses[1].strip(), 'quantity': int(uses[2]), 'source_text': part.strip()})
             continue
-        fuel_liters=re.fullmatch(r'(Топливо)\s*\(\s*(\d+)\s*л\s*\)',part,re.I)
+        fuel_liters=re.fullmatch(r'(Топливо)\s*\(\s*(\d+(?:[.,]\d+)?)\s*л\s*\)',part,re.I)
         if fuel_liters:
-            result.append({'name':fuel_liters[1], 'quantity':int(fuel_liters[2]),'source_text':part.strip()})
+            result.append({'name':fuel_liters[1], 'quantity':number(fuel_liters[2]),
+                           'source_text':part.strip(),'liquid_liters':True})
             continue
         filter_charges=re.fullmatch(r'(Фильтр для противогаза)\s*\(\s*(\d+)\s*заряд(?:ов|а)?\s*\)',part,re.I)
         if filter_charges:
@@ -37,9 +38,13 @@ def components(value):
             alternatives=[]
             for option in part.split('/'):
                 option=option.strip()
+                fuel_liters=re.fullmatch(r'(Топливо)\s*\(\s*(\d+(?:[.,]\d+)?)\s*л\s*\)',option,re.I)
+                if fuel_liters:
+                    alternatives.append({'name':fuel_liters[1], 'quantity':number(fuel_liters[2]),
+                                         'liquid_liters':True})
+                    continue
                 count=re.search(r'\(\s*(\d+)\s*\)\s*$',option)
-                unresolved_fractional_fuel=bool(re.fullmatch(r'Топливо\s*\(\s*\d+[.,]\d+\s*л\s*\)',option,re.I))
-                if not count and re.search(r'\([^)]*\)\s*$',option) and not unresolved_fractional_fuel:
+                if not count and re.search(r'\([^)]*\)\s*$',option):
                     alternatives=[]
                     break
                 alternatives.append({'name':option[:count.start()].strip() if count else option,

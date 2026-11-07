@@ -1,6 +1,6 @@
 """Серверные работы: резерв компонентов, игровое время, к100 и решения ГМа."""
 from copy import deepcopy
-from math import ceil,floor
+from math import ceil,floor,isfinite
 import random
 import re
 from uuid import uuid4
@@ -154,15 +154,24 @@ def _allocate(data,recipe,*,with_status=False):
                 filter_available=_craft_filter_charges(item) if component.get('filter_charges') else None
                 if component.get('filter_charges') and filter_available is None:continue
                 packet_uses=_chlorine_uses(item)
-                key=tuple(path);available=(item.get('quantity',1) if whole else
-                    (filter_available if filter_available is not None else packet_uses if packet_uses is not None else _available_uses(item))
-                    if item.get('quantity',1)>0 else 0)-prior_spent.get(key,0)
+                liquid=bool(variant.get('liquid_liters'))
+                if liquid:
+                    quantity=item.get('quantity',1)
+                    if (type(quantity) not in {int,float} or not isfinite(quantity)
+                            or not 0<quantity<=10000 or round(quantity*10)!=quantity*10):continue
+                    available=round(quantity-prior_spent.get(tuple(path),0),1)
+                else:
+                    available=(item.get('quantity',1) if whole else
+                        (filter_available if filter_available is not None else packet_uses if packet_uses is not None else _available_uses(item))
+                        if item.get('quantity',1)>0 else 0)-prior_spent.get(tuple(path),0)
+                key=tuple(path)
                 unit=10 if matches_box else 1
                 total+=max(0,available)*unit
-                take=min(ceil(left/unit),available)
+                take=min(left/unit if liquid else ceil(left/unit),available)
                 if take>0:
                     trial.append({'component':index,'path':path,'amount':take,'item':deepcopy(item),
-                                  'whole':whole,'filter_charges':bool(component.get('filter_charges'))})
+                                  'whole':whole,'filter_charges':bool(component.get('filter_charges')),
+                                  'liquid_liters':liquid})
                     trial_spent[key]=trial_spent.get(key,0)+take;left=max(0,left-take*unit)
                 if not left and not with_status:break
             if with_status:options.append({'name':variant['name'],'available':total,'required':variant['quantity']})
@@ -279,6 +288,18 @@ def _escrow(data,allocations):
             item['maxUses']=10
             item.setdefault('uses',10)
         amount=allocation['amount'];piece=deepcopy(item)
+        if allocation.get('liquid_liters'):
+            quantity=item.get('quantity',1)
+            if (type(quantity) not in {int,float} or not isfinite(quantity) or not 0<quantity<=10000
+                    or round(quantity*10)!=quantity*10 or quantity<amount):
+                raise ConflictError('Количество топлива изменилось')
+            remainder=round(quantity-amount,1)
+            if remainder:item['quantity']=remainder
+            else:parent.pop(index)
+            piece.update(id=str(uuid4()),quantity=amount)
+            result.append({'component':allocation['component'],'amount':amount,'item':piece,
+                           'maximum':1,'liquid_liters':True})
+            continue
         if allocation.get('filter_charges'):
             from app.services.gas_mask_filters import filter_charges
             charges=filter_charges(item);quantity=item.get('quantity',1)
@@ -318,6 +339,10 @@ def _return_materials(data,escrow,lost):
         amount=entry['amount']-lost.get(index,0)
         if not amount:continue
         item=deepcopy(entry['item']);maximum=entry['maximum']
+        if entry.get('liquid_liters'):
+            item['quantity']=round(amount,1)
+            destination.append(item)
+            continue
         if entry.get('filter_charges'):
             item.update(quantity=1,durability=amount)
             item.setdefault('attributes',{})['durability']=amount
@@ -613,17 +638,20 @@ def operate(character_id,user_id,payload):
                 data.setdefault('inventory',{}).setdefault('pockets',[]).append(item_from_template(output,material['quantity']))
         if action=='finish' and job['kind'] not in {'book','salvage'}:
             loss=job['quote']['failure_loss'];choices=payload.get('chosen_loss',[])
-            pool=[index for index,entry in enumerate(job['escrow']) for _ in range(entry['amount'])]
+            pool=[index for index,entry in enumerate(job['escrow'])
+                  for _ in range(1 if entry.get('liquid_liters') else entry['amount'])]
             count=0 if job['quote']['automatic_success'] or loss['all'] else min(loss['chosen'],len(pool))
             if not isinstance(choices,list) or len(choices)!=count or any(type(i) is not int or i not in pool for i in choices):raise ValidationError('Выберите компоненты, которые будут потеряны при неудаче')
             for index in choices:
                 if index not in pool:raise ValidationError('Недостаточно выбранных компонентов')
-                pool.remove(index);lost[index]=lost.get(index,0)+1
+                pool.remove(index)
+                lost[index]=lost.get(index,0)+(job['escrow'][index]['amount'] if job['escrow'][index].get('liquid_liters') else 1)
             outcome=resolve_creation(job['quote']);roll=outcome['roll'];success=outcome['success']
             if not success:
                 if loss['all']:lost={index:entry['amount'] for index,entry in enumerate(job['escrow'])}
                 else:
-                    for index in random.SystemRandom().sample(pool,min(loss['random'],len(pool))):lost[index]=lost.get(index,0)+1
+                    for index in random.SystemRandom().sample(pool,min(loss['random'],len(pool))):
+                        lost[index]=lost.get(index,0)+(job['escrow'][index]['amount'] if job['escrow'][index].get('liquid_liters') else 1)
             else:lost={index:entry['amount'] for index,entry in enumerate(job['escrow'])}
         _return_materials(data,job['escrow'],lost)
         if success and job['kind']=='modification':

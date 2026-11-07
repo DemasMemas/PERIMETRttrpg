@@ -660,6 +660,73 @@ def test_molotov_can_be_created_with_three_spirit_uses(client,workshop,auth_head
     assert units(finished.json['data'],'Коктейль Молотова')==1
 
 
+def test_molotov_reserves_half_liter_of_fuel_and_returns_it_on_cancel(client,workshop,auth_headers):
+    data=deepcopy(workshop['actor_character'].data)
+    data['inventory']['pockets']=[
+        {'name':'Топливо(1 Литр)','category':'misc','quantity':1,'weight':1,'volume':1},
+        {'name':'Стеклянная бутылка (Объем 1 литр) (3 использования воды)','category':'misc','quantity':1},
+        {'name':'Тканные материалы','category':'crafting_material','quantity':1},
+    ]
+    workshop['actor_character'].data=data
+    db.session.add(ItemTemplate(name='Коктейль Молотова',category='grenade',price=300))
+    db.session.commit()
+    quoted=call(client,workshop,auth_headers,'quote',recipe_id='recipe-v11')
+    assert quoted.status_code==200 and quoted.json['result']['missing']==[],quoted.json
+    started=call(client,workshop,auth_headers,'start',recipe_id='recipe-v11')
+    assert started.status_code==200,started.json
+    fuel=[item for item in started.json['data']['inventory']['pockets'] if item['name']=='Топливо(1 Литр)']
+    assert [item['quantity'] for item in fuel]==[.5]
+    reserved=next(entry for entry in started.json['result']['escrow'] if entry['item']['name']=='Топливо(1 Литр)')
+    assert reserved['amount']==.5 and reserved['liquid_liters']
+    cancelled=call(client,workshop,auth_headers,'cancel',job_id=started.json['result']['id'])
+    assert cancelled.status_code==200,cancelled.json
+    fuel=[item for item in cancelled.json['data']['inventory']['pockets'] if item['name']=='Топливо(1 Литр)']
+    assert sum(item['quantity'] for item in fuel)==1
+
+
+def test_molotov_spends_only_half_liter_of_fuel_on_success(client,workshop,auth_headers,monkeypatch):
+    data=deepcopy(workshop['actor_character'].data)
+    data['inventory']['pockets']=[
+        {'name':'Топливо(1 Литр)','category':'misc','quantity':1},
+        {'name':'Стеклянная бутылка (Объем 1 литр) (3 использования воды)','category':'misc','quantity':1},
+        {'name':'Тканные материалы','category':'crafting_material','quantity':1},
+    ]
+    workshop['actor_character'].data=data
+    db.session.add(ItemTemplate(name='Коктейль Молотова',category='grenade',price=300))
+    db.session.commit()
+    started=call(client,workshop,auth_headers,'start',recipe_id='recipe-v11')
+    assert started.status_code==200,started.json
+    workshop['lobby'].game_time_minutes+=30;db.session.commit()
+    monkeypatch.setattr('app.services.crafting.resolve_creation',lambda quote:{'success':True,'roll':100,'automatic':False})
+    finished=call(client,workshop,auth_headers,'finish',job_id=started.json['result']['id'],chosen_loss=[0])
+    assert finished.status_code==200,finished.json
+    fuel=[item for item in finished.json['data']['inventory']['pockets'] if item['name']=='Топливо(1 Литр)']
+    assert sum(item['quantity'] for item in fuel)==.5
+
+
+def test_failed_molotov_loses_only_reserved_half_liter(client,workshop,auth_headers,monkeypatch):
+    data=deepcopy(workshop['actor_character'].data)
+    data['inventory']['pockets']=[
+        {'name':'Топливо(1 Литр)','category':'misc','quantity':1},
+        {'name':'Стеклянная бутылка (Объем 1 литр) (3 использования воды)','category':'misc','quantity':1},
+        {'name':'Тканные материалы','category':'crafting_material','quantity':1},
+    ]
+    workshop['actor_character'].data=data
+    db.session.add(ItemTemplate(name='Коктейль Молотова',category='grenade',price=300))
+    db.session.commit()
+    started=call(client,workshop,auth_headers,'start',recipe_id='recipe-v11')
+    assert started.status_code==200,started.json
+    fuel_index=next(index for index,entry in enumerate(started.json['result']['escrow'])
+                    if entry['item']['name']=='Топливо(1 Литр)')
+    workshop['lobby'].game_time_minutes+=30;db.session.commit()
+    monkeypatch.setattr('app.services.crafting.resolve_creation',lambda quote:{'success':False,'roll':1,'automatic':False})
+    failed=call(client,workshop,auth_headers,'finish',job_id=started.json['result']['id'],chosen_loss=[fuel_index])
+    assert failed.status_code==200,failed.json
+    assert failed.json['result']['lost'][str(fuel_index)]==.5
+    fuel=[item for item in failed.json['data']['inventory']['pockets'] if item['name']=='Топливо(1 Литр)']
+    assert sum(item['quantity'] for item in fuel)==.5
+
+
 def test_water_purification_spends_one_tablet_from_chlorine_packet(client,workshop,auth_headers):
     data=deepcopy(workshop['actor_character'].data)
     data['skills']['other']['survival']={'base':13,'bonus':0}

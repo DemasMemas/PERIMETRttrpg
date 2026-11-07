@@ -97,7 +97,9 @@ def test_integer_fuel_liters_use_one_liter_catalog_units():
     fractional=next(item for item in data['recipes'] if item['id']=='recipe-v11')
     spirit=next(item for item in fractional['components'] if 'Спирт' in item['name'])
     assert spirit['alternatives']==[{'name':'Спирт','quantity':3},
-        {'name':'Топливо(0.5л)','quantity':1}]
+        {'name':'Топливо','quantity':.5,'liquid_liters':True}]
+    assert all(next(item for item in data['recipes'] if item['id']==recipe_id)['components'][-1]['liquid_liters']
+               for recipe_id in ('recipe-v12','recipe-v13'))
 
 
 def test_aeration_requires_ten_filter_charges_not_ten_filters():
