@@ -45,6 +45,8 @@ def retired_catalog_template(template):
     attributes = template.attributes if hasattr(template, 'attributes') else template.get('attributes')
     return (((attributes or {}).get('craft_workbench') is True)
             or (category == 'gloves' and name == 'Спортивные')
+            or (category == 'misc' and (name or '').casefold().startswith(('лента на ', 'спидлоадер для ', 'подавач')))
+            or (category == 'ammo' and _is_legacy_grenade_ammo(name))
             or ((attributes or {}).get('import_source') == 'equipment_workbook'
                 and (attributes or {}).get('book_kind') == 'skill'
                 and name in {'Как не страдать от больной спины к концу жизни?',
@@ -53,6 +55,11 @@ def retired_catalog_template(template):
                 name == 'Укорочение ствола' or (attributes or {}).get('moduleRuleId') == 'short_barrel'))
             or (category == 'container' and name in {'Блок-А', 'Барьер', 'Щит', 'Стена'}
                 and (attributes or {}).get('artifact_container_kind') == 'storage'))
+
+
+def _is_legacy_grenade_ammo(name):
+    from app.services.equipment_importer import _looks_like_grenade_ammo
+    return _looks_like_grenade_ammo({'A': name or '', 'L': name or '', 'K': '', 'V': '', 'P': '', 'S': ''})
 
 
 @lru_cache(maxsize=1)
@@ -65,6 +72,21 @@ def _canonical_identity():
 def canonical_catalog_templates(templates):
     """Скрыть старые дубли при новых выдачах, сохранив записи и существующие вещи."""
     by_key, known_names = _canonical_identity()
+    def pouch_signature(attributes):
+        try:
+            capacity = float(attributes.get('capacity') or 0)
+        except (TypeError, ValueError):
+            return None
+        return capacity, tuple(attributes.get('allowed_categories') or [])
+    canonical_pouches = {
+        pouch_signature(item['attributes'])
+        for item in by_key.values() if item['category'] == 'pouch'
+    }
+    canonical_pouches.discard(None)
+    canonical_grenades = {
+        item['attributes'].get('explosive_key') for item in by_key.values()
+        if item['category'] == 'grenade' and item['attributes'].get('explosive_key')
+    }
     selected = {}
     order = []
     def field(item, name):
@@ -75,9 +97,19 @@ def canonical_catalog_templates(templates):
         category = field(item, 'category')
         name = field(item, 'name')
         key = category, _normalize_equipment_name(name)
+        attrs = field(item, 'attributes') or {}
+        if key not in by_key:
+            if category == 'pouch' and pouch_signature(attrs) in canonical_pouches:
+                continue
+            if category == 'grenade' and attrs.get('explosive_key') in canonical_grenades:
+                continue
+            if category == 'container' and any(name == f'Контейнер для ношения {alias}' for alias in ('Блок-А', 'Барьер', 'Щит', 'Стена')):
+                continue
+            if category == 'gloves' and _normalize_equipment_name((name or '').removeprefix('Перчатки ').removesuffix(' перчатки')) in {
+                    canonical_name for canonical_category, canonical_name in by_key if canonical_category == 'gloves'}:
+                continue
         if key[1] in known_names and key not in by_key:
             continue
-        attrs = field(item, 'attributes') or {}
         source = by_key.get(key)
         expected = (source or {}).get('attributes') or {}
         matches = sum(field(item, name) == source.get(name)

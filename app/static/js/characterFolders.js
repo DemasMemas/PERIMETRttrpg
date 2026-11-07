@@ -95,7 +95,7 @@ export function createCharacterFolderPanel(lobbyId, userId) {
         container.ondragend = () => { draggedIds = null; clearDropFeedback(); };
         const dropZone = (zone, category, folderId = null) => {
             zone.dataset.characterFolderDrop = String(folderId ?? 'root');
-            zone.title = folderId === null ? 'Перетащите сюда персонажа, чтобы вернуть в корень' : 'Перетащите сюда персонажа или группу';
+            zone.title = folderId === null ? 'Перетащите сюда персонажа, чтобы оставить без папки' : 'Перетащите сюда персонажа или группу';
             const accepts = () => draggedIds?.length && draggedIds.every(id => characters.some(c => c.id === id && characterCategory(c) === category));
             zone.addEventListener('dragover', event => {
                 if (!accepts()) return;
@@ -159,7 +159,7 @@ export function createCharacterFolderPanel(lobbyId, userId) {
             panel.appendChild(createFolder);
             const root = document.createElement('div'); root.className = 'character-folder-root';
             dropZone(root, category);
-            const heading = document.createElement('div'); heading.className = 'character-list-heading'; heading.textContent = 'В корне';
+            const heading = document.createElement('div'); heading.className = 'character-list-heading'; heading.textContent = 'Без папки';
             root.appendChild(heading); panel.appendChild(root);
             const appendMembers = (target, subset) => {
                 if (!subset.length) {
@@ -188,7 +188,7 @@ export function createCharacterFolderPanel(lobbyId, userId) {
                         if (name?.trim()) mutate(`/${folder.id}`, 'PATCH', { name: name.trim() });
                     }));
                     actions.appendChild(button('Удалить папку', () => {
-                        if (confirm('Удалить папку? Персонажи останутся в комнате и вернутся в корень.')) mutate(`/${folder.id}`, 'DELETE');
+                        if (confirm('Удалить папку? Персонажи останутся в комнате без папки.')) mutate(`/${folder.id}`, 'DELETE');
                     }));
                     details.appendChild(actions);
                 }

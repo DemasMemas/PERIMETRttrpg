@@ -117,6 +117,22 @@ def test_legacy_catalog_duplicates_are_hidden_from_new_issuance(client,prepared,
         assert not any(entry['name']==name for entry in response.json['global'])
 
 
+def test_old_catalog_aliases_do_not_reappear_in_item_picker():
+    from app.services.equipment_catalog import canonical_catalog_templates, retired_catalog_template
+
+    aliases = [
+        {'category': 'pouch', 'name': 'Вещевой подсумок - 1',
+         'attributes': {'capacity': 1, 'allowed_categories': []}},
+        {'category': 'grenade', 'name': 'РГД 5', 'attributes': {'explosive_key': 'rgd5'}},
+        {'category': 'container', 'name': 'Контейнер для ношения Блок-А', 'attributes': {}},
+        {'category': 'gloves', 'name': 'Перчатки Медицинские', 'attributes': {}},
+        {'category': 'misc', 'name': 'Лента на 5 патронов', 'attributes': {}},
+        {'category': 'ammo', 'name': 'Граната РГД-5', 'attributes': {}},
+    ]
+    assert canonical_catalog_templates(aliases) == []
+    assert retired_catalog_template(aliases[-1])
+
+
 def test_budget_exhaustion_and_zero_chance_are_visible_without_exceeding_cost(prepared):
     items,result=roll_loot(profile(budget=50,pools=[pool(draws=3),pool(category='no-items',chance=0)]),prepared['templates'])
     assert len(items)==1 and result['spent']==50 and result['skipped_pools']==[1]

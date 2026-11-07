@@ -57,6 +57,7 @@ const AUTO_SAVE_DELAY = 500;
 const pendingWeaponJamActions = new Map();
 let equipmentRenderVersion = 0;
 let equipmentOpenPanels = new Set();
+let equipmentActivePanel = 'weapons';
 let sheetSocketHandler = null;
 let widgetOperation = false;
 let widgetContext = false;
@@ -277,7 +278,7 @@ export function getCategoryDisplay(cat) {
         'armor': 'Броня',
         'helmet': 'Головное снаряжение',
         'gas_mask': 'Противогазы',
-        'detector': 'Детекторы',
+        'detector': 'Приборы',
         'container': 'Контейнеры',
         'consumable': 'Расходники',
         'crafting_material': 'Материалы',
@@ -525,7 +526,7 @@ const ITEM_CATEGORY_ORDER = [
     'Оружие', 'Оружие ближнего боя', 'Броня', 'Головное снаряжение', 'Противогазы',
     'Магазины', 'Патроны', 'Гранаты', 'Оружейные модули',
     'Рюкзаки', 'Разгрузки', 'Подсумки', 'Контейнеры',
-    'Расходники', 'Приборы', 'Детекторы', 'Фильтры противогазов',
+    'Расходники', 'Приборы', 'Фильтры противогазов',
     'Модули шлемов', 'Артефакты', 'Материалы', 'Инструменты', 'Книги', 'Прочее',
 ];
 const CONSUMABLE_SECTION_ORDER = [
@@ -5075,6 +5076,11 @@ function renderEquipmentLoadout(container, data, weaponTemplates, helmetTemplate
         weapons: 'Оружие и действия', helmet: 'Шлем', gasMask: 'Противогаз',
         armor: 'Броня', detector: 'Детектор', cosmetic: 'Косметика', pda: 'Модификации КПК',
     };
+    const navigation = document.createElement('div');
+    navigation.className = 'equipment-panel-nav';
+    navigation.setAttribute('role', 'tablist');
+    navigation.setAttribute('aria-label', 'Разделы экипировки');
+    panels.append(navigation);
     groups.forEach(group => {
         const key = group.dataset.equipmentGroup;
         const details = document.createElement('details');
@@ -5086,7 +5092,29 @@ function renderEquipmentLoadout(container, data, weaponTemplates, helmetTemplate
         group.before(details);
         details.append(summary, group);
         panels.append(details);
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'equipment-panel-tab';
+        button.dataset.panel = key;
+        button.setAttribute('role', 'tab');
+        button.textContent = panelLabels[key] || key;
+        navigation.append(button);
     });
+    const selectPanel = key => {
+        equipmentActivePanel = key;
+        panels.querySelectorAll(':scope > .equipment-detail').forEach(panel => {
+            const selected = panel.dataset.equipmentPanel === key;
+            panel.hidden = !selected;
+            if (selected) panel.open = true;
+        });
+        navigation.querySelectorAll('.equipment-panel-tab').forEach(button => {
+            button.setAttribute('aria-selected', String(button.dataset.panel === key));
+        });
+    };
+    navigation.querySelectorAll('.equipment-panel-tab').forEach(button => {
+        button.addEventListener('click', () => selectPanel(button.dataset.panel));
+    });
+    selectPanel(navigation.querySelector(`[data-panel="${equipmentActivePanel}"]`) ? equipmentActivePanel : groups[0].dataset.equipmentGroup);
     container.querySelectorAll('#weapons-container > [data-weapon-index]').forEach(card => {
         const key = `weapon-${card.dataset.weaponIndex}`;
         const details = document.createElement('details');
@@ -5114,6 +5142,7 @@ function renderEquipmentLoadout(container, data, weaponTemplates, helmetTemplate
                 ? container.querySelector(`[data-equipment-panel="${key}"]`) : null;
             const panel = container.querySelector(`[data-equipment-panel="${weaponPanel ? 'weapons' : key}"]`);
             if (!panel) return;
+            selectPanel(weaponPanel ? 'weapons' : key);
             panel.open = true;
             if (weaponPanel) weaponPanel.open = true;
             (weaponPanel || panel).scrollIntoView({ behavior: 'smooth', block: 'nearest' });
@@ -5637,8 +5666,10 @@ function renderWeaponGripControl(weapon, index) {
     }
     if (secondary!=null) return '<span>По оружию в каждой руке</span>';
     return `<span data-weapon-grip-label="${index}">Хват: ${hands === 1 ? `${side==='left'?'левая':'правая'} рука` : 'двумя руками'}</span>`
-        + [['right','Взять в правую руку'],['left','Взять в левую руку'],['both','Взять двумя руками']].map(([hand,label])=>
-            `<button type="button" data-weapon-grip-hand="${hand}" ${hand===(hands===2?'right':'both')?`data-weapon-grip-change="${index}"`:''} class="btn btn-sm btn-secondary" ${disabled || (hand==='both'?hands===2:hands===1&&side===hand)?'disabled':''} onclick="changeWeaponGrip(${index},${hand==='both'?2:1},'${hand==='both'?side:hand}')">${label}${active?' · 1 ОД':''}</button>`).join('');
+        + [['right','Взять в правую руку'],['left','Взять в левую руку'],['both','Взять двумя руками']]
+            .filter(([hand]) => hand === 'both' ? hands !== 2 : hands !== 1 || side !== hand)
+            .map(([hand,label])=>
+                `<button type="button" data-weapon-grip-hand="${hand}" ${hand===(hands===2?'right':'both')?`data-weapon-grip-change="${index}"`:''} class="btn btn-sm btn-secondary" ${disabled?'disabled':''} onclick="changeWeaponGrip(${index},${hand==='both'?2:1},'${hand==='both'?side:hand}')">${label}${active?' · 1 ОД':''}</button>`).join('');
 }
 
 window.drawWeaponFromEquipment = async function(weaponIndex,hand) {
@@ -13094,7 +13125,7 @@ function openPouchMountPicker(slot) {
         const entry = entries[Number(select.value)];
         if (entry) window.mountPouchFromInventory(slot, entry.path, entry.item.id);
     };
-    modal.style.display = 'block';
+    modal.style.display = 'flex';
 }
 
 window.addBeltPouch = function() { openPouchMountPicker('belt'); };
@@ -15169,6 +15200,7 @@ function inventoryPickerSection(template) {
     if (template.category === 'helmet') {
         if (attrs.soft_headwear) return 'Головные уборы';
         if (attrs.requires_filter) return 'Шлемы-противогазы';
+        if (/^(?:шлем\s+)?(?:витязь\s*4в76|ударник(?:-м)?|первопроходец)$/i.test(String(template.name || '').trim())) return 'Шлемы без забрала';
         if (attrs.integrated_visor) return 'Шлемы с забралом';
         return 'Шлемы без забрала';
     }
@@ -15177,8 +15209,26 @@ function inventoryPickerSection(template) {
     if (template.category === 'vest') return 'Разгрузки';
     if (template.category === 'exoskeleton_module') return 'Аккумуляторы экзоскелета';
     if (template.category === 'device' && template.subcategory === 'battery') return 'Батарейки';
+    if (template.category === 'detector') return 'Детекторы';
+    if (attrs.night_vision || attrs.slot_type === 'nvg') return 'ПНВ';
+    if (attrs.portable_light || /фонар/i.test(template.name || '')) return 'Фонари';
+    if (template.category === 'container') {
+        if (attrs.artifact_container_kind === 'equipped') return 'Контейнеры для ношения артефактов';
+        if (attrs.artifact_container_kind === 'storage') return 'Контейнеры для хранения артефактов';
+        return template.subcategory === 'Кейсы' ? 'Кейсы' : template.subcategory || 'Другие контейнеры';
+    }
+    if (template.category === 'misc' || template.category === 'other') {
+        return template.subcategory || attrs.source_section || 'Прочее';
+    }
     if (template.category === 'artifact') return attrs.anomaly_type || attrs.anomalyType || template.subcategory || 'Тип аномалии не указан';
     return null;
+}
+
+function inventoryPickerGroup(template) {
+    if (template.attributes?.book_kind) return 'Книги';
+    if (template.category === 'detector' || template.attributes?.portable_light
+        || /фонар/i.test(template.name || '') && ['misc', 'other', 'device'].includes(template.category)) return 'Приборы';
+    return template.categoryDisplay || getCategoryDisplay(template.category) || 'Прочее';
 }
 
 export function renderInventoryTemplatePicker(templates, query = '', options = {}) {
@@ -15215,7 +15265,7 @@ export function renderInventoryTemplatePicker(templates, query = '', options = {
 
     const grouped = {};
     filtered.forEach(t => {
-        const group = t.attributes?.book_kind ? 'Книги' : t.categoryDisplay || getCategoryDisplay(t.category) || 'Прочее';
+        const group = inventoryPickerGroup(t);
         if (!grouped[group]) grouped[group] = [];
         grouped[group].push(t);
     });
@@ -15283,7 +15333,7 @@ export function renderInventoryTemplatePicker(templates, query = '', options = {
                     <summary style="cursor:pointer; font-weight:600; display:flex; justify-content:space-between; gap:10px;"><span>${section}</span><span style="opacity:.6; font-weight:400;">${sectionItems.length}</span></summary>
                     ${renderCards(sectionItems)}
                 </details>`).join('');
-        } else if (['Оружие', 'Броня', 'Головное снаряжение', 'Артефакты', 'Разгрузки', 'Приборы'].includes(group)) {
+        } else if (['Оружие', 'Броня', 'Головное снаряжение', 'Артефакты', 'Разгрузки', 'Приборы', 'Контейнеры', 'Прочее'].includes(group)) {
             const sections = {};
             items.forEach(template => {
                 const section = inventoryPickerSection(template) || 'Другие предметы';
@@ -15293,7 +15343,9 @@ export function renderInventoryTemplatePicker(templates, query = '', options = {
                 : group === 'Броня' ? ['Лёгкая', 'Средняя', 'Тяжёлая', 'Аномальная', 'Экзоскелет']
                 : group === 'Головное снаряжение' ? ['Головные уборы', 'Шлемы без забрала', 'Шлемы-противогазы', 'Шлемы с забралом']
                 : group === 'Разгрузки' ? ['Разгрузки', 'Пояса', 'Бронеплиты']
-                : group === 'Приборы' ? ['Батарейки', 'Аккумуляторы экзоскелета'] : [];
+                : group === 'Приборы' ? ['Детекторы', 'ПНВ', 'Фонари', 'Батарейки', 'Аккумуляторы экзоскелета']
+                : group === 'Контейнеры' ? ['Кейсы', 'Контейнеры для ношения артефактов', 'Контейнеры для хранения артефактов']
+                : group === 'Прочее' ? ['Взлом и ловушки', 'Выживание и Лагерь', 'Генераторы артефактов', 'Электроника', 'Прочее'] : [];
             contents = Object.keys(sections)
                 .sort((a, b) => compareByFixedOrder(a, b, sectionOrder))
                 .map(section => {
@@ -16178,10 +16230,25 @@ function renderBackpackItem(item, index, parentPath, parentContainer, allTemplat
     nameDragZone.style.display = 'flex';
     nameDragZone.style.alignItems = 'center';
     nameDragZone.style.cursor = 'grab';
-    nameDragZone.draggable = true;
+    nameDragZone.draggable = false;
+
+    let editingFieldPointer = false;
+    itemDiv.addEventListener('pointerdown', (event) => {
+        if (!event.target.closest('input, textarea, select, [contenteditable="true"]')) return;
+        editingFieldPointer = true;
+        itemDiv.draggable = false;
+        const restoreDrag = () => {
+            editingFieldPointer = false;
+            itemDiv.draggable = true;
+            document.removeEventListener('pointerup', restoreDrag);
+            document.removeEventListener('pointercancel', restoreDrag);
+        };
+        document.addEventListener('pointerup', restoreDrag);
+        document.addEventListener('pointercancel', restoreDrag);
+    }, true);
 
     itemDiv.addEventListener('dragstart', (e) => {
-        if (e.target.closest('button, input, select, textarea')) {
+        if (editingFieldPointer || e.target.closest('button, input, select, textarea, [contenteditable="true"]')) {
             e.preventDefault();
             e.stopPropagation();
             return false;
@@ -16281,21 +16348,6 @@ function renderBackpackItem(item, index, parentPath, parentContainer, allTemplat
         e.stopPropagation();
         return window.adjustBackpackItemQuantityAtPath(itemPath.join(','), liquidCanisterKind(item) ? 0.1 : 1);
     };
-
-    // Отключаем временно draggable у родителя при взаимодействии с инпутами (чтобы не мешать редактированию)
-    const disableDragForInput = (input) => {
-        if (!input) return;
-        input.addEventListener('mousedown', (e) => {
-            e.stopPropagation();
-            itemDiv.draggable = false;
-        });
-        input.addEventListener('mouseup', () => { itemDiv.draggable = true; });
-        input.addEventListener('mouseleave', () => { itemDiv.draggable = true; });
-    };
-    disableDragForInput(weightInput);
-    disableDragForInput(volumeInput);
-    disableDragForInput(qtyInput);
-    if (nameCell.tagName === 'INPUT') disableDragForInput(nameCell);
 
     // --- Кнопки действий ---
     const actionsDiv = document.createElement('div');

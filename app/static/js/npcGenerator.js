@@ -110,8 +110,9 @@ export async function openNpcGeneratorConfig(lobbyId,characters=[]) {
     const [config,catalog]=await Promise.all([Server.getNpcGenerationConfig(lobbyId),Server.getLobbyTemplates(lobbyId,'')]);
     const templates=(catalog.global||[]).filter(item=>item.id>0&&!['background','special_trait','modification'].includes(item.category)
         && !item.attributes?.not_for_sale);
-    const root=modal('Настройка генератора НПС','Имена и уровни задаёт ГМ. Численные характеристики и способности пока вводятся вручную. Для каждого сочетания можно сохранить собственный пул снаряжения.');
-    root.querySelector('.npc-generator-body').innerHTML=`<label>Имена НПС, по одному в строке<textarea class="form-control npc-generator-names" rows="4"></textarea></label>
+    const root=modal('Настройки создания НПС','Эти настройки применяются при создании новых НПС. Уже созданные персонажи не меняются.');
+    root.querySelector('.npc-generator-body').innerHTML=`<p>1. Укажите имена и добавьте уровни опасности и богатства. 2. Выберите сочетание уровней и настройте его пул снаряжения. 3. Сохраните настройки. При создании НПС выберите это сочетание; численные характеристики и способности затем задаются вручную.</p>
+        <label>Имена НПС, по одному в строке<textarea class="form-control npc-generator-names" rows="4"></textarea></label>
         <p class="text-muted">Если список пуст, имена собираются из авторских имён и прозвищ. Свой список заменяет этот источник.</p>
         <div class="npc-generator-levels"><section><h4>Опасность</h4><div data-level-list="danger_levels"></div>
             <button type="button" class="btn btn-sm btn-secondary" data-add-level="danger_levels">Добавить уровень</button></section>
