@@ -310,6 +310,10 @@ if(typeof renderFacingPreview==='function'){const original=renderFacingPreview;r
             await require('./electronics.browser.cjs')({page,request,token,lobby,base,connect,debugPort,safeSession});
             return;
         }
+        if (safeSession && process.env.VTT_SAFE_SCENARIO === 'catalog') {
+            await require('./catalog_picker.browser.cjs')({page,request,token,lobby,base,safeSession});
+            return;
+        }
         if (safeSession && process.env.VTT_SAFE_SCENARIO === 'fire-rate') {
             await require('./fire_rate.browser.cjs')({page,request,token,lobby,base,connect,debugPort,safeSession});
             return;

@@ -15231,8 +15231,7 @@ function inventoryPickerSection(template) {
     if (template.category === 'device' && template.subcategory === 'battery') return 'Батарейки';
     if (attrs.flamethrower_tank || attrs.flamethrower_air) return 'Баки и Баллоны Огнеметов';
     if (template.category === 'detector') return 'Детекторы';
-    if (attrs.night_vision || attrs.slot_type === 'nvg') return 'ПНВ';
-    if (attrs.portable_light || /фонар/i.test(template.name || '')) return 'Фонари';
+    if (attrs.night_vision || attrs.slot_type === 'nvg' || attrs.portable_light || /фонар/i.test(template.name || '')) return 'ПНВ и фонари';
     if (template.category === 'container') {
         if (attrs.artifact_container_kind === 'equipped') return 'Контейнеры для ношения артефактов';
         if (attrs.artifact_container_kind === 'storage') return 'Контейнеры для хранения артефактов';
@@ -15364,7 +15363,7 @@ export function renderInventoryTemplatePicker(templates, query = '', options = {
                 : group === 'Броня' ? ['Лёгкая', 'Средняя', 'Тяжёлая', 'Аномальная', 'Экзоскелет']
                 : group === 'Шлемы' ? ['Головные уборы', 'Шлемы без забрала', 'Шлемы-противогазы', 'Шлемы с забралом']
                 : group === 'Разгрузки' ? ['Разгрузки', 'Пояса', 'Бронеплиты']
-                : group === 'Приборы' ? ['Детекторы', 'ПНВ', 'Фонари', 'Батарейки', 'Аккумуляторы экзоскелета']
+                : group === 'Приборы' ? ['Детекторы', 'ПНВ и фонари', 'Батарейки', 'Аккумуляторы экзоскелета', 'Баки и Баллоны Огнеметов']
                 : group === 'Контейнеры' ? ['Кейсы', 'Контейнеры для ношения артефактов', 'Контейнеры для хранения артефактов']
                 : group === 'Прочее' ? ['Взлом и ловушки', 'Выживание и Лагерь', 'Генераторы артефактов', 'Электроника', 'Прочее'] : [];
             contents = Object.keys(sections)

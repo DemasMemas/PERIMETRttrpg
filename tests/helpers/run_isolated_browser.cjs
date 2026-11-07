@@ -4,7 +4,7 @@ const {cleanEnvironment,BROWSER_SCENARIOS,BROWSER_DB_MODES}=require('./browser_i
 function parseBrowserArgs(args) {
     const mode=Object.keys(BROWSER_DB_MODES).find(mode=>BROWSER_DB_MODES[mode]===args[0]);
     if(args.length!==2||!mode||!Object.hasOwn(BROWSER_SCENARIOS,args[1]))throw Error('Нужно --confirm-isolated-browser или --confirm-memory-browser и pripyat|widgets|skills|movement|magazine|damage-revoke|durable-reload|medical-retry|sheet-repro|rotation|surface|height|gm-relocation|terrain|walls|psi|climb|jump|graphics|ice|slippery|grenades|world-loading');
-    if(['trade','fire-rate','health-audit','weather','morning-answers','stations','covers','traps','electronics','controllers','movement','magazine','damage-revoke','durable-reload','medical-retry','sheet-repro','skills','rotation','surface','height','gm-relocation','terrain','walls','psi','climb','jump','graphics','anomaly-boar','ice','slippery','grenades','world-loading'].includes(args[1])&&mode!=='owned-file')throw Error('Сценарий требует --confirm-isolated-browser');
+    if(['trade','fire-rate','health-audit','weather','morning-answers','stations','covers','traps','electronics','catalog','controllers','movement','magazine','damage-revoke','durable-reload','medical-retry','sheet-repro','skills','rotation','surface','height','gm-relocation','terrain','walls','psi','climb','jump','graphics','anomaly-boar','ice','slippery','grenades','world-loading'].includes(args[1])&&mode!=='owned-file')throw Error('Сценарий требует --confirm-isolated-browser');
     if(['creation','weapons','traits'].includes(args[1])&&mode!=='owned-file')throw Error('Создание персонажа требует --confirm-isolated-browser');
     return {mode,scenario:args[1],confirmation:args[0]};
 }

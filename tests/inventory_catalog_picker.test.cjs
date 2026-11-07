@@ -31,3 +31,15 @@ test('служебный отрицательный ID не показывает
     assert.doesNotMatch(html,/ID -33001/);
     assert.match(html,/selectInventoryTemplate\(-33001\)/);
 });
+
+test('ПНВ и все фонари находятся в одном разделе приборов, детекторы отдельно',()=>{
+    const html=context.renderInventoryTemplatePicker([
+        {id:1,name:'Очки ПНВ',category:'device',attributes:{night_vision:true}},
+        {id:2,name:'Налобный фонарь',category:'device',attributes:{portable_light:true}},
+        {id:3,name:'Фонарик',category:'misc',attributes:{}},
+        {id:4,name:'ДА-2',category:'detector',attributes:{}},
+    ]);
+    assert.equal((html.match(/<span>ПНВ и фонари<\/span>/g)||[]).length,1);
+    assert.match(html,/<span>Детекторы<\/span>/);
+    assert.doesNotMatch(html,/<span>(?:ПНВ|Фонари)<\/span>/);
+});
