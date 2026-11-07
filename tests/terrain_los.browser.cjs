@@ -1,5 +1,5 @@
 const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path');
-module.exports=async({page,request,token,lobby,base,safeSession})=>{
+module.exports=async({page,request,token,lobby,base,connect,debugPort,safeSession})=>{
  assert.equal(process.env.VTT_SAFE_SCENARIO,'terrain');assert.ok(safeSession);
  const result={checks:[]},save=()=>fs.writeFileSync(path.join(safeSession.artifacts,'terrain-los.json'),JSON.stringify(result,null,2));
  const api='/lobbies/'+lobby.id;
@@ -46,13 +46,14 @@ module.exports=async({page,request,token,lobby,base,safeSession})=>{
  await page.evaluate('(async()=>{window.T=await import("three");window.UI=await import("/static/js/ui_interactions.js");await enterLocation('+waterLocation.id+')})()');
  await page.until('document.getElementById("scene-loading-screen").classList.contains("is-hidden")','реальная водная сцена');
  await page.evaluate('(()=>{selectLocationEditorTool("height");L.setLocationEditMode(true);document.getElementById("loc-water-level-enabled").checked=true;locationControls.target.set(4,1,4);locationControls.object.position.set(10,12,13);locationControls.update();UI.collapseMapToolsPanel()})()');
- const clickWater=async(height)=>{
+ const clickWater=async(height,expectedPreview)=>{
   const point=await page.evaluate('(()=>{locationControls.object.updateMatrixWorld(true);const v=new T.Vector3(2.5,'+height+',2.5).project(locationControls.object),r=document.querySelector("#location-canvas canvas").getBoundingClientRect();return{x:r.left+(v.x+1)*r.width/2,y:r.top+(1-v.y)*r.height/2}})()');
   await page.call('Input.dispatchMouseEvent',{type:'mouseMoved',...point,button:'none',buttons:0});
+  await page.until('document.getElementById("loc-water-level-preview").textContent.includes("Итоговая высота: '+expectedPreview+' м")','итоговая высота показана до применения');
   await page.call('Input.dispatchMouseEvent',{type:'mousePressed',...point,button:'left',buttons:1,clickCount:1});
   await page.call('Input.dispatchMouseEvent',{type:'mouseReleased',...point,button:'left',buttons:0,clickCount:1});
  };
- await clickWater(1.4);
+ await clickWater(1.4,.8);
  await page.until('!L.getLocationEditorHistoryState().busy','выравнивание сохранено');
  await page.until('(async()=>{const r=await fetch("'+waterUrl+'",{headers:{Authorization:"Bearer "+localStorage.getItem("access_token")}});const d=await r.json();return d.tiles_data?.[2]?.[2]?.height===.8&&d.tiles_data?.[3]?.[2]?.height===.8})()','водоём выровнен на сервере');
  const leveled=await request(waterUrl,null,token,'GET');
@@ -60,7 +61,7 @@ module.exports=async({page,request,token,lobby,base,safeSession})=>{
  fs.writeFileSync(path.join(safeSession.artifacts,'water-level-minimum.png'),Buffer.from((await page.call('Page.captureScreenshot',{format:'png'})).data,'base64'));
  result.checks.push({stage:'water-level-minimum',connectedCells:3,height:.8,separateBodyUnchanged:true});
  await page.evaluate('(()=>{document.getElementById("loc-water-level-mode").value="exact";L.setLocationBrushHeight(1.6)})()');
- await clickWater(.8);
+ await clickWater(.8,1.6);
  await page.until('!L.getLocationEditorHistoryState().busy','заданная высота сохранена');
  await page.until('(async()=>{const r=await fetch("'+waterUrl+'",{headers:{Authorization:"Bearer "+localStorage.getItem("access_token")}});const d=await r.json();return d.tiles_data?.[2]?.[2]?.height===1.6&&d.tiles_data?.[2]?.[3]?.height===1.6&&d.tiles_data?.[3]?.[2]?.height===1.6})()','заданная высота водоёма сохранена');
  assert.equal((await request(waterUrl,null,token,'GET')).tiles_data[6][6].height,2.4);
@@ -77,5 +78,7 @@ module.exports=async({page,request,token,lobby,base,safeSession})=>{
  await page.evaluate('(async()=>{document.getElementById("world-water-level-mode").value="exact";window.tileHeight=1.6;await M.levelWorldWaterBody({chunkX:0,chunkY:0,tileX:4,tileY:4,tileData:sceneModule.chunksMap.get("0,0").tilesData[4][4]})})()');
  await page.until('sceneModule.chunksMap.get("0,0").tilesData[5][4].height===1.6','заданная высота глобального водоёма');
  result.checks.push({stage:'world-water-level',minimum:.7,exact:1.6,separateBodyUnchanged:true});
+ await require('./location_fog_water.browser.cjs')({page,request,token,lobby,base,connect,debugPort,safeSession});
+ result.checks.push({stage:'fog-visual-polygon-2',deepWater:true,noIndexTruncation:true});
  result.status='READY_FOR_REVIEW';save();
 };

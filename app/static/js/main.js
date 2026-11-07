@@ -682,8 +682,14 @@ window.enterLocation = async function(locationId, { scoutView = null } = {}) {
                     <label>Уровень воды <select class="form-control" id="loc-water-level-mode">
                         <option value="minimum">По текущему минимуму водоёма</option>
                         <option value="exact">По высоте, указанной выше</option>
-                    </select></label>`;
+                    </select></label>
+                    <output id="loc-water-level-preview">Наведите на водоём, чтобы увидеть итоговую высоту.</output>`;
                 sections.height.appendChild(waterLevelControls);
+                for (const id of ['loc-water-level-enabled','loc-water-level-mode'])
+                    document.getElementById(id).onchange = () => {
+                        const tile=getHoveredTileCoords();
+                        if(tile) updateHighlightByCoords(tile.x,tile.z);
+                    };
                 const heightMode = sculptModeRow.querySelector('select');
                 const syncSculpt = () => {
                     const settings = getLocationSculptSettings();

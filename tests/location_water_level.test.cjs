@@ -6,7 +6,7 @@ const vm=require('node:vm');
 
 test('выравнивание затрагивает только выбранный связанный водоём',()=>{
     const source=fs.readFileSync(path.join(__dirname,'../app/static/js/locationScene.js'),'utf8');
-    const start=source.indexOf('export function levelLocationWaterBody(');
+    const start=source.indexOf('function locationWaterLevelSelection(');
     const end=source.indexOf('export function applyLocationBrush(',start);
     assert.ok(start>0&&end>start);
     const tiles=[
@@ -29,7 +29,7 @@ test('выравнивание затрагивает только выбран�
             cells.forEach(([x,z])=>{tiles[z][x].height=update.height;});
         },
         showNotification:message=>messages.push(message)});
-    vm.runInContext(source.slice(start,end).replace('export function','function'),context);
+    vm.runInContext(source.slice(start,end).replaceAll('export function','function'),context);
     assert.equal(context.levelLocationWaterBody(0,0),3);
     assert.equal(updates[0].height,.8);
     assert.equal(updates[0].radius,0);

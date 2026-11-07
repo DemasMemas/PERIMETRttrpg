@@ -6590,9 +6590,9 @@ function updateFogOverlay(active, sources) {
     }
     const width = Number(currentLocationData?.grid_width) || 0;
     const height = Number(currentLocationData?.grid_height) || 0;
-    const capacity = width * height;
-    if (!capacity) return;
+    if (!width || !height) return;
     fogSurfaceData ??= buildFogSurfaceData(currentLocationData.tiles_data);
+    const indexCapacity = fogSurfaceData.positions.length / 3;
     const tiles = { explored: [], unexplored: [] };
     for (let y = 0; y < height; y += 1) {
         for (let x = 0; x < width; x += 1) {
@@ -6606,8 +6606,8 @@ function updateFogOverlay(active, sources) {
         if (!mesh) {
             const geometry = new THREE.BufferGeometry();
             geometry.setAttribute('position', new THREE.Float32BufferAttribute(fogSurfaceData.positions, 3));
-            const indexArray = fogSurfaceData.positions.length / 3 > 65535
-                ? new Uint32Array(capacity * 24) : new Uint16Array(capacity * 24);
+            const indexArray = indexCapacity > 65535
+                ? new Uint32Array(indexCapacity) : new Uint16Array(indexCapacity);
             const indexBuffer = new THREE.BufferAttribute(indexArray, 1);
             indexBuffer.setUsage(THREE.DynamicDrawUsage);
             geometry.setIndex(indexBuffer);
@@ -8738,6 +8738,7 @@ function createHighlight() {
 }
 
 function updateHighlight(x, z, height) {
+    updateLocationWaterLevelPreview(x,z);
     if (!highlightBox) createHighlight();
     if (window.locationEditMode && sculpting()) {
         if (!highlightBox.userData.sculpt) {
@@ -17513,13 +17514,35 @@ export function applyLocationWaterProfile(centers,profile,radius=0,basin=false) 
 }
 export function getLocationWaterProfileDiagnostics(){return locationWaterProfiles?.diagnostics();}
 
+function locationWaterLevelSelection(x,z,mode,requestedHeight) {
+    const tiles=currentLocationData?.tiles_data;
+    if(!tiles)return {cells:[],target:null};
+    const getTile=(cx,cz)=>tiles[cz]?.[cx];
+    const cells=connectedWaterCells(getTile,x,z);
+    if(!cells.length)return {cells,target:null};
+    const minimum=cells.reduce((value,[cx,cz])=>Math.min(value,Number(getTile(cx,cz).height??1)),Infinity);
+    return {cells,target:mode==='exact'?Number(requestedHeight):minimum};
+}
+
+let waterLevelPreviewKey='',waterLevelPreviewLocation=null;
+function updateLocationWaterLevelPreview(x,z) {
+    const output=document.getElementById('loc-water-level-preview');
+    if(!output||!document.getElementById('loc-water-level-enabled')?.checked)return;
+    const mode=document.getElementById('loc-water-level-mode')?.value||'minimum';
+    const key=`${x},${z},${mode},${currentBrushHeight},${movementMapVersion}`;
+    if(waterLevelPreviewLocation===currentLocationData&&waterLevelPreviewKey===key)return;
+    waterLevelPreviewLocation=currentLocationData;waterLevelPreviewKey=key;
+    const {cells,target}=locationWaterLevelSelection(x,z,mode,currentBrushHeight);
+    output.textContent=!cells.length?'Выберите клетку водоёма.'
+        : Number.isFinite(target)&&target>=.5&&target<=3
+            ? `Итоговая высота: ${target} м · клеток: ${cells.length}`
+            : 'Высота воды должна быть от 0,5 до 3 м.';
+}
+
 export function levelLocationWaterBody(x,z,mode='minimum',requestedHeight=null) {
     if(!currentLocationData||!window.isGM)return 0;
-    const tiles=currentLocationData.tiles_data,getTile=(cx,cz)=>tiles[cz]?.[cx];
-    const cells=connectedWaterCells(getTile,x,z);
+    const {cells,target}=locationWaterLevelSelection(x,z,mode,requestedHeight);
     if(!cells.length){showNotification('Выберите клетку водоёма');return 0;}
-    const minimum=cells.reduce((value,[cx,cz])=>Math.min(value,Number(getTile(cx,cz).height??1)),Infinity);
-    const target=mode==='exact'?Number(requestedHeight):minimum;
     if(!Number.isFinite(target)||target<.5||target>3){
         showNotification('Высота воды должна быть от 0,5 до 3 м');return 0;
     }
@@ -19252,6 +19275,7 @@ export function setLocationBrushHeight(h) {
     const locHeightSpan = document.getElementById('loc-height-value');
     if (locHeightSlider) locHeightSlider.value = h;
     if (locHeightSpan) locHeightSpan.textContent = String(h);
+    if (hoveredTileCoords) updateLocationWaterLevelPreview(hoveredTileCoords.x,hoveredTileCoords.z);
 }
 export function setLocationEraserMode(e) {
     eraserMode = e;

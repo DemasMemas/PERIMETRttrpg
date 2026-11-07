@@ -243,7 +243,7 @@ if(typeof renderFacingPreview==='function'){const original=renderFacingPreview;r
             return;
         }
         if (safeSession && process.env.VTT_SAFE_SCENARIO === 'terrain') {
-            await require('./terrain_los.browser.cjs')({page,request,token,lobby,base,safeSession});
+            await require('./terrain_los.browser.cjs')({page,request,token,lobby,base,connect,debugPort,safeSession});
             return;
         }
         if (safeSession && process.env.VTT_SAFE_SCENARIO === 'gm-relocation') {
