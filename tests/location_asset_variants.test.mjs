@@ -13,8 +13,26 @@ for (const file of files) {
 const variants = modules.get('locationAssetVariants.js');
 await variants.link(specifier => modules.get(specifier.replace('./', '')));
 await variants.evaluate();
-const { placementForLocationAsset, visualAssetForLocationObject } = variants.namespace;
+const { placementForLocationAsset, visualAssetForLocationObject, locationObjectLabel } = variants.namespace;
 const { findLocationAsset } = modules.get('locationAssetCatalog.js').namespace;
+
+test('весь каталог показывает игровые названия, включая сохранённые технические имена', () => {
+    const assets = modules.get('locationAssetCatalog.js').namespace.LOCATION_ASSETS;
+    for (const asset of assets) {
+        assert.doesNotMatch(asset.label, /[a-z]|тест|финальный/i, asset.id);
+        assert.doesNotMatch(asset.group, /[a-z]|ассет/i, asset.id);
+        const placement = placementForLocationAsset(asset);
+        assert.equal(locationObjectLabel({type:placement.type,name:asset.id,
+            properties:{visual_asset:placement.visualAsset}}), asset.label);
+    }
+    for (const [type,visual,name,expected] of [
+        ['barrel','art_rusty_barrel','Ржавая бочка PBR','Ржавая бочка'],
+        ['box','art_wooden_crate','Складской ящик 12','Старый деревянный ящик'],
+        ['fence','art_chainlink_fence','Секция ограды 0','Сетчатый забор'],
+        ['floor','art_dirty_earth','Грунтовая площадка 3','Грязная земля'],
+        ['wall','art_worn_plaster','Северная стена дома','Северная стена дома'],
+    ]) assert.equal(locationObjectLabel({type,name,properties:{visual_asset:visual}}),expected);
+});
 
 test('replacement furniture keeps both generations of saved IDs and original dimensions', () => {
     for (const [canonical, alias, model, oldSize, newSize] of [

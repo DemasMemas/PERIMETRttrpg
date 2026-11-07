@@ -11,7 +11,7 @@ const read = name => fs.readFileSync(path.join(__dirname, '../app/static/js', na
 test('осмотр аномалии не выдаёт параметры или класс укрытия',()=>{
     const source=read('locationScene.js'),buttons=[],messages=[];
     const menu={style:{},appendChild:button=>buttons.push(button),getBoundingClientRect:()=>({width:200,height:60})};
-    const context=vm.createContext({combatState:{status:'idle'},pendingStructureAction:null,
+    const context=createSceneContext({combatState:{status:'idle'},pendingStructureAction:null,
         contextMenu:menu,createContextMenu(){},window:{isGM:true,innerWidth:1000,innerHeight:800},
         COVER_CLASS_DEFAULTS:{medium:{maxHp:1000,protection:50,label:'Среднее'}},getObjectActions:()=>[],
         isStructureCoverObject:object=>object.type!=='anomaly',document:{createElement:()=>({style:{}})},showNotification:message=>messages.push(message)});

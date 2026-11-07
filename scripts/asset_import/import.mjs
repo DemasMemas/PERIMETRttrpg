@@ -412,7 +412,7 @@ async function main() {
     await writeFile(statePath, JSON.stringify(state, null, 2) + '\n');
     if (!args.has('--models') && !args.has('--materials') && !errors.length) {
         const entries = models.map(({ asset, meta }) => ({ id: asset.id, label: asset.label,
-            baseType: asset.baseType, kind: 'structure', group: 'Художественные ассеты',
+            baseType: asset.baseType, kind: 'structure', group: 'Предметы и ограждения',
             ...(asset.artStatus ? { artStatus: asset.artStatus } : {}),
             icon: { box: '▣', barrel: '◉', fence: '╫' }[asset.baseType],
             color: { box: '#8b6b4f', barrel: '#8a6444', fence: '#8b7458' }[asset.baseType],
@@ -422,7 +422,7 @@ async function main() {
                 pivot: meta.pivot, orientation: meta.orientation, groundClearance: meta.groundClearance,
                 source: meta.sourceUrl, license: meta.license } }));
         entries.push(...materials.map(({ asset, meta }) => ({ id: `art_${asset.id}`,
-            label: asset.label, baseType: asset.baseType, kind: 'structure', group: 'PBR-материалы',
+            label: asset.label, baseType: asset.baseType, kind: 'structure', group: 'Поверхности',
             icon: asset.baseType === 'wall' ? '▥' : '▦',
             color: { wall: '#80786c', floor: '#776d5d' }[asset.baseType],
             dimensions: asset.dimensions,

@@ -2,7 +2,7 @@
   "models": [
     {
       "id": "art_rusty_barrel",
-      "label": "Ржавая бочка (Poly Haven)",
+      "label": "Ржавая бочка",
       "baseType": "barrel",
       "source": { "provider": "polyhaven", "id": "Barrel_01", "resolution": "1k" },
       "dimensions": [0.65, 0.65, 0.9],
@@ -12,7 +12,7 @@
     },
     {
       "id": "art_wooden_crate",
-      "label": "Старый деревянный ящик (тест, не финальный)",
+      "label": "Старый деревянный ящик",
       "artStatus": "reference-only",
       "baseType": "box",
       "source": { "provider": "polyhaven", "id": "wooden_crate_02", "resolution": "1k" },
@@ -41,9 +41,9 @@
     }
   ],
   "materials": [
-    { "id": "rusty_metal", "label": "Окрашенный ржавый металл (PBR)", "baseType": "wall", "dimensions": [2, 0.2, 2.4], "source": { "provider": "polyhaven", "id": "rusty_metal_sheet", "resolution": "1k" } },
-    { "id": "aged_wood", "label": "Состаренное дерево (PBR)", "baseType": "floor", "dimensions": [2, 2, 0.12], "source": { "provider": "polyhaven", "id": "wood_planks_dirt", "resolution": "1k" } },
-    { "id": "worn_plaster", "label": "Выцветшая штукатурка (PBR)", "baseType": "wall", "dimensions": [2, 0.2, 2.4], "source": { "provider": "polyhaven", "id": "concrete_wall_003", "resolution": "1k" } },
+    { "id": "rusty_metal", "label": "Окрашенный ржавый металл", "baseType": "wall", "dimensions": [2, 0.2, 2.4], "source": { "provider": "polyhaven", "id": "rusty_metal_sheet", "resolution": "1k" } },
+    { "id": "aged_wood", "label": "Состаренное дерево", "baseType": "floor", "dimensions": [2, 2, 0.12], "source": { "provider": "polyhaven", "id": "wood_planks_dirt", "resolution": "1k" } },
+    { "id": "worn_plaster", "label": "Выцветшая штукатурка", "baseType": "wall", "dimensions": [2, 0.2, 2.4], "source": { "provider": "polyhaven", "id": "concrete_wall_003", "resolution": "1k" } },
     { "id": "dirty_earth", "label": "Грязная земля", "baseType": "floor", "dimensions": [2, 2, 0.12], "source": { "provider": "polyhaven", "id": "dirt", "resolution": "1k" } }
   ]
 }

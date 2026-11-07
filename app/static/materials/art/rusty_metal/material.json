@@ -1,7 +1,7 @@
 {
   "id": "rusty_metal",
   "type": "material",
-  "label": "Окрашенный ржавый металл (PBR)",
+  "label": "Окрашенный ржавый металл",
   "sourceUrl": "https://polyhaven.com/a/rusty_metal_sheet",
   "license": "CC0",
   "maps": {

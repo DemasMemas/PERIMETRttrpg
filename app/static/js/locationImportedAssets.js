@@ -2,10 +2,10 @@
 export const IMPORTED_LOCATION_ASSETS = Object.freeze([
     {
         "id": "art_rusty_barrel",
-        "label": "Ржавая бочка (Poly Haven)",
+        "label": "Ржавая бочка",
         "baseType": "barrel",
         "kind": "structure",
-        "group": "Художественные ассеты",
+        "group": "Предметы и ограждения",
         "icon": "◉",
         "color": "#8a6444",
         "dimensions": [
@@ -25,10 +25,10 @@ export const IMPORTED_LOCATION_ASSETS = Object.freeze([
     },
     {
         "id": "art_wooden_crate",
-        "label": "Старый деревянный ящик (тест, не финальный)",
+        "label": "Старый деревянный ящик",
         "baseType": "box",
         "kind": "structure",
-        "group": "Художественные ассеты",
+        "group": "Предметы и ограждения",
         "artStatus": "reference-only",
         "icon": "▣",
         "color": "#8b6b4f",
@@ -52,7 +52,7 @@ export const IMPORTED_LOCATION_ASSETS = Object.freeze([
         "label": "Сетчатый забор",
         "baseType": "fence",
         "kind": "structure",
-        "group": "Художественные ассеты",
+        "group": "Предметы и ограждения",
         "icon": "╫",
         "color": "#8b7458",
         "dimensions": [
@@ -75,10 +75,10 @@ export const IMPORTED_LOCATION_ASSETS = Object.freeze([
     },
     {
         "id": "art_rusty_metal",
-        "label": "Окрашенный ржавый металл (PBR)",
+        "label": "Окрашенный ржавый металл",
         "baseType": "wall",
         "kind": "structure",
-        "group": "PBR-материалы",
+        "group": "Поверхности",
         "icon": "▥",
         "color": "#80786c",
         "dimensions": [
@@ -99,10 +99,10 @@ export const IMPORTED_LOCATION_ASSETS = Object.freeze([
     },
     {
         "id": "art_aged_wood",
-        "label": "Состаренное дерево (PBR)",
+        "label": "Состаренное дерево",
         "baseType": "floor",
         "kind": "structure",
-        "group": "PBR-материалы",
+        "group": "Поверхности",
         "icon": "▦",
         "color": "#776d5d",
         "dimensions": [
@@ -123,10 +123,10 @@ export const IMPORTED_LOCATION_ASSETS = Object.freeze([
     },
     {
         "id": "art_worn_plaster",
-        "label": "Выцветшая штукатурка (PBR)",
+        "label": "Выцветшая штукатурка",
         "baseType": "wall",
         "kind": "structure",
-        "group": "PBR-материалы",
+        "group": "Поверхности",
         "icon": "▥",
         "color": "#80786c",
         "dimensions": [
@@ -150,7 +150,7 @@ export const IMPORTED_LOCATION_ASSETS = Object.freeze([
         "label": "Грязная земля",
         "baseType": "floor",
         "kind": "structure",
-        "group": "PBR-материалы",
+        "group": "Поверхности",
         "icon": "▦",
         "color": "#776d5d",
         "dimensions": [

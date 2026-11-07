@@ -194,9 +194,9 @@ def _structures(location, *, stress=False):
     add('Факел', 'torch', 32, 21, 0.25, 0.25, 1.7, '#6b4a30', is_lit=True)
     add('Бочка с огнём', 'fire_barrel', 23, 19, 0.72, 0.72, 0.78, '#5f625c', is_lit=True)
     # The base types keep storage, collision and interactions unchanged.
-    add('Ржавая бочка PBR', 'barrel', 23, 25, 0.65, 0.65, 0.9, '#8a6444',
+    add('Ржавая бочка', 'barrel', 23, 25, 0.65, 0.65, 0.9, '#8a6444',
         visual_asset='art_rusty_barrel', weight_kg=40)
-    add('Старый ящик PBR', 'box', 25, 25, 0.8, 0.8, 0.7, '#8b6b4f',
+    add('Старый деревянный ящик', 'box', 25, 25, 0.8, 0.8, 0.7, '#8b6b4f',
         visual_asset='art_wooden_crate', weight_kg=25, contents=[])
     add('Сетчатый забор', 'fence', 28, 25, 2, 0.15, 1.2, '#8b7458',
         visual_asset='art_chainlink_fence')
@@ -209,10 +209,10 @@ def _structures(location, *, stress=False):
         for index in range(18):
             x = 41 + (index % 6) * 3
             z = 12 + (index // 6) * 4
-            add(f'Складской ящик {index}', 'box', x, z, 0.8, 0.8, 0.7, '#8b6b4f',
+            add('Старый деревянный ящик', 'box', x, z, 0.8, 0.8, 0.7, '#8b6b4f',
                 visual_asset='art_wooden_crate', contents=[])
         for index in range(8):
-            add(f'Бочка полигона {index}', 'barrel', 42 + index * 2, 26,
+            add('Ржавая бочка', 'barrel', 42 + index * 2, 26,
                 0.65, 0.65, 0.9, '#8a6444', visual_asset='art_rusty_barrel', weight_kg=40)
         for index, x in enumerate((43, 49, 55, 61)):
             add('Грязная земля', 'floor', x, 34, 3, 3, 0.12, '#776d5d',

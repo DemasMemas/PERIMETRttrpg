@@ -49,7 +49,7 @@ import {
 import { createLocationLightingEchoTracker, DEFAULT_LOCATION_LIGHTING, resolveLocationLighting,
     resolveLocationVisualPreset } from './locationLighting.js';
 import { findLocationAsset } from './locationAssetCatalog.js';
-import { placementForLocationAsset, visualAssetForLocationObject } from './locationAssetVariants.js';
+import { placementForLocationAsset, visualAssetForLocationObject, locationObjectLabel } from './locationAssetVariants.js';
 import {
     alignLocationPbrFloorUvs, applyLocationPbrMaterial, releaseLocationPbrMaterial, releaseLocationPbrTextures,
     tileLocationPbrBoxUvs,
@@ -10436,7 +10436,7 @@ function showStructureActionMenu(clientX, clientY, object) {
         actions: entries,
     };
 
-    const title = findLocationAsset(object.type)?.label || object.name || object.type || 'Объект';
+    const title = locationObjectLabel(object);
     structureActionMenu.innerHTML = `
         <div style="
             padding: 10px 12px 8px;
@@ -10908,7 +10908,7 @@ function showContainerInteractionMenuLegacy(object) {
             padding: 12px 14px;
             border-bottom: 1px solid rgba(255,255,255,0.08);
         ">
-            <div style="font-weight:700;">${object.name || object.type || 'Контейнер'}</div>
+            <div style="font-weight:700;">${locationObjectLabel(object)}</div>
             <button type="button" class="container-close-btn" style="
                 width:32px;
                 height:32px;
@@ -10997,17 +10997,8 @@ function showObjectContextMenu(clientX, clientY, object) {
     const tree = object.type === 'tree' || /^nature_(?:oak|birch|pine|spruce|poplar|willow)/.test(object.type || '');
     const coverProtection = object.properties?.cover_physical_protection
         ?? object.properties?.cover_base_physical_protection ?? (tree ? 20 : coverDefaults.protection);
-    const visualAsset = visualAssetForLocationObject(object.type, object.properties);
-    const objectName = ['art_chainlink_fence', 'art_dirty_earth'].includes(visualAsset?.id)
-        ? visualAsset.label : object.name;
-    const coverNames = [objectName, visualAsset?.label,
-        findLocationAsset(object.type)?.label].filter(Boolean);
-    const rawCoverName = coverNames.find(name => /[А-Яа-яЁё]/.test(name)) || coverNames[0] || '';
-    const cleanCoverName = rawCoverName.replace(/\s*(?:\(|\[)?PBR(?:\)|\])?/gi, ' ').trim();
-    const coverName = /[А-Яа-яЁё]/.test(cleanCoverName) ? cleanCoverName : ({
-        wall: 'Стена', fence: 'Забор', door: 'Дверь', window: 'Окно', table: 'Стол',
-        chair: 'Стул', shelf: 'Стеллаж', box: 'Ящик', barrel: 'Бочка',
-    }[object.type] || 'Укрытие');
+    const objectName = locationObjectLabel(object);
+    const coverName = objectName;
     const actions = [{
         label: 'Осмотреть',
         action: () => showNotification(
@@ -13715,7 +13706,7 @@ async function placeStructureAtTileImpl(x, z, client = null) {
     const coverProfile = COVER_CLASS_DEFAULTS[selectedCoverClass] || COVER_CLASS_DEFAULTS.medium;
     try {
         const object = await editorCreateObject(window.currentLobbyId, currentLocationId, {
-            name: placedType,
+            name: selectedLocationAsset?.label || locationObjectLabel({type:placedType}),
             type: placedType,
             tile_x: mount?.tileX ?? x,
             tile_y: mount?.tileZ ?? z,
@@ -14483,7 +14474,7 @@ function getPrimaryLocationEditorAsset() {
     const kind = editorSelection.kind;
     if (kind === 'structure') return {
         kind, label: source.properties?.roof_section ? `Корпус ${source.properties.roof_section.owner+1} · ${{flat:'Плоская кровля',shed:'Односкатная кровля',gable:'Двускатная кровля'}[source.properties.roof_section.bodies[source.properties.roof_section.owner]?.type]||'Кровля'}`
-            : visualAssetForLocationObject(source.type, source.properties)?.label || source.name || source.type,
+            : locationObjectLabel(source),
         x: Number(source.tile_x) + 0.5 + Number(source.properties?.offset_x || 0),
         z: Number(source.tile_y) + 0.5 + Number(source.properties?.offset_z || 0),
         rotation: normalizedBearing(objectRotationToBearing(source.properties?.rotation || 0)),
@@ -19941,7 +19932,7 @@ async function showContainerInteractionMenu(object) {
 
     containerInteractionMenu.innerHTML = `
         <div class="container-drag-handle" style="display:flex; justify-content:space-between; align-items:center; gap:10px; padding:12px 14px; border-bottom:1px solid rgba(255,255,255,0.08); cursor:move; user-select:none; touch-action:none;">
-            <div style="font-weight:700;">${object.name || object.type || 'Контейнер'}</div>
+            <div style="font-weight:700;">${locationObjectLabel(object)}</div>
             <button type="button" class="container-close-btn" style="width:32px; height:32px; border-radius:999px; border:0; background:rgba(255,255,255,0.08); color:#fff; cursor:pointer; font-size:18px; line-height:1;">×</button>
         </div>
         <div style="padding:10px 14px; border-bottom:1px solid rgba(255,255,255,0.06); display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
@@ -20027,7 +20018,7 @@ async function showContainerInteractionMenu(object) {
         `;
         rightPanel.innerHTML = `
             <div style="padding:10px 12px; border-bottom:1px solid rgba(255,255,255,0.06); display:flex; justify-content:space-between; gap:10px; align-items:center;">
-                <div style="font-weight:700;">${object.name || object.type || 'Контейнер'}</div>
+                <div style="font-weight:700;">${locationObjectLabel(object)}</div>
                 ${window.isGM ? '<button type="button" class="btn btn-sm btn-secondary container-add-item-btn">Добавить предмет</button>' : ''}
             </div>
             <div class="exchange-list exchange-list-target" style="padding:10px 12px; max-height:100%; overflow:auto;"></div>
@@ -20080,7 +20071,7 @@ async function showContainerInteractionMenu(object) {
                 }
 
                 await window.openInventoryTemplatePicker('pockets', {
-                    title: `Добавить предмет: ${object.name || object.type || 'Контейнер'}`,
+                    title: `Добавить предмет: ${locationObjectLabel(object)}`,
                     onSelect: async (newItem) => {
                         const updatedContents = [...getContainerItems(object), newItem];
                         object = await Server.updateLocationObject(window.currentLobbyId, object.id, {
