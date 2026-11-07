@@ -2258,6 +2258,13 @@ input[type="number"] {
 .pda-shell-note { display: inline-block; padding: 9px 13px; border: 1px solid #a1bc744d; border-radius: 6px; color: #bdd1af; }
 .pda-shell-mod { display: flex; flex-direction: column; margin: 8px 0; padding: 8px 12px; border-left: 3px solid #91b973; background: #ffffff0a; }
 .pda-shell-footer { flex-wrap: wrap; border-top: 1px solid #8eb87844; border-bottom: 0; color: #8bab83; font-size: .67rem; letter-spacing: .12em; }
+.pda-network form { display:grid; gap:10px; margin:12px 0; }
+.pda-network form label { display:grid; gap:5px; }
+.pda-network textarea { resize:vertical; min-height:72px; }
+.pda-radio-messages { min-height:100px; max-height:260px; overflow:auto; }
+.pda-radio-message { padding:7px 0; border-bottom:1px solid #8eb87833; white-space:pre-wrap; overflow-wrap:anywhere; }
+.pda-radio-contact { display:flex; flex-wrap:wrap; align-items:center; gap:8px; margin:8px 0; }
+.pda-radio-contact small { flex-basis:100%; }
 .pda-shell-account { border: 0; padding: 0; background: none; color: inherit; font: inherit; letter-spacing: inherit; cursor: pointer; text-align: left; }
 .pda-shell-account:hover, .pda-shell-account:focus-visible { color: #cce7c0; text-decoration: underline; }
 .pda-account-title { margin: 0 0 8px; }

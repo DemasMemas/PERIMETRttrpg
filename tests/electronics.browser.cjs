@@ -1,7 +1,7 @@
 // Электроника в Припяти: отдельная БД, настоящий интерфейс и игровой ход времени.
 const assert=require('node:assert/strict');
 const {loadFixture,waitForDocument}=require('./durable_reload.browser.cjs');
-module.exports=async({page,request,token,lobby,base,safeSession})=>{
+module.exports=async({page,request,token,lobby,base,connect,debugPort,safeSession})=>{
     assert.equal(process.env.VTT_SAFE_SCENARIO,'electronics');assert.ok(safeSession.verified);
     const api=`/lobbies/${lobby.id}`,{fixture}=loadFixture();
     const location=await request(api+'/locations',{...fixture,objects:undefined,world_tile_x:7,world_tile_z:8},token),loc=api+'/locations/'+location.id;
@@ -67,4 +67,47 @@ module.exports=async({page,request,token,lobby,base,safeSession})=>{
     await page.evaluate("[...document.querySelectorAll('#dosimeter-modal button')].find(b=>b.textContent==='Заменить батарейку').click();true");
     await page.until("!document.querySelector('#dosimeter-modal select')",'Израсходована одна батарейка');
     console.log('Дозиметр: игрок включает и выключает прибор, получает и теряет показания радиации, замена расходует одну батарейку.');
+    await page.evaluate("[...document.querySelectorAll('#dosimeter-modal button')].find(b=>b.textContent==='Закрыть').click();true");
+    const playerFresh=await request('/lobbies/characters/'+player.id,null,token,'GET');
+    playerFresh.data.inventory.pockets.push({id:'radio-player',name:'КПК',category:'misc',quantity:1});
+    await request('/lobbies/characters/'+player.id,{data:playerFresh.data},token,'PUT');
+    const actorFresh=await request('/lobbies/characters/'+actor.id,null,token,'GET');
+    await request('/lobbies/characters/'+actor.id+'/portable-lights',{operation:'pda_toggle',path:['inventory','pockets',0],source_id:'dynamo-device',character_revision:actorFresh.data._revision},token);
+    for(const [id,auth,login]of [[actor.id,token,'radio-actor'],[player.id,playerToken,'radio-player']])
+        await request('/lobbies/characters/'+id+'/pda-account/register',{login,password:'synthetic-radio-password'},auth);
+    let protocol,context,peer;
+    try{
+        const version=await(await fetch(`http://127.0.0.1:${debugPort}/json/version`)).json();protocol=await connect(version.webSocketDebuggerUrl);
+        context=await protocol.call('Target.createBrowserContext');const target=await protocol.call('Target.createTarget',{url:base,browserContextId:context.browserContextId});
+        const tabs=await(await fetch(`http://127.0.0.1:${debugPort}/json`)).json();peer=await connect(tabs.find(t=>t.id===target.targetId).webSocketDebuggerUrl);
+        await peer.call('Page.enable');await peer.call('Runtime.enable');await waitForDocument(peer,{href:base,label:'Второй КПК'});
+        await peer.evaluate(`localStorage.setItem('access_token',${JSON.stringify(token)});localStorage.setItem('user_id','${lobby.gm_id}');true`);
+        await peer.call('Emulation.setDeviceMetricsOverride',{width:1920,height:1080,deviceScaleFactor:1,mobile:false});
+        const peerEpoch=await peer.evaluate('performance.timeOrigin');await peer.call('Page.navigate',{url:href});
+        await waitForDocument(peer,{href,afterEpoch:peerEpoch,label:'ГМ со вторым КПК'});
+        await peer.until(`window.currentLocationId===${location.id}&&document.getElementById('scene-loading-screen').classList.contains('is-hidden')`,'Вторая сцена');
+        const open=async(client,id,device)=>{
+            await client.evaluate(`window.currentLocationCharacterId=${id};window.openCharacterSheet(${id},'inventory').then(()=>true)`);
+            await client.until(`Boolean([...document.querySelectorAll('[data-widget-identity]')].find(e=>JSON.parse(e.dataset.widgetIdentity).id===${JSON.stringify(device)}))`,'Физический КПК в инвентаре');
+            await client.evaluate(`(()=>{const row=[...document.querySelectorAll('[data-widget-identity]')].find(e=>JSON.parse(e.dataset.widgetIdentity).id===${JSON.stringify(device)});row.querySelector('[data-widget-key=use]').click()})()`);
+            await client.until("document.getElementById('pda-shell-modal')",'Открыт КПК');
+            await client.evaluate("[...document.querySelectorAll('#pda-shell-modal nav button')].find(b=>b.textContent==='Общий чат').click();true");
+            await client.until("document.querySelector('[data-radio-status]')?.textContent.includes('Дальность передачи: 300')",'Сеть КПК готова');
+        };
+        await open(page,player.id,'radio-player');await open(peer,actor.id,'dynamo-device');
+        await page.evaluate("(()=>{const field=document.querySelector('[aria-label=\"Сообщение КПК\"]');field.value='Сигнал игрока';field.dispatchEvent(new Event('input'));const form=document.querySelector('[data-radio-send]');form.requestSubmit();form.requestSubmit()})()");
+        await peer.until("document.querySelector('[data-radio-messages]')?.textContent.includes('Сигнал игрока')",'Второй КПК получил сообщение по сети');
+        assert.equal(await peer.evaluate("[...document.querySelectorAll('.pda-radio-message')].filter(e=>e.textContent.includes('Сигнал игрока')).length"),1);
+        await peer.evaluate("(()=>{const field=document.querySelector('[aria-label=\"Сообщение КПК\"]');field.value='Ответ ГМа';field.dispatchEvent(new Event('input'));document.querySelector('[data-radio-send]').requestSubmit()})()");
+        await page.until("document.querySelector('[data-radio-messages]')?.textContent.includes('Ответ ГМа')",'Игрок получил ответ');
+        await page.evaluate("[...document.querySelectorAll('#pda-shell-modal nav button')].find(b=>b.textContent==='Контакты').click();true");
+        await page.until("document.querySelector('[data-radio-signals]')?.textContent.includes('radio-actor')",'КПК обнаружен как сигнал');
+        await page.evaluate("(()=>{const input=document.querySelector('[aria-label=\"Логин контакта КПК\"]');input.value='radio-actor';document.querySelector('[data-radio-add]').requestSubmit()})()");
+        await page.until("document.querySelector('[data-radio-saved] input')?.checked",'Друг сохранён в аккаунте');
+        const bounds=await peer.evaluate("(()=>{const panel=document.querySelector('.pda-shell').getBoundingClientRect(),button=document.querySelector('[data-radio-send] button').getBoundingClientRect();return button.width>0&&button.x>=panel.x&&button.right<=panel.right&&button.bottom<=panel.bottom})()");assert.ok(bounds,'На 1920×1080 кнопка отправки находится внутри КПК');
+        console.log('Сеть КПК: обычный игрок и ГМ обмениваются сообщениями в двух клиентах, двойной submit не дублирует сообщение, друг сохраняется; интерфейс проверен на 1920×1080.');
+    }finally{
+        if(peer)peer.close();
+        if(protocol){if(context)await protocol.call('Target.disposeBrowserContext',{browserContextId:context.browserContextId}).catch(()=>{});protocol.close();}
+    }
 };

@@ -31,3 +31,30 @@ class PdaAccountLogin(db.Model):
     character_id = db.Column(db.Integer, db.ForeignKey('lobby_characters.id', ondelete='CASCADE'), primary_key=True)
     account_id = db.Column(db.Integer, db.ForeignKey('pda_accounts.id', ondelete='CASCADE'), nullable=False)
     account = db.relationship('PdaAccount')
+
+
+class PdaContact(db.Model):
+    __tablename__='pda_contacts'
+    account_id=db.Column(db.Integer,db.ForeignKey('pda_accounts.id',ondelete='CASCADE'),primary_key=True)
+    target_account_id=db.Column(db.Integer,db.ForeignKey('pda_accounts.id',ondelete='CASCADE'),primary_key=True)
+    friendly=db.Column(db.Boolean,nullable=False,default=True)
+
+
+class PdaTransmission(db.Model):
+    __tablename__='pda_transmissions'
+    id=db.Column(db.String(100),primary_key=True)
+    lobby_id=db.Column(db.Integer,db.ForeignKey('lobbies.id',ondelete='CASCADE'),nullable=False,index=True)
+    sender_account_id=db.Column(db.Integer,db.ForeignKey('pda_accounts.id',ondelete='CASCADE'),nullable=False)
+    source_signal_id=db.Column(db.String(64),nullable=False)
+    recipient_account_ids=db.Column(db.JSON,nullable=False,default=list)
+    text=db.Column(db.Text,nullable=False)
+    target_login=db.Column(db.String(32),nullable=True)
+    game_time=db.Column(db.Integer,nullable=False)
+    signature=db.Column(db.String(64),nullable=False)
+    created_at=db.Column(db.DateTime,nullable=False,default=lambda:datetime.now(timezone.utc))
+
+
+class PdaDelivery(db.Model):
+    __tablename__='pda_deliveries'
+    account_id=db.Column(db.Integer,db.ForeignKey('pda_accounts.id',ondelete='CASCADE'),primary_key=True)
+    transmission_id=db.Column(db.String(100),db.ForeignKey('pda_transmissions.id',ondelete='CASCADE'),primary_key=True)

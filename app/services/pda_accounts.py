@@ -33,7 +33,7 @@ def _password(payload):
 
 
 def account_status(character_id, user_id):
-    character = _character(character_id, user_id)
+    character = _character(character_id, user_id, edit=True)
     session = db.session.get(PdaAccountLogin, character.id)
     account = db.session.get(PdaAccount, session.account_id) if session else None
     if not account or account.lobby_id != character.lobby_id:

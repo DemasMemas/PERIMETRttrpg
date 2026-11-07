@@ -5192,6 +5192,8 @@ def portable_lights(character_id):
         return jsonify({'lights':items,'batteries':batteries}),200
     character,actor,result=operate(character_id,user_id,request.get_json() or {})
     emit_character_update({'character_id':character.id,'updates':{'data':character.data_snapshot()},'source':'portable_light'})
+    if result.get('operation')=='pda_jammer':
+        socketio.emit('pda_network_updated',{'lobby_id':character.lobby_id},room=f'lobby_{character.lobby_id}')
     for model in LocationCharacter.query.filter_by(character_id=character.id).all():
         socketio.emit('combat_state_updated',CombatService.get_state(model.location_id,user_id),room=f'location_{model.location_id}')
     return jsonify({'light_operation':result,'data':character.data_snapshot()}),200
@@ -5267,13 +5269,33 @@ def character_pda_account(character_id):
     return jsonify(account_status(character_id, int(get_jwt_identity()))), 200
 
 
+@lobbies_bp.route('/characters/<int:character_id>/pda-network',methods=['GET','POST'])
+@jwt_required()
+def character_pda_network(character_id):
+    from app.services.pda_network import snapshot,operate
+    user_id=int(get_jwt_identity())
+    if request.method=='GET':
+        try:path=json.loads(request.args.get('item_path','null'))
+        except (ValueError,TypeError):raise ValidationError('Выберите КПК')
+        return jsonify(snapshot(character_id,user_id,{'item_path':path,'item_id':request.args.get('item_id') or None,
+            'location_id':request.args.get('location_id',type=int)})),200
+    character,result=operate(character_id,user_id,request.get_json(silent=True) or {})
+    socketio.emit('pda_network_updated',{'lobby_id':character.lobby_id},room=f'lobby_{character.lobby_id}')
+    if result.get('operation')=='pda_jammer':
+        emit_character_update({'character_id':character.id,'updates':{'data':character.data_snapshot()},'source':'pda_network'})
+    return jsonify({'result':result,'data':character.data_snapshot()}),200
+
+
 @lobbies_bp.route('/characters/<int:character_id>/pda-account/<operation>', methods=['POST'])
 @jwt_required()
 def change_character_pda_account(character_id, operation):
     from app.services.pda_accounts import account_action
 
-    return jsonify(account_action(character_id, int(get_jwt_identity()), operation,
-        request.get_json(silent=True) or {})), 200
+    result=account_action(character_id, int(get_jwt_identity()), operation,request.get_json(silent=True) or {})
+    if operation in {'login','register','logout'}:
+        character=db.session.get(LobbyCharacter,character_id)
+        socketio.emit('pda_network_updated',{'lobby_id':character.lobby_id},room=f'lobby_{character.lobby_id}')
+    return jsonify(result),200
 
 
 @lobbies_bp.route('/<int:lobby_id>/crafting-requests',methods=['GET'])

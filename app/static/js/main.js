@@ -2093,6 +2093,9 @@ if (socket) {
     socket.on('trap_alarm',data=>{
         if(data.location_id===window.currentLocationId)showNotification(data.message,'system');
     });
+    socket.on('pda_network_updated',data=>{
+        if(Number(data.lobby_id)===Number(window.currentLobbyId))window.dispatchEvent(new Event('pda-network-updated'));
+    });
     socket.on('character_moved', (data) => {
         updateCharacterPosition(data.character_id, data.x, data.y, data);
         for (const check of data.slip_checks || []) {

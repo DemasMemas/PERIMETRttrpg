@@ -101,11 +101,16 @@ def preserve(current,incoming):
     def pda_identity(path,item):return item.get('id') or (tuple(path),item.get('templateId'),item.get('name'))
     old_pda={pda_identity(path,item):item.get('pdaState') for path,item in walk(current or {})
         if definition(item)=='pda'}
+    old_network={pda_identity(path,item):item.get('pdaNetwork') for path,item in walk(current or {}) if definition(item)=='pda'}
     for path,item in walk(incoming):
         if definition(item)=='pda' and pda_identity(path,item) in old_pda:
             previous=old_pda[pda_identity(path,item)]
             if previous is None:item.pop('pdaState',None)
             else:item['pdaState']=deepcopy(previous)
+        if definition(item)=='pda':
+            network=old_network.get(pda_identity(path,item))
+            if network is None:item.pop('pdaNetwork',None)
+            else:item['pdaNetwork']=deepcopy(network)
     def identity(path,item):return item.get('id') or (*path,item.get('templateId'),item.get('name'))
     previous={identity(path,item):item for path,item in nvg_items(current or {})}
     belt=(((current or {}).get('equipment') or {}).get('belt') or {})
@@ -159,7 +164,9 @@ def advance_pda(data,seconds):
         if not state['on'] or state['charge_percent']<=0:continue
         from app.services.equipment_modifications import installed
         endurance=2 if any(mod.get('ruleId')=='pda-b4' for mod in installed(item)) else 1
-        state['charge_percent']=max(0.0,state['charge_percent']-seconds/(7200*endurance))
+        jammer=bool((item.get('pdaNetwork') or {}).get('jammer_on') and any(mod.get('ruleId')=='pda-b16' for mod in installed(item)))
+        state['charge_percent']=max(0.0,state['charge_percent']-seconds/(7200*endurance)-(seconds*100/60 if jammer else 0))
+        if not state['charge_percent'] and item.get('pdaNetwork'):item['pdaNetwork']['jammer_on']=False
         item['pdaState']=state;changed=True
     meta=(data.get('health') or {}).get('combatMeta') or {}
     charging=meta.get('pdaDynamo')
@@ -429,7 +436,7 @@ def operate(character_id,user_id,payload):
     from app.services.character import CharacterService
     from app.services.combat import CombatService
     from app.services.inventory_access import calculate_inventory_access
-    if not isinstance(payload,dict) or set(payload)-{'operation','path','mount','weapon_index','character_revision','battery_path','source_id','book_path'}:
+    if not isinstance(payload,dict) or set(payload)-{'operation','path','mount','weapon_index','character_revision','battery_path','source_id','book_path','enabled'}:
         raise ValidationError('Некорректные параметры фонаря')
     character=db.session.get(LobbyCharacter,character_id)
     if not character:raise NotFoundError('Персонаж не найден')
@@ -474,11 +481,19 @@ def operate(character_id,user_id,payload):
         character.data=data;flag_modified(character,'data')
         return character,actor,{'operation':operation,'action_points':cost,'source_id':selected['id']}
     if definition(selected)=='pda':
-        if operation not in {'pda_toggle','pda_battery','pda_import_book','pda_dynamo_start','pda_dynamo_stop'}:
+        if operation not in {'pda_toggle','pda_battery','pda_import_book','pda_dynamo_start','pda_dynamo_stop','pda_jammer'}:
             raise ValidationError('Выберите действие с КПК')
         status=pda_state(selected)
         if status.get('broken'):raise ValidationError('КПК вышел из строя')
-        if operation in {'pda_dynamo_start','pda_dynamo_stop'}:
+        if operation=='pda_jammer':
+            from app.services.equipment_modifications import installed
+            if not any(mod.get('ruleId')=='pda-b16' for mod in installed(selected)):raise ValidationError('На КПК нет глушилки')
+            if type(payload.get('enabled')) is not bool:raise ValidationError('Выберите состояние глушилки')
+            if not status['on'] or status['charge_percent']<=0:raise ValidationError('Включите заряженный КПК')
+            network=selected.setdefault('pdaNetwork',{})
+            cost=1 if actor and bool(network.get('jammer_on'))!=payload['enabled'] else 0
+            network['jammer_on']=payload['enabled']
+        elif operation in {'pda_dynamo_start','pda_dynamo_stop'}:
             meta=data.setdefault('health',{}).setdefault('combatMeta',{})
             if operation=='pda_dynamo_stop':
                 if (meta.get('pdaDynamo') or {}).get('id')!=selected['id']:raise ValidationError('Динамо-машина этого КПК не используется')

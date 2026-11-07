@@ -74,6 +74,10 @@ export const Server = {
     changeWeaponPair: (characterId,payload) => apiFetch(`/lobbies/characters/${characterId}/weapon-pair`,{
         method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}),
     getPortableLights: characterId => apiFetch(`/lobbies/characters/${characterId}/portable-lights`),
+    getPdaNetwork: (characterId,selection) => apiFetch(`/lobbies/characters/${characterId}/pda-network?${new URLSearchParams({item_path:JSON.stringify(selection.item_path),
+        ...(selection.item_id?{item_id:selection.item_id}:{}),...(selection.location_id?{location_id:selection.location_id}:{})})}`),
+    changePdaNetwork: (characterId,payload) => apiFetch(`/lobbies/characters/${characterId}/pda-network`,{
+        method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}),
     getRadiationAccess: (lobbyId,characterId,locationId) => apiFetch(`/lobbies/${lobbyId}/radiation-access?character_id=${encodeURIComponent(characterId)}${locationId?'&location_id='+encodeURIComponent(locationId):''}`),
     operateProsthesis: (characterId,payload) => apiFetch(`/lobbies/characters/${characterId}/prostheses`,{
         method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}),

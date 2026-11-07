@@ -1,5 +1,6 @@
 import { Server } from './api.js';
 import { showNotification } from './utils.js';
+import { createPdaNetworkView } from './pdaNetworkView.js';
 
 const sections = [
     ['chat', 'Общий чат', 'Сообщения участников Зоны'],
@@ -54,6 +55,7 @@ export function openPdaShell({ item, findItem, getData, operate, canEdit, charac
     let filesLoading = false;
     let selectedMod = '';
     let selectedTool = '';
+    let networkView=null;
     let pdaQuote = null;
     let accountSnapshot = null;
     let accountLoading = true;
@@ -77,6 +79,7 @@ export function openPdaShell({ item, findItem, getData, operate, canEdit, charac
         render();
         try {
             accountSnapshot = await Server.changePdaAccount(characterId, operation, payload);
+            if(['login','register','logout'].includes(operation)){networkView?.close();networkView=null;}
             if (operation === 'login' || operation === 'register') {
                 accountDraft.password = '';
                 accountMessage = operation === 'register'
@@ -123,6 +126,7 @@ export function openPdaShell({ item, findItem, getData, operate, canEdit, charac
     function render() {
         const current = findItem(item.id)?.item || item;
         const state = powerState(current);
+        networkView?.setActive(state.on&&['chat','contacts'].includes(selected),selected);
         const power = modal.querySelector('[data-pda-power]');
         const accountButton = modal.querySelector('[data-pda-account]');
         const guestName = getData()?.basic?.name || getData()?.name || 'Персонаж';
@@ -462,6 +466,10 @@ export function openPdaShell({ item, findItem, getData, operate, canEdit, charac
                     content.append(row);
                 }
             }
+        } else if(selected==='chat'||selected==='contacts'){
+            heading.textContent=selected==='chat'?'Радиосвязь':'Контакты';
+            networkView ||= createPdaNetworkView({characterId,findSource:()=>findItem(item.id),getData,operateHardware:operate,canEdit});
+            content.append(networkView.element);networkView.setActive(true,selected);
         } else if (selected === 'mods') {
             const recorded = (current.modifications || []).filter(mod => mod?.ruleId);
             const label = document.createElement('p');
@@ -616,6 +624,7 @@ export function openPdaShell({ item, findItem, getData, operate, canEdit, charac
     };
     window.addEventListener('pda-game-time-updated', onTimeUpdated);
     const close = () => {
+        networkView?.close();
         window.removeEventListener('pda-game-time-updated', onTimeUpdated);
         modal.remove();
     };
