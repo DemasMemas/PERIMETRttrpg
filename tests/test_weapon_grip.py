@@ -137,6 +137,31 @@ def test_explicit_left_hand_requires_that_hand_and_is_server_preserved(client,gr
 
 
 @pytest.mark.parametrize('combat',[False,True])
+def test_ordinary_pistol_draws_in_left_hand_and_survives_sheet_reload(client,grenade_game,auth_headers,combat):
+    actor=prepare(grenade_game);data=deepcopy(actor.character.data)
+    data['weapons'][0].update(name='Пистолет',subcategory='Пистолеты',weight=.5)
+    data.pop('activeWeaponIndex',None)
+    actor.character.data=data;actor.drawn_weapon_index=None;flag_modified(actor.character,'data')
+    if not combat:LocationCombatState.query.filter_by(location_id=actor.location_id).one().status='finished'
+    db.session.commit()
+    if combat:
+        result=CombatService.perform_action(actor.location_id,grenade_game['lobby'].gm_id,actor.id,
+            'draw_weapon',weapon_index=0,attribute_choice='left_hand')
+        assert result['draw_weapon']['grip']=={'hands':1,'hand':'left'}
+    else:
+        response=client.post(f'/lobbies/characters/{actor.character_id}/weapon-grip',
+            headers=auth_headers(grenade_game['actor_user']),json={'draw':True,'hands':1,'hand':'left',
+                'weapon_index':0,'character_revision':actor.character.revision})
+        assert response.status_code==200,response.json
+    saved=client.get(f'/lobbies/characters/{actor.character_id}',
+        headers=auth_headers(grenade_game['actor_user'])).json['data']
+    assert saved['activeWeaponIndex']==0
+    assert saved['health']['combatMeta']['weaponGripHands']==1
+    assert saved['health']['combatMeta']['weaponPrimaryHand']=='left'
+    assert actor.drawn_weapon_index==0
+
+
+@pytest.mark.parametrize('combat',[False,True])
 def test_unarmed_character_with_only_left_hand_can_draw_without_grip_deadlock(client,grenade_game,auth_headers,combat):
     actor=prepare(grenade_game);data=deepcopy(actor.character.data)
     data.pop('activeWeaponIndex',None);data['health'].setdefault('zones',{})['rightArm']={'current':0,'max':100}

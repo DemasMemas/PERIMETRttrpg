@@ -5776,8 +5776,7 @@ function renderRangedAttackButtons(weapon, template, index, disabled) {
         && combatState.current_character?.character_id === currentCharacterId
         && !isHeldWeaponIndex(drawnWeaponIndex,index);
     if (requiresDraw) {
-        const drawCost = ergonomics?.draw_action_points ?? 4;
-        return `<button type="button" class="btn btn-sm btn-primary" ${disabledAttr} onclick="drawWeaponFromEquipment(${index})">Достать оружие · ${drawCost} ОД</button>`;
+        return '';
     }
     const isGrenadeLauncher = weaponClass === 'grenade_launcher';
     if (isGrenadeLauncher) {
@@ -5789,7 +5788,7 @@ function renderRangedAttackButtons(weapon, template, index, disabled) {
             <button type="button" class="btn btn-sm btn-warning" ${firingDisabledAttr} onclick="useWeaponFromEquipment(${index}, 'aimed', 1, 4)">Прицельный · 4 ОД</button>`;
     }
     if (!isCombatActive && weapon.requiresManualCycle && !isHeldWeaponIndex(persistentWeaponIndex, index)) {
-        return `<button type="button" class="btn btn-sm btn-primary" onclick="drawWeaponFromEquipment(${index})">Взять в руки</button>`;
+        return '';
     }
     if (weapon.requiresManualCycle) {
         const cycleType = getManualCycleType(weapon, template);
@@ -5798,13 +5797,7 @@ function renderRangedAttackButtons(weapon, template, index, disabled) {
         const cycleCost = cycleType === 'pump' && level === 'professional' ? 0 : 1;
         return `${buttButton}<button type="button" class="btn btn-sm btn-warning" ${disabledAttr} onclick="cycleWeaponFromEquipment(${index})">${cycleType === 'pump' ? 'Дослать патрон' : 'Передёрнуть затвор'} · ${cycleCost} ОД</button>`;
     }
-    if (!isCombatActive) {
-        if (isHeldWeaponIndex(persistentWeaponIndex, index)) {
-            buttons.push('<button type="button" class="btn btn-sm btn-secondary" disabled>В руках</button>');
-        } else {
-            buttons.push(`<button type="button" class="btn btn-sm btn-primary" onclick="drawWeaponFromEquipment(${index})">Взять в руки</button>`);
-        }
-    } else if (
+    if (isCombatActive &&
         combatState.current_character?.character_id === currentCharacterId
         && isHeldWeaponIndex(drawnWeaponIndex, index)
     ) {

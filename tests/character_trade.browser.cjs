@@ -263,6 +263,26 @@ module.exports=async({page,request,token,lobby,base,connect,debugPort,safeSessio
     assert.equal(afterSlot.data.weapons[0].unlockedModificationSlots,1);
     assert.equal(afterSlot.data.weapons[0].modifications.length,1);
     console.log(JSON.stringify({mechanic_slot_ui:true,slot_persisted:true,exact_price:true}));
+    await page.evaluate(`window.openCharacterSheet(${a.id},'equipment');true`);
+    await page.until(`document.querySelector('[data-weapon-draw-hand="left"][data-weapon-draw-index="0"]')`,
+        'У пистолета есть выбор левой руки');
+    assert.equal(await page.evaluate(`[...document.querySelectorAll('[data-weapon-index="0"] button')]
+        .some(button=>button.textContent.trim()==='Взять в руки'||button.textContent.trim().startsWith('Достать оружие'))`),false);
+    await page.evaluate(`document.querySelector('[data-weapon-draw-hand="left"][data-weapon-draw-index="0"]').click();true`);
+    await page.until(`document.querySelector('[data-weapon-grip-label="0"]')?.textContent.includes('левая рука')`,
+        'Пистолет взят в левую руку');
+    assert.equal((await read(a.id)).data.health.combatMeta.weaponPrimaryHand,'left');
+    const gripEpoch=await page.evaluate('performance.timeOrigin');
+    await page.call('Page.navigate',{url:href});
+    await waitForDocument(page,{href,afterEpoch:gripEpoch,label:'Припять: повторный вход после выбора руки'});
+    await page.until(`window.socket?.connected&&window.currentLocationId===${location.id}
+        &&document.getElementById('scene-loading-screen').classList.contains('is-hidden')`,
+        'Сцена вновь готова после выбора руки');
+    await page.evaluate(`window.openCharacterSheet(${a.id},'equipment');true`);
+    await page.until(`document.querySelector('[data-weapon-grip-label="0"]')?.textContent.includes('левая рука')`,
+        'Левая рука сохранена после перезахода');
+    await page.evaluate(`window.closeCharacterSheet();true`);
+    console.log(JSON.stringify({pistolLeftHandUi:true,noGenericDrawButton:true,gripAfterReload:true}));
     await page.evaluate(`(async()=>{const generator=await import('/static/js/npcGenerator.js');
         await generator.openNpcCreation(${lobby.id});return true})()`);
     await page.until(`document.querySelector('.npc-generator-name')?.value.includes(' ')
