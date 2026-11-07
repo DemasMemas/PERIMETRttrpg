@@ -31,3 +31,11 @@ def install(app,db,check_database,run_id):
         {'name':'Контейнер для ношения Барьер','category':'container','price':1,'attributes':{}},
     ]))
     db.session.add_all(legacy);db.session.commit()
+    # Для завершающего попадания в забрало: успешный к20 и известная лицевая зона.
+    from types import SimpleNamespace
+    from app.services import combat
+    original=combat.random
+    def roll(low,high):
+        check_database();return 4 if (low,high)==(1,20) else original.randint(low,high)
+    combat.random=SimpleNamespace(randint=roll,choice=original.choice,uniform=original.uniform,
+        random=original.random,shuffle=original.shuffle)

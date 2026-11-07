@@ -5287,6 +5287,15 @@ class CombatService:
                 if not isinstance(protection, dict):
                     protection = attrs.get('protection') if isinstance(attrs.get('protection'), dict) else {}
                 candidates.append((slot, item, attrs, protection))
+        if zone=='head' and head_protection_zone=='face':
+            helmet=equipment.get('helmet') or {}
+            if isinstance(helmet,dict) and not helmet.get('protectionDisabled'):
+                for visor in helmet.get('installedModules') or []:
+                    if not isinstance(visor,dict) or visor.get('slotType')!='visor' or visor.get('stopLayerBroken') or visor.get('stage',1)==5:continue
+                    if type(visor.get('durability')) in {int,float} and visor['durability']<=0:continue
+                    attrs=CombatService._template_attributes(visor)
+                    protection=visor.get('protection') if isinstance(visor.get('protection'),dict) else attrs.get('protection') or {}
+                    candidates.append(('visor',visor,attrs,protection))
         zone_group = 'head' if zone == 'head' else ('torso' if zone in {'chest', 'abdomen'} else zone)
         total = 0.0
         details = []
@@ -6222,6 +6231,7 @@ class CombatService:
         prepared_trauma_rolls=None,
         precision_attacker=None,
         limb_hit=None,
+        stop_layer_context=None,
     ):
         character = target.character
         data = dict(character.data or {})
@@ -6236,6 +6246,12 @@ class CombatService:
             return health
         stoic_active=CombatService._combat_background_active(target,'Стойкий')
         if stoic_active:damage=max(0,damage*.9)
+        stop_layer=None
+        if zone=='head' and damage>10:
+            from app.services.equipment_modifications import stop_layer_candidate,consume_stop_layer
+            visor=stop_layer_context if stop_layer_context is not None else stop_layer_candidate(data,head_impact)
+            if visor is not None:
+                stop_layer=consume_stop_layer(visor,data);damage=0;allow_bleeding=False;bleeding_result=None;trauma_checks=0
         previous_condition = CombatService._character_condition(data)['state']
         health = apply_health_maximums(data)
         before_health=deepcopy(health)
@@ -6554,6 +6570,7 @@ class CombatService:
         health['lastTraumas'] = traumas
         health['_attackOutcome'] = {
             'applied_damage':damage,
+            **({'stop_layer':stop_layer} if stop_layer else {}),
             'bleedings': created_bleedings,
             'additional_traumas': traumas,
             'catastrophic_limb_injury': catastrophic_limb_injury,
@@ -8615,6 +8632,8 @@ class CombatService:
         armor, armor_layers = CombatService._target_armor(armor_target_data, zone,
             **({'limb_hit':limb_hit} if limb_hit else {}),**({'target':target} if background_is(armor_target_data,'Стойкий') else {}),
             **plate_kwargs)
+        from app.services.equipment_modifications import stop_layer_candidate
+        stop_layer_context=stop_layer_candidate(target_data,head_impact) if zone=='head' else None
         crystal_layers=[layer['item'] for layer in armor_layers if layer.get('liquid_crystal_first')]
         crystal_first=bool(crystal_layers and profile['damage']>0)
         back_protection = (
@@ -8742,6 +8761,7 @@ class CombatService:
             attacker=attacker,
             head_impact=head_impact,
             armor_penetrated=armor_penetrated,
+            stop_layer_context=stop_layer_context,
             prepared_trauma_rolls=(
                 [head_impact_roll] if head_impact_roll is not None else None
             ),
@@ -8749,9 +8769,11 @@ class CombatService:
             **({'limb_hit':limb_hit} if limb_hit else {}),
         )
         attack_outcome = health.pop('_attackOutcome', {})
+        if attack_outcome.get('stop_layer'):
+            result['stop_layer']=attack_outcome['stop_layer'];final_damage=0;bleeding_result=None
         if limb_hit:result['limb_hit']={key:limb_hit[key] for key in ('roll','label','mechanical')}
         if attack_outcome.get('prosthesis_damage'):result['prosthesis_damage']=attack_outcome['prosthesis_damage']
-        if incendiary_protection is not None and incendiary_protection < 50:
+        if not attack_outcome.get('stop_layer') and incendiary_protection is not None and incendiary_protection < 50:
             from app.services.burning import ignite
             ignite(target,3,source='ammunition_incendiary',source_character_id=getattr(attacker,'character_id',None))
             result['ignited_rounds'] = 3
@@ -9229,6 +9251,8 @@ class CombatService:
                 f"{prefix} — попадание: {zone}, урон {damage}; "
                 f"защита {armor}%, пробитие {penetration}%."
             )
+            if hit_result.get('stop_layer'):
+                lines.append('   Стоп-слой поглотил попадание; забрало разрушено.')
             pepper = hit_result.get('pepper_head_hit')
             if isinstance(pepper, dict):
                 lines.append(
@@ -12222,7 +12246,7 @@ class CombatService:
             or attributes.get('integrated_visor')
             or attributes.get('requires_filter')
             or any(
-                isinstance(module, dict) and module.get('slotType') == 'visor'
+                isinstance(module, dict) and module.get('slotType') == 'visor' and not module.get('protectionDisabled') and not module.get('stopLayerBroken')
                 for module in modules
             )
             or 'противогазо-шлем' in name

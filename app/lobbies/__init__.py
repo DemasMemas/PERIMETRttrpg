@@ -5178,19 +5178,21 @@ def portable_lights(character_id):
     CharacterService.check_access(character,user_id,edit=request.method=='POST')
     if request.method=='GET':
         items=[]
-        from app.services.equipment_modifications import visor_light_mount
+        from app.services.equipment_modifications import visor_light_mount,helmet_module_available
         for path,item in walk(character.data or {}):
             if definition(item)=='dosimeter':continue
             binding=next((binding for binding in bindings(character.data) if binding.get('id')==item.get('id')),None)
             items.append({'path':path,'id':item.get('id'),'name':item.get('name'),'kind':definition(item),'binding':binding,
                 'uses_left':(item.get('lightPower') or {}).get('uses_left',10),'visor_mount':visor_light_mount(character.data,path),
+                'mount_available':not (binding and binding.get('mount')=='head' and item.get('slotType')=='light') or visor_light_mount(character.data,path),
                 'remaining_seconds':(item.get('glowState') or {}).get('remaining_seconds') if glow(item) else None,
                 'activated':bool((item.get('glowState') or {}).get('activated')) if glow(item) else None,
                 'pda_state':pda_state(item) if definition(item)=='pda' else None})
         for path,item in nvg_items(character.data or {}):
             if path[:3]!=['equipment','helmet','installedModules']:continue
             items.append({'path':path,'id':item.get('id'),'name':item.get('name') or 'ПНВ','kind':'nvg',
-                'binding':{'mount':'nvg','on':bool(nvg_on(item))},'uses_left':(item.get('lightPower') or {}).get('uses_left',10)})
+                'binding':{'mount':'nvg','on':bool(nvg_on(item))},'uses_left':(item.get('lightPower') or {}).get('uses_left',10),
+                'mount_available':helmet_module_available(character.data,path)})
         batteries=[{'path':path,'name':item.get('name')} for path,item in walk(character.data or {},True)
             if 'батаре' in str(item.get('name') or '').casefold() and 'installedModules' not in path]
         return jsonify({'lights':items,'batteries':batteries}),200

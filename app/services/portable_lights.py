@@ -627,6 +627,9 @@ def operate(character_id,user_id,payload):
     if nvg:
         if path[:3]!=['equipment','helmet','installedModules'] or operation not in {'toggle','battery'}:
             raise ValidationError('Выберите установленный ПНВ и переключение или замену батарейки')
+        from app.services.equipment_modifications import helmet_module_available
+        if operation=='toggle' and not nvg_on(selected) and not helmet_module_available(data,path):
+            raise ValidationError('Сначала снимите ПНВ с разрушенного крепления')
         binding={'on':bool(nvg_on(selected)),**{key:power(selected)[key] for key in ('period_used','battle_used') if key in power(selected)}}
     if glow(selected) and operation not in {'ignite','prepare','stow'}:
         raise ValidationError('Одноразовый источник света нельзя выключить или перезарядить')
@@ -688,6 +691,9 @@ def operate(character_id,user_id,payload):
         if not glow(selected):power(selected)
     elif operation=='toggle':
         if not binding:raise ValidationError('Сначала подготовьте фонарь')
+        from app.services.equipment_modifications import visor_light_mount
+        if not binding.get('on') and binding.get('mount')=='head' and selected.get('slotType')=='light' and not visor_light_mount(data,path):
+            raise ValidationError('Сначала снимите фонарь с разрушенного или снятого крепления')
         if not binding.get('on') and power(selected)['uses_left']<=0:raise ValidationError('Батарейка фонаря разряжена')
         cost=1 if actor else 0;binding['on']=not binding.get('on')
         if 'scheduled_on' in power(selected):power(selected)['scheduled_on']=binding['on']

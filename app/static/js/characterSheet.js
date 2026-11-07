@@ -1657,7 +1657,7 @@ function createItemFromTemplate(template, quantity = 1, options = {}) {
 
 function helmetHasVisor(helmet, template = null) {
     return Boolean(template?.attributes?.integrated_visor || helmet?.attributes?.integrated_visor)
-        || (helmet?.installedModules || []).some(module => module?.slotType === 'visor');
+        || (helmet?.installedModules || []).some(module => module?.slotType === 'visor'&&!module.protectionDisabled&&!module.stopLayerBroken);
 }
 
 const INTEGRATED_HELMET_ARMORS = new Set([
@@ -4931,7 +4931,7 @@ function equipmentFigureAppearance(equipment, armorTemplates, helmetTemplates) {
         } else if (hasFilter || helmetName.includes('противогазо')) {
             helmetKind = 'sealed';
         } else if (helmet.integratedWithArmor
-            || helmet?.installedModules?.some(module => module.slotType === 'visor')
+            || helmet?.installedModules?.some(module => module.slotType === 'visor'&&!module.protectionDisabled&&!module.stopLayerBroken)
             || (Array.isArray(zones) ? zones.includes('face') : helmetTemplate?.attributes?.integrated_visor)) {
             helmetKind = 'visor';
         } else {
@@ -5195,6 +5195,7 @@ function renderSlotsUniversal(item, itemPath, depth = 0) {
                 const dur = installed.durability ?? 0;
                 const maxDur = installed.maxDurability ?? 0;
                 info = `${info} (точность ${acc}, эргон. ${erg}, харизма ${cha}, прочность ${dur}/${maxDur}, физ. защита ${formatProtectionPercent(prot)})`;
+                if(installed.stopLayerBroken)info=`${escapeHtml(installed.name)} · разрушено Стоп-слоем`;
             } else if (slot.type === 'battery') {
                 const power = installed.attributes?.power;
                 info = `${info} (заряд ${power !== undefined ? power : '?'}%)`;
@@ -8885,7 +8886,7 @@ window.equipGlassesFromInventory = async function(itemPath) {
     // Проверка совместимости с забралом шлема
     if (item.attributes?.incompatible_with_visor) {
         const helmet = currentCharacterData.equipment?.helmet;
-        if (helmet && helmet.installedModules?.some(m => m.slotType === 'visor')) {
+        if (helmet && helmet.installedModules?.some(m => m.slotType === 'visor'&&!m.protectionDisabled&&!m.stopLayerBroken)) {
             showNotification('Нельзя надеть эти очки вместе со шлемом, имеющим забрало');
             return;
         }

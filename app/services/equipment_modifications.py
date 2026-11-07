@@ -61,6 +61,7 @@ SPECIAL_ARMOR={
  'a39':({}, {'liquid_crystal_layer':20}),
  'g25':({}, {'nvg_mount':True}),
  'g18':({}, {'nvg_mount':True,'visor_light_mount':True}),
+ 'g21':({}, {'stop_layer':True}),
  'd32':({}, {'exoskeleton_run':True})}
 
 
@@ -124,6 +125,31 @@ def worn_items(data):
 def worn_rule(data,key):return sum(rule(item,key) for item in worn_items(data))
 
 
+def stop_layer_candidate(data,head_impact):
+    if not isinstance(head_impact,dict) or head_impact.get('armor_zone')!='face':return None
+    helmet=((data or {}).get('equipment') or {}).get('helmet') or {}
+    if not isinstance(helmet,dict) or helmet.get('protectionDisabled'):return None
+    for visor in helmet.get('installedModules') or []:
+        if not isinstance(visor,dict) or visor.get('slotType')!='visor' or visor.get('protectionDisabled') or visor.get('stopLayerBroken'):continue
+        if visor.get('stage',1)==5 or type(visor.get('durability')) in {int,float} and visor['durability']<=0:continue
+        if rule(visor,'stop_layer'):return visor
+    return None
+
+
+def consume_stop_layer(visor,data):
+    # Сохраняем экземпляр и вложенные приборы для снятия; разрушенное забрало
+    # больше не защищает, не служит креплением и не восстанавливается листом.
+    visor.update(stopLayerBroken=True,protectionDisabled=True,durability=0,currentStageDurability=0,stage=5)
+    child_ids=set()
+    for module in visor.get('installedModules') or []:
+        if not isinstance(module,dict):continue
+        if module.get('slotType')=='nvg':module['active']=False
+        if module.get('id'):child_ids.add(module['id'])
+    for binding in (((data.get('health') or {}).get('combatMeta') or {}).get('portableLights') or []):
+        if binding.get('id') in child_ids:binding['on']=False
+    return {'item_id':visor.get('id'),'name':visor.get('name') or 'Забрало','destroyed':True}
+
+
 def visor_light_mount(data,path):
     """Фонарь действительно установлен на модифицированном забрале надетого шлема."""
     if not isinstance(path,list) or len(path)!=6 or path[:3]!=['equipment','helmet','installedModules'] or path[4]!='installedModules':return False
@@ -137,6 +163,17 @@ def visor_light_mount(data,path):
     return bool(visor.get('slotType')=='visor' and not visor.get('protectionDisabled') and rule(visor,'visor_light_mount')
         and isinstance(lights,list) and type(path[5]) is int and 0<=path[5]<len(lights)
         and isinstance(lights[path[5]],dict) and lights[path[5]].get('slotType')=='light')
+
+
+def helmet_module_available(data,path):
+    if not isinstance(path,list) or path[:3]!=['equipment','helmet','installedModules']:return False
+    node=data
+    for key in path:
+        if isinstance(node,dict) and isinstance(key,str):node=node.get(key)
+        elif isinstance(node,list) and type(key) is int and 0<=key<len(node):node=node[key]
+        else:return False
+        if isinstance(node,dict) and (node.get('protectionDisabled') or node.get('stopLayerBroken')):return False
+    return isinstance(node,dict)
 
 
 def gear_stat(item,key,base):
@@ -288,6 +325,9 @@ def preserve(current,incoming,*,is_gm=True):
     previous={item.get('id'):item for item in items(current) if item.get('id')}
     for item in items(incoming):
         old=previous.get(item.get('id'));canonical=deepcopy(installed(old)) if old else []
+        if old and old.get('stopLayerBroken'):
+            item.update(stopLayerBroken=True,protectionDisabled=True,durability=0,currentStageDurability=0,stage=5)
+        else:item.pop('stopLayerBroken',None)
         manual=[m for m in item.get('modifications') or [] if not isinstance(m,dict) or not m.get('ruleId')]
         if not is_gm:
             old_manual=[m for m in old.get('modifications') or [] if not isinstance(m,dict) or not m.get('ruleId')] if old else []

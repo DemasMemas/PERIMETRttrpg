@@ -10,6 +10,88 @@ from test_crafting import workshop,call
 from test_quick_skill_checks import checks
 from test_grenade_rules import grenade_game
 from test_flamethrower import flame_game
+from test_movement_shooting_balance import arena,shoot
+
+
+def stop_visor():
+    return {'id':'stop-visor','name':'Забрало','slotType':'visor','category':'helmet_module',
+        'durability':100,'maxDurability':100,'modifications':[make_record('armor-g21')],
+        'installedModules':[{'id':'preserved-nvg','slotType':'nvg'}]}
+
+
+@pytest.mark.parametrize('damage,subzone,blocked',[(10,'face',False),(11,'face',True),(30,'back',False),(30,'crown',False)])
+def test_stop_layer_threshold_and_face_only(grenade_game,damage,subzone,blocked):
+    target=grenade_game['actor_location'];data=deepcopy(target.character.data)
+    data['equipment']={'helmet':{'category':'helmet','installedModules':[stop_visor()]}}
+    target.character.data=data;db.session.commit()
+    before=data['health']['current']
+    health=CombatService._apply_attack_damage(target,damage,'head',{'bleeding':'сильное'},
+        head_impact={'armor_zone':subzone,'damage_head':True},trauma_checks=0)
+    outcome=health.pop('_attackOutcome');assert bool(outcome.get('stop_layer')) is blocked
+    assert health['current']==before-(0 if blocked else damage)
+    visor=target.character.data['equipment']['helmet']['installedModules'][0]
+    if blocked:
+        assert visor['stopLayerBroken'] and visor['protectionDisabled'] and visor['durability']==0
+        assert visor['installedModules'][0]['id']=='preserved-nvg'
+        assert outcome['bleedings']==[] and outcome['additional_traumas']==[]
+        again=CombatService._apply_attack_damage(target,damage,'head',{},head_impact={'armor_zone':'face','damage_head':True},trauma_checks=0,allow_bleeding=False)
+        assert again['_attackOutcome']['applied_damage']==damage
+
+
+def test_stop_layer_in_real_shot_blocks_pepper_and_saves_destroyed_instance(arena,monkeypatch):
+    from app.services.equipment_modifications import preserve
+    _,_,shooter,target=arena
+    data=deepcopy(target.character.data);data['equipment']={'helmet':{'category':'helmet',
+        'attributes':{'protection_zones':['crown']},'installedModules':[stop_visor()]}}
+    target.character.data=data;target.facing_x=-1
+    weapon=deepcopy(shooter.character.data);weapon['weapons'][0].update(damage=100,
+        installedMagazine={'ammo':[{'name':'Перцовый патрон','quantity':20,'damage':100,'attributes':{'caliber':'18x45 И'}}]})
+    shooter.character.data=weapon;db.session.commit()
+    assert CombatService._ranged_damage_profile(weapon['weapons'][0])[0]['pepper_round']
+    head=CombatService._head_impact_profile
+    monkeypatch.setattr(CombatService,'_head_impact_profile',lambda _,attacker,target:head(4,attacker,target))
+    monkeypatch.setattr('app.services.combat.random.randint',lambda low,high:20 if high==20 else high)
+    CombatService.perform_action(target.location_id,arena[0].id,shooter.id,'aim',weapon_index=0,target_character_id=target.character_id)
+    result=shoot(arena,fire_mode='aimed',target_character_id=target.character_id,target_zone='head',action_points=4)
+    hit=result['attack']['results'][0]
+    assert hit['damage']==0 and hit['stop_layer']['item_id']=='stop-visor'
+    assert not hit.get('pepper_head_hit') and target.character.data['health']['current']==700
+    saved=deepcopy(target.character.data);incoming=deepcopy(saved)
+    visor=incoming['equipment']['helmet']['installedModules'][0]
+    visor.update(stopLayerBroken=False,protectionDisabled=False,durability=100,stage=1)
+    preserve(saved,incoming,is_gm=False)
+    assert visor['stopLayerBroken'] and visor['protectionDisabled'] and visor['durability']==0
+
+
+def test_visor_own_protection_only_covers_face_and_is_lost_when_shattered(app):
+    visor=stop_visor();visor['protection']={'physical':30}
+    data={'equipment':{'helmet':{'category':'helmet','protection':{'physical':50},
+        'attributes':{'protection_zones':['crown']},'installedModules':[visor]}}}
+    assert CombatService._target_armor(data,'head',head_protection_zone='face')[0]==30
+    assert CombatService._target_armor(data,'head',head_protection_zone='crown')[0]==50
+    visor.update(stopLayerBroken=True,protectionDisabled=True)
+    assert CombatService._target_armor(data,'head',head_protection_zone='face')[0]==0
+
+
+def test_shattered_mount_preserves_and_switches_off_devices_without_free_reactivation(client,grenade_game,auth_headers):
+    from app.services.portable_lights import ready_sources
+    target=grenade_game['actor_location'];data=deepcopy(target.character.data)
+    visor=stop_visor();visor['modifications'].append(make_record('armor-g18'))
+    visor['installedModules'].append({'id':'preserved-light','name':'Фонарик','slotType':'light','category':'misc','quantity':1})
+    data['equipment']={'helmet':{'category':'helmet','installedModules':[visor]}}
+    data['health'].setdefault('combatMeta',{})['portableLights']=[{'id':'preserved-light','mount':'head','on':True}]
+    target.character.data=data;db.session.commit()
+    CombatService._apply_attack_damage(target,20,'head',{},head_impact={'armor_zone':'face','damage_head':True})
+    db.session.commit();assert ready_sources(target)==[]
+    path=['equipment','helmet','installedModules',0,'installedModules']
+    before=target.action_points_current
+    for index,identity in enumerate(['preserved-nvg','preserved-light']):
+        response=client.post(f'/lobbies/characters/{target.character_id}/portable-lights',headers=auth_headers(grenade_game['actor_user']),
+            json={'operation':'toggle','path':path+[index],'source_id':identity,'character_revision':target.character.revision})
+        assert response.status_code==400,response.json
+    assert target.action_points_current==before
+    status=client.get(f'/lobbies/characters/{target.character_id}/portable-lights',headers=auth_headers(grenade_game['actor_user'])).json
+    assert all(not item['binding']['on'] and item['mount_available'] is False for item in status['lights'] if item['id'] in {'preserved-nvg','preserved-light'})
 
 
 @pytest.mark.parametrize('rule_id,family,previous',[('armor-d11','Аномальная',['armor-d9','armor-d10']),

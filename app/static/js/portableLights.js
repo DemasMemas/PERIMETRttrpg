@@ -21,7 +21,7 @@ export async function renderPortableLights(container,characterId,data,operate,is
         const row=document.createElement('div');row.className='portable-light-row';
         row.dataset.lightId=light.id || JSON.stringify(light.path);
         const caption=document.createElement('strong');
-        const mount={hand:'в руке',head:'на голове',taped:'на оружии',weapon:'модуль оружия'}[light.binding?.mount];
+        const mount=light.mount_available===false?'крепление недоступно':{hand:'в руке',head:'на голове',taped:'на оружии',weapon:'модуль оружия'}[light.binding?.mount];
         caption.textContent=light.kind==='pda'
             ? `${light.name} · ${Number(light.pda_state?.charge_percent??100).toFixed(1)}% · ${light.pda_state?.on?'включён':'выключен'}`
             : light.kind==='glow'
@@ -54,7 +54,7 @@ export async function renderPortableLights(container,characterId,data,operate,is
             root.append(row);continue;
         }
         if (light.binding) {
-            if(light.kind!=='glow')button(`${light.binding.on?'Выключить':'Включить'}${active?' · 1 ОД':''}`,'toggle',{},!light.binding.on && light.uses_left<=0);
+            if(light.kind!=='glow')button(`${light.binding.on?'Выключить':'Включить'}${active?' · 1 ОД':''}`,'toggle',{},!light.binding.on && (light.uses_left<=0||light.mount_available===false));
             if (!['weapon','nvg'].includes(light.binding.mount)) button(`Убрать${active?' · 1 ОД':''}`,'stow');
         } else {
             if(light.kind==='glow'){
