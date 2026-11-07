@@ -1688,7 +1688,7 @@ function updateAttackPreview(clientX, clientY) {
             updateJumpPreview(clientX,clientY,actorEntry);
             return;
         }
-        const point = ['explosive_attack','flamethrower_fire'].includes(pendingCombatAction.actionKey)?localMapToolPoint(clientX,clientY):getPointerWorldPoint(clientX, clientY, actorEntry.model.position.y);
+        const point = ['explosive_attack','flamethrower_fire','throw_item'].includes(pendingCombatAction.actionKey)?localMapToolPoint(clientX,clientY):getPointerWorldPoint(clientX, clientY, actorEntry.model.position.y);
         if (!point) {
             clearAttackPreview();
             return;
@@ -5191,15 +5191,23 @@ function showJumpMenu(characterId) {
 export function beginPendingCombatAction(action) {
     window.cancelCommonMapTool?.();
     if (!combatState || combatState.status !== 'active') {
-        if (!['use_item','jump'].includes(action?.actionKey) || !canControlCharacter(action.actorCharacterId)
+        if (!['use_item','jump','throw_item'].includes(action?.actionKey) || !canControlCharacter(action.actorCharacterId)
             || getLocationCharacterCondition(action.actorCharacterId).state !== 'active') {
-            showNotification('Этот персонаж сейчас не может применить предмет', 'system');
+            showNotification('Этот персонаж сейчас не может выполнить действие', 'system');
             return false;
         }
-        pendingCombatAction = { ...action, outOfCombat: true, createdAt: Date.now() };
+        const actor = findCombatCharacterByCharacterId(action.actorCharacterId);
+        if (action.actionKey === 'throw_item' && !actor?.location_character_id) {
+            showNotification('Не удалось определить персонажа на подлокации', 'system');
+            return false;
+        }
+        pendingCombatAction = { ...action, actorLocationCharacterId:action.actorLocationCharacterId || actor?.location_character_id,
+            outOfCombat: true, createdAt: Date.now() };
         closeCombatMenus();
         hideStructureInteraction();
-        showNotification(action.actionKey==='jump'?'Прыжок: выберите точку (Esc — отмена)':'Применение предмета: выберите персонажа на карте (Esc — отмена)', 'system');
+        showNotification(action.actionKey==='jump'?'Прыжок: выберите точку (Esc — отмена)'
+            :action.actionKey==='throw_item'?'Метание предмета: выберите свободную точку (Esc — отмена)'
+            :'Применение предмета: выберите персонажа на карте (Esc — отмена)', 'system');
         return true;
     }
     const actor = action?.actorCharacterId ? findCombatCharacterByCharacterId(action.actorCharacterId) : null;
@@ -5636,7 +5644,8 @@ async function resolveCombatPointSelection(clientX, clientY) {
         clearPendingCombatAction();
         return false;
     }
-    const point = getPointerWorldPoint(clientX, clientY, actorEntry.model.position.y);
+    const point = ['explosive_attack','flamethrower_fire','throw_item'].includes(action.actionKey)
+        ? localMapToolPoint(clientX,clientY) : getPointerWorldPoint(clientX, clientY, actorEntry.model.position.y);
     if (!point) return false;
     const targetX = action.actionKey==='jump'?Math.max(0,Math.min(currentLocationData.grid_width-1,Math.round((point.x-.5)*10)/10)):Math.floor(point.x);
     const targetY = action.actionKey==='jump'?Math.max(0,Math.min(currentLocationData.grid_height-1,Math.round((point.z-.5)*10)/10)):Math.floor(point.z);

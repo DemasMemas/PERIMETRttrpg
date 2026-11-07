@@ -82,7 +82,9 @@ export function itemTooltipModel(template = {}, item = {}) {
     const officialDescription = sourceDescription != null && template.description
         && key(item.description || '') === key(sourceDescription) ? template.description : null;
     const rawDescription = compact(officialDescription || item.description || template.description || attrs.raw_description || attrs.notes);
-    const description = numericDescriptionCovered(rawDescription,profile.direct) ? '' : rawDescription;
+    const water = profile.direct?.water_source || /^(вода|water)$/i.test(item.name || template.name || '');
+    const waterRules = water ? rawDescription.replace(/при питье/gi, '').replace(/утоляет жажду/gi, '') : rawDescription;
+    const description = numericDescriptionCovered(waterRules,profile.direct) ? '' : rawDescription;
     const metrics = [], rules = [], seen = new Set();
     const add = (list, text) => {
         text = compact(text);
@@ -110,7 +112,6 @@ export function itemTooltipModel(template = {}, item = {}) {
     if (item.durability != null) add(metrics, `Прочность: ${item.durability}${item.maxDurability != null ? ` / ${item.maxDurability}` : attrs.max_durability != null ? ` / ${attrs.max_durability}` : ''}`);
     if (item.uses != null) add(metrics, `Использований: ${item.uses}${item.maxUses != null ? ` / ${item.maxUses}` : ''}`);
     if (item.lightPower?.uses_left!=null) add(metrics,`Батарейка: ${item.lightPower.uses_left} / 10`);
-    const water = profile.direct?.water_source || /^(вода|water)$/i.test(item.name || template.name || '');
     if (water) {
         const container = /канистр|кастрюл|ведро|бочк/i.test(item.name || template.name || '');
         const capacity = Number(attrs.water_litres ?? item.water_litres ?? (container?0:1));
@@ -149,6 +150,9 @@ export function itemTooltipModel(template = {}, item = {}) {
             }
             if (typeof value === 'string' && !readable(value)) continue;
             add(rules, typeof value === 'boolean' ? caption : `${caption}: ${field.endsWith('_delta') && Number(value) > 0 ? '+' : ''}${value}`);
+        }
+        for (const requirement of profile.direct?.requires_items || []) {
+            if (requirement?.name) add(rules, `Требуется: ${requirement.name} × ${requirement.quantity || 1}`);
         }
         for (const effect of [...(profile.effects || []), ...(attrs.effects || [])]) {
             if (effect?.source !== 'direct' && !repeatsDirectEffect(effect,profile.direct)) {

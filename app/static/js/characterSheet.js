@@ -12469,7 +12469,7 @@ async function queueItemThrow(item, itemPath, attackType=null) {
         showNotification('Метание доступно на подлокации', 'system');
         return;
     }
-    if (window.locationCombatState?.status !== 'active') {
+    if (window.locationCombatState?.status !== 'active' && itemPath[0] === 'weapons') {
         const scene = await import('./locationScene.js');
         await scene.requestCombatStartForAttack(currentCharacterId);
         return;
@@ -16194,27 +16194,6 @@ function renderBackpackItem(item, index, parentPath, parentContainer, allTemplat
     });
 
     nameDragZone.appendChild(nameWrapper);
-
-    // Кнопка свойств (ⓘ) – добавляем в ту же зону, но она не вызовет drag
-    const hasProt = item.durability !== null && item.durability !== undefined;
-    const hasMods = item.modifications && item.modifications.length > 0;
-    const hasEffects = item.attributes?.effects && item.attributes.effects.length > 0;
-    const hasMagazineDetails = item.category === 'magazine' && item.ammo?.length;
-    if (hasProt || hasMods || hasEffects || hasMagazineDetails || isBloodPacket) {
-        const infoBtn = document.createElement('button');
-        infoBtn.type = 'button';
-        infoBtn.className = 'btn btn-sm btn-secondary';
-        infoBtn.textContent = 'ⓘ';
-        infoBtn.title = 'Свойства';
-        infoBtn.style.marginLeft = '5px';
-        infoBtn.style.padding = '2px 6px';
-        infoBtn.style.fontSize = '0.8rem';
-        infoBtn.onclick = (e) => {
-            e.stopPropagation();
-            showItemDetailsModal(item);
-        };
-        nameDragZone.appendChild(infoBtn);
-    }
 
     const usesLeft = Number.isFinite(Number(item.uses)) ? Number(item.uses) : Number.isFinite(Number(item.attributes?.uses_remaining)) ? Number(item.attributes.uses_remaining) : null;
     const maxUses = Number.isFinite(Number(item.maxUses)) ? Number(item.maxUses) : Number.isFinite(Number(item.attributes?.uses)) ? Number(item.attributes.uses) : null;

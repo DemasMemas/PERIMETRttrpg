@@ -826,6 +826,62 @@ def test_water_requirement_is_spent_atomically(client, pair, auth_headers):
     assert response.json["consumable_result"]["requirements"]["water_charges"] == 2
 
 
+@pytest.mark.parametrize('water_name,radiation,exhaustion', [
+    ('Болотная вода', 10, 2), ('Дождевая вода', 5, 1), ('Радиоактивная вода', 3, .5),
+])
+def test_required_water_exposure_precedes_main_consumable(
+        client, pair, auth_headers, water_name, radiation, exhaustion):
+    LocationCombatState.query.one().status = 'idle'
+    water_template = ItemTemplate(name=water_name, category='consumable', attributes={
+        'uses': 3, 'consumable': {'direct': {'water_source': True, 'radiation_delta': radiation,
+            'exhaustion_delta': exhaustion, 'uses': 3}}})
+    ration_template = ItemTemplate(name='Тестовый паёк', category='consumable', attributes={
+        'uses': 1, 'consumable': {'editor_version': 2, 'direct': {
+            'requires_water_fraction': 1 / 3, 'radiation_delta': -10, 'exhaustion_delta': -2}}})
+    db.session.add_all([water_template, ration_template]); db.session.flush()
+    water = {'id': 'rain', 'name': water_name, 'templateId': water_template.id,
+        'category': 'consumable', 'quantity': 1, 'uses': 3, 'maxUses': 3}
+    ration = {'id': 'ration', 'name': 'Тестовый паёк', 'templateId': ration_template.id,
+        'category': 'consumable', 'quantity': 1, 'uses': 1, 'maxUses': 1}
+    data = deepcopy(pair['actor_character'].data)
+    data['inventory']['backpack'] = [water, ration]
+    data['health'].update(radiation=0, exhaustion=0)
+    pair['actor_character'].data = data
+    flag_modified(pair['actor_character'], 'data'); db.session.commit()
+    response = client.post(f"/lobbies/characters/{pair['actor_character'].id}/general-consumable",
+        headers=auth_headers(pair['actor_user']), json={'operation_id': 'rain-ration',
+            'source': {'path': ['inventory', 'backpack', 1], 'snapshot': deepcopy(ration)},
+            'application': application()})
+    assert response.status_code == 200, response.json
+    assert response.json['data']['health']['radiation'] == 0
+    assert response.json['data']['health']['exhaustion'] == 0
+    assert response.json['data']['inventory']['backpack'][0]['uses'] == 2
+
+
+def test_custom_consumable_can_require_another_item(client, pair, auth_headers):
+    LocationCombatState.query.one().status = 'idle'
+    template = ItemTemplate(name='Сборный расходник', category='consumable', attributes={
+        'uses': 1, 'consumable': {'editor_version': 2, 'direct': {
+            'stress_delta': -1, 'requires_items': [{'name': 'Деталь', 'quantity': 2}]}}})
+    db.session.add(template); db.session.flush()
+    component = {'id': 'component', 'name': 'Деталь', 'category': 'misc', 'quantity': 2}
+    consumable = {'id': 'custom', 'name': template.name, 'category': 'consumable',
+        'templateId': template.id, 'quantity': 1}
+    data = deepcopy(pair['actor_character'].data)
+    data['inventory']['backpack'] = [component, consumable]
+    data['health']['stress'] = 2
+    pair['actor_character'].data = data
+    flag_modified(pair['actor_character'], 'data'); db.session.commit()
+    response = client.post(f"/lobbies/characters/{pair['actor_character'].id}/general-consumable",
+        headers=auth_headers(pair['actor_user']), json={'operation_id': 'custom-requirement',
+            'source': {'path': ['inventory', 'backpack', 1], 'snapshot': deepcopy(consumable)},
+            'application': application()})
+    assert response.status_code == 200, response.json
+    assert response.json['data']['inventory']['backpack'] == []
+    assert response.json['data']['health']['stress'] == 1
+    assert response.json['consumable_result']['requirements']['items'] == [{'name': 'Деталь', 'quantity': 2}]
+
+
 def test_missing_requirement_rolls_back_selected_item(client, pair, auth_headers):
     LocationCombatState.query.one().status = "idle"
     cigarette, _ = install_consumable(

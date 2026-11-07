@@ -6,6 +6,7 @@ import pytest
 from app.extensions import db
 from app.services.combat import CombatService
 from app.services.exceptions import ValidationError
+from app.models import LocationCombatState
 from app.services.thrown_items import prepare, weight_band
 from test_grenade_rules import grenade_game
 
@@ -41,6 +42,43 @@ def test_throw_item_moves_one_instance_and_spends_server_ap(grenade_game, monkey
     assert actor.action_points_current==before-plan['action_points']
     assert actor.character.data['inventory']['pockets'][0]['quantity']==1
     assert result['thrown_item']['ground_object_id']
+
+
+def test_ordinary_item_can_be_thrown_on_empty_ground_without_combat(grenade_game, monkeypatch):
+    actor = grenade_game['actor_location']
+    LocationCombatState.query.one().status = 'idle'
+    data = deepcopy(actor.character.data)
+    data['inventory']['pockets'] = [{'id': 'stone', 'name': 'Камень',
+        'category': 'misc', 'weight': .4, 'quantity': 1}]
+    actor.character.data = data
+    db.session.commit()
+    monkeypatch.setattr('app.services.brigadier_order.boost_roll', lambda data, rolls, **kwargs: ([20], 20, 0))
+    before_ap = actor.action_points_current
+    result = CombatService.perform_action(grenade_game['location'].id, grenade_game['lobby'].gm_id,
+        actor.id, 'throw_item', item_path=['inventory', 'pockets', 0], item_id='stone',
+        target_x=4, target_y=5)
+    assert result['thrown_item']['success']
+    assert result['thrown_item']['damage'] is None
+    assert actor.action_points_current == before_ap
+    assert actor.character.data['inventory']['pockets'] == []
+    assert LocationCombatState.query.one().status == 'idle'
+
+
+def test_throw_at_occupied_ground_requires_combat(grenade_game):
+    actor = grenade_game['actor_location']
+    target = grenade_game['target_location']
+    LocationCombatState.query.one().status = 'idle'
+    target.pos_x, target.pos_y = 4, 5
+    data = deepcopy(actor.character.data)
+    data['inventory']['pockets'] = [{'id': 'stone', 'name': 'Камень',
+        'category': 'misc', 'weight': .4, 'quantity': 1}]
+    actor.character.data = data
+    db.session.commit()
+    with pytest.raises(ValidationError, match='начните бой'):
+        CombatService.perform_action(grenade_game['location'].id, grenade_game['lobby'].gm_id,
+            actor.id, 'throw_item', item_path=['inventory', 'pockets', 0], item_id='stone',
+            target_x=4, target_y=5)
+    assert actor.character.data['inventory']['pockets'][0]['id'] == 'stone'
 
 
 def test_heavy_item_cannot_exceed_range(grenade_game):

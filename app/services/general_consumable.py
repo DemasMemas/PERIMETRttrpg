@@ -181,22 +181,33 @@ def _is_alcohol(item, lobby_id=None):
     return any(name in str(item.get("name") or "").casefold() for name in ("водка", "самогон", "вино", "пиво", "алкогол"))
 
 
-def _consume_requirements(data, direct, lobby_id=None):
+def _apply_requirement_exposure(health, item, lobby_id, charges):
+    template = resolve_item_template(item, lobby_id)
+    profile = ((template.attributes or {}).get('consumable') or {}) if template else (item.get('attributes') or {}).get('consumable') or {}
+    source = profile.get('direct') if isinstance(profile, dict) else None
+    if not isinstance(source, dict):
+        return
+    _adjust(health, 'radiation', _number(source.get('radiation_delta')) * charges, 0)
+    _adjust(health, 'exhaustion', _number(source.get('exhaustion_delta')) * charges, 0, 10)
+
+
+def _consume_requirements(data, direct, health, lobby_id=None):
     result = {}
     if direct.get("requires_water_fraction"):
         charges = max(1, ceil(_number(direct["requires_water_fraction"]) * 3 - 1e-6))
         water = next((
             entry for entry in _inventory_entries(data)
             if _is_water_supply(entry[2], lobby_id)
-            and _available_uses(entry[2], _template_for_item(entry[2])) >= charges
+            and _available_uses(entry[2], resolve_item_template(entry[2], lobby_id)) >= charges
         ), None)
         if water:
+            _apply_requirement_exposure(health, water[2], lobby_id, charges)
             _consume_entry(water[0], water[1], charges)
             result["water_charges"] = charges
         elif direct.get("water_or_alcohol"):
             alcohol = next((
                 entry for entry in _inventory_entries(data)
-                if _is_alcohol(entry[2], lobby_id) and _available_uses(entry[2], _template_for_item(entry[2])) >= 1
+                if _is_alcohol(entry[2], lobby_id) and _available_uses(entry[2], resolve_item_template(entry[2], lobby_id)) >= 1
             ), None)
             if not alcohol:
                 if not direct.get("exhaustion_if_no_water"):
@@ -207,6 +218,7 @@ def _consume_requirements(data, direct, lobby_id=None):
                 result["without_water"] = True
             else:
                 result["alcohol"] = alcohol[2].get("name") or "Алкоголь"
+                _apply_requirement_exposure(health, alcohol[2], lobby_id, 1)
                 _consume_entry(alcohol[0], alcohol[1], 1)
         elif direct.get("exhaustion_if_no_water"):
             direct["exhaustion_delta"] = _number(direct.get("exhaustion_delta")) + _number(
@@ -215,6 +227,25 @@ def _consume_requirements(data, direct, lobby_id=None):
             result["without_water"] = True
         else:
             raise ValidationError("Для использования не хватает воды")
+
+    required_items = direct.get('requires_items') or []
+    if not isinstance(required_items, list):
+        raise ValidationError('Некорректный список требуемых предметов')
+    for requirement in required_items:
+        if not isinstance(requirement, dict):
+            raise ValidationError('Некорректный требуемый предмет')
+        name = str(requirement.get('name') or '').strip()
+        quantity = requirement.get('quantity', 1)
+        if not name or type(quantity) is not int or not 1 <= quantity <= 100:
+            raise ValidationError('Укажите название и количество требуемого предмета')
+        entry = next((entry for entry in _inventory_entries(data)
+            if str(entry[2].get('name') or '').strip().casefold() == name.casefold()
+            and _available_uses(entry[2], resolve_item_template(entry[2], lobby_id)) >= quantity), None)
+        if not entry:
+            raise ValidationError(f'Для использования не хватает предмета: {name}')
+        _apply_requirement_exposure(health, entry[2], lobby_id, quantity)
+        _consume_entry(entry[0], entry[1], quantity)
+        result.setdefault('items', []).append({'name': name, 'quantity': quantity})
 
     if direct.get("requires_fire"):
         fire_sources = [
@@ -739,7 +770,7 @@ class GeneralConsumableService:
         # same list and removing it would otherwise invalidate the saved index.
         if not direct.get("not_consumed"):
             _consume_uses(parent, index, 1, template,actor_data=data)
-        requirements = _consume_requirements(data, direct, character.lobby_id)
+        requirements = _consume_requirements(data, direct, health, character.lobby_id)
         intoxication_before=_number(health.get('intoxication'))
         if not _apply_profile(health, profile, direct, item, in_combat=state is not None,character_data=data):
             raise ValidationError("Предмет не имеет применимых эффектов")

@@ -13665,6 +13665,31 @@ class CombatService:
             db.session.commit()
             return {'character':CombatService._serialize_character(character),
                     'state':CombatService.get_state(location_id,user_id),'action':action_key,'jump':details}
+        if (not state or state.status != 'active') and action_key == 'throw_item':
+            if not CombatService._can_end_turn_for_character(character, user_id, is_gm=is_gm):
+                raise PermissionDenied('Вы не управляете этим персонажем')
+            CombatService.ensure_character_can_act(character)
+            if not isinstance(item_path, list) or not item_path or item_path[0] != 'inventory':
+                raise ValidationError('Метать оружие вне боя нельзя')
+            from app.services.thrown_items import prepare as prepare_throw, execute as execute_throw
+            data = character.character.data if character.character and isinstance(character.character.data, dict) else {}
+            plan = prepare_throw(location, character, data, item_path, item_id, target_x, target_y,
+                target_floor_level, attack_type)
+            tile_x = min(location.grid_width - 1, int(plan['target_x'] + .5))
+            tile_y = min(location.grid_height - 1, int(plan['target_y'] + .5))
+            occupied = any(other.id != character.id and (other.floor_level or 0) == plan['floor_level']
+                and other.pos_x == tile_x and other.pos_y == tile_y
+                for other in LocationCharacter.query.filter_by(location_id=location_id).all())
+            if occupied:
+                raise ValidationError('Для броска в персонажа начните бой')
+            details = execute_throw(location, character, data, plan, 0)
+            character.character.data = data
+            flag_modified(character.character, 'data')
+            character.last_action = db.func.now()
+            db.session.commit()
+            return {'action': action_key, 'thrown_item': details,
+                'character': CombatService._serialize_character(character),
+                'state': CombatService.get_state(location_id, user_id)}
         if (not state or state.status!='active') and action_key=='flamethrower_service':
             if not CombatService._can_end_turn_for_character(character,user_id,is_gm=is_gm):raise PermissionDenied('Вы не управляете персонажем')
             CombatService.ensure_character_can_act(character)

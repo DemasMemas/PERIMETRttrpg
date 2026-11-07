@@ -83,6 +83,14 @@ test('Вода: дробь из книги не дублируется direct/ef
     assert.deepEqual(Array.from(result.rules),['Радиация: -1','Опьянение: -10','Истощение: -0.5','Утоляет жажду']);
 });
 
+test('Радиоактивные виды воды показывают каждый эффект отдельно',async()=>{
+    const {itemTooltipModel}=await load('itemPresentation.js');
+    const model=itemTooltipModel({name:'Дождевая вода',description:'+5 радиации, +1 уровня истощения, -10 опьянения при питье. 3 использования.',
+        category:'consumable',attributes:{uses:3,consumable:{direct:{radiation_delta:5,exhaustion_delta:1,
+            intoxication_delta:-10,uses:3,satisfy_water:true,water_source:true}}}}, {uses:2,maxUses:3});
+    assert.deepEqual(Array.from(model.rules),['Радиация: +5','Истощение: +1','Опьянение: -10','Утоляет жажду']);
+});
+
 test('Подсказка сохраняет противоположные модификаторы и переводит технический слот',async()=>{
     const {itemTooltipModel}=await load('itemPresentation.js');
     const model=itemTooltipModel({category:'weapon_module',subcategory:'handguard',

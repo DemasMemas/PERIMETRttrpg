@@ -28,6 +28,7 @@ const LABELS = {
     blood_type_test: 'Определение группы крови', filter_charges: 'Заряды фильтра',
     requires_gas_mask: 'Требует противогаз', requires_fire: 'Требует огонь',
     requires_water_fraction: 'Требует воды, доля бутылки', water_or_alcohol: 'Можно заменить алкоголем',
+    requires_items: 'Требуемые предметы', quantity: 'Количество',
     water_source: 'Можно использовать как воду', is_alcohol: 'Считается алкоголем',
     blood_packet: 'Это пакет крови',
     satisfy_water: 'Утоляет жажду', satisfy_food: 'Утоляет голод', satisfy_sleep: 'Сон',
@@ -187,4 +188,15 @@ export function renderConsumableProfileTree(root, profile) {
     for (const section of ['direct', 'effects', 'modifiers', 'status_removals', 'status_additions', 'requirements', 'addiction', 'notes']) {
         if (section in profile) appendNode(root, section, profile[section], profile, 0);
     }
+    const addRequirement = document.createElement('button');
+    addRequirement.type = 'button';
+    addRequirement.className = 'btn btn-sm btn-secondary';
+    addRequirement.textContent = 'Добавить требуемый предмет';
+    addRequirement.onclick = () => {
+        profile.direct ||= {};
+        profile.direct.requires_items ||= [];
+        profile.direct.requires_items.push({ name: '', quantity: 1 });
+        redraw();
+    };
+    root.appendChild(addRequirement);
 }
