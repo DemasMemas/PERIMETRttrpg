@@ -263,4 +263,19 @@ module.exports=async({page,request,token,lobby,base,connect,debugPort,safeSessio
     assert.equal(afterSlot.data.weapons[0].unlockedModificationSlots,1);
     assert.equal(afterSlot.data.weapons[0].modifications.length,1);
     console.log(JSON.stringify({mechanic_slot_ui:true,slot_persisted:true,exact_price:true}));
+    await page.evaluate(`(async()=>{const generator=await import('/static/js/npcGenerator.js');
+        await generator.openNpcCreation(${lobby.id});return true})()`);
+    await page.until(`document.querySelector('.npc-generator-name')?.value.includes(' ')
+        &&!document.querySelector('.npc-generator-reroll').disabled`,'авторское имя НПС предложено');
+    const firstName=await page.evaluate(`document.querySelector('.npc-generator-name').value`);
+    await page.evaluate(`document.querySelector('.npc-generator-reroll').click();true`);
+    await page.until(`document.querySelector('.npc-generator-name')?.value!==${JSON.stringify(firstName)}`,
+        'авторское имя НПС переброшено');
+    const generatedName=await page.evaluate(`document.querySelector('.npc-generator-name').value`);
+    await page.evaluate(`document.querySelector('.npc-generator-create').click();true`);
+    await page.until(`!document.querySelector('.npc-generator-name')`,'НПС с авторским именем создан');
+    const generatedCharacters=await request(`/lobbies/${lobby.id}/characters`,null,token,'GET');
+    assert.ok(generatedCharacters.some(character=>character.name===generatedName
+        &&character.data?.npcGenerator?.name_source==='author_name_parts'));
+    console.log(JSON.stringify({author_npc_name_ui:true,reroll:true,created:true}));
 };

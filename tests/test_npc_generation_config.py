@@ -4,6 +4,7 @@ from app.extensions import db
 from app.models import NpcGenerationConfig, LobbyCharacter, NpcCreationReceipt, LocationCharacter
 from app.models.templates import ItemTemplate
 from app.services.npc_generation import preview_name
+from app.services.npc_name_parts import FIRST_NAME_PARTS, SECOND_NAME_PARTS
 from test_character_interactions import _setup_pair
 from test_npc_loot import pool, profile
 
@@ -33,6 +34,29 @@ def test_gm_saves_independent_level_pair_and_can_reroll_name(client,create_user,
     assert NpcGenerationConfig.query.count()==1
     suggested=preview_name(pair['lobby'],pair['actor_user']['id'],exclude='Имя автора 1')
     assert suggested=={'name':'Имя автора 2','source':'gm_name_pool'}
+
+
+def test_author_name_parts_supply_preview_and_replay_without_gm_list(client,create_user,auth_headers):
+    pair=_setup_pair(client,create_user,auth_headers)
+    assert len(FIRST_NAME_PARTS)==90 and len(SECOND_NAME_PARTS)==138
+    rng=type('FirstChoice',(),{'choice':lambda self,items:items[0]})()
+    lobby=pair['lobby'];gm=pair['actor_user']['id']
+    first=preview_name(lobby,gm,rng=rng)
+    assert first=={'name':'Иван Бобр','source':'author_name_parts'}
+    assert preview_name(lobby,gm,exclude=first['name'],rng=rng)=={
+        'name':'Иван Хмурый','source':'author_name_parts'}
+    url=f'/lobbies/{lobby.id}/npc-generation-config'
+    preview=client.post(url+'/name-preview',headers=auth_headers(pair['actor_user']),json={})
+    assert preview.status_code==200 and preview.json['source']=='author_name_parts'
+    create={'operation_id':'npc-author-name-123','name':first['name'],
+        'danger_id':None,'wealth_id':None}
+    response=client.post(url+'/create',headers=auth_headers(pair['actor_user']),json=create)
+    assert response.status_code==201,response.json
+    identifier=response.json['character']['id']
+    assert LobbyCharacter.query.get(identifier).data['npcGenerator']['name_source']=='author_name_parts'
+    replay=client.post(url+'/create',headers=auth_headers(pair['actor_user']),json=create)
+    assert replay.status_code==200 and replay.json['character']['id']==identifier
+    assert NpcCreationReceipt.query.filter_by(operation_id=create['operation_id']).count()==1
 
 
 def test_config_is_private_and_invalid_pair_cannot_replace_it(client,create_user,auth_headers):

@@ -14,6 +14,7 @@ from app.models import NpcGenerationConfig, NpcCreationReceipt
 from app.services.exceptions import ConflictError, PermissionDenied, ValidationError
 from app.services.npc_loot import apply_rolled_loot, roll_loot, validate_profile
 from app.models.templates import ItemTemplate
+from app.services.npc_name_parts import FIRST_NAME_PARTS, SECOND_NAME_PARTS
 
 
 def _gm(lobby,user_id):
@@ -108,10 +109,18 @@ def preview_name(lobby,user_id,exclude=None,*,rng=None):
     _gm(lobby,user_id)
     config=db.session.get(NpcGenerationConfig,lobby.id)
     names=config.names if config else []
-    if not names:raise ValidationError('Сначала добавьте утверждённые имена НПС')
     if exclude is not None and not isinstance(exclude,str):raise ValidationError('Некорректное имя для переброса')
-    available=[name for name in names if name!=exclude] or names
-    return {'name':(rng or random.SystemRandom()).choice(available),'source':'gm_name_pool'}
+    choice=(rng or random.SystemRandom()).choice
+    if names:
+        available=[name for name in names if name!=exclude] or names
+        return {'name':choice(available),'source':'gm_name_pool'}
+    first=choice(FIRST_NAME_PARTS)
+    second=choice(SECOND_NAME_PARTS)
+    name=f'{first} {second}'
+    if name==exclude:
+        second=SECOND_NAME_PARTS[(SECOND_NAME_PARTS.index(second)+1)%len(SECOND_NAME_PARTS)]
+        name=f'{first} {second}'
+    return {'name':name,'source':'author_name_parts'}
 
 
 def _equip_rolled_protection(data):
@@ -227,7 +236,11 @@ def create_npc(lobby,user_id,payload):
     from sqlalchemy.orm.attributes import flag_modified
     character=CharacterService.create_character(lobby.id,user_id,name,{'basic':{'is_npc':True}},commit=False)
     data=deepcopy(character.data or {})
-    data['npcGenerator']={'name_source':'gm_name_pool' if config and name in config.names else 'manual',
+    first,separator,second=name.partition(' ')
+    name_source=('gm_name_pool' if config and name in config.names else
+        'author_name_parts' if separator and first in FIRST_NAME_PARTS and second in SECOND_NAME_PARTS
+        else 'manual')
+    data['npcGenerator']={'name_source':name_source,
         'danger_id':danger_id,'wealth_id':wealth_id,'numeric_profile_id':None,
         'group_id':None,'faction_id':None}
     if profile:

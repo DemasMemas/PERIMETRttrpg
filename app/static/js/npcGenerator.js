@@ -112,6 +112,7 @@ export async function openNpcGeneratorConfig(lobbyId,characters=[]) {
         && !item.attributes?.not_for_sale);
     const root=modal('Настройка генератора НПС','Имена и уровни задаёт ГМ. Численные характеристики и способности пока вводятся вручную. Для каждого сочетания можно сохранить собственный пул снаряжения.');
     root.querySelector('.npc-generator-body').innerHTML=`<label>Имена НПС, по одному в строке<textarea class="form-control npc-generator-names" rows="4"></textarea></label>
+        <p class="text-muted">Если список пуст, имена собираются из авторских имён и прозвищ. Свой список заменяет этот источник.</p>
         <div class="npc-generator-levels"><section><h4>Опасность</h4><div data-level-list="danger_levels"></div>
             <button type="button" class="btn btn-sm btn-secondary" data-add-level="danger_levels">Добавить уровень</button></section>
             <section><h4>Богатство</h4><div data-level-list="wealth_levels"></div>
@@ -178,7 +179,7 @@ export async function openNpcCreation(lobbyId,onCreated) {
     const root=modal('Создать НПС','Имя можно переписать или перебросить. По выбранным уровням предметы и деньги выдаются сразу; по одному совместимому предмету каждого слота надевается. После создания ГМ настраивает числа и размещение.');
     const body=root.querySelector('.npc-generator-body');
     body.innerHTML=`<label>Имя НПС<input class="form-control npc-generator-name" maxlength="100"></label>
-        <button type="button" class="btn btn-sm btn-secondary npc-generator-reroll" ${config.names.length?'':'disabled'}>Перебросить имя</button>
+        <button type="button" class="btn btn-sm btn-secondary npc-generator-reroll">Перебросить имя</button>
         <label>Сочетание уровней<select class="form-control npc-generator-pair"><option value="">Без пула снаряжения</option>
             ${config.combinations.map((pair,index)=>`<option value="${index}">${escapeHtml(config.danger_levels.find(level=>level.id===pair.danger_id)?.name||'Опасность')}
                 · ${escapeHtml(config.wealth_levels.find(level=>level.id===pair.wealth_id)?.name||'Богатство')}</option>`).join('')}</select></label>
@@ -191,7 +192,7 @@ export async function openNpcCreation(lobbyId,onCreated) {
         finally{button.disabled=false;}
     };
     body.querySelector('.npc-generator-reroll').onclick=reroll;
-    if(config.names.length)await reroll();
+    await reroll();
     body.querySelector('.npc-generator-create').onclick=async()=>{
         const button=body.querySelector('.npc-generator-create');button.disabled=true;
         const pairIndex=body.querySelector('.npc-generator-pair').value;
