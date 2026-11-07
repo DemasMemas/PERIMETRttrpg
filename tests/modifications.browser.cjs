@@ -16,6 +16,8 @@ module.exports=async({peer,request,recipient,token,api,read})=>{
     await request('/lobbies/characters/'+recipient.id,{data},token,'PUT');
     await peer.evaluate(`window.openCharacterSheet(${recipient.id},'equipment').then(()=>true)`);
     await peer.evaluate("document.querySelector('#character-crafting-open').click();true");
+    await peer.until("document.querySelector('[data-crafting-tab=other]')",'Открыты вкладки создания');
+    await peer.evaluate("document.querySelector('[data-crafting-tab=other]').click();true");
     await peer.until("document.querySelector('#crafting-modal select[aria-label=\"Книга для чтения\"]')",'Книга снаряжения доступна игроку');
     await peer.evaluate("[...document.querySelectorAll('#crafting-modal button')].find(b=>b.textContent==='Читать · 4 часа').click();true");
     await peer.until("document.querySelector('#crafting-modal')?.innerText.includes('Работа идёт')",'Начато настоящее чтение');
@@ -25,6 +27,7 @@ module.exports=async({peer,request,recipient,token,api,read})=>{
     await peer.until("[...document.querySelectorAll('#crafting-modal button')].some(b=>b.textContent==='Завершить чтение'&&!b.disabled)",'Прошли четыре игровых часа');
     await peer.evaluate("[...document.querySelectorAll('#crafting-modal button')].find(b=>b.textContent==='Завершить чтение').click();true");
     await peer.until("document.querySelector('#crafting-modal select[aria-label=\"Предмет для модификации\"]')",'Вернулся список снаряжения');
+    await peer.evaluate("document.querySelector('[data-crafting-tab=modifications]').click();true");
     await peer.evaluate("(()=>{const d=[...document.querySelectorAll('#crafting-modal details')].find(d=>d.querySelector('summary')?.textContent==='Модификации снаряжения');d.open=true;const r=d.querySelector('select[aria-label=Модификация]');r.value='weapon-c23';r.dispatchEvent(new Event('change'));const t=d.querySelector('select[aria-label=\"Инструменты для модификации\"]');t.value=[...t.options].find(o=>/оружейника/i.test(o.textContent)&&/расшир/i.test(o.textContent)).value;t.dispatchEvent(new Event('change'));const c=d.querySelector('input[type=checkbox]');c.checked=true;c.dispatchEvent(new Event('change'));return true})()");
     await peer.until("[...document.querySelectorAll('#crafting-modal button')].some(b=>b.textContent==='Установить самостоятельно')",'Книга, навык и инструменты разрешили установку');
     assert.ok(await peer.evaluate("document.querySelector('#crafting-modal').innerText.includes('Итоговая СЛ -5')"));

@@ -4056,3 +4056,26 @@ input[type=range]::-webkit-slider-thumb {
 #time-plans-count { display:inline-block; min-width:18px; border-radius:12px; padding:1px 5px; background:#b35d3f; color:white; text-align:center; }
 #time-plans-count[hidden] { display:none; }
 @media(max-width:650px) { .time-plans-dialog { padding:16px; } .time-plan-scale { flex-wrap:wrap; } .time-plan-card header { flex-direction:column; } }
+
+/* Каталог создания: категории и рецепты остаются доступны без вложенных списков. */
+#crafting-modal .modal-content { box-sizing:border-box; width:min(1000px,96vw); max-width:96vw !important; }
+#crafting-modal .block-header { display:flex; align-items:center; justify-content:space-between; gap:12px; }
+#crafting-modal .block-header h3 { margin:0; }
+.crafting-tabs, .crafting-categories { display:flex; flex-wrap:wrap; gap:8px; margin:12px 0; }
+.crafting-tabs { border-bottom:1px solid var(--panel-border); padding-bottom:10px; }
+.crafting-tabs .is-active, .crafting-categories .is-active { border-color:#b8d99d; background:#496145; color:#fff; }
+.crafting-pane[hidden] { display:none; }
+#crafting-modal .crafting-recipe-select[hidden] { display:none; }
+.crafting-recipe-layout { display:grid; grid-template-columns:minmax(220px, .9fr) minmax(0, 1.5fr); gap:16px; margin-top:12px; }
+.crafting-recipe-cards { display:grid; align-content:start; gap:8px; max-height:55vh; overflow:auto; padding:2px; }
+.crafting-recipe-card { display:grid; grid-template-columns:40px minmax(0,1fr); grid-template-rows:auto auto; align-items:center; gap:2px 9px; width:100%; padding:9px; border:1px solid var(--panel-border); border-radius:8px; background:rgba(25,35,29,.7); color:inherit; text-align:left; cursor:pointer; }
+.crafting-recipe-card:hover, .crafting-recipe-card.is-selected { border-color:#b8d99d; background:rgba(73,97,69,.7); }
+.crafting-recipe-icon { grid-row:1 / 3; display:grid; place-items:center; width:38px; height:38px; border:1px solid currentColor; border-radius:6px; opacity:.65; font-size:22px; }
+.crafting-recipe-card strong { font-size:14px; }
+.crafting-recipe-card small { opacity:.7; }
+.crafting-recipe-detail { min-width:0; padding:14px; border:1px solid var(--panel-border); border-radius:8px; }
+.crafting-recipe-detail h4 { margin:4px 0 10px; }
+.crafting-recipe-detail p { margin:7px 0; }
+.crafting-modification-info { display:flex; flex-wrap:wrap; gap:7px 12px; align-items:baseline; padding:10px; margin:10px 0; border:1px solid var(--panel-border); border-radius:7px; }
+.crafting-modification-info p { flex-basis:100%; margin:0; }
+@media(max-width:650px) { .crafting-recipe-layout { grid-template-columns:minmax(0,1fr); } .crafting-recipe-cards { max-height:220px; } }

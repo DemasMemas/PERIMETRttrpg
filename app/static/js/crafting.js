@@ -19,7 +19,7 @@ export async function showCrafting({characterId,lobbyId,onSaved}){
     const onKey=event=>{if(event.key==='Escape')close();};document.addEventListener('keydown',onKey);
     header.append(button('×',close));panel.append(header);
     const body=el('div');panel.append(body);
-    let snapshot,busy=false,selectedRecipe='',searchValue='',generation=0;
+    let snapshot,busy=false,selectedRecipe='',searchValue='',generation=0,activeTab='creation',selectedGroup='Все';
     const modSelection={};
     const act=async(operation,payload={},targetId=characterId,revision=snapshot.revision)=>{
         if(busy)return;busy=true;
@@ -64,14 +64,38 @@ export async function showCrafting({characterId,lobbyId,onSaved}){
             for(const entry of job.escrow)body.append(el('p',`${entry.item.name} × ${entry.amount}`));
             return;
         }
-        const filter=el('input',null,'form-control');filter.type='search';filter.placeholder='Поиск рецепта';filter.value=searchValue;body.append(filter);
-        const recipes=select('Рецепт',snapshot.catalog.recipes.map(r=>[r.id,`${r.group} · ${r.name}`]));body.append(recipes);
+        const tabs=el('div',null,'crafting-tabs');tabs.setAttribute('role','tablist');body.append(tabs);
+        const panes={creation:el('section',null,'crafting-pane'),modifications:el('section',null,'crafting-pane'),other:el('section',null,'crafting-pane')};
+        for(const [key,label] of [['creation','Создание'],['modifications','Модификации'],['other','Другое']]){
+            const tab=button(label,()=>{activeTab=key;activateTab();});tab.setAttribute('role','tab');tab.dataset.craftingTab=key;tabs.append(tab);
+            panes[key].dataset.craftingPane=key;body.append(panes[key]);
+        }
+        const activateTab=()=>{
+            for(const [key,pane] of Object.entries(panes)){pane.hidden=key!==activeTab;const tab=tabs.querySelector(`[data-crafting-tab="${key}"]`);tab.setAttribute('aria-selected',String(key===activeTab));tab.classList.toggle('is-active',key===activeTab);}
+        };
+        activateTab();
+        const filter=el('input',null,'form-control');filter.type='search';filter.placeholder='Поиск рецепта';filter.setAttribute('aria-label','Поиск рецепта');filter.value=searchValue;panes.creation.append(filter);
+        const recipes=select('Рецепт',snapshot.catalog.recipes.map(r=>[r.id,`${r.group} · ${r.name}`]));recipes.hidden=true;panes.creation.append(recipes);
         if(selectedRecipe&&snapshot.catalog.recipes.some(r=>r.id===selectedRecipe))recipes.value=selectedRecipe;
-        const detail=el('div');body.append(detail);
+        const categories=el('div',null,'crafting-categories'),layout=el('div',null,'crafting-recipe-layout'),cards=el('div',null,'crafting-recipe-cards');
+        const detail=el('div',null,'crafting-recipe-detail');layout.append(cards,detail);panes.creation.append(categories,layout);
+        const groups=['Все',...new Set(snapshot.catalog.recipes.map(r=>r.group))];
+        if(!groups.includes(selectedGroup))selectedGroup='Все';
+        const paintCards=()=>{
+            categories.replaceChildren();cards.replaceChildren();
+            for(const group of groups){const category=button(group,()=>{selectedGroup=group;paintCards();});category.classList.toggle('is-active',selectedGroup===group);category.setAttribute('aria-pressed',String(selectedGroup===group));categories.append(category);}
+            const matched=snapshot.catalog.recipes.filter(recipe=>(selectedGroup==='Все'||recipe.group===selectedGroup)&&
+                `${recipe.name} ${recipe.group} ${recipe.tools_text}`.toLocaleLowerCase().includes(searchValue.toLocaleLowerCase()));
+            for(const recipe of matched){
+                const card=button('',()=>{recipes.value=recipe.id;void show();paintCards();});card.className='crafting-recipe-card';card.classList.toggle('is-selected',recipes.value===recipe.id);
+                card.append(el('span','◈','crafting-recipe-icon'),el('strong',recipe.name),el('small',`${recipe.group} · ${recipe.duration_text}`));cards.append(card);
+            }
+            if(!matched.length)cards.append(el('p','Рецепты не найдены.'));
+        };
         const show=async()=>{
             ++generation;selectedRecipe=recipes.value;detail.replaceChildren();
             const recipe=snapshot.catalog.recipes.find(r=>r.id===recipes.value);if(!recipe)return;
-            detail.append(el('h4',recipe.name),el('p',`Время: ${recipe.duration_text}. Нужно: ${recipe.tools_text}.`));
+            detail.append(el('small',recipe.group),el('h4',recipe.name),el('p',`Время: ${recipe.duration_text}. Нужно: ${recipe.tools_text}.`));
             const parts=recipe.tools_text.split(',').at(-1).split('/');
             const tool=select('Вариант приготовления',(recipe.difficulty_options.length?recipe.difficulty_options:[0]).map((difficulty,i)=>[i,`${parts[i]?.trim()||'По рецепту'} · исходная СЛ ${difficulty}`]));
             if(recipe.difficulty_options.length>1)detail.append(tool);
@@ -106,21 +130,22 @@ export async function showCrafting({characterId,lobbyId,onSaved}){
             detail.append(button('Запросить одобрение ГМа',()=>act('request_tool',{recipe_id:recipe.id,tool_path:extra.value===''?null:snapshot.inventory[Number(extra.value)].path})));
             for(const request of snapshot.state.tool_requests||[])if(request.recipe_id===recipe.id)detail.append(el('p',`${request.tool_name||'Условия создания'}: ${{pending:'ожидает ГМа',approved:'одобрено',rejected:'отклонено'}[request.status]}${request.used?' · использовано':''}`));
         };
-        recipes.onchange=show;
+        recipes.onchange=()=>{void show();paintCards();};
         filter.oninput=()=>{
             searchValue=filter.value;
-            for(const option of recipes.options)option.hidden=!option.textContent.toLocaleLowerCase().includes(searchValue.toLocaleLowerCase());
-            if(recipes.selectedOptions[0]?.hidden){const first=[...recipes.options].find(o=>!o.hidden);if(first){recipes.value=first.value;void show();}}
+            paintCards();
         };
+        paintCards();
         await show();
-        if(snapshot.targets.length)renderModifications();
-        renderSalvage();
-        renderFlamethrowers();
+        if(snapshot.targets.length)renderModifications(panes.modifications);
+        else panes.modifications.append(el('p','Нет снаряжения для модификации.'));
+        renderSalvage(panes.other);
+        renderFlamethrowers(panes.other);
         const books=snapshot.inventory.filter(e=>e.item.attributes?.book_kind);
         if(books.length){
-            body.append(el('h4','Электронные книги'));
-            const book=select('Книга для чтения',books.map((entry,i)=>[i,entry.item.name]));body.append(book);
-            const skill=select('Навык книги',[]);body.append(skill);
+            panes.other.append(el('h4','Электронные книги'));
+            const book=select('Книга для чтения',books.map((entry,i)=>[i,entry.item.name]));panes.other.append(book);
+            const skill=select('Навык книги',[]);panes.other.append(skill);
             const update=()=>{
                 const entry=books[Number(book.value)],attrs=entry.item.attributes;
                 skill.replaceChildren();skill.hidden=attrs.book_kind!=='skill';
@@ -130,14 +155,14 @@ export async function showCrafting({characterId,lobbyId,onSaved}){
                 const assigned=snapshot.state.book_assignments?.[entry.item.id];if(assigned){skill.value=assigned;skill.disabled=true;}else skill.disabled=false;
             };
             book.onchange=update;update();
-            body.append(button('Читать · 4 часа',()=>act('read_book',{path:books[Number(book.value)].path,skill_path:skill.hidden?null:skill.value})));
+            panes.other.append(button('Читать · 4 часа',()=>act('read_book',{path:books[Number(book.value)].path,skill_path:skill.hidden?null:skill.value})));
         }
-        if(snapshot.state.library?.length){body.append(el('h4','Прочитано'));for(const book of snapshot.state.library)body.append(el('p',`${book.name}${book.skill_path?' · '+(snapshot.skills.find(s=>s.path===book.skill_path)?.label||''):''}`));}
-        if(snapshot.state.history?.length){body.append(el('h4','Последние работы'));for(const result of snapshot.state.history.slice(-5).reverse())body.append(el('p',`${result.name}: ${result.cancelled?'отменено':result.success?'готово':'неудача'}${result.roll!=null?(result.kind==='salvage'?` · к100 ${result.roll} + ${result.bonus} = ${result.total} · ${result.materials.map(m=>`${m.name} ×${m.quantity}`).join(', ')||'без добычи'}`:` · к100 ${result.roll}, СЛ ${result.difficulty}`):''}`));}
+        if(snapshot.state.library?.length){panes.other.append(el('h4','Прочитано'));for(const book of snapshot.state.library)panes.other.append(el('p',`${book.name}${book.skill_path?' · '+(snapshot.skills.find(s=>s.path===book.skill_path)?.label||''):''}`));}
+        if(snapshot.state.history?.length){panes.other.append(el('h4','Последние работы'));for(const result of snapshot.state.history.slice(-5).reverse())panes.other.append(el('p',`${result.name}: ${result.cancelled?'отменено':result.success?'готово':'неудача'}${result.roll!=null?(result.kind==='salvage'?` · к100 ${result.roll} + ${result.bonus} = ${result.total} · ${result.materials.map(m=>`${m.name} ×${m.quantity}`).join(', ')||'без добычи'}`:` · к100 ${result.roll}, СЛ ${result.difficulty}`):''}`));}
     };
-    const renderFlamethrowers=()=>{
+    const renderFlamethrowers=container=>{
         if(!snapshot.flamethrowers?.length)return;
-        const section=el('details',null,'crafting-flamethrowers');section.open=true;section.append(el('summary','Огнемёты'));body.append(section);
+        const section=el('details',null,'crafting-flamethrowers');section.open=true;section.append(el('summary','Огнемёты'));container.append(section);
         for(const entry of snapshot.flamethrowers){
             const weapon=entry.weapon,kind=weapon.attributes.flamethrower;
             section.append(el('h4',weapon.name),el('p',entry.resources.map((item,i)=>`${i?'Воздух':'Топливо'}: ${item?`${item.name} · ${item.uses??item.attributes?.uses_remaining??0}`:'не установлен'}`).join(' · ')));
@@ -176,11 +201,11 @@ export async function showCrafting({characterId,lobbyId,onSaved}){
             }));
         }
     };
-    const renderSalvage=()=>{
+    const renderSalvage=container=>{
         const candidates=snapshot.inventory.filter(e=>e.salvage_kind);
         const tools=snapshot.inventory.filter(e=>e.salvage_tool_bonus>0);
         if(!candidates.length||!tools.length)return;
-        const section=el('details',null,'crafting-salvage');section.append(el('summary','Разобрать предмет'));body.append(section);
+        const section=el('details',null,'crafting-salvage');section.append(el('summary','Разобрать предмет'));container.append(section);
         const target=select('Предмет для разбора',candidates.map((e,i)=>[i,e.item.name]));
         const tool=select('Один инструмент',tools.map((e,i)=>[i,e.item.name]));
         const amount=el('input',null,'form-control');amount.type='number';amount.min=1;amount.step=1;amount.value=1;amount.setAttribute('aria-label','Количество для разбора');
@@ -194,18 +219,19 @@ export async function showCrafting({characterId,lobbyId,onSaved}){
             }catch(error){showNotification(error.message,'system');}
         }));
     };
-    const renderModifications=()=>{
-        const section=el('details');section.append(el('summary','Модификации снаряжения'));body.append(section);
+    const renderModifications=container=>{
+        const section=el('details');section.open=true;section.append(el('summary','Модификации снаряжения'));container.append(section);
         const root=el('div');section.append(root);
         const targets=select('Предмет для модификации',snapshot.targets.map((entry,i)=>[i,`${entry.item.name||entry.item.model} · ${entry.slots.used}/${entry.slots.available} слотов`]));
         if(modSelection.target!=null&&snapshot.targets[modSelection.target])targets.value=modSelection.target;
-        root.append(targets);const form=el('div');root.append(form);let quoteVersion=0;
+        root.append(el('label','Предмет для модификации'),targets);const form=el('div');root.append(form);let quoteVersion=0;
         const redraw=()=>{
             modSelection.target=Number(targets.value);const target=snapshot.targets[modSelection.target];form.replaceChildren();
             const choices=snapshot.catalog.modifications.filter(r=>r.family===target.slots.family);
             const rules=select('Модификация',[]);fillModificationOptions(rules,choices);
             if(choices.some(r=>r.id===modSelection.rule))rules.value=modSelection.rule;
-            form.append(rules,el('p',`Открыто слотов: ${target.slots.available} / ${target.slots.maximum}`));
+            const ruleInfo=el('div',null,'crafting-modification-info');
+            form.append(el('label','Улучшение'),rules,ruleInfo,el('p',`Занято слотов: ${target.slots.used}. Доступно: ${target.slots.available} из ${target.slots.maximum}.`));
             const tool=select('Инструменты для модификации',snapshot.inventory.map((entry,i)=>[i,`${entry.item.name} · ${entry.item.uses??entry.item.maxUses??entry.item.attributes?.uses??'—'} зарядов`]));
             if(snapshot.inventory[modSelection.tool])tool.value=modSelection.tool;
             form.append(el('label','Набор инструментов или станок'),tool);
@@ -224,6 +250,7 @@ export async function showCrafting({characterId,lobbyId,onSaved}){
             const update=async()=>{
                 const version=++quoteVersion;modSelection.rule=rules.value;modSelection.tool=Number(tool.value);modSelection.double=double.checked;
                 const rule=choices.find(r=>r.id===rules.value);if(!rule)return;
+                ruleInfo.replaceChildren(el('strong',rule.branch||rule.family||'Оружие'),el('span',`Уровень ${rule.level||1}`),el('p',rule.name||rule.description));
                 materialSection.hidden=rule.kind==='weapon';
                 const selectedReplacement=replacement.value;
                 replacement.replaceChildren();const none=el('option','Новая модификация');none.value='';replacement.append(none);

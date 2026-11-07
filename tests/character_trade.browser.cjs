@@ -408,8 +408,31 @@ module.exports=async({page,request,token,lobby,base,connect,debugPort,safeSessio
         assert.deepEqual(actual,expected);
     }
     await page.evaluate(`document.querySelector('.modification-close').click();true`);
+    await page.evaluate(`document.querySelectorAll('.character-trade').forEach(editor=>editor.closest('.modal')?.remove());true`);
     await page.evaluate(`import('/static/js/crafting.js')
         .then(module=>module.showCrafting({characterId:${a.id},lobbyId:${lobby.id}})).then(()=>true)`);
+    assert.ok(await page.evaluate(`(()=>{
+        const tabs=[...document.querySelectorAll('#crafting-modal [role=tab]')];
+        const cards=document.querySelectorAll('#crafting-modal .crafting-recipe-card');
+        const categories=document.querySelectorAll('#crafting-modal .crafting-categories button');
+        return tabs.length===3&&cards.length>0&&categories.length>1&&
+            document.querySelector('[data-crafting-pane=modifications]').hidden;
+    })()`));
+    const catalogWidth=await page.evaluate(`(()=>{const panel=document.querySelector('#crafting-modal .modal-content');
+        return {scroll:panel.scrollWidth,visible:panel.clientWidth}})()`);
+    assert.ok(catalogWidth.scroll<=catalogWidth.visible+2,JSON.stringify(catalogWidth));
+    fs.writeFileSync(path.join(safeSession.artifacts,'crafting-catalog.png'),
+        Buffer.from((await page.call('Page.captureScreenshot',{format:'png'})).data,'base64'));
+    await page.call('Emulation.setDeviceMetricsOverride',{width:480,height:800,deviceScaleFactor:1,mobile:false});
+    const mobileCatalog=await page.evaluate(`(()=>{const panel=document.querySelector('#crafting-modal .modal-content');
+        return {panel:panel.getBoundingClientRect().width,viewport:innerWidth,scroll:panel.scrollWidth,visible:panel.clientWidth}})()`);
+    assert.ok(mobileCatalog.panel<=mobileCatalog.viewport&&mobileCatalog.scroll<=mobileCatalog.visible+2,JSON.stringify(mobileCatalog));
+    fs.writeFileSync(path.join(safeSession.artifacts,'crafting-catalog-mobile.png'),
+        Buffer.from((await page.call('Page.captureScreenshot',{format:'png'})).data,'base64'));
+    await page.call('Emulation.clearDeviceMetricsOverride');
+    await page.evaluate(`document.querySelector('[data-crafting-tab=modifications]').click();true`);
+    assert.ok(await page.evaluate(`!document.querySelector('[data-crafting-pane=modifications]').hidden &&
+        document.querySelector('[data-crafting-pane=creation]').hidden`));
     await page.until(`document.querySelector('#crafting-modal select[aria-label="Предмет для модификации"]')`,
         'Самостоятельная установка доступна');
     for(const [name,expected] of Object.entries(branches)){

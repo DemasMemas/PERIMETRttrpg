@@ -20,6 +20,8 @@ module.exports=async({peer,request,recipient,token,api,read})=>{
         await peer.evaluate(`window.openCharacterSheet(${recipient.id},'equipment').then(()=>true)`);
         await peer.until("document.querySelector('#character-crafting-open')",'Кнопка создания в листе');
         await peer.evaluate("document.querySelector('#character-crafting-open').click();true");
+        await peer.until("document.querySelector('[data-crafting-tab=other]')",'Открыты вкладки создания');
+        await peer.evaluate("document.querySelector('[data-crafting-tab=other]').click();true");
         await peer.until("document.querySelector('.crafting-salvage select')",'Разбор доступен в реальном окне');
     };
     await open();
