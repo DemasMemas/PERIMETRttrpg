@@ -60,8 +60,10 @@ def item_from_template(template,quantity=1):
           'description':template.description,'price':template.price or 0,'weight':template.weight or 0,
           'volume':0 if attrs.get('book_kind') else template.volume or 0,'quantity':quantity,'attributes':attrs,
           'installedModules':[],'modifications':[],'contents':[], 'compatible_ids':deepcopy(template.compatible_ids or [])}
-    if template.category in {'container', 'backpack', 'pouch'}:
-        item.update(isContainer=True, capacity=attrs.get('capacity', attrs.get('limit', template.volume or 0)))
+    from app.services.liquid_containers import is_canister
+    if template.category in {'container', 'backpack', 'pouch'} or is_canister(item):
+        item.update(isContainer=True, capacity=attrs.get('liquid_capacity_liters',
+            attrs.get('capacity', attrs.get('limit', template.volume or 0))))
     if isinstance(attrs.get('pouches'), list):
         item['pouches'] = deepcopy(attrs['pouches'])
     if attrs.get('uses') is not None:item.update(uses=attrs['uses'],maxUses=attrs['uses'])
@@ -97,7 +99,34 @@ def apply_purchase(data,selection,budget,*,allow_debt=False):
             if template.category in {'weapon','melee_weapon'}:
                 if quantity>50:raise ValidationError('Слишком много отдельных экземпляров оружия')
                 data.setdefault('weapons',[]).extend(item_from_template(template) for _ in range(quantity))
-            else:data['inventory']['pockets'].append(item_from_template(template,quantity))
+            else:
+                item=item_from_template(template,quantity)
+                from app.services.liquid_containers import is_canister
+                if is_canister(item):
+                    data['inventory']['pockets'].extend(item_from_template(template) for _ in range(quantity))
+                else:data['inventory']['pockets'].append(item)
+    from app.services.liquid_containers import is_canister,liquid_kind
+    pockets=data['inventory']['pockets']
+    fuel_items=[item for item in pockets if liquid_kind(item)=='fuel']
+    if fuel_items:
+        canisters=[item for item in pockets if is_canister(item) and not any(
+            liquid_kind(entry)=='water' for entry in item.get('contents') or [])]
+        capacity=sum(max(0,15-sum(entry['quantity'] for entry in canister.get('contents') or []))
+            for canister in canisters)
+        if sum(item['quantity'] for item in fuel_items)>capacity:
+            raise ValidationError('Для купленного топлива нужны канистры по 15 л')
+        pockets[:]=[item for item in pockets if liquid_kind(item)!='fuel']
+        for fuel in fuel_items:
+            remaining=fuel['quantity']
+            for canister in canisters:
+                used=sum(entry['quantity'] for entry in canister.get('contents') or [])
+                amount=min(remaining,15-used)
+                if amount<=0:continue
+                filled=deepcopy(fuel);filled['id']=uuid.uuid4().hex;filled['quantity']=amount
+                canister.setdefault('contents',[]).append(filled)
+                canister['fuelUsed']=True
+                remaining-=amount
+                if remaining==0:break
     data['inventory']['money']=budget-spent
     data['creation']['startingPurchase']={'budget':budget,'spent':spent,'remaining':budget-spent,'items':receipt,'completed':not allow_debt}
 

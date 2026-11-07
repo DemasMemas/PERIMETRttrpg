@@ -1608,7 +1608,7 @@ function createItemFromTemplate(template, quantity = 1, options = {}) {
         maxDurability: templateMaxDurability,
         installedModules: [],
         contents: [],
-        isContainer: template.category === 'container' || template.category === 'backpack' || template.category === 'pouch',
+        isContainer: template.category === 'container' || template.category === 'backpack' || template.category === 'pouch' || isLiquidCanister(template),
         capacity: template.attributes?.capacity ?? template.attributes?.limit ?? template.volume ?? 0,
         isEquippable: ['weapon', 'armor', 'helmet', 'gas_mask', 'device', 'detector', 'backpack'].includes(template.category),
         isStackable: ['consumable', 'crafting_material', 'artifact', 'ammo'].includes(template.category)
@@ -1819,7 +1819,7 @@ function migrateOldItemToNew(oldItem) {
         maxDurability: oldItem.maxDurability,
         installedModules: [],
         contents: oldItem.contents || [], // <-- важно
-        isContainer: oldItem.category === 'container' || oldItem.category === 'backpack' || oldItem.category === 'pouch',
+        isContainer: oldItem.category === 'container' || oldItem.category === 'backpack' || oldItem.category === 'pouch' || isLiquidCanister(oldItem),
         isEquippable: ['weapon', 'armor', 'helmet', 'gas_mask', 'backpack'].includes(oldItem.category),
         isStackable: ['consumable', 'crafting_material', 'artifact'].includes(oldItem.category)
     };
@@ -2263,6 +2263,30 @@ function getTotalVolume(item) {
         total += item.contents.reduce((sum, subItem) => sum + getTotalVolume(subItem), 0);
     }
     return total;
+}
+
+function liquidCanisterKind(item) {
+    const name = String(item?.name || '').toLowerCase().replace(/\s+/g, '');
+    if (name === 'топливо(1литр)') return 'fuel';
+    if (name === 'вода(1литр)') return 'water';
+    return null;
+}
+
+function isLiquidCanister(item) {
+    return String(item?.name || '').toLowerCase().startsWith('канистра')
+        && Number(item?.attributes?.liquid_capacity_liters) === 15;
+}
+
+function canStoreInLiquidCanister(canister, liquid, items = canister?.contents || []) {
+    const kind = liquidCanisterKind(liquid);
+    if (!kind || (liquid?.contents || []).length) return false;
+    const quantity = Number(liquid.quantity ?? 1);
+    if (!Number.isFinite(quantity) || quantity <= 0 || Math.round(quantity * 10) !== quantity * 10) return false;
+    const fuelUsed = canister.fuelUsed || items.some(entry => liquidCanisterKind(entry) === 'fuel');
+    if (kind === 'water' && fuelUsed) return false;
+    if (kind === 'fuel' && items.some(entry => liquidCanisterKind(entry) === 'water')) return false;
+    const used = items.reduce((total, entry) => total + Number(entry.quantity ?? 1), 0);
+    return used + quantity <= 15.000001;
 }
 
 function calculateBackpackTotals(items) {
@@ -14243,7 +14267,7 @@ window.updateBackpackItemAtPath = function(pathStr, field, value) {
     if (!item) return;
 
     if (field === 'quantity') {
-        setBackpackItemQuantityAtPath(path, parseInt(value) || 1);
+        setBackpackItemQuantityAtPath(path, liquidCanisterKind(item) ? Number(value) : (parseInt(value, 10) || 1));
     } else if (field === 'name') {
         item.name = value;
     } else {
@@ -14260,8 +14284,8 @@ window.adjustBackpackItemQuantityAtPath = function(pathStr, delta) {
     const item = getItemByPath(path);
     if (!item) return;
 
-    const currentQuantity = Math.max(1, Number(item.quantity) || 1);
-    const nextQuantity = currentQuantity + Number(delta || 0);
+    const currentQuantity = Math.max(liquidCanisterKind(item) ? 0.1 : 1, Number(item.quantity) || 1);
+    const nextQuantity = Math.round((currentQuantity + Number(delta || 0)) * 10) / 10;
     if (setBackpackItemQuantityAtPath(path, nextQuantity)) {
         recalculateInventoryTotals();
         renderInventoryTab(currentCharacterData);
@@ -14353,6 +14377,24 @@ function setBackpackItemQuantityAtPath(path, quantity) {
     const index = path[path.length - 1];
     if (!Array.isArray(parentData) || typeof index !== 'number' || !parentData[index]) return false;
     const item = parentData[index];
+    if (isLiquidCanister(item) && quantity !== 1) {
+        showNotification('Канистры хранятся по отдельности');
+        return false;
+    }
+    if (liquidCanisterKind(item) && quantity > 0) {
+        if (!Number.isFinite(quantity) || Math.round(quantity * 10) !== quantity * 10) {
+            showNotification('Количество жидкости должно быть кратно 0,1 л');
+            return false;
+        }
+        const container = path.at(-2) === 'contents' ? getItemByPath(path.slice(0, -2)) : null;
+        if (isLiquidCanister(container)) {
+            const others = parentData.filter((_, itemIndex) => itemIndex !== index);
+            if (!canStoreInLiquidCanister(container, {...item, quantity}, others)) {
+                showNotification('В канистре может быть не более 15 л');
+                return false;
+            }
+        }
+    }
     if (!quantity || quantity <= 0) {
         parentData.splice(index, 1);
         return true;
@@ -14361,7 +14403,7 @@ function setBackpackItemQuantityAtPath(path, quantity) {
         const stacks = splitAmmoItemIntoSlotStacks(item, quantity);
         parentData.splice(index, 1, ...stacks);
     } else {
-        item.quantity = Math.floor(quantity);
+        item.quantity = liquidCanisterKind(item) ? quantity : Math.floor(quantity);
     }
     return true;
 }
@@ -15265,7 +15307,17 @@ async function addTemplateItemToInventory(templateId, target, quantity = 1, ammo
         createdByPlayer: !window.isGM,
     });
     if (itemAttributes) newItem.attributes = { ...(newItem.attributes || {}), ...itemAttributes };
+    const targetCanister = targetPath.at(-1) === 'contents' ? getItemByPath(targetPath.slice(0, -1)) : null;
+    if (liquidCanisterKind(newItem) === 'fuel' && !isLiquidCanister(targetCanister)) {
+        showNotification('Топливо можно добавить только внутрь канистры');
+        return false;
+    }
+    if (isLiquidCanister(targetCanister) && !canStoreInLiquidCanister(targetCanister, newItem, targetItems)) {
+        showNotification('В канистру помещаются только вода или топливо, не более 15 л; после топлива воду добавлять нельзя');
+        return false;
+    }
     targetItems.push(...splitAmmoItemIntoSlotStacks(newItem));
+    if (isLiquidCanister(targetCanister) && liquidCanisterKind(newItem) === 'fuel') targetCanister.fuelUsed = true;
 
     await rerenderContainer(targetPath, null, { keepExpanded: true });
     recalculateInventoryTotals();
@@ -15318,7 +15370,10 @@ window.openInventoryTemplatePicker = async function(target = 'pockets', options 
     content.innerHTML = 'Загрузка...';
 
     const render = async () => {
-        const templates = (await getAllItemTemplates()).filter(t => window.isGM || t.source !== 'local');
+        const targetCanister = modal._inventoryTarget?.at(-1) === 'contents'
+            ? getItemByPath(modal._inventoryTarget.slice(0, -1)) : null;
+        const templates = (await getAllItemTemplates()).filter(t =>
+            (window.isGM || t.source !== 'local') && (!isLiquidCanister(targetCanister) || liquidCanisterKind(t)));
         content.innerHTML = renderInventoryTemplatePicker(templates, searchInput.value);
     };
 
@@ -15970,6 +16025,10 @@ function renderBackpackNew(items, groupedByCategory, allTemplates) {
 }
 
 function renderBackpackItem(item, index, parentPath, parentContainer, allTemplates) {
+    if (isLiquidCanister(item)) {
+        item.isContainer = true;
+        item.contents ||= [];
+    }
     const itemDiv = document.createElement('div');
     itemDiv.dataset.itemTooltip = 'true';
     if (item.templateId) itemDiv.dataset.itemTemplateId = String(item.templateId);
@@ -16025,6 +16084,13 @@ function renderBackpackItem(item, index, parentPath, parentContainer, allTemplat
         itemDiv._toggleIcon = toggleIcon;
     }
     nameWrapper.appendChild(nameCell);
+    if (isLiquidCanister(item)) {
+        const litres = (item.contents || []).reduce((total, entry) => total + Number(entry.quantity || 0), 0);
+        const fill = document.createElement('span');
+        fill.style.cssText = 'margin-left:8px; font-size:11px; opacity:.8; white-space:nowrap;';
+        fill.textContent = `${Math.round(litres * 10) / 10}/15 л${item.fuelUsed ? ' · только топливо' : ''}`;
+        nameWrapper.appendChild(fill);
+    }
     const isBloodPacket = isBloodPacketItem(item);
     if (isBloodPacket) {
         const bloodBadge = document.createElement('span');
@@ -16141,18 +16207,22 @@ function renderBackpackItem(item, index, parentPath, parentContainer, allTemplat
     qtyDownBtn.className = 'btn btn-sm btn-secondary';
     qtyDownBtn.textContent = '−';
     qtyDownBtn.title = 'Уменьшить количество';
+    if (isLiquidCanister(item)) qtyDownBtn.disabled = true;
     qtyDownBtn.style.width = '28px';
     qtyDownBtn.style.height = '28px';
     qtyDownBtn.style.padding = '0';
     qtyDownBtn.style.lineHeight = '1';
     qtyDownBtn.onclick = (e) => {
         e.stopPropagation();
-        return window.adjustBackpackItemQuantityAtPath(itemPath.join(','), -1);
+        return window.adjustBackpackItemQuantityAtPath(itemPath.join(','), liquidCanisterKind(item) ? -0.1 : -1);
     };
 
     const qtyInput = document.createElement('input');
     qtyInput.dataset.widgetKey = 'quantity';
     qtyInput.type = 'number';
+    if (isLiquidCanister(item)) qtyInput.disabled = true;
+    qtyInput.step = liquidCanisterKind(item) ? '0.1' : '1';
+    if (liquidCanisterKind(item)) qtyInput.min = '0.1';
     qtyInput.className = 'form-control number-input';
     qtyInput.style.minWidth = '54px';
     qtyInput.value = item.quantity || 1;
@@ -16165,13 +16235,14 @@ function renderBackpackItem(item, index, parentPath, parentContainer, allTemplat
     qtyUpBtn.className = 'btn btn-sm btn-secondary';
     qtyUpBtn.textContent = '+';
     qtyUpBtn.title = 'Увеличить количество';
+    if (isLiquidCanister(item)) qtyUpBtn.disabled = true;
     qtyUpBtn.style.width = '28px';
     qtyUpBtn.style.height = '28px';
     qtyUpBtn.style.padding = '0';
     qtyUpBtn.style.lineHeight = '1';
     qtyUpBtn.onclick = (e) => {
         e.stopPropagation();
-        return window.adjustBackpackItemQuantityAtPath(itemPath.join(','), 1);
+        return window.adjustBackpackItemQuantityAtPath(itemPath.join(','), liquidCanisterKind(item) ? 0.1 : 1);
     };
 
     // Отключаем временно draggable у родителя при взаимодействии с инпутами (чтобы не мешать редактированию)
@@ -17624,6 +17695,16 @@ function setupDropTarget(containerDiv, containerPath, containerItem) {
             : targetContainer.contents;
         if (!Array.isArray(targetItems)) return;
 
+        if (isLiquidCanister(targetContainer)) {
+            const sameCanister = draggedItemPath.slice(0, -1).join(',') === containerPath.join(',');
+            const otherItems = sameCanister ? targetItems.filter(entry => entry !== draggedItem) : targetItems;
+            if (!canStoreInLiquidCanister(targetContainer, draggedItem, otherItems)) {
+                showNotification('В канистру помещаются только вода или топливо, не более 15 л; после топлива воду добавлять нельзя');
+                draggedItem = null; draggedItemPath = null;
+                return;
+            }
+        }
+
         const volumeOf=containerPath[0]==='inventory'&&containerPath[1]==='backpack'?(item=>backpackItemVolume(currentCharacterData,item)):getTotalVolume;
         const newVolume = volumeOf(draggedItem);
         const sourceContainerPath = draggedItemPath.slice(0, -1);
@@ -17631,7 +17712,8 @@ function setupDropTarget(containerDiv, containerPath, containerItem) {
             && sourceContainerPath.every((value, index) => value === containerPath[index]);
         const currentUsed = targetItems.reduce((sum, item) => sum + volumeOf(item), 0)
             - (isSameContainer ? newVolume : 0);
-        const limit = containerPath.length===2&&containerPath[0]==='inventory'&&containerPath[1]==='pockets'
+        const limit = isLiquidCanister(targetContainer) ? 15
+            : containerPath.length===2&&containerPath[0]==='inventory'&&containerPath[1]==='pockets'
             ? pocketCapacity(currentCharacterData)
             : containerPath[0]==='equipment'&&containerPath[2]==='pouches'
                 ? pouchCapacity(targetContainer, containerPath[1]==='belt' ? currentCharacterData.equipment?.belt : null)
@@ -17651,6 +17733,7 @@ function setupDropTarget(containerDiv, containerPath, containerItem) {
 
         // Добавляем в целевой контейнер
         targetItems.push(draggedItem);
+        if (isLiquidCanister(targetContainer) && liquidCanisterKind(draggedItem) === 'fuel') targetContainer.fuelUsed = true;
 
         // Полная перерисовка сохраняет корректные пути после сдвига индексов.
         await renderInventoryTab(currentCharacterData);

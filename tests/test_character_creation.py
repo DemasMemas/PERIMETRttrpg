@@ -144,6 +144,25 @@ def test_starting_purchase_uses_catalog_prices_and_rejects_restricted_templates(
         with pytest.raises(ValidationError):build_character('Имя',plan('Бедный',purchases=selection))
 
 
+def test_starting_purchase_packs_fuel_into_individual_canisters(app):
+    from app.extensions import db
+    from app.models.templates import ItemTemplate
+    from app.services.character_starting_purchase import apply_purchase
+    fuel=ItemTemplate(name='Топливо(1 Литр)',category='misc',price=300,volume=1)
+    vessel=ItemTemplate(name='Канистра(Пустая)(Объем 15 литров)(45 использований воды)',
+        category='misc',price=1500,volume=20,attributes={'liquid_capacity_liters':15})
+    db.session.add_all([fuel,vessel]);db.session.flush()
+    data={'inventory':{'pockets':[],'backpack':[]},'creation':{}}
+    apply_purchase(data,[{'templateId':fuel.id,'quantity':16},{'templateId':vessel.id,'quantity':2}],10000)
+    canisters=data['inventory']['pockets']
+    assert len(canisters)==2 and len({item['id'] for item in canisters})==2
+    assert [sum(liquid['quantity'] for liquid in item['contents']) for item in canisters]==[15,1]
+    assert all(item['fuelUsed'] and item['isContainer'] for item in canisters)
+    with pytest.raises(ValidationError,match='канистры'):
+        apply_purchase({'inventory':{'pockets':[]},'creation':{}},
+            [{'templateId':fuel.id,'quantity':1}],10000)
+
+
 def test_reused_creation_plan_creates_independent_items_and_rewards(creation_case):
     from app.extensions import db
     from app.models.templates import ItemTemplate

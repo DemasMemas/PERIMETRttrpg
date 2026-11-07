@@ -684,6 +684,28 @@ def test_molotov_reserves_half_liter_of_fuel_and_returns_it_on_cancel(client,wor
     assert sum(item['quantity'] for item in fuel)==1
 
 
+def test_molotov_returns_reserved_fuel_to_its_canister(client,workshop,auth_headers):
+    data=deepcopy(workshop['actor_character'].data)
+    data['inventory']['pockets']=[
+        {'id':'molotov-canister','name':'Канистра(Пустая)(Объем 15 литров)(45 использований воды)',
+         'category':'misc','attributes':{'liquid_capacity_liters':15},'quantity':1,'fuelUsed':True,
+         'contents':[{'id':'canister-fuel','name':'Топливо(1 Литр)','category':'misc','quantity':1}]},
+        {'name':'Стеклянная бутылка (Объем 1 литр) (3 использования воды)','category':'misc','quantity':1},
+        {'name':'Тканные материалы','category':'crafting_material','quantity':1},
+    ]
+    workshop['actor_character'].data=data
+    db.session.add(ItemTemplate(name='Коктейль Молотова',category='grenade',price=300))
+    db.session.commit()
+    started=call(client,workshop,auth_headers,'start',recipe_id='recipe-v11')
+    assert started.status_code==200,started.json
+    assert [item['quantity'] for item in started.json['data']['inventory']['pockets'][0]['contents']]==[.5]
+    cancelled=call(client,workshop,auth_headers,'cancel',job_id=started.json['result']['id'])
+    assert cancelled.status_code==200,cancelled.json
+    canister=cancelled.json['data']['inventory']['pockets'][0]
+    assert sum(item['quantity'] for item in canister['contents'])==1
+    assert not any(item['name']=='Топливо(1 Литр)' for item in cancelled.json['data']['inventory']['pockets'])
+
+
 def test_molotov_spends_only_half_liter_of_fuel_on_success(client,workshop,auth_headers,monkeypatch):
     data=deepcopy(workshop['actor_character'].data)
     data['inventory']['pockets']=[

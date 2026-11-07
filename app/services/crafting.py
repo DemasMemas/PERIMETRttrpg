@@ -289,6 +289,11 @@ def _escrow(data,allocations):
             item.setdefault('uses',10)
         amount=allocation['amount'];piece=deepcopy(item)
         if allocation.get('liquid_liters'):
+            from app.services.liquid_containers import is_canister,liquid_kind
+            container=next((candidate for candidate_path,candidate in walk(data,True)
+                if candidate_path==path[:-2]),None) if len(path)>=2 and path[-2]=='contents' else None
+            container_id=container.setdefault('id',str(uuid4())) if is_canister(container) else None
+            if container_id and liquid_kind(item)=='fuel':container['fuelUsed']=True
             quantity=item.get('quantity',1)
             if (type(quantity) not in {int,float} or not isfinite(quantity) or not 0<quantity<=10000
                     or round(quantity*10)!=quantity*10 or quantity<amount):
@@ -298,7 +303,8 @@ def _escrow(data,allocations):
             else:parent.pop(index)
             piece.update(id=str(uuid4()),quantity=amount)
             result.append({'component':allocation['component'],'amount':amount,'item':piece,
-                           'maximum':1,'liquid_liters':True})
+                           'maximum':1,'liquid_liters':True,
+                           **({'liquid_container_id':container_id} if container_id else {})})
             continue
         if allocation.get('filter_charges'):
             from app.services.gas_mask_filters import filter_charges
@@ -341,7 +347,16 @@ def _return_materials(data,escrow,lost):
         item=deepcopy(entry['item']);maximum=entry['maximum']
         if entry.get('liquid_liters'):
             item['quantity']=round(amount,1)
-            destination.append(item)
+            from app.services.liquid_containers import is_canister,liquid_kind
+            container=next((candidate for _,candidate in walk(data,True)
+                if candidate.get('id')==entry.get('liquid_container_id') and is_canister(candidate)),None)
+            contents=container.get('contents') or [] if container else []
+            kind=liquid_kind(item)
+            can_return=(container and kind and sum(float(part.get('quantity',1)) for part in contents)+amount<=15
+                and not (kind=='water' and (container.get('fuelUsed') or any(liquid_kind(part)=='fuel' for part in contents)))
+                and not (kind=='fuel' and any(liquid_kind(part)=='water' for part in contents)))
+            if can_return:container.setdefault('contents',[]).append(item)
+            else:destination.append(item)
             continue
         if entry.get('filter_charges'):
             item.update(quantity=1,durability=amount)
