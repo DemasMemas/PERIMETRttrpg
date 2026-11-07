@@ -71,6 +71,52 @@ def test_retired_sport_gloves_are_not_offered_or_generated(client,prepared,auth_
     assert [entry['name'] for entry in response.json['global']]==['Рабочие']
 
 
+def test_legacy_catalog_duplicates_are_hidden_from_new_issuance(client,prepared,auth_headers):
+    from app.services.equipment_catalog import load_catalog, canonical_catalog_templates
+    from app.services.character_starting_purchase import available_templates
+    from app.services.npc_loot import candidates
+
+    source=load_catalog()
+    def catalog_item(category,name):
+        return ItemTemplate(**next(entry for entry in source
+            if entry['category']==category and entry['name']==name))
+    pouch=catalog_item('pouch','Вещевой подсумок — 1')
+    glove=catalog_item('gloves','Медицинские')
+    detector=catalog_item('detector','ДА-2')
+    nvg=catalog_item('device','Очки ПНВ-1п')
+    grenade=catalog_item('grenade','Граната РГД-5')
+    old=[ItemTemplate(name=pouch.name,category='pouch',price=1,attributes={}),
+         ItemTemplate(name=glove.name,category='gloves',price=1,attributes={}),
+         ItemTemplate(name=detector.name,category='device',price=1,attributes={}),
+         ItemTemplate(name=nvg.name,category='helmet_module',price=1,attributes={}),
+         ItemTemplate(name=grenade.name,category='ammo',price=1,attributes={})]
+    db.session.add_all([*old,pouch,glove,detector,nvg,grenade]);db.session.commit()
+    all_templates=ItemTemplate.query.all()
+    selected=canonical_catalog_templates(all_templates)
+    assert [item.id for item in selected if item.name==pouch.name and item.category=='pouch']==[pouch.id]
+    assert [item.id for item in selected if item.name==glove.name and item.category=='gloves']==[glove.id]
+    assert not any(item.id in {entry.id for entry in old} for item in selected)
+    flashlight=[entry for entry in source if entry['name']=='Фонарик'
+                and entry['category'] in {'misc','weapon_module'}]
+    assert {entry['category'] for entry in canonical_catalog_templates(flashlight)}=={'misc','weapon_module'}
+    assert {item.id for item in old} <= {item.id for item in ItemTemplate.query.all()}
+    assert [item.id for item in available_templates() if item.name==pouch.name]==[pouch.id]
+    assert [item.id for item in candidates(all_templates,pool(category='gloves',subcategory='',item_class='',max_price=1000))
+            if item.name==glove.name]==[glove.id]
+    for category,name,expected in [('pouch',pouch.name,pouch.id),('gloves',glove.name,glove.id),
+                                   ('detector',detector.name,detector.id),('device',nvg.name,nvg.id),
+                                   ('grenade',grenade.name,grenade.id)]:
+        response=client.get(f"/lobbies/{prepared['lobby'].id}/templates?category={category}",
+            headers=auth_headers(prepared['actor_user']))
+        assert response.status_code==200,response.json
+        assert [entry['id'] for entry in response.json['global'] if entry['name']==name]==[expected]
+    for category,name in [('device',detector.name),('helmet_module',nvg.name),('ammo',grenade.name)]:
+        response=client.get(f"/lobbies/{prepared['lobby'].id}/templates?category={category}",
+            headers=auth_headers(prepared['actor_user']))
+        assert response.status_code==200,response.json
+        assert not any(entry['name']==name for entry in response.json['global'])
+
+
 def test_budget_exhaustion_and_zero_chance_are_visible_without_exceeding_cost(prepared):
     items,result=roll_loot(profile(budget=50,pools=[pool(draws=3),pool(category='no-items',chance=0)]),prepared['templates'])
     assert len(items)==1 and result['spent']==50 and result['skipped_pools']==[1]

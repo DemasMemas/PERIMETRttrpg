@@ -2429,8 +2429,8 @@ def get_lobby_templates(lobby_id, lobby, participant):
         query_global = query_global.filter_by(subcategory=subcategory)
         query_local = query_local.filter_by(subcategory=subcategory)
 
-    from app.services.equipment_catalog import retired_catalog_template
-    global_templates = [template for template in query_global.all() if not retired_catalog_template(template)]
+    from app.services.equipment_catalog import canonical_catalog_templates
+    global_templates = canonical_catalog_templates(query_global.all())
     local_templates = query_local.all()
 
     global_schema = ItemTemplateSchema(many=True)

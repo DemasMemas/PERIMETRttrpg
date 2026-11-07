@@ -1,6 +1,7 @@
 """Полный каталог из книги и принятых игровых правил; без изменения исходного XLSX."""
 from copy import deepcopy
 import json
+from functools import lru_cache
 from pathlib import Path
 
 from app.services.equipment_importer import parse_equipment_templates, _normalize_equipment_name
@@ -47,6 +48,43 @@ def retired_catalog_template(template):
                 name == 'Укорочение ствола' or (attributes or {}).get('moduleRuleId') == 'short_barrel'))
             or (category == 'container' and name in {'Блок-А', 'Барьер', 'Щит', 'Стена'}
                 and (attributes or {}).get('artifact_container_kind') == 'storage'))
+
+
+@lru_cache(maxsize=1)
+def _canonical_identity():
+    entries = load_catalog()
+    by_key = {(item['category'], _normalize_equipment_name(item['name'])): item for item in entries}
+    return by_key, {name for _, name in by_key}
+
+
+def canonical_catalog_templates(templates):
+    """Скрыть старые дубли при новых выдачах, сохранив записи и существующие вещи."""
+    by_key, known_names = _canonical_identity()
+    selected = {}
+    order = []
+    def field(item, name):
+        return item.get(name) if isinstance(item, dict) else getattr(item, name, None)
+    for item in templates:
+        if retired_catalog_template(item):
+            continue
+        category = field(item, 'category')
+        name = field(item, 'name')
+        key = category, _normalize_equipment_name(name)
+        if key[1] in known_names and key not in by_key:
+            continue
+        attrs = field(item, 'attributes') or {}
+        source = by_key.get(key)
+        expected = (source or {}).get('attributes') or {}
+        matches = sum(field(item, name) == source.get(name)
+                      for name in ('price', 'weight', 'volume', 'item_class', 'subcategory')) if source else 0
+        matches += sum(attrs.get(name) == value for name, value in expected.items()
+                       if name not in {'source_order', 'source_description', 'raw_description'})
+        score = (matches, len(attrs), -(field(item, 'id') or 0))
+        if key not in selected:
+            order.append(key)
+        if key not in selected or score > selected[key][0]:
+            selected[key] = score, item
+    return [selected[key][1] for key in order]
 
 
 def additional_water_templates(entries):

@@ -82,7 +82,8 @@ def recipe_by_id(recipe_id):
 
 
 def _template(name):
-    templates=ItemTemplate.query.all();key=normalized(name)
+    from app.services.equipment_catalog import canonical_catalog_templates
+    templates=canonical_catalog_templates(ItemTemplate.query.all());key=normalized(name)
     exact=next((t for t in templates if normalized(t.name)==key),None)
     if exact:return exact
     aliases={
