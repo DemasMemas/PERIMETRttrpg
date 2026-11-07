@@ -25,12 +25,14 @@ def templates():
 
 
 def ingredient_matches(recipe_id, item):
-    if recipe_id not in RECIPES or not isinstance(item, dict):
+    if recipe_id not in {*RECIPES, 'recipe-aa8'} or not isinstance(item, dict):
         return False
     attrs = item.get('attributes') or {}
     species = str(attrs.get('source_mutant') or '').strip().casefold().replace('ё', 'е')
     raw = bool(species) and attrs.get('mutant_part') == 'meat'
     boiled = bool(species) and attrs.get('cooked_meat') == 'boiled'
+    if recipe_id == 'recipe-aa8':
+        return boiled and _radiation(attrs.get('meat_remaining_radiation')) is not None
     if recipe_id == 'recipe-aa15':
         return raw and species != 'туша' and _radiation(attrs.get('radiation')) is not None
     return (raw and _radiation(attrs.get('radiation')) is not None

@@ -127,7 +127,7 @@ def _allocate(data,recipe,*,with_status=False):
     for index,component in enumerate(recipe['components']):
         if _environment(component):continue
         ammo_template=db.session.get(ItemTemplate,component['ammo_template_id']) if component.get('ammo_template_id') else None
-        meat_component = index == 0 and recipe['id'] in {'recipe-aa15', 'recipe-aa16'}
+        meat_component = index == 0 and recipe['id'] in {'recipe-aa8','recipe-aa15', 'recipe-aa16'}
         variants=component.get('alternatives') or [component]
         remaining=None;picked=None;options=[];prior_spent=spent.copy()
         for variant in variants:
@@ -138,7 +138,7 @@ def _allocate(data,recipe,*,with_status=False):
             left=variant['quantity'];trial_spent=prior_spent.copy();trial=[];total=0
             for path,item in candidates:
                 from app.services.flamethrower import charges
-                attrs=item.get('attributes') or {};whole=bool(meat_component or component.get('whole_tank') or component.get('whole_air')
+                attrs=item.get('attributes') or {};whole=bool(meat_component and recipe['id']!='recipe-aa8' or component.get('whole_tank') or component.get('whole_air')
                     or normalized(variant['name']) in {'стеклянная бутылка','пластиковая бутылка','канистра','кастрюля','котелок'})
                 if component.get('ammo_template_id'):
                     from app.services.crafting_ammo import is_plain_ammo

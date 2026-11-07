@@ -133,6 +133,35 @@ def test_high_voltage_pda_battery_doubles_runtime(app):
     assert upgraded['inventory']['pockets'][0]['pdaState']['charge_percent']==99.5
 
 
+def test_sausage_uses_two_boiled_mutant_meat_portions_and_removes_radiation(
+        client,workshop,auth_headers,monkeypatch):
+    from app.services.cooked_meat import ingredient_matches
+    from app.services.equipment_catalog import load_catalog
+    assert not ingredient_matches('recipe-aa8',{'name':'Мясо(вареное)','quantity':2})
+    source=next(item for item in load_catalog() if item['name']=='Колбаса')
+    db.session.add(ItemTemplate(**source))
+    character=workshop['actor_character'];data=deepcopy(character.data)
+    data['skills']['other']['survival']={'base':20,'bonus':0}
+    data['inventory']['pockets']=[
+        {'id':'boiled-mutant','name':'Мясо(вареное) (3 использования)','category':'consumable',
+         'quantity':1,'uses':3,'maxUses':3,'attributes':{'cooked_meat':'boiled',
+             'source_mutant':'Кабан','meat_original_radiation':30,'meat_remaining_radiation':22.5}},
+        {'name':'Хлеб','category':'consumable','quantity':1},
+        {'name':'Бумага','category':'crafting_material','quantity':1},
+    ]
+    character.data=data;db.session.commit()
+    started=call(client,workshop,auth_headers,'start',recipe_id='recipe-aa8')
+    assert started.status_code==200,started.json
+    assert next(item for item in started.json['data']['inventory']['pockets'] if item['id']=='boiled-mutant')['uses']==1
+    workshop['lobby'].game_time_minutes+=60;db.session.commit()
+    monkeypatch.setattr('app.services.crafting.resolve_creation',lambda quote:{'success':True,'roll':100,'automatic':False})
+    finished=call(client,workshop,auth_headers,'finish',job_id=started.json['result']['id'],chosen_loss=[])
+    assert finished.status_code==200,finished.json
+    sausage=next(item for item in finished.json['data']['inventory']['pockets'] if item['name']=='Колбаса')
+    assert sausage['quantity']==5
+    assert 'radiation' not in sausage['attributes']
+
+
 def ammo_workshop(workshop,name='5.45x39'):
     from app.services.equipment_catalog import load_catalog
     from app.services.character_starting_purchase import item_from_template
