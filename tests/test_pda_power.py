@@ -39,6 +39,22 @@ def test_dielectric_alone_survives_electricity_without_recharging(grenade_game):
     assert data['inventory']['pockets'][0]['pdaState']=={'on':True,'charge_percent':20}
 
 
+def test_holding_pda_uses_one_hand_and_stowing_broken_device_is_allowed(client,grenade_game,auth_headers):
+    from app.models import LocationCombatState
+    from app.services.portable_lights import held_hand,held_pda
+    pair=grenade_game;actor=pair['actor_location'];actor.drawn_weapon_index=None
+    LocationCombatState.query.filter_by(location_id=actor.location_id).one().status='idle'
+    data=deepcopy(actor.character.data);data['inventory']['pockets']=[{'id':'held-pda','name':'КПК','category':'misc','quantity':1}]
+    actor.character.data=data;db.session.commit()
+    def use(operation):return client.post(f'/lobbies/characters/{actor.character_id}/portable-lights',headers=auth_headers(pair['actor_user']),json={
+        'operation':operation,'path':['inventory','pockets',0],'source_id':'held-pda','character_revision':actor.character.revision})
+    assert use('pda_hold').status_code==200
+    assert held_hand(actor.character.data) and held_pda(actor.character.data)['id']=='held-pda'
+    data=deepcopy(actor.character.data);data['inventory']['pockets'][0]['pdaState']={'on':False,'charge_percent':50,'broken':True}
+    actor.character.data=data;db.session.commit()
+    assert use('pda_stow').status_code==200 and not held_hand(actor.character.data)
+
+
 def test_dynamo_requires_modification_one_free_hand_and_stops_at_combat_start(client,grenade_game,auth_headers):
     from app.models import LocationCombatState
     from app.services.combat import CombatService

@@ -2096,6 +2096,11 @@ if (socket) {
     socket.on('pda_network_updated',data=>{
         if(Number(data.lobby_id)===Number(window.currentLobbyId))window.dispatchEvent(new Event('pda-network-updated'));
     });
+    socket.on('detonation_pending',data=>{
+        if(Number(data.lobby_id)===Number(window.currentLobbyId)&&window.isGM){
+            void import('./itemControllers.js').then(m=>m.refreshDetonations(window.currentLobbyId));
+        }
+    });
     socket.on('character_moved', (data) => {
         updateCharacterPosition(data.character_id, data.x, data.y, data);
         for (const check of data.slip_checks || []) {

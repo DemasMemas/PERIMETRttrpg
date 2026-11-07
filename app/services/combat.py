@@ -6732,12 +6732,12 @@ class CombatService:
         return 0.1
 
     @staticmethod
-    def _resolve_flash(location_id, epicenter_x, epicenter_y, profile, floor_level=0, target_ids=None):
+    def _resolve_flash(location_id, epicenter_x, epicenter_y, profile, floor_level=0, target_ids=None,scene_context=None):
         from app.services.explosion_geometry import distance as spatial_distance
-        location=db.session.get(Location,location_id)
-        objects=LocationObject.query.filter_by(location_id=location_id).all()
+        location=scene_context['location'] if scene_context else db.session.get(Location,location_id)
+        objects=scene_context['objects'] if scene_context else LocationObject.query.filter_by(location_id=location_id).all()
         results = []
-        for target in LocationCharacter.query.filter_by(location_id=location_id).all():
+        for target in (scene_context['people'] if scene_context else LocationCharacter.query.filter_by(location_id=location_id).all()):
             if target_ids is not None and target.id not in target_ids:
                 continue
             if not target.character:
@@ -6749,7 +6749,7 @@ class CombatService:
                 target, epicenter_x, epicenter_y,
             )
             blindness = CombatService._received_flash(target.character.data or {}, profile.get('blindness'), distance, multiplier)
-            cover=CombatService._explosion_cover(location_id,epicenter_x,epicenter_y,target,floor_level,optical=True)
+            cover=CombatService._explosion_cover(location_id,epicenter_x,epicenter_y,target,floor_level,optical=True,**({'scene_context':scene_context} if scene_context else {}))
             if (cover.get('zones') or {}).get('head'):
                 blindness=0
             data = dict(target.character.data or {})
@@ -6899,7 +6899,7 @@ class CombatService:
         }
 
     @staticmethod
-    def _apply_direct_fire_hit(location_id, x, y, area, target_ids=None):
+    def _apply_direct_fire_hit(location_id, x, y, area, target_ids=None,scene_context=None):
         if not isinstance(area, dict) or area.get('type') != 'fire':
             return []
         rounds = max(
@@ -6909,7 +6909,7 @@ class CombatService:
             ),
         )
         results = []
-        for target in LocationCharacter.query.filter_by(location_id=location_id).all():
+        for target in (scene_context['people'] if scene_context else LocationCharacter.query.filter_by(location_id=location_id).all()):
             if target_ids is not None and target.id not in target_ids:
                 continue
             if not target.character or CombatService._point_distance(target.pos_x,target.pos_y,x,y) > .75:
@@ -6917,6 +6917,7 @@ class CombatService:
             direct_area = {**area, 'burn_rounds': rounds, 'radius': 0.75}
             result = CombatService._apply_area_effect_to_character(
                 direct_area, target, area.get('created_round'),
+                **({'geometry_context':(scene_context['location'],scene_context['objects'])} if scene_context else {}),
             )
             if result:
                 result['direct_hit'] = True
@@ -6937,7 +6938,9 @@ class CombatService:
         return 'head'
 
     @staticmethod
-    def _explosion_cover(location_id, epicenter_x, epicenter_y, target, floor_level=0, optical=False):
+    def _explosion_cover(location_id, epicenter_x, epicenter_y, target, floor_level=0, optical=False,scene_context=None):
+        if scene_context:
+            return {'protection':max(0,min(100,float(scene_context.get('cover_percent',0)))),'grade':'none','zones':{},'objects':[]}
         source = type('ExplosionOrigin', (), {
             'floor_level': floor_level,
             'pos_x': epicenter_x,
@@ -7182,25 +7185,25 @@ class CombatService:
 
     @staticmethod
     def resolve_explosion(location_id, epicenter_x, epicenter_y, profile, *, round_number=0, floor_level=0,
-                          target_ids=None,damage_objects=True,create_area=True,live_shield_ids=()):
+                          target_ids=None,damage_objects=True,create_area=True,live_shield_ids=(),scene_context=None):
         from app.services.location_navigation import level_of
         from app.services.explosion_choice import hold
-        if target_ids is None and hold(location_id,epicenter_x,epicenter_y,profile,floor_level):
+        if not scene_context and target_ids is None and hold(location_id,epicenter_x,epicenter_y,profile,floor_level):
             return {'profile':profile['key'],'name':profile['name'],'epicenter':{'x':epicenter_x,'y':epicenter_y},
                     'radius':profile.get('radius',0),'floor_level':floor_level,'targets':[],'objects':[],
                     'area':None,'awaiting_gm':True}
         from app.services import noise
-        noise_location=db.session.get(Location,location_id)
-        noise_objects=LocationObject.query.filter_by(location_id=location_id).all()
+        noise_location=scene_context['location'] if scene_context else db.session.get(Location,location_id)
+        noise_objects=scene_context['objects'] if scene_context else LocationObject.query.filter_by(location_id=location_id).all()
         noise_volume=CombatService._coerce_float(profile.get('noise'),0)
         noise_context=noise.space(noise_location,noise_objects,epicenter_x,epicenter_y,floor_level) if noise_volume>0 else None
-        source_actor=LocationCharacter.query.filter_by(location_id=location_id,character_id=profile.get('source_character_id')).first() if profile.get('source_character_id') else None
+        source_actor=LocationCharacter.query.filter_by(location_id=location_id,character_id=profile.get('source_character_id')).first() if profile.get('source_character_id') and not scene_context else None
         living={p.id for p in LocationCharacter.query.filter_by(location_id=location_id).all() if p.character and CombatService._character_condition(p.character.data)['state']!='dead'} if source_actor else set()
         def finish(payload):
             from app.services.character_rules import explosion_occurred
-            if profile.get('blast_base',0)>0 or profile.get('fragment',0)>0 or profile.get('effect')=='flash':explosion_occurred(location_id)
+            if not scene_context and (profile.get('blast_base',0)>0 or profile.get('fragment',0)>0 or profile.get('effect')=='flash'):explosion_occurred(location_id)
             payload['noise_targets']=noise.apply(noise_location,epicenter_x,epicenter_y,floor_level,noise_volume,
-                target_ids=target_ids,objects=noise_objects,context=noise_context)
+                target_ids=target_ids,objects=noise_objects,context=noise_context,**({'people':scene_context['people']} if scene_context else {}))
             by_id={r['character_id']:r for r in payload['noise_targets']}
             for target in payload.get('targets',[]):
                 if target['character_id'] in by_id:target['deafness']=by_id[target['character_id']]['deafness']
@@ -7220,6 +7223,7 @@ class CombatService:
                 'targets': CombatService._resolve_flash(
                     location_id, epicenter_x, epicenter_y, profile, **({'floor_level':floor_level} if floor_level else {}),
                     **({'target_ids':target_ids} if target_ids is not None else {}),
+                    **({'scene_context':scene_context} if scene_context else {}),
                 ),
                 'objects': [],
                 'area': None,
@@ -7231,7 +7235,7 @@ class CombatService:
             if floor_level:
                 area['floor_level'] = floor_level
             from app.services.cloud_geometry import prepare
-            prepare(db.session.get(Location,location_id),LocationObject.query.filter_by(location_id=location_id).all(),area)
+            prepare(noise_location,noise_objects,area)
             return finish({
                 'profile': profile['key'],
                 'name': profile['name'],
@@ -7241,16 +7245,17 @@ class CombatService:
                 'targets': CombatService._apply_direct_fire_hit(
                     location_id, epicenter_x, epicenter_y, area,
                     **({'target_ids':target_ids} if target_ids is not None else {}),
+                    **({'scene_context':scene_context} if scene_context else {}),
                 ),
                 'objects': [],
                 'area': area if create_area else None,
             })
         radius = max(0, CombatService._coerce_float(profile.get('radius'), 0))
         target_results = []
-        objects=LocationObject.query.filter_by(location_id=location_id).all()
-        location=db.session.get(Location,location_id)
+        objects=noise_objects
+        location=noise_location
         indoors=CombatService._explosion_is_indoors(location,objects,epicenter_x,epicenter_y,floor_level)
-        people=CombatService._unique_location_characters(LocationCharacter.query.filter_by(location_id=location_id).all())
+        people=scene_context['people'] if scene_context else CombatService._unique_location_characters(LocationCharacter.query.filter_by(location_id=location_id).all())
         from app.services.explosion_geometry import distance as spatial_distance,height as surface_height
         living=[(c.id,c.pos_x,c.pos_y,c.floor_level or 0) for c in people
                 if c.character and (c.id in live_shield_ids or CombatService._character_condition(c.character.data or {})['state']!='dead')]
@@ -7271,6 +7276,7 @@ class CombatService:
             crystal_context={'item':crystal_item,'active':liquid_crystal_ready(crystal_item)}
             cover = CombatService._explosion_cover(
                 location_id, epicenter_x, epicenter_y, target, **({'floor_level':floor_level} if floor_level else {}),
+                **({'scene_context':scene_context} if scene_context else {}),
             )
             # Живое тело на линии взрыва прикрывает следующую цель целиком.
             from app.services.movement_geometry import CHARACTER_RADIUS
@@ -7487,6 +7493,7 @@ class CombatService:
         CombatService._apply_direct_fire_hit(
             location_id, epicenter_x, epicenter_y, area,
             **({'target_ids':target_ids} if target_ids is not None else {}),
+            **({'scene_context':scene_context} if scene_context else {}),
         )
         return finish({
             'profile': profile['key'],
@@ -12965,6 +12972,8 @@ class CombatService:
                 CombatService._advance_character_time(round_character, 6)
             from app.services.portable_lights import advance_ground
             advance_ground(location_id,6)
+            from app.services.item_controllers import advance as advance_controllers
+            advance_controllers(location.lobby_id,6,location_id)
             state.round_number += 1
             from app.services.sniper_position import expire as expire_sniper_position
             expire_sniper_position(location_id,state)
@@ -13898,6 +13907,7 @@ class CombatService:
         if action_key=='place_cover':
             action={'key':'place_cover','label':'Установка укрытия','action_points':5,'free_actions':0,'movement_points':0}
         if action_key=='trap':action={'key':'trap','label':'Ловушка','action_points':5,'free_actions':0,'movement_points':0}
+        if action_key=='controller':action={'key':'controller','label':'Взрыватель','action_points':5,'free_actions':0,'movement_points':0}
         if not action:
             raise ValidationError("Unknown action")
 
@@ -13936,6 +13946,11 @@ class CombatService:
         order_plan=None
         reduction_plan=None
         cover_placement=None
+        if action_key=='controller':
+            from app.services.item_controllers import prepare as controller_plan,LABELS
+            controller_prepared=controller_plan(character,data,attribute_choice,user_id)
+            special_action_cost=controller_prepared['action_points']
+            action['label']=LABELS[controller_prepared['operation']]
         if action_key=='trap':
             from app.services.traps import prepare as trap_plan
             trap_prepared=trap_plan(character,data,attribute_choice,user_id)
@@ -14520,6 +14535,9 @@ class CombatService:
             explosive_profile = CombatService._explosive_profile(explosive_item)
             if not explosive_profile:
                 raise ValidationError("This explosive does not have a damage profile yet")
+            controlled_explosive=(explosive_item.get('controllerState') or {}).get('kind') in {'remote_detonator','timer'}
+            if controlled_explosive and explosive_item.get('quantity',1)!=1:raise ValidationError('Заряд со взрывателем должен быть отдельным предметом')
+            if controlled_explosive and fuse_mode=='delay':raise ValidationError('На заряде установлен отдельный контроллер')
             if source=='weapon':
                 from app.services.equipment_modifications import explosive_profile as modified_explosive_profile
                 explosive_profile=modified_explosive_profile(explosive_weapon,explosive_profile)
@@ -14641,6 +14659,9 @@ class CombatService:
                     throw_check['obstacle'] if source == 'hand' else 0
                 ),
             }
+            if controlled_explosive:
+                explosive_details['controlled_item']=deepcopy(explosive_item)
+                explosive_details['airburst']=False
         elif action_key=='prosthesis':
             from app.services.prostheses import plan
             equipment_action_details=plan(data,equipment_operation,equipment_slot,item_path)
@@ -17107,6 +17128,10 @@ class CombatService:
             from app.services.traps import execute as execute_trap
             narrative_action_details=execute_trap(character,data,attribute_choice,user_id,state)
             character.character.data=data;flag_modified(character.character,'data')
+        if action_key=='controller':
+            from app.services.item_controllers import execute as execute_controller
+            narrative_action_details=execute_controller(character,data,attribute_choice,user_id,state)
+            character.character.data=data;flag_modified(character.character,'data')
         if action_key=='prepare_water':
             from app.services.burning import water_item
             water,litres=water_item(data,item_path)
@@ -17212,7 +17237,17 @@ class CombatService:
                     explosive_details.get('roll'),
                 )
             fuse = str(explosive_details['profile'].get('fuse') or 'instant')
-            if fuse == 'instant':
+            controlled_item=explosive_details.get('controlled_item')
+            if controlled_item and not explosive_details.get('diamond_fumble'):
+                controlled_item['quantity']=1
+                controlled_item['controllerState']['explosive_profiles']=[deepcopy(explosive_details['profile'])]
+                obj=LocationObject(location_id=location_id,name=controlled_item.get('name') or 'Заряд',type='ground_item',
+                    tile_x=explosive_details['impact']['x'],tile_y=explosive_details['impact']['y'],properties={
+                        'contents':[controlled_item],'is_ground_item':True,'passable':True,
+                        'floor_level':explosive_details['floor_level'],'interactions':['open_container']})
+                db.session.add(obj);db.session.flush()
+                explosive_details.update(ground_object_id=obj.id,ground_object_event='created',detonated=False)
+            elif fuse == 'instant':
                 explosive_details['explosion'] = CombatService.resolve_explosion(
                     location_id,
                     explosive_details['impact']['x'],

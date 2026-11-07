@@ -7,7 +7,7 @@ MAX_MONEY = 2**53 - 1
 
 
 def _contains_individual_items(item):
-    if any(item.get(key) for key in ('contents','installedModules','installedMagazine','fixedAmmo','ammo','loadedGrenade')):
+    if any(item.get(key) for key in ('contents','installedModules','installedMagazine','fixedAmmo','ammo','loadedGrenade','trapGrenades')) or (item.get('controllerState') or {}).get('kind'):
         return True
     return any(_contains_individual_items(pouch) for pouch in item.get('pouches') or [] if isinstance(pouch,dict))
 

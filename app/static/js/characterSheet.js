@@ -10072,6 +10072,9 @@ window.reloadGrenadeLauncher = async function(weaponIndex) {
 
 // Использование предмета из инвентаря (для расходников, гранат и т.д.)
 async function useItem(item, itemPath, options = {}) {
+    if(['remote_detonator','timer'].includes(item.attributes?.device_kind)||['Дистанционный взрыватель','Таймер'].includes(item.name)){
+        return openItemController(item,itemPath);
+    }
     if(item.attributes?.device_kind==='dosimeter'||item.name==='Дозиметр'){
         const {openDosimeter}=await import('./dosimeter.js');
         return openDosimeter({characterId:currentCharacterId,itemId:item.id,itemPath,operate:payload=>window.operatePortableLight(payload)});
@@ -10106,6 +10109,13 @@ async function useItem(item, itemPath, options = {}) {
     } else {
         showNotification('Невозможно использовать этот предмет');
     }
+}
+
+async function openItemController(item,path){
+    const {openController}=await import('./itemControllers.js');
+    return openController({characterId:currentCharacterId,itemId:item.id,itemPath:path,onSaved:async data=>{
+        currentCharacterData=data;await renderInventoryTab(data);recalculateInventoryTotals();
+    }});
 }
 
 function getRepairTargetCategory(item) {
@@ -12474,6 +12484,11 @@ async function useGrenade(item, itemPath, options = {}) {
         `;
         document.body.appendChild(modal);
         modal.style.display = 'flex';
+        if(item.controllerState?.kind){
+            modal.querySelector('p').textContent='После броска заряд останется на земле с установленным контроллером.';
+            modal.querySelector('[data-fuse="normal"]').textContent='Бросить заряд с контроллером';
+            modal.querySelector('[data-fuse="delay"]').remove();
+        }
         const close = () => modal.remove();
         modal.querySelector('.close').onclick = close;
         modal.querySelector('[data-cancel]').onclick = close;
@@ -16317,7 +16332,7 @@ function renderBackpackItem(item, index, parentPath, parentContainer, allTemplat
     qtyDownBtn.className = 'btn btn-sm btn-secondary';
     qtyDownBtn.textContent = '−';
     qtyDownBtn.title = 'Уменьшить количество';
-    if (isLiquidCanister(item)) qtyDownBtn.disabled = true;
+    if (isLiquidCanister(item)||item.controllerState?.kind) qtyDownBtn.disabled = true;
     qtyDownBtn.style.width = '28px';
     qtyDownBtn.style.height = '28px';
     qtyDownBtn.style.padding = '0';
@@ -16330,7 +16345,7 @@ function renderBackpackItem(item, index, parentPath, parentContainer, allTemplat
     const qtyInput = document.createElement('input');
     qtyInput.dataset.widgetKey = 'quantity';
     qtyInput.type = 'number';
-    if (isLiquidCanister(item)) qtyInput.disabled = true;
+    if (isLiquidCanister(item)||item.controllerState?.kind) qtyInput.disabled = true;
     qtyInput.step = liquidCanisterKind(item) ? '0.1' : '1';
     if (liquidCanisterKind(item)) qtyInput.min = '0.1';
     qtyInput.className = 'form-control number-input';
@@ -16345,7 +16360,7 @@ function renderBackpackItem(item, index, parentPath, parentContainer, allTemplat
     qtyUpBtn.className = 'btn btn-sm btn-secondary';
     qtyUpBtn.textContent = '+';
     qtyUpBtn.title = 'Увеличить количество';
-    if (isLiquidCanister(item)) qtyUpBtn.disabled = true;
+    if (isLiquidCanister(item)||item.controllerState?.kind) qtyUpBtn.disabled = true;
     qtyUpBtn.style.width = '28px';
     qtyUpBtn.style.height = '28px';
     qtyUpBtn.style.padding = '0';
@@ -16483,6 +16498,11 @@ function renderBackpackItem(item, index, parentPath, parentContainer, allTemplat
 
     // Использовать
     const usableCategories = ['consumable', 'grenade', 'device'];
+    if(item.controllerState?.kind){
+        const controllerButton=document.createElement('button');controllerButton.type='button';controllerButton.className='btn btn-sm btn-secondary';
+        controllerButton.textContent='Взрыватель';controllerButton.title='Таймер и отсоединение провода';controllerButton.dataset.widgetKey='controller';
+        controllerButton.onclick=event=>{event.stopPropagation();void openItemController(item,itemPath);};actionsDiv.append(controllerButton);
+    }
     const isBattery = (item.category === 'device' && item.subcategory === 'battery');
     if ((usableCategories.includes(item.category) || item.attributes?.usable ||
         (item.category === 'misc' && item.name === 'КПК')) && !isBattery) {

@@ -14,6 +14,11 @@ from app.services.exceptions import ConflictError, PermissionDenied, ValidationE
 def _bound_items(actor, payload):
     data = actor.character.data or {}
     result = {}
+    if payload.get('action_key')=='controller':
+        from app.services.item_controllers import _get
+        choice=payload.get('attribute_choice') or {}
+        for key in ('item_path','controller_path','pda_path'):
+            if choice.get(key) is not None:result['controller_'+key]=deepcopy(_get(data,choice[key]))
     if payload.get('action_key')=='trap':
         from app.services.traps import _item
         choice=payload.get('attribute_choice') or {}
@@ -194,6 +199,9 @@ def validate_deferred_conditions(actor, row):
         plan(actor,actor.character.data,payload.get('attribute_choice'))
     if kind=='trap':
         from app.services.traps import prepare
+        prepare(actor,actor.character.data,payload.get('attribute_choice'),actor.location.lobby.gm_id)
+    if kind=='controller':
+        from app.services.item_controllers import prepare
         prepare(actor,actor.character.data,payload.get('attribute_choice'),actor.location.lobby.gm_id)
     if kind=='prosthesis':
         from app.services.prostheses import plan

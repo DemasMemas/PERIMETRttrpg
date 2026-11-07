@@ -285,7 +285,7 @@ def load_ammunition(data, request, *, combat=False):
         if moved:
             # Keep each variant's complete ballistic data; never combine unlike ammunition.
             loaded = deepcopy(stack)
-            for key in ('id', 'weight', 'volume', 'ammo'):
+            for key in (('ammo',) if stack.get('controllerState') else ('id', 'weight', 'volume', 'ammo')):
                 loaded.pop(key, None)
             loaded['quantity'] = moved
             last = ammo[-1] if ammo else None

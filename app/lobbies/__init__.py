@@ -5269,6 +5269,43 @@ def character_pda_account(character_id):
     return jsonify(account_status(character_id, int(get_jwt_identity()))), 200
 
 
+@lobbies_bp.route('/characters/<int:character_id>/controllers',methods=['GET','POST'])
+@jwt_required()
+def character_controllers(character_id):
+    from app.services.item_controllers import snapshot,operate,publish
+    user_id=int(get_jwt_identity())
+    if request.method=='GET':
+        character=db.session.get(LobbyCharacter,character_id)
+        if not character:raise NotFoundError('Персонаж не найден')
+        try:path=json.loads(request.args.get('item_path','null'))
+        except (ValueError,TypeError):raise ValidationError('Выберите КПК')
+        return jsonify(snapshot(character,user_id,{'item_path':path,'item_id':request.args.get('item_id'),
+            'location_id':request.args.get('location_id',type=int)}))
+    character,result=operate(character_id,user_id,request.get_json(silent=True) or {})
+    publish(character.lobby_id,result)
+    emit_character_update({'character_id':character.id,'updates':{'data':character.data_snapshot()},'source':'controller'})
+    return jsonify({'data':character.data_snapshot(),'result':result})
+
+
+@lobbies_bp.route('/<int:lobby_id>/detonations',methods=['GET'])
+@jwt_required()
+@requires_gm
+def pending_detonations(lobby_id,lobby):
+    from app.services.world_detonations import pending
+    return jsonify({'events':pending(lobby_id,lobby.gm_id)})
+
+
+@lobbies_bp.route('/<int:lobby_id>/detonations/<event_id>',methods=['POST'])
+@jwt_required()
+@requires_gm
+def resolve_world_detonation(lobby_id,event_id,lobby):
+    from app.services.world_detonations import add_target
+    result=add_target(lobby_id,lobby.gm_id,event_id,request.get_json(silent=True) or {})
+    from app.services.traps import publish_effects
+    publish_effects(result)
+    return jsonify({'event':result})
+
+
 @lobbies_bp.route('/characters/<int:character_id>/pda-network',methods=['GET','POST'])
 @jwt_required()
 def character_pda_network(character_id):
@@ -5417,6 +5454,9 @@ def perform_location_combat_action(lobby_id, location_id, lobby, participant):
     publish_traps(location_id,(result.get('jump') or {}).get('trap_ids',[]))
     from app.services.traps import publish_effects as publish_trap_effects
     if result.get('action')=='trap':publish_trap_effects(result.get('narrative_action'))
+    if result.get('action')=='controller':
+        from app.services.item_controllers import publish as publish_controller
+        publish_controller(lobby_id,result.get('narrative_action') or {})
     if result.get('jump'):publish_trap_effects(result['jump'].get('traps',[]))
     pending_nodes = [result]
     while pending_nodes:

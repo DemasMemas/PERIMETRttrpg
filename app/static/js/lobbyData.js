@@ -46,6 +46,9 @@ export async function loadLobbyInfo() {
 
         window.isGM = (lobby.gm_id == localStorage.getItem('user_id'));
         AppState.setIsGM(window.isGM);
+        if(window.isGM){
+            const {refreshDetonations}=await import('./itemControllers.js');void refreshDetonations(currentLobbyId);
+        }
         applyLobbyTime(lobby);
         const dayInput = document.getElementById('lobby-game-day');
         const timeInput = document.getElementById('lobby-game-time');

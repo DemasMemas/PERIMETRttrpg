@@ -302,6 +302,10 @@ if(typeof renderFacingPreview==='function'){const original=renderFacingPreview;r
             await require('./traps.browser.cjs')({page,request,token,lobby,base,safeSession});
             return;
         }
+        if (safeSession && process.env.VTT_SAFE_SCENARIO === 'controllers') {
+            await require('./controllers.browser.cjs')({page,request,token,lobby,base,safeSession});
+            return;
+        }
         if (safeSession && process.env.VTT_SAFE_SCENARIO === 'electronics') {
             await require('./electronics.browser.cjs')({page,request,token,lobby,base,connect,debugPort,safeSession});
             return;

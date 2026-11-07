@@ -86,6 +86,8 @@ def preserve(current,incoming):
     meta=incoming.setdefault('health',{}).setdefault('combatMeta',{})
     if 'pdaDynamo' in old:meta['pdaDynamo']=deepcopy(old['pdaDynamo'])
     else:meta.pop('pdaDynamo',None)
+    if 'heldPda' in old:meta['heldPda']=deepcopy(old['heldPda'])
+    else:meta.pop('heldPda',None)
     if 'portableLights' in old:meta['portableLights']=deepcopy(old['portableLights'])
     else:meta.pop('portableLights',None)
     states={item.get('id'):item.get('lightPower') for _,item in walk(current or {}) if item.get('id')}
@@ -131,7 +133,12 @@ def preserve(current,incoming):
 
 def held_hand(data):
     ids={item.get('id') for _,item in walk(data)}
-    return bool(dynamo_device(data)) or any(binding.get('mount')=='hand' and binding.get('id') in ids for binding in bindings(data))
+    return bool(held_pda(data) or dynamo_device(data)) or any(binding.get('mount')=='hand' and binding.get('id') in ids for binding in bindings(data))
+
+
+def held_pda(data):
+    identity=(((data.get('health') or {}).get('combatMeta') or {}).get('heldPda') or {}).get('id')
+    return next((item for _,item in walk(data) if identity and item.get('id')==identity and definition(item)=='pda'),None)
 
 
 def dynamo_device(data):
@@ -203,14 +210,10 @@ def advance_ground(location_id,seconds):
     from app.extensions import socketio
     from app.schemas.location import LocationObjectSchema
     updated=[]
-    for obj in LocationObject.query.filter_by(location_id=location_id,type='ground_item').all():
-        props=deepcopy(obj.properties or {});changed=False
-        for item in props.get('contents') or []:
-            state=item.get('glowState') if glow(item) else None
-            if not isinstance(state,dict) or not state.get('activated'):continue
-            before=state.get('remaining_seconds',0)
-            state['remaining_seconds']=max(0,float(before)-max(0,seconds))
-            changed=changed or state['remaining_seconds']!=before
+    for obj in LocationObject.query.filter_by(location_id=location_id).all():
+        if not (obj.properties or {}).get('contents'):continue
+        props=deepcopy(obj.properties or {})
+        changed=advance({'inventory':{'backpack':props['contents']}},seconds)
         if changed:
             obj.properties=props;updated.append(obj)
             db.session.flush()
@@ -247,7 +250,14 @@ def advance(data,seconds=0,*,battle_end=False):
         if glow(item) or definition(item)=='pda':continue
         state=power(item);before=deepcopy((state,binding))
         _advance_power(state,binding,seconds,battle_end)
+        if 'scheduled_on' in state:state['scheduled_on']=binding.get('on',False)
         changed=changed or before!=(state,binding)
+    bound_ids={entry.get('id') for entry in bindings(data)}
+    for identity,item in items.items():
+        if identity in bound_ids or not (item.get('lightPower') or {}).get('scheduled_on'):continue
+        status=power(item);before=deepcopy(status);binding={'on':True}
+        _advance_power(status,binding,seconds,battle_end)
+        status['scheduled_on']=binding['on'];changed=changed or before!=status
     for path,item in nvg_items(data):
         state=power(item);before=deepcopy(item)
         mounted=path[:3]==['equipment','helmet','installedModules']
@@ -272,7 +282,7 @@ def start_battle(data):
     return changed
 
 
-def advance_lobby(lobby,seconds):
+def _advance_lobby_devices(lobby,seconds):
     from app.services.equipment_care import has_timers
     updated=[]
     for character in LobbyCharacter.query.filter_by(lobby_id=lobby.id).all():
@@ -280,13 +290,28 @@ def advance_lobby(lobby,seconds):
             for _,item in walk(character.data or {}))
         has_pda=any(definition(item)=='pda' for _,item in walk(character.data or {}))
         has_dosimeter=any(definition(item)=='dosimeter' for _,item in walk(character.data or {}))
-        if not bindings(character.data) and not nvg_items(character.data or {}) and not has_timers(character.data or {}) and not has_glow and not has_pda and not has_dosimeter:continue
+        has_scheduled=any((item.get('lightPower') or {}).get('scheduled_on') for _,item in walk(character.data or {}))
+        if not bindings(character.data) and not nvg_items(character.data or {}) and not has_timers(character.data or {}) and not has_glow and not has_pda and not has_dosimeter and not has_scheduled:continue
         data=deepcopy(character.data or {})
         if advance(data,seconds):
             character.data=data;flag_modified(character,'data');updated.append(character)
     if seconds>0:
         for location in Location.query.filter_by(lobby_id=lobby.id).all():advance_ground(location.id,seconds)
     return updated
+
+
+def advance_lobby(lobby,seconds):
+    from app.services.item_controllers import advance as advance_controllers,next_due
+    remaining=max(0,seconds);updated={}
+    while remaining>0:
+        step=next_due(lobby.id,remaining)
+        for character in _advance_lobby_devices(lobby,step):updated[character.id]=character
+        for result in advance_controllers(lobby.id,step):
+            for identity in result.get('affected_character_ids',[]):
+                character=db.session.get(LobbyCharacter,identity)
+                if character:updated[identity]=character
+        remaining=max(0,remaining-step)
+    return list(updated.values())
 
 
 def ready_sources(actor,*,objects=None):
@@ -481,11 +506,27 @@ def operate(character_id,user_id,payload):
         character.data=data;flag_modified(character,'data')
         return character,actor,{'operation':operation,'action_points':cost,'source_id':selected['id']}
     if definition(selected)=='pda':
-        if operation not in {'pda_toggle','pda_battery','pda_import_book','pda_dynamo_start','pda_dynamo_stop','pda_jammer'}:
+        if operation not in {'pda_toggle','pda_battery','pda_import_book','pda_dynamo_start','pda_dynamo_stop','pda_jammer','pda_hold','pda_stow'}:
             raise ValidationError('Выберите действие с КПК')
         status=pda_state(selected)
-        if status.get('broken'):raise ValidationError('КПК вышел из строя')
-        if operation=='pda_jammer':
+        if status.get('broken') and operation not in {'pda_hold','pda_stow'}:raise ValidationError('КПК вышел из строя')
+        if operation in {'pda_hold','pda_stow'}:
+            meta=data.setdefault('health',{}).setdefault('combatMeta',{})
+            if operation=='pda_stow':
+                if (meta.get('heldPda') or {}).get('id')!=selected['id']:raise ValidationError('Этот КПК не находится в руке')
+                meta.pop('heldPda',None);cost=1 if actor else 0
+            elif (meta.get('heldPda') or {}).get('id')!=selected['id']:
+                same_dynamo=(meta.get('pdaDynamo') or {}).get('id')==selected['id']
+                from app.services.weapon_grip import functional_arms
+                present=actor or LocationCharacter.query.filter_by(character_id=character_id).first()
+                if not same_dynamo:
+                    if held_hand(data):raise ValidationError('Рука уже занята переносным прибором')
+                    if present and not CombatService._has_usable_free_hand(present):raise ValidationError('Для КПК нужна свободная рука')
+                    if not present and functional_arms(data)-int(bool(meta.get('heldWaterItem')))-int(bool(meta.get('bodyTransport')))<1:raise ValidationError('Для КПК нужна свободная рука')
+                else:meta.pop('pdaDynamo',None)
+                meta['heldPda']={'id':selected['id']}
+                cost=max(1,int(calculate_inventory_access(data,path,selected)['retrieval_action_points'])) if actor and not same_dynamo else 0
+        elif operation=='pda_jammer':
             from app.services.equipment_modifications import installed
             if not any(mod.get('ruleId')=='pda-b16' for mod in installed(selected)):raise ValidationError('На КПК нет глушилки')
             if type(payload.get('enabled')) is not bool:raise ValidationError('Выберите состояние глушилки')
@@ -505,8 +546,10 @@ def operate(character_id,user_id,payload):
                 if status['charge_percent']>=100:raise ValidationError('КПК полностью заряжен')
                 from app.services.weapon_grip import functional_arms
                 present=LocationCharacter.query.filter_by(character_id=character_id).first()
-                if held_hand(data) or meta.get('pdaDynamo'):raise ValidationError('Рука уже занята переносным устройством')
-                if present:
+                was_held=(meta.get('heldPda') or {}).get('id')==selected['id']
+                if (held_hand(data) and not was_held) or meta.get('pdaDynamo'):raise ValidationError('Рука уже занята переносным устройством')
+                if was_held:meta.pop('heldPda',None)
+                elif present:
                     if not CombatService._has_usable_free_hand(present):raise ValidationError('Для динамо-машины нужна свободная рука')
                 elif functional_arms(data)-int(bool(meta.get('heldWaterItem')))-int(bool(meta.get('bodyTransport')))<1:
                     raise ValidationError('Для динамо-машины нужна свободная рука')
@@ -597,7 +640,7 @@ def operate(character_id,user_id,payload):
         if definition(selected)=='module' and mount!='weapon':raise ValidationError('Оружейный модуль крепится к оружию')
         if glow(selected) and (mount!='hand' or (selected.get('glowState') or {}).get('remaining_seconds',0)<=0):
             raise ValidationError('Этот источник света нельзя снова активировать')
-        binding={'id':selected['id'],'mount':mount,'on':bool(glow(selected))}
+        binding={'id':selected['id'],'mount':mount,'on':bool(glow(selected) or (selected.get('lightPower') or {}).get('scheduled_on'))}
         if mount in {'weapon','taped'}:
             index=payload.get('weapon_index')
             weapons=data.get('weapons') or []
@@ -621,6 +664,7 @@ def operate(character_id,user_id,payload):
         if not binding:raise ValidationError('Сначала подготовьте фонарь')
         if not binding.get('on') and power(selected)['uses_left']<=0:raise ValidationError('Батарейка фонаря разряжена')
         cost=1 if actor else 0;binding['on']=not binding.get('on')
+        if 'scheduled_on' in power(selected):power(selected)['scheduled_on']=binding['on']
         if binding['on']:binding['period_used']=True
         if actor:binding['battle_used']=True
     elif operation in {'stow','battery'}:

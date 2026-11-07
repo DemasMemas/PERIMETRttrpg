@@ -116,6 +116,10 @@ export function itemTooltipModel(template = {}, item = {}) {
     }
     if (item.uses != null) add(metrics, `Использований: ${item.uses}${item.maxUses != null ? ` / ${item.maxUses}` : ''}`);
     if (item.lightPower?.uses_left!=null) add(metrics,`Батарейка: ${item.lightPower.uses_left} / 10`);
+    if(item.controllerState?.kind){
+        const state=item.controllerState;
+        add(rules,state.error||(!state.armed?state.disconnected||state.kind!=='timer'?'Провод взрывателя отсоединён':'Таймер остановлен':state.kind==='timer'?`Таймер: ${state.remaining_seconds} с${state.mode==='on'?' · включить':state.mode==='off'?' · выключить':''}`:'Установлен дистанционный взрыватель'));
+    }
     if (water) {
         const container = /канистр|кастрюл|ведро|бочк/i.test(item.name || template.name || '');
         const capacity = Number(attrs.water_litres ?? item.water_litres ?? (container?0:1));

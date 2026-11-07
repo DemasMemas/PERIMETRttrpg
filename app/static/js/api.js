@@ -58,6 +58,14 @@ export const Server = {
         method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}),
     getCrafting: characterId => apiFetch(`/lobbies/characters/${characterId}/crafting`),
     getPdaAccount: characterId => apiFetch(`/lobbies/characters/${characterId}/pda-account`),
+    getControllers: (characterId,selection={}) => apiFetch(`/lobbies/characters/${characterId}/controllers?${new URLSearchParams({
+        ...(selection.item_path?{item_path:JSON.stringify(selection.item_path)}:{}),...(selection.item_id?{item_id:selection.item_id}:{}),
+        ...(selection.location_id?{location_id:selection.location_id}:{})})}`),
+    operateController: (characterId,payload) => apiFetch(`/lobbies/characters/${characterId}/controllers`,{
+        method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}),
+    getDetonations: lobbyId => apiFetch(`/lobbies/${lobbyId}/detonations`),
+    resolveDetonation: (lobbyId,eventId,payload) => apiFetch(`/lobbies/${lobbyId}/detonations/${encodeURIComponent(eventId)}`,{
+        method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}),
     changePdaAccount: (characterId, operation, payload = {}) => apiFetch(`/lobbies/characters/${characterId}/pda-account/${operation}`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
     }),

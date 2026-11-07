@@ -20241,13 +20241,22 @@ async function showContainerInteractionMenu(object) {
                 return;
             }
             currentEntries.forEach((entry) => {
-                targetList.appendChild(buildTransferRow(entry, '←', async (amount = 1) => {
+                const row=buildTransferRow(entry, '←', async (amount = 1) => {
                     if (!selectedCharacterId) {
                         showNotification('Выберите персонажа', 'system');
                         return;
                     }
                     await transferEntry(entry, amount, 'to_character');
-                }));
+                });
+                if(entry.item.controllerState?.armed){
+                    const defuse=document.createElement('button');defuse.type='button';defuse.className='btn btn-sm btn-secondary';defuse.textContent='Оторвать провод · 3 ОД';
+                    defuse.onclick=async event=>{
+                        event.stopPropagation();defuse.disabled=true;
+                        try{const {runController}=await import('./itemControllers.js');await runController(selectedCharacterId,{operation:'disarm',attachment_id:entry.item.controllerState.id});closeContainerInteractionMenu();}
+                        catch(error){showNotification(error.message,'system');defuse.disabled=false;}
+                    };row.append(defuse);
+                }
+                targetList.append(row);
             });
         };
         renderContainerEntries();

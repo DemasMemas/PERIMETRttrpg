@@ -91,13 +91,13 @@ def affected_ids(location,objects,event,people):
     return result
 
 
-def apply(location,x,y,level,volume,*,count=1,target_ids=None,objects=None,context=None):
+def apply(location,x,y,level,volume,*,count=1,target_ids=None,objects=None,context=None,people=None):
     from app.services.combat import CombatService
     volume=max(0,CombatService._coerce_float(volume,0))
     if volume<=0 or count<=0:return []
     if objects is None:objects=LocationObject.query.filter_by(location_id=location.id).all()
     context=context or space(location,objects,x,y,level)
-    people=CombatService._unique_location_characters(LocationCharacter.query.filter_by(location_id=location.id).all())
+    if people is None:people=CombatService._unique_location_characters(LocationCharacter.query.filter_by(location_id=location.id).all())
     results=[]
     for target in recipients(location,objects,x,y,level,volume,people,context=context):
         if target_ids is not None and target.id not in target_ids:continue

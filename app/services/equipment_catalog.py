@@ -54,8 +54,8 @@ def trap_templates():
 
 
 def electronic_templates():
-    from app.services.electronics import templates
-    return templates()
+    from app.services.electronics import templates,controller_templates
+    return templates()+controller_templates()
 
 
 def craft_mold_templates(creation):

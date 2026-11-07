@@ -18,6 +18,8 @@ logger = logging.getLogger(__name__)
 
 
 def _preserve_intoxication_status(current_data, incoming_data, *, is_gm=True):
+    from app.services.item_controllers import preserve as preserve_controllers
+    preserve_controllers(current_data,incoming_data)
     from app.services.flamethrower import preserve as preserve_flame_resources
     preserve_flame_resources(current_data,incoming_data)
     from app.services.equipment_modifications import preserve as preserve_modifications
@@ -187,7 +189,7 @@ class CharacterService:
         return list(dict.fromkeys([*visible_to, *editable])), editable
 
     @staticmethod
-    def sync_location_health(character, health,character_data=None):
+    def sync_location_health(character, health,character_data=None,notify_observed=True):
         """Keep sheet effects, body zones and the placed model in sync."""
         health['effects'] = normalize_effect_list(health.get('effects') or [])
         sync_health_derived_statuses(health)
@@ -225,7 +227,7 @@ class CharacterService:
                 model.weapon_braced = False
                 model.braced_weapon_index = None
             from app.services.combat import CombatService
-            CombatService._notify_observed_death(model,character_data=character_data)
+            if notify_observed:CombatService._notify_observed_death(model,character_data=character_data)
         return posture_updates
 
     @staticmethod

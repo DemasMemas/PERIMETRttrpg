@@ -1,10 +1,12 @@
 import { Server } from './api.js';
 import { showNotification } from './utils.js';
 import { createPdaNetworkView } from './pdaNetworkView.js';
+import { renderRemoteCharges } from './itemControllers.js';
 
 const sections = [
     ['chat', 'Общий чат', 'Сообщения участников Зоны'],
     ['contacts', 'Контакты', 'Люди и каналы связи'],
+    ['charges', 'Заряды', 'Дистанционные взрыватели'],
     ['gallery', 'Галерея', 'Фото, видео и аудио'],
     ['files', 'Файлы', 'Электронные книги'],
     ['notes', 'Заметки', 'Личные записи'],
@@ -150,6 +152,16 @@ export function openPdaShell({ item, findItem, getData, operate, canEdit, charac
             nav.append(button);
         }
         content.replaceChildren();
+        modal.querySelector('[data-pda-hold]')?.remove();
+        const holding=getData()?.health?.combatMeta?.heldPda?.id===current.id&&Boolean(current.id);
+        const hold=document.createElement('button');hold.type='button';hold.dataset.pdaHold='';hold.className='btn btn-secondary';
+        hold.textContent=holding?'Убрать КПК':'Взять КПК в руку';hold.disabled=busy||!canEdit;
+        hold.onclick=async()=>{
+            const source=findItem(item.id);if(!source||busy)return;busy=true;render();
+            try{await operate({operation:holding?'pda_stow':'pda_hold',path:source.path,source_id:source.item.id});}
+            finally{busy=false;if(modal.isConnected)render();}
+        };
+        modal.querySelector('.pda-shell-footer').append(hold);
         modal.querySelector('[data-pda-dynamo]')?.remove();
         if((current.modifications||[]).some(mod=>mod.ruleId==='pda-b7')){
             const charging=getData()?.health?.combatMeta?.pdaDynamo?.id===current.id;
@@ -470,6 +482,10 @@ export function openPdaShell({ item, findItem, getData, operate, canEdit, charac
             heading.textContent=selected==='chat'?'Радиосвязь':'Контакты';
             networkView ||= createPdaNetworkView({characterId,findSource:()=>findItem(item.id),getData,operateHardware:operate,canEdit});
             content.append(networkView.element);networkView.setActive(true,selected);
+        } else if(selected==='charges'){
+            heading.textContent='Заряды';
+            renderRemoteCharges(content,{characterId,selection:()=>{const source=findItem(item.id);return {
+                item_path:source?.path,item_id:source?.item.id,...(window.isLocationActive?{location_id:window.currentLocationId}:{})};},onSaved});
         } else if (selected === 'mods') {
             const recorded = (current.modifications || []).filter(mod => mod?.ruleId);
             const label = document.createElement('p');

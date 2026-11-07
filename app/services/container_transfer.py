@@ -104,7 +104,8 @@ class ContainerTransferService:
         if amount == quantity:
             parent.pop(index)
         else:
-            if item.get('contents'):
+            from app.services.trade import _contains_individual_items
+            if _contains_individual_items(item):
                 raise ValidationError('Cannot split a filled container')
             item['quantity'] = quantity - amount
             moved['quantity'] = amount

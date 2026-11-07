@@ -50,6 +50,59 @@ def templates():
         'Детекторы',{'device_kind':'dosimeter','battery_duration_seconds':DOSIMETER_SECONDS,'source_recipe_id':'recipe-f10'})]
 
 
+def controller_templates():
+    from app.services.catalog_import import template
+    return [template(name,'device',1000,.1,.1,description,'Электроника',{'device_kind':kind,'source_recipe_id':recipe})
+        for name,kind,recipe,description in [
+            ('Дистанционный взрыватель','remote_detonator','recipe-f6','Подрыв с привязанного КПК на дистанции до 250 м. Расходуется вместе с зарядом.'),
+            ('Таймер','timer','recipe-f12','Запуск взрывчатки или переключение устройства по времени. Максимальная отсрочка — 24 часа.')]]
+
+
+def switchable(item):
+    from app.services.portable_lights import definition
+    return ((definition(item) in {'pda','dosimeter','hand','improved','head','module'})
+        or (item.get('slotType')=='nvg' or (item.get('attributes') or {}).get('night_vision'))
+        or item.get('category') in {'device','detector'}) and (item.get('attributes') or {}).get('device_kind') not in {'timer','remote_detonator'}
+
+
+def switch(item,data,on):
+    """Таймер использует настоящее питание прибора, включая штатные фонари и КПК."""
+    from app.services.exceptions import ValidationError
+    from app.services.portable_lights import definition,pda_state,power,bindings
+    kind=definition(item)
+    if kind=='pda':
+        status=pda_state(item)
+        if on and (status.get('broken') or status['charge_percent']<=0):raise ValidationError('КПК неисправен или разряжен')
+        status['on']=on;item['pdaState']=status
+        if not on:item.setdefault('pdaNetwork',{})['jammer_on']=False
+    elif kind=='dosimeter':
+        status=state(item)
+        if on and status['remaining_seconds']<=0:raise ValidationError('Дозиметр разряжен')
+        status['on']=on;item['deviceState']=status
+    elif item.get('slotType')=='nvg' or (item.get('attributes') or {}).get('night_vision'):
+        if on and power(item)['uses_left']<=0:raise ValidationError('ПНВ разряжен')
+        item['active']=item['enabled']=on
+    elif kind in {'hand','improved','head','module'}:
+        status=power(item)
+        if on and status['uses_left']<=0:raise ValidationError('Фонарь разряжен')
+        status['scheduled_on']=on
+        for binding in bindings(data):
+            if binding.get('id')==item.get('id'):
+                binding['on']=on
+                if on:binding['period_used']=True
+    elif switchable(item):
+        attrs=item.setdefault('attributes',{})
+        battery=next((module for module in item.get('installedModules') or [] if module.get('slotType')=='battery'),None)
+        if on and not attrs.get('isActive'):
+            if battery:
+                charge=(battery.get('attributes') or {}).get('power',0)
+                if charge<=0:raise ValidationError('Батарейка прибора разряжена')
+                battery.setdefault('attributes',{})['power']=max(0,charge-1)
+            elif 'power' in attrs and attrs['power']<=0:raise ValidationError('Прибор разряжен')
+        attrs['isActive']=on
+    else:raise ValidationError('Этот предмет не имеет включения и выключения')
+
+
 def expose_pdas(data,damage):
     """Разовый урон электроаномалии до защиты тела; ОЗ устройства не вводятся."""
     from app.services.portable_lights import walk,definition,pda_state
