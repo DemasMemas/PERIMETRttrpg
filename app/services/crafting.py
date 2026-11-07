@@ -6,7 +6,7 @@ import re
 from uuid import uuid4
 from sqlalchemy.orm.attributes import flag_modified
 from app.extensions import db
-from app.models import LobbyCharacter,LocationCharacter,LocationCombatState,LocationObject
+from app.models import LobbyCharacter,Location,LocationCharacter,LocationCombatState,LocationObject
 from app.models.templates import ItemTemplate
 from app.services.character import CharacterService
 from app.services.character_starting_purchase import item_from_template
@@ -138,7 +138,17 @@ def _template(name):
 
 def _environment(component):
     name=normalized(component['name'])
-    return name.startswith('доступ к ') or name=='в округе должна быть мебель из дерева или готовые доски'
+    return name.startswith('доступ к ') or name in {'в округе должна быть мебель из дерева или готовые доски','трава'}
+
+
+def _grass_at_location(character):
+    placement=LocationCharacter.query.filter_by(character_id=character.id).order_by(
+        LocationCharacter.last_action.desc().nullslast(),LocationCharacter.id.desc()).first()
+    location=db.session.get(Location,placement.location_id) if placement else None
+    return bool(location and any(
+        isinstance(tile,dict) and tile.get('terrain')=='grass'
+        for row in (location.tiles_data or []) for tile in row
+    ))
 
 
 def _chlorine_uses(item):
@@ -280,8 +290,10 @@ def quote(character,data,payload):
     component_missing_count=len(missing)
     state=data.get('crafting') or {};approval=next((r for r in state.get('tool_requests',[]) if r['id']==payload.get('approval_id')
         and r['recipe_id']==recipe['id'] and r['status']=='approved' and r.get('environment') and not r.get('used')),None)
-    environment=[c['name'] for c in recipe['components'] if _environment(c)]
+    environment=[c['name'] for c in recipe['components'] if _environment(c) and normalized(c['name'])!='трава']
     if environment and not (approval and approval.get('environment')):missing.append('Нужно подтверждение условий ГМом: '+', '.join(environment))
+    if any(normalized(c['name'])=='трава' for c in recipe['components']) and not _grass_at_location(character):
+        missing.append('На подлокации нужна хотя бы одна клетка с травой')
     level=CombatService._skill_value(data,'skills.'+recipe['skill'])
     difficulty=recipe['difficulty_options'][option] if recipe['difficulty_options'] else 0
     result=({'difficulty':0,'automatic_success':True,'failure_loss':{'random':0,'chosen':0,'all':False}}
@@ -540,7 +552,7 @@ def operate(character_id,user_id,payload):
         from app.services.equipment_modifications import definition
         subject_id=payload.get('recipe_id')
         recipe=recipe_by_id(subject_id) if str(subject_id).startswith('recipe-') else definition(subject_id)
-        environment=any(_environment(c) for c in recipe.get('components',[]))
+        environment=any(_environment(c) and normalized(c['name'])!='трава' for c in recipe.get('components',[]))
         if not environment or payload.get('tool_path'):
             raise ValidationError('Заявка нужна только для подтверждения условия сцены')
         result={'id':str(uuid4()),'recipe_id':recipe['id'],'recipe_name':recipe.get('name') or recipe.get('description'),'status':'pending',

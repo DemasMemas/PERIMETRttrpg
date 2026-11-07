@@ -1774,14 +1774,9 @@
       "output_count": 35,
       "components": [
         {
-          "name": "Серная кислота",
-          "quantity": 1,
-          "source_text": "Серная кислота"
-        },
-        {
-          "name": "Натрий",
-          "quantity": 1,
-          "source_text": "Натрий"
+          "name": "Химические материалы",
+          "quantity": 2,
+          "source_text": "Химические материалы (2)"
         },
         {
           "name": "Сахар",
@@ -1789,7 +1784,7 @@
           "source_text": "Сахар"
         }
       ],
-      "components_text": "Серная кислота, Натрий, Сахар",
+      "components_text": "Химические материалы (2), Сахар",
       "difficulty_options": [
         45.0
       ],
@@ -2584,9 +2579,9 @@
       "output_count": 1,
       "components": [
         {
-          "name": "Консервная банка",
+          "name": "Металлические детали",
           "quantity": 1,
-          "source_text": "Консервная банка"
+          "source_text": "Металлические детали"
         },
         {
           "name": "Марля",
@@ -2599,7 +2594,7 @@
           "source_text": "Бумага"
         }
       ],
-      "components_text": "Консервная банка, Марля, Бумага",
+      "components_text": "Металлические детали, Марля, Бумага",
       "difficulty_options": [
         40.0
       ],
@@ -3087,12 +3082,12 @@
       "output_count": 1,
       "components": [
         {
-          "name": "Мед Сырьё",
+          "name": "Медицинские материалы",
           "quantity": 2,
-          "source_text": "Мед Сырьё(2)"
+          "source_text": "Медицинские материалы (2)"
         }
       ],
-      "components_text": "Мед Сырьё(2)",
+      "components_text": "Медицинские материалы (2)",
       "difficulty_options": [
         55.0
       ],

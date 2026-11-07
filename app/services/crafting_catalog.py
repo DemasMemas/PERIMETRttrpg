@@ -123,6 +123,15 @@ def parse_recipes(rows):
         add('AA', name_aa, row.get('AB'), row.get('AC'), row.get('AD'), row.get('AE'),
             'other.medicine' if medicine else 'other.survival',
             'Продвинутая медицина' if advanced else 'Медицина' if medicine else 'Продукты')
+    approved_components = {
+        'recipe-aa21': 'Химические материалы (2), Сахар',
+        'recipe-aa31': 'Металлические детали, Марля, Бумага',
+        'recipe-aa39': 'Медицинские материалы (2)',
+    }
+    for item in result:
+        if item['id'] in approved_components:
+            item['components_text'] = approved_components[item['id']]
+            item['components'] = components(item['components_text'])
     # ВОГ-17 удалён автором из системы; не подменяется другим боеприпасом.
     return [item for item in result if not re.search(r'вог[\s-]*17',item['name'],re.I)]
 

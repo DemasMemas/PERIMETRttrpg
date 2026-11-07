@@ -999,8 +999,10 @@ def test_named_medicine_recipe_resolves_real_catalog_item(client,workshop,auth_h
 def test_analgin_recipe_finishes_with_thirty_five_catalog_tablets_once(client,workshop,auth_headers,monkeypatch):
     data=deepcopy(workshop['actor_character'].data)
     data['skills']['other']['medicine']={'base':20}
-    data['inventory']['pockets'].extend({'name':name,'category':'crafting_material','quantity':1}
-        for name in ('Серная кислота','Натрий','Сахар'))
+    data['inventory']['pockets'].extend([
+        {'name':'Химические материалы','category':'crafting_material','quantity':2},
+        {'name':'Сахар','category':'crafting_material','quantity':1},
+    ])
     workshop['actor_character'].data=data
     placement=LocationCharacter.query.filter_by(character_id=workshop['actor_character'].id).first()
     db.session.add(LocationObject(location_id=placement.location_id,name='Смесительный Станок',
@@ -1018,6 +1020,29 @@ def test_analgin_recipe_finishes_with_thirty_five_catalog_tablets_once(client,wo
     repeated=call(client,workshop,auth_headers,'finish',job_id=started.json['result']['id'])
     assert repeated.status_code==200 and repeated.json['result']['replayed']
     assert units(repeated.json['data'],'Анальгин (Таблетка)')==35
+
+
+def test_approved_medicine_recipes_use_existing_materials():
+    from app.services.crafting import recipe_by_id
+    assert [(entry['name'],entry['quantity']) for entry in recipe_by_id('recipe-aa21')['components']] == [
+        ('Химические материалы',2),('Сахар',1)]
+    assert [entry['name'] for entry in recipe_by_id('recipe-aa31')['components']] == [
+        'Металлические детали','Марля','Бумага']
+    assert [(entry['name'],entry['quantity']) for entry in recipe_by_id('recipe-aa39')['components']] == [
+        ('Медицинские материалы',2)]
+
+
+def test_grass_recipe_reads_location_terrain_without_inventory_item(workshop):
+    from app.services.crafting import quote
+    character=workshop['actor_character']
+    location=workshop['location']
+    character.data.setdefault('skills',{}).setdefault('other',{})['medicine']={'base':10}
+    location.tiles_data=[[{'terrain':'dirt','height':1,'objects':[]}]]
+    missing=quote(character,character.data,{'recipe_id':'recipe-aa25'})['missing']
+    assert any('клетка с травой' in reason for reason in missing)
+    location.tiles_data=[[{'terrain':'grass','height':1,'objects':[]}]]
+    available=quote(character,character.data,{'recipe_id':'recipe-aa25'})['missing']
+    assert not any('травой' in reason or 'условий ГМом' in reason for reason in available)
 
 
 def test_work_gloves_lower_creation_difficulty_only_while_worn(client,workshop,auth_headers):
