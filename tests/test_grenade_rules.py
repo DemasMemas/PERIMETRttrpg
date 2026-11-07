@@ -732,6 +732,30 @@ def test_fire_area_does_not_reignite_character_standing_in_water(grenade_game,mo
     assert not any(e['type']=='burning' for e in actor.character.data['health']['effects'])
 
 
+def test_underbarrel_pepper_gas_keeps_pain_for_two_rounds_after_exit(grenade_game,monkeypatch):
+    from app.services.combat import EXPLOSIVE_PROFILES
+    actor=grenade_game['actor_location']
+    state=LocationCombatState.query.filter_by(location_id=actor.location_id).one()
+    area=CombatService._area_from_profile({**EXPLOSIVE_PROFILES['underbarrel_gas'],
+        'key':'underbarrel_gas'},actor.pos_x,actor.pos_y,state.round_number)
+    area['floor_level']=actor.floor_level or 0
+    state.area_effects=[area]
+    monkeypatch.setattr('app.services.combat.random.randint',lambda low,high:high)
+    CombatService._advance_area_effects(state)
+    assert actor.character.data['health']['painLevel']==1
+    actor.pos_x,actor.pos_y=10,10
+    CombatService._advance_area_effects(state)
+    after=next(effect for effect in actor.character.data['health']['effects']
+        if effect.get('source')=='gas_cloud_exit')
+    assert after['remaining']==2
+    CombatService._apply_periodic_health_effects(actor,phase='round_end')
+    assert actor.character.data['health']['painLevel']==2
+    CombatService._apply_periodic_health_effects(actor,phase='round_end')
+    assert actor.character.data['health']['painLevel']==3
+    assert not any(effect.get('source')=='gas_cloud_exit'
+        for effect in actor.character.data['health']['effects'])
+
+
 def test_deleted_participant_does_not_keep_short_fuse_pending(grenade_game,monkeypatch):
     from app.services.grenade_reaction import begin
     quiet_explosion(monkeypatch)

@@ -153,7 +153,7 @@ EXPLOSIVE_PROFILES = {
     'bang793': {'label': 'Bang-79-3', 'fragment': 400, 'radius': 6, 'penetration': 50, 'blast_base': 200, 'blast_falloff': 50, 'projectile_range': None, 'fragment_keeps_penetration': True, 'fuse': 'round'},
     'rg60tb': {'label': '\u0420\u0413-60\u0422\u0411', 'fragment': 100, 'radius': 3, 'penetration': 0, 'blast_base': 400, 'blast_falloff': 50, 'projectile_range': None, 'area_effect': 'fire', 'area_radius': 4, 'duration_rounds': 10, 'burn_rounds': 2, 'direct_burn_rounds': 4, 'burn_damage': 150, 'thermal_threshold': 65},
     'rosh92': {'label': '\u0420\u041e\u0428-92', 'fragment': 0, 'radius': 8, 'penetration': 0, 'blast_base': 2000, 'blast_falloff': 100, 'projectile_range': 30, 'incendiary_rounds': 5},
-    'underbarrel_gas': {'label': '\u041f\u043e\u0434\u0441\u0442\u0432\u043e\u043b\u044c\u043d\u044b\u0439 \u0433\u0430\u0437\u043e\u0432\u044b\u0439', 'effect': 'gas', 'radius': 2.5, 'duration_rounds': 2, 'pain': 1, 'concussion_chance': 25, 'projectile_range': 30},
+    'underbarrel_gas': {'label': '\u041f\u043e\u0434\u0441\u0442\u0432\u043e\u043b\u044c\u043d\u044b\u0439 \u0433\u0430\u0437\u043e\u0432\u044b\u0439', 'effect': 'gas', 'radius': 2.5, 'duration_rounds': 2, 'pain': 1, 'concussion_chance': 25, 'exit_pain_rounds': 2, 'projectile_range': 30},
     'underbarrel_smoke': {'label': '\u041f\u043e\u0434\u0441\u0442\u0432\u043e\u043b\u044c\u043d\u044b\u0439 \u0434\u044b\u043c\u043e\u0432\u043e\u0439', 'effect': 'smoke_growing', 'radius': 2, 'max_radius': 4, 'grow_rounds': 2, 'hold_rounds': 1, 'shrink_per_round': 2, 'projectile_range': 30, 'fuse': 'turn_end'},
     'underbarrel_flash': {'label': '\u041f\u043e\u0434\u0441\u0442\u0432\u043e\u043b\u044c\u043d\u044b\u0439 \u0441\u0432\u0435\u0442\u043e\u0448\u0443\u043c\u043e\u0432\u043e\u0439', 'effect': 'flash', 'radius': 6, 'blindness': 175, 'noise': 20, 'projectile_range': 30},
     'zarya': {'label': '\u0417\u0430\u0440\u044f', 'effect': 'flash', 'radius': 10, 'blindness': 250, 'noise': 20, 'fuse': 'turn_end'},
@@ -6824,6 +6824,7 @@ class CombatService:
             'hold_rounds': CombatService._coerce_int(profile.get('hold_rounds'), 0),
             'shrink_per_round': CombatService._coerce_float(profile.get('shrink_per_round'), 0),
             'pain': CombatService._coerce_int(profile.get('pain'), 0),
+            'exit_pain_rounds': CombatService._coerce_int(profile.get('exit_pain_rounds'), 0),
             'chemical_damage': CombatService._coerce_int(profile.get('chemical_damage'), 0),
             'concussion_chance': CombatService._coerce_int(profile.get('concussion_chance'), 0),
             'burn_rounds': CombatService._coerce_int(profile.get('burn_rounds'), 0),
@@ -7568,6 +7569,8 @@ class CombatService:
             area = dict(source)
             age = CombatService._coerce_int(area.get('age'), 0) + max(1,CombatService._coerce_int(area.get('age_step'),1))
             area['age'] = age
+            previously_exposed = set(area.get('exposed_actor_ids') or []) if area.get('exit_pain_rounds') else set()
+            currently_exposed = set()
             for target in targets:
                 if target.character:
                     result = CombatService._apply_area_effect_to_character(
@@ -7575,6 +7578,25 @@ class CombatService:
                     )
                     if result:
                         affected.append(result)
+                        if area.get('exit_pain_rounds') and result.get('type') == 'gas' and not result.get('blocked_by_gas_mask'):
+                            currently_exposed.add(target.id)
+            if area.get('exit_pain_rounds'):
+                for target in targets:
+                    if target.id not in previously_exposed - currently_exposed or not target.character:
+                        continue
+                    data = dict(target.character.data or {})
+                    health = data.setdefault('health', {})
+                    apply_effect_to_health(health, {
+                        'type': 'periodic_adjustment', 'name': 'Боль после газового облака',
+                        'source': 'gas_cloud_exit', 'area': area.get('id'),
+                        'remaining': area['exit_pain_rounds'], 'tick': 'round_end',
+                        'adjustments': [{'field': 'painLevel', 'delta': 1, 'min': 0, 'max': 10}],
+                    }, character_data=data)
+                    target.character.data = data
+                    flag_modified(target.character, 'data')
+                    CombatService._sync_location_effects_from_character(target)
+                    affected.append({'character_id': target.character_id, 'type': 'gas_exit'})
+                area['exposed_actor_ids'] = sorted(currently_exposed)
             area_type = str(area.get('type') or '')
             keep = True
             if area_type == 'smoke_growing':
