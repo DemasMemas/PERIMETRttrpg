@@ -128,6 +128,26 @@ module.exports = async ({ page, request, token, lobby, login, profile, base, con
         await page.until(`(()=>{const t=document.getElementById('delayed-item-tooltip');return t && getComputedStyle(t).display!=='none' && getComputedStyle(t).visibility==='visible' && t.textContent.includes(${JSON.stringify(expected)})})()`, 'visible hover tooltip');
     };
     await page.evaluate(`document.querySelector('[data-tab="equipment"]').click()`);
+    await page.call('Emulation.setDeviceMetricsOverride', { width: 1920, height: 1080, deviceScaleFactor: 1, mobile: false });
+    const loadoutLayout = await page.evaluate(`(()=>{
+        const tab=document.querySelector('#sheet-tab-equipment');tab.scrollTop=0;
+        const slots=[...tab.querySelectorAll('.equipment-loadout .loadout-slot')].map(node=>node.getBoundingClientRect());
+        const figure=tab.querySelector('.loadout-figure').getBoundingClientRect();
+        return {allSlotsVisible:slots.every(rect=>rect.top>=0&&rect.bottom<=innerHeight),
+            figureVisible:figure.top>=0&&figure.bottom<=innerHeight,
+            noVerticalScroll:tab.scrollHeight<=tab.clientHeight+2};
+    })()`);
+    assert.deepEqual(loadoutLayout,{allSlotsVisible:true,figureVisible:true,noVerticalScroll:true},'1920×1080: все слоты и силуэт видны без прокрутки');
+    await page.evaluate(`document.querySelector('.equipment-panel-tab[data-panel="helmet"]').click()`);
+    const helmetLayout = await page.evaluate(`(()=>{
+        const tab=document.querySelector('#sheet-tab-equipment');
+        const fields=tab.querySelector('.helmet-main-block .fields-container');
+        return {noHorizontalScroll:fields.scrollWidth<=fields.clientWidth+2,
+            noVerticalScroll:tab.scrollHeight<=tab.clientHeight+2};
+    })()`);
+    assert.deepEqual(helmetLayout,{noHorizontalScroll:true,noVerticalScroll:true},'1920×1080: весь раздел шлема виден без прокрутки');
+    await page.evaluate(`document.querySelector('.equipment-panel-tab[data-panel="weapons"]').click()`);
+    await page.call('Emulation.clearDeviceMetricsOverride');
     await page.evaluate(`document.querySelector('[data-equipment-panel="cosmetic"]').open=true;document.querySelector('[data-equipment-group="cosmetic"]').scrollIntoView({block:'center'})`);
     fs.writeFileSync(path.join(artifactDir, 'cosmetic-pin-buttons.png'), Buffer.from((await page.call('Page.captureScreenshot', { format: 'png' })).data, 'base64'));
     assert.equal(await page.evaluate(`(()=>{

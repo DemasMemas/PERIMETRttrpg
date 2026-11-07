@@ -4501,12 +4501,10 @@ async function renderEquipmentTab(data) {
                     ${renderSlotsUniversal(helmet, ['equipment', 'helmet'])}
                 </div>
             ` : ''}
-            <div class="modifications-block">
-                <div style="display:flex; align-items:center;">
-                    <h5 style="margin:0;">Модификации шлема</h5>
-                </div>
+            ${helmet.modifications?.length ? `<div class="modifications-block">
+                <h5>Модификации шлема</h5>
                 <div id="helmet-modifications-container">${renderHelmetModifications(helmet.modifications, groupedHelmetMods)}</div>
-            </div>
+            </div>` : ''}
         </div>
 
         <!-- Противогаз -->
@@ -5039,7 +5037,6 @@ function renderEquipmentLoadout(container, data, weaponTemplates, helmetTemplate
     };
     const exoskeletonBattery = equipmentModule(equipment.armor, 'exoskeleton_battery');
     container.insertAdjacentHTML('afterbegin', `<section class="equipment-loadout" aria-label="Экипировка персонажа">
-        <div class="loadout-heading"><div><span class="loadout-eyebrow">Снаряжение</span><h4>Экипировка персонажа</h4></div><span class="loadout-hint">Наведите для характеристик · нажмите для действий</span></div>
         <div class="loadout-main">
             <div class="loadout-column">
                 ${slot('Шлем', equipment.helmet?.templateId ? equipment.helmet : null, 'helmet', 'Ш', 'helmet', null,
@@ -5145,7 +5142,6 @@ function renderEquipmentLoadout(container, data, weaponTemplates, helmetTemplate
             selectPanel(weaponPanel ? 'weapons' : key);
             panel.open = true;
             if (weaponPanel) weaponPanel.open = true;
-            (weaponPanel || panel).scrollIntoView({ behavior: 'smooth', block: 'nearest' });
         });
     });
 }
