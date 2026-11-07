@@ -25,6 +25,19 @@ WATER_VARIANTS = (
 CRAFT_MOLD_PRICES = {'recipe-v38': 200, 'recipe-v41': 650}
 
 
+def approved_component_templates():
+    """Компоненты №200, которым автор явно запретил самостоятельное применение."""
+    from app.services.catalog_import import template
+    return [template(name, 'crafting_material', price, weight, volume,
+        'Компонент для изготовления предметов. Самостоятельного применения нет.',
+        'Материалы для создания', {'import_source': 'author_answers_2026_11_07',
+            'craft_material': True, 'source_recipe_id': recipe_id})
+        for name, price, weight, volume, recipe_id in (
+            ('Датчик', 300, .1, .1, 'recipe-f13'),
+            ('Смесь Дымовая', 600, .25, .25, 'recipe-v39'),
+        )]
+
+
 def craft_mold_templates(creation):
     """Формы из книги создания с параметрами, утверждёнными автором."""
     from app.services.catalog_import import template
@@ -186,7 +199,7 @@ def parse_catalog(workbook_path):
     entries.extend(additional_water_templates(entries))
     from app.services.cooked_meat import templates as cooked_meat_templates
     entries.extend(cooked_meat_templates())
-    return prepare_catalog(entries)
+    return prepare_catalog([*entries, *approved_component_templates()])
 
 
 def prepare_catalog(entries):
@@ -240,7 +253,8 @@ def load_catalog(path=None):
     if creation_path.is_file():
         entries = [*entries, *craft_mold_templates(json.loads(creation_path.read_text(encoding='utf-8')))]
     from app.services.cooked_meat import templates as cooked_meat_templates
-    return prepare_catalog([*entries, *additional_water_templates(entries), *cooked_meat_templates()])
+    return prepare_catalog([*entries, *additional_water_templates(entries), *cooked_meat_templates(),
+                            *approved_component_templates()])
 
 
 def shifted_helmet_updates(previous,canonical):

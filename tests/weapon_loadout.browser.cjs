@@ -145,6 +145,8 @@ module.exports=async({page,request,token,lobby,safeSession})=>{
             ['helmet','Композит',{requires_filter:true}],['helmet','Кевлар',{integrated_visor:true}],
             ['vest',''],['belt',''],['armor_plate',''],
             ['device','battery'],['exoskeleton_module','battery'],
+            ['device','flamethrower_tank',{flamethrower_tank:'jet'}],
+            ['device','flamethrower_air',{flamethrower_air:true}],
             ['artifact','',{anomaly_type:'Электрическая'}],
         ].map(([category,subcategory,attributes],id)=>({id:id+1,name:'Образец '+id,category,subcategory,
             attributes:attributes||{},item_class:category==='artifact'?'2':null}));
@@ -164,6 +166,8 @@ module.exports=async({page,request,token,lobby,safeSession})=>{
     assert.ok(picker.helmets.includes('Головные уборы')&&picker.helmets.includes('Шлемы-противогазы'));
     assert.ok(picker.vests.includes('Пояса')&&picker.vests.includes('Бронеплиты'));
     assert.ok(picker.devices.includes('Батарейки')&&picker.devices.includes('Аккумуляторы экзоскелета'));
+    assert.ok(picker.devices.includes('Баки и Баллоны Огнеметов'));
+    assert.ok(!picker.devices.includes('Другие предметы'));
     assert.ok(picker.artifacts.includes('Электрическая'));
     assert.equal(picker.duplicateIds,0,'группировка не дублирует шаблоны');
     fs.writeFileSync(path.join(safeSession.artifacts,'weapon-loadout.json'),JSON.stringify({modelSurvivesSave:true,threeSlots:true,launcherTwoSlots:true,

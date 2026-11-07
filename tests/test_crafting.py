@@ -376,6 +376,37 @@ def test_craft_molds_have_approved_catalog_properties_and_are_created(
     assert units(finished.json['data'],name)==count
 
 
+@pytest.mark.parametrize('recipe_id,name,material,price,size',[
+    ('recipe-f13','Датчик','Электронные материалы',300,.1),
+    ('recipe-v39','Смесь Дымовая','Химические материалы',600,.25),
+])
+def test_approved_components_can_be_crafted_and_consumed_in_next_recipe(
+        client,workshop,auth_headers,monkeypatch,recipe_id,name,material,price,size):
+    from app.services.equipment_catalog import load_catalog
+    from app.services.crafting import _allocate
+    template=next(item for item in load_catalog() if item['name']==name)
+    assert (template['category'],template['price'],template['weight'],template['volume'])==('crafting_material',price,size,size)
+    db.session.add(ItemTemplate(**template))
+    character=workshop['actor_character'];data=deepcopy(character.data)
+    data['skills']['other']['engineering']={'base':20}
+    data['inventory']['pockets']=[{'name':material,'category':'crafting_material','quantity':1}]
+    character.data=data
+    placement=workshop['actor_location']
+    db.session.add(LocationObject(location_id=placement.location_id,name='Смесительный станок',type='workbench',
+        tile_x=round(placement.pos_x),tile_y=round(placement.pos_y),properties={}))
+    db.session.commit()
+    started=call(client,workshop,auth_headers,'start',recipe_id=recipe_id)
+    assert started.status_code==200,started.json
+    workshop['lobby'].game_time_minutes+=30;db.session.commit()
+    monkeypatch.setattr('app.services.crafting.resolve_creation',lambda quote:{'success':True,'roll':100,'automatic':False})
+    finished=call(client,workshop,auth_headers,'finish',job_id=started.json['result']['id'],chosen_loss=[])
+    assert finished.status_code==200,finished.json
+    assert units(finished.json['data'],name)==1
+    allocations,missing=_allocate(finished.json['data'],{'id':'component-reuse','components':[{'name':name,'quantity':1}]})
+    assert not missing and sum(entry['amount'] for entry in allocations)==1
+    assert units(finished.json['data'],material)==0
+
+
 def test_grenade_molds_are_reserved_as_consumed_items(app):
     from app.services.crafting import _allocate, _escrow, recipe_by_id
 

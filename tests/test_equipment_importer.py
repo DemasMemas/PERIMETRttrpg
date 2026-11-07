@@ -344,6 +344,24 @@ def test_craft_mold_migration_preserves_existing_template_and_is_repeatable(app,
     assert (grenade.price, grenade.weight, grenade.volume) == (650, .25, .25)
 
 
+def test_approved_component_migration_preserves_existing_ids_and_repeats_safely(app,monkeypatch):
+    import importlib.util
+    from pathlib import Path
+    from app.extensions import db
+    from app.models.templates import ItemTemplate
+    path=Path(__file__).resolve().parents[1]/'migrations/versions/b2e94d7c8053_add_approved_craft_components.py'
+    spec=importlib.util.spec_from_file_location('approved_components_migration',path)
+    migration=importlib.util.module_from_spec(spec);spec.loader.exec_module(migration)
+    existing=ItemTemplate(name='Датчик',category='crafting_material',price=175,attributes={'gm_note':'сохранить'})
+    db.session.add(existing);db.session.flush();identity=existing.id
+    monkeypatch.setattr(migration.op,'get_bind',lambda:db.session.connection())
+    migration.upgrade();migration.upgrade();db.session.expire_all()
+    assert ItemTemplate.query.filter_by(name='Датчик').count()==1
+    assert existing.id==identity and existing.price==175 and existing.attributes=={'gm_note':'сохранить'}
+    mixture=ItemTemplate.query.filter_by(name='Смесь Дымовая').one()
+    assert (mixture.price,mixture.weight,mixture.volume)==(600,.25,.25)
+
+
 def test_water_variants_have_author_effects_without_price_or_trade(app, monkeypatch):
     import importlib.util
     from pathlib import Path
