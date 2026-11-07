@@ -48,6 +48,8 @@ export async function openCharacterCreation(lobbyId, onCreated) {
     if (document.getElementById('character-creation-modal')) return;
     const skills = rules.skillOrder.map(path => [path, rules.skills[path.split('.')[0]][path.split('.')[1]]]);
     const shop = rules.startingPurchaseTemplates || [], purchases = new Map();
+    const purchaseName = template => template.attributes?.book_kind
+        ? `Книга · ${template.name}` : template.name;
     const modal = document.createElement('div');
     modal.id = 'character-creation-modal'; modal.className = 'modal creation-modal';
     const skillCards = (stage, editable = true) => Object.entries(GROUPS).map(([group, title]) => `<section class="creation-skill-group"><h4>${title}</h4><div class="creation-skill-grid">${skills.filter(([path]) => path.startsWith(group + '.')).map(([path, label]) => `<div class="creation-skill-card">
@@ -164,7 +166,7 @@ export async function openCharacterCreation(lobbyId, onCreated) {
     function renderCart() {
         find('[data-purchase-list]').innerHTML = purchases.size ? [...purchases].map(([id, quantity]) => {
             const template = shop.find(item => item.id === id);
-            return `<div class="creation-cart-row"><strong>${escape(template.name)}</strong><span>${money(template.price * quantity)}</span><label>Количество<div class="creation-stepper"><button type="button" class="btn btn-sm" data-cart-adjust="${id}" data-delta="-1" aria-label="Уменьшить количество: ${escape(template.name)}">−</button><input type="number" min="0" max="10000" value="${quantity}" data-cart-quantity="${id}" class="form-control"><button type="button" class="btn btn-sm" data-cart-adjust="${id}" data-delta="1" aria-label="Увеличить количество: ${escape(template.name)}">+</button></div></label><button type="button" data-purchase-remove="${id}" class="btn btn-sm btn-secondary">Убрать</button></div>`;
+            return `<div class="creation-cart-row"><strong>${escape(purchaseName(template))}</strong><span>${money(template.price * quantity)}</span><label>Количество<div class="creation-stepper"><button type="button" class="btn btn-sm" data-cart-adjust="${id}" data-delta="-1" aria-label="Уменьшить количество: ${escape(template.name)}">−</button><input type="number" min="0" max="10000" value="${quantity}" data-cart-quantity="${id}" class="form-control"><button type="button" class="btn btn-sm" data-cart-adjust="${id}" data-delta="1" aria-label="Увеличить количество: ${escape(template.name)}">+</button></div></label><button type="button" data-purchase-remove="${id}" class="btn btn-sm btn-secondary">Убрать</button></div>`;
         }).join('') : '<p class="creation-hint">Выберите предмет в каталоге.</p>';
     }
     function renderShop() {
@@ -352,7 +354,7 @@ export async function openCharacterCreation(lobbyId, onCreated) {
             form.elements.cashPoints.value = Math.max(0, (Number(form.elements.cashPoints.value) || 0) + Number(button.dataset.cashAdjust)); queuePreview();
         } else if (button.hasAttribute('data-purchase-select')) {
             selectedPurchase = shop.find(template => template.id === Number(button.dataset.purchaseSelect));
-            find('[data-purchase-title]').textContent = `${selectedPurchase.name} · ${money(selectedPurchase.price)}`;
+            find('[data-purchase-title]').textContent = `${purchaseName(selectedPurchase)} · ${money(selectedPurchase.price)}`;
             find('[data-purchase-selection]').hidden = false; find('[data-purchase-quantity]').value = '1';
             find('[data-purchase-selection-total]').textContent = money(selectedPurchase.price);
         } else if (button.hasAttribute('data-purchase-quick-add')) {

@@ -15141,6 +15141,17 @@ export function renderInventoryTemplatePicker(templates, query = '', options = {
                         </summary>
                         ${renderCards(sections[section].sort(compareTemplatesBySourceOrder))}
                     </details>`).join('');
+        } else if (group === 'Книги') {
+            const sections = [
+                ['Книги навыков', items.filter(item => item.attributes?.book_kind === 'skill')],
+                ['Книги снаряжения', items.filter(item => item.attributes?.book_kind === 'equipment')],
+                ['Прочие книги', items.filter(item => !['skill', 'equipment'].includes(item.attributes?.book_kind))],
+            ];
+            contents = sections.filter(([, sectionItems]) => sectionItems.length).map(([section, sectionItems]) => `
+                <details ${normalizedQuery || options.open ? 'open' : ''} style="border-left:2px solid rgba(174,165,120,.45); padding:6px 8px; margin-top:8px; background:rgba(255,255,255,.025);">
+                    <summary style="cursor:pointer; font-weight:600; display:flex; justify-content:space-between; gap:10px;"><span>${section}</span><span style="opacity:.6; font-weight:400;">${sectionItems.length}</span></summary>
+                    ${renderCards(sectionItems)}
+                </details>`).join('');
         } else if (['Оружие', 'Броня', 'Головное снаряжение', 'Артефакты', 'Разгрузки', 'Приборы'].includes(group)) {
             const sections = {};
             items.forEach(template => {
