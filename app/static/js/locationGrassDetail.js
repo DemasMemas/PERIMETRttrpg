@@ -135,21 +135,61 @@ export function settlePebbles(pebbles, getHeight) {
 export function swampPlacements(tiles, isCovered = () => false) {
     const pools = [];
     const reeds = [];
+    const candidates = [];
     for (let z = 0; z < tiles.length; z++) {
         for (let x = 0; x < tiles[z].length; x++) {
             if (tiles[z][x].terrain !== 'swamp') continue;
-            let pool = null;
             if (hash(x, z, 310) < 0.23) {
                 const px = x + 0.32 + hash(x, z, 320) * 0.36;
                 const pz = z + 0.32 + hash(x, z, 330) * 0.36;
                 if (!isCovered(px, pz)) {
-                    pool = { x: px, z: pz,
+                    candidates.push({ x: px, z: pz,
                         radius: 0.18 + hash(x, z, 340) * 0.08,
                         turn: hash(x, z, 350) * Math.PI * 2,
-                        seed: hash(x, z, 360) };
-                    pools.push(pool);
+                        seed: hash(x, z, 360), priority: hash(x, z, 370) });
                 }
             }
+        }
+    }
+    // Три центра с размахом меньше 3 м по обеим осям помещаются в один квадрат 3×3 м.
+    // Проверяем соседние ячейки, чтобы ограничение работало и на границе сетки.
+    const accepted = new Map();
+    candidates.sort((a, b) => a.priority - b.priority || a.z - b.z || a.x - b.x);
+    for (const candidate of candidates) {
+        const nearby = [];
+        const cx = Math.floor(candidate.x);
+        const cz = Math.floor(candidate.z);
+        for (let z = cz - 3; z <= cz + 3; z++) {
+            for (let x = cx - 3; x <= cx + 3; x++) {
+                for (const pool of accepted.get(`${x},${z}`) || []) {
+                    if (Math.abs(pool.x - candidate.x) < 3
+                        && Math.abs(pool.z - candidate.z) < 3) nearby.push(pool);
+                }
+            }
+        }
+        let crowded = false;
+        for (let a = 0; a < nearby.length && !crowded; a++) {
+            for (let b = a + 1; b < nearby.length; b++) {
+                if (Math.max(candidate.x, nearby[a].x, nearby[b].x)
+                        - Math.min(candidate.x, nearby[a].x, nearby[b].x) < 3
+                    && Math.max(candidate.z, nearby[a].z, nearby[b].z)
+                        - Math.min(candidate.z, nearby[a].z, nearby[b].z) < 3) {
+                    crowded = true;
+                    break;
+                }
+            }
+        }
+        if (crowded) continue;
+        const { priority, ...pool } = candidate;
+        pools.push(pool);
+        const key = `${cx},${cz}`;
+        if (!accepted.has(key)) accepted.set(key, []);
+        accepted.get(key).push(pool);
+    }
+    for (let z = 0; z < tiles.length; z++) {
+        for (let x = 0; x < tiles[z].length; x++) {
+            if (tiles[z][x].terrain !== 'swamp') continue;
+            const pool = accepted.get(`${x},${z}`)?.[0] || null;
             for (let index = 0; index < 5; index++) {
                 const localX = 0.08 + hash(x, z, 380 + index) * 0.84;
                 const localZ = 0.08 + hash(x, z, 400 + index) * 0.84;

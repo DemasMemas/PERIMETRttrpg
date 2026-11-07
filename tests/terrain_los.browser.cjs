@@ -80,5 +80,7 @@ module.exports=async({page,request,token,lobby,base,connect,debugPort,safeSessio
  result.checks.push({stage:'world-water-level',minimum:.7,exact:1.6,separateBodyUnchanged:true});
  await require('./location_fog_water.browser.cjs')({page,request,token,lobby,base,connect,debugPort,safeSession});
  result.checks.push({stage:'fog-visual-polygon-2',deepWater:true,noIndexTruncation:true});
+ await require('./location_swamp_pools.browser.cjs')({page,request,token,lobby,safeSession});
+ result.checks.push({stage:'swamp-pools',maximumPerThreeMeters:2});
  result.status='READY_FOR_REVIEW';save();
 };

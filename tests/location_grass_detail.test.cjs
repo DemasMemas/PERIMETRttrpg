@@ -112,6 +112,31 @@ test('swamp pools and reeds are batched, repeatable, and excluded beneath floors
     assert.doesNotMatch(source, /transparent: true, opacity: 0\.88, depthWrite: false/);
 });
 
+test('в любом квадрате 3×3 м остаётся не более двух болотных луж', async () => {
+    const { swampPlacements } = await import(moduleUrl);
+    const layouts = [
+        Array.from({ length: 12 }, () => Array.from({ length: 12 }, () => ({ terrain: 'swamp' }))),
+        Array.from({ length: 24 }, (_, z) => Array.from({ length: 20 }, (_, x) =>
+            ({ terrain: (x + z) % 7 === 0 ? 'grass' : 'swamp' }))),
+        Array.from({ length: 21 }, (_, z) => Array.from({ length: 18 }, (_, x) =>
+            ({ terrain: x > 2 && z > 2 && x < 16 && z < 19 ? 'swamp' : 'water' }))),
+    ];
+    for (const tiles of layouts) {
+        for (const covered of [() => false, x => x < 4]) {
+            const first = swampPlacements(tiles, covered);
+            assert.deepEqual(first, swampPlacements(tiles, covered));
+            assert.ok(first.pools.length > 0);
+            for (const pool of first.pools) {
+                for (const other of first.pools) {
+                    const count = first.pools.filter(item => item.x >= pool.x && item.x < pool.x + 3
+                        && item.z >= other.z && item.z < other.z + 3).length;
+                    assert.ok(count <= 2, `В квадрате от ${pool.x}, ${other.z} найдено ${count} луж`);
+                }
+            }
+        }
+    }
+});
+
 test('swamp water is upward-facing and skips steep ground', async () => {
     const { createGrassDetailGroup } = await import(moduleUrl);
     const tiles = Array.from({ length: 12 }, () => Array.from({ length: 12 }, () => ({ terrain: 'swamp' })));
