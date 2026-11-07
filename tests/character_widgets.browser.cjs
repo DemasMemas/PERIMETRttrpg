@@ -145,6 +145,12 @@ module.exports = async ({ page, request, token, lobby, login, profile, base, con
     const collapsedHeight = await page.evaluate(`document.querySelector('.equipment-loadout').getBoundingClientRect().height`);
     assert.ok(Math.abs(leftHeight-collapsedHeight)<2,'левая панель не меняет высоту при сворачивании оружия справа');
     await page.evaluate(`document.querySelector('[data-equipment-panel="weapon-0"]').open=true`);
+    await page.evaluate(`document.querySelector('.loadout-slot[data-equipment-open="weapon-1"]').click()`);
+    assert.deepEqual(await page.evaluate(`[...document.querySelectorAll('.loadout-weapon-details')].filter(node=>node.open).map(node=>node.dataset.equipmentPanel)`),
+        ['weapon-1'],'слот ближнего боя сворачивает остальные карточки оружия');
+    await page.evaluate(`document.querySelector('.loadout-slot[data-equipment-open="weapon-0"]').click()`);
+    assert.deepEqual(await page.evaluate(`[...document.querySelectorAll('.loadout-weapon-details')].filter(node=>node.open).map(node=>node.dataset.equipmentPanel)`),
+        ['weapon-0'],'слот основного оружия сворачивает остальные карточки');
     await page.evaluate(`document.querySelector('.equipment-panel-tab[data-panel="helmet"]').click()`);
     const helmetLayout = await page.evaluate(`(()=>{
         const tab=document.querySelector('#sheet-tab-equipment');

@@ -3,15 +3,18 @@ const {modules,fixture}=require('./location_furniture_fixture.cjs');
 test('обычные станки размещаются как объекты сцены с проверяемым назначением',async()=>{
     const {C}=await modules();
     const stations=C.LOCATION_ASSETS.filter(asset=>asset.group==='Станки');
-    assert.equal(stations.length,6);
-    assert.deepEqual(new Set(stations.map(asset=>asset.properties.craft_workbench)),
+    assert.equal(stations.length,7);
+    assert.deepEqual(new Set(stations.filter(asset=>asset.properties.craft_workbench).map(asset=>asset.properties.craft_workbench)),
         new Set(['Самогонный Аппарат','Печь','Станок Оружейника','Станок Бронника',
             'Смесительный Станок','Станок Электрика']));
-    for(const station of stations){
+    for(const station of stations.filter(asset=>asset.properties.craft_workbench)){
         assert.ok(C.findLocationAsset(station.baseType));
         assert.equal(station.visual.modelId,C.findLocationAsset(station.baseType).visual.modelId);
         assert.ok(station.dimensions.every(value=>value>0));
     }
+    const aeration=C.findLocationAsset('station_aeration');
+    assert.equal(aeration.visual.modelId,'aeration_column');
+    assert.equal(aeration.properties.aeration_unit,true);
 });
 test('all new standalone objects have physical dimensions and distinct original models',async()=>{
     const {C}=await modules(),ids=C.LOCATION_ASSETS.map(a=>a.id);

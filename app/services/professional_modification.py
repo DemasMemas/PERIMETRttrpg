@@ -82,8 +82,7 @@ def _prepare(location_id, user_id, payload):
     if settings.get('scientist_enabled' if scientist else 'modification_enabled') is not True:
         raise ValidationError('Этот НПС не устанавливает выбранные модификации')
     from app.services.workbenches import require
-    require(settings,'Станок Электрика' if scientist else
-            'Станок Оружейника' if rule['kind']=='weapon' else 'Станок Бронника')
+    require(settings,'Станок Оружейника' if rule['kind']=='weapon' else 'Станок Бронника')
     factor = slots['factor']
     if type(factor) is not int or factor not in {1, 2, 3, 4, 6}:
         raise ValidationError('Класс предмета не позволяет рассчитать цену установки')

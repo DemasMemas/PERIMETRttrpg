@@ -151,9 +151,14 @@ def test_scientist_physical_exoskeleton_price_and_service_role(client, shop, aut
     shop['actor_character'].data = data
     db.session.commit()
     configured = configure(client, shop, auth_headers, scientist_enabled=True,
-                           modification_enabled=False, repair_markup=.5)
+                           modification_enabled=False, repair_markup=.5,
+                           workbenches=['Станок Электрика'])
     assert configured.status_code == 200, configured.json
     args = {'target_path':['equipment','armor'], 'item_id':'service-exo', 'rule_id':'armor-d18'}
+    denied = request(client, shop, auth_headers, **args)
+    assert denied.status_code == 400 and 'Станок Бронника' in denied.json['error']['message']
+    configured = configure(client, shop, auth_headers, workbenches=['Станок Бронника'])
+    assert configured.status_code == 200, configured.json
     quote = request(client, shop, auth_headers, **args)
     assert quote.status_code == 200, quote.json
     assert quote.json['base_price'] == 45000 and quote.json['price'] == 22500

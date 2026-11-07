@@ -5141,7 +5141,11 @@ function renderEquipmentLoadout(container, data, weaponTemplates, helmetTemplate
             if (!panel) return;
             selectPanel(weaponPanel ? 'weapons' : key);
             panel.open = true;
-            if (weaponPanel) weaponPanel.open = true;
+            if (weaponPanel) {
+                container.querySelectorAll('.loadout-weapon-details').forEach(details => {
+                    details.open = details === weaponPanel;
+                });
+            }
         });
     });
 }

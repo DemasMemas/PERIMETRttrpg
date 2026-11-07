@@ -6,7 +6,8 @@ const ceramicModels = new Set(['washbasin', 'toilet', 'bathtub']);
 const glassModels=new Set(['display_case','refrigerated_display']);
 const smoothModels=new Set(['tv_crt','tv_flat','tv_wall','washing_machine','gas_boiler','water_heater','radiator','towel_rail','mirror',
     'switchboard','plate','glass','mug','bowl','pot','cauldron','pan','kettle','fork','spoon','knife','bucket_metal','bucket_plastic','basin',
-    'dish_rack','cash_register','shop_scales','bottle','tin_can','shower','road_sign','dumpster','car_sedan','car_van','car_burned']);
+    'dish_rack','cash_register','shop_scales','bottle','tin_can','shower','road_sign','dumpster','car_sedan','car_van','car_burned',
+    'aeration_column']);
 
 // Keep reusable CPU geometry and atlas pixels, release the departed renderer's
 // GPU allocations and its dispose subscriptions on these cached resources.
@@ -279,6 +280,26 @@ function buildAdditionalHouseholdModel(T,id,{B,C,add,legs,markTrunk}) {
     const screen=(x,y,z,w,h)=>{B(x,y,z,w,h,.035,dark,2);B(x,y,z+.022,w*.9,h*.85,.008,'#4b6460',2);};
     const slats=(y,w=1,d=.8,n=5)=>{for(let i=0;i<n;i++)B(0,y,-d/2+(i+.5)*d/n,w,.055,d/n*.85,wood);};
     const stone=(x,y,z,sx,sy,sz,c=grey,angle=0)=>add(new T.DodecahedronGeometry(1,0),x,y,z,sx,sy,sz,c,2,.2,angle,angle*.7,0);
+    if(id==='aeration_column') {
+        const tank='#1d7297',tankShade='#155779',steel='#a9aca8',brass='#a78e55',panel='#222a2c';
+        C(0,.045,0,.35,.09,'#191d1d');
+        C(0,.43,0,.30,.69,tank);C(0,.775,0,.29,.045,tankShade);
+        ball(0,.79,0,.29,.035,.29,tankShade);
+        C(0,.815,0,.085,.035,steel);C(0,.875,0,.035,.11,brass);
+        rod([-.28,.2,.02],[-.28,.75,.02],.024,steel);
+        rod([-.28,.75,.02],[-.16,.80,.02],.024,steel);
+        C(-.28,.26,.02,.04,.08,brass);C(-.28,.61,.02,.04,.055,brass);
+        B(-.31,.48,.20,.12,.14,.09,panel,2);
+        B(-.31,.48,.255,.065,.07,.008,'#607f72',2);
+        C(.12,.90,.04,.025,.15,brass);
+        C(.12,.975,.055,.075,.02,steel,2,Math.PI/2);
+        ring(.12,.975,.07,.073,.009,panel,0);
+        rod([.12,.975,.075],[.15,1.01,.075],.005,panel);
+        B(.44,.66,0,.23,.18,.21,panel,2);
+        C(.31,.66,0,.065,.11,panel,2,0,Math.PI/2);
+        rod([.26,.73,0],[.35,.78,0],.014,panel);
+        return true;
+    }
     if(/^(oak|birch|pine|bush|tall_grass)_(green|dry|dead)$/.test(id)) {
         const [species,...rest]=id.split('_'),state=rest.at(-1),grass=id.startsWith('tall_grass');
         const dead=state==='dead',dry=state==='dry',bark=species==='birch'?'#b2b1a1':'#685c48';
