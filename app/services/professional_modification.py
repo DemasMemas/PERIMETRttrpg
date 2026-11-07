@@ -46,6 +46,8 @@ def _prepare(location_id, user_id, payload):
                        if entry['path'] == path), None)
         if not target or not isinstance(payload.get('item_id'), str) or target.get('id') != payload['item_id']:
             raise ConflictError('Предмет перемещён. Откройте услугу заново.')
+        from app.services.workbenches import for_item, require
+        require(settings,for_item(target.get('category') or ('weapon' if target.get('model') else '')))
         if type(target.get('quantity', 1)) is not int or target.get('quantity', 1) != 1:
             raise ValidationError('Перед открытием слота разделите стопку')
         status = item_slots(target)
@@ -64,6 +66,9 @@ def _prepare(location_id, user_id, payload):
     scientist = rule.get('scientist_only') is True
     if settings.get('scientist_enabled' if scientist else 'modification_enabled') is not True:
         raise ValidationError('Этот НПС не устанавливает выбранные модификации')
+    from app.services.workbenches import require
+    require(settings,'Станок Электрика' if scientist else
+            'Станок Оружейника' if rule['kind']=='weapon' else 'Станок Бронника')
     factor = slots['factor']
     if type(factor) is not int or factor not in {1, 2, 3, 4, 6}:
         raise ValidationError('Класс предмета не позволяет рассчитать цену установки')

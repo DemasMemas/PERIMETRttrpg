@@ -2,6 +2,7 @@ import { categoryNames } from './characterTrade.js';
 import { Server } from './api.js';
 import { showNotification } from './utils.js';
 const escape = value => String(value ?? '').replace(/[&<>"']/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
+const workbenchNames = ['Самогонный Аппарат','Печь','Станок Оружейника','Станок Бронника','Смесительный Станок','Станок Электрика'];
 
 export async function openNpcMerchant(lobbyId, characterId, onChanged = null) {
     const [character, catalog] = await Promise.all([Server.getCharacter(characterId), Server.getLobbyTemplates(lobbyId, '')]);
@@ -28,12 +29,14 @@ export function renderMerchantEditor(modal, {character, templates, onSave, onClo
     const eligible = templates.filter(template => !['background','special_trait','modification'].includes(template.category)
         && !template.attributes?.not_for_sale && (template.id>0||template.category==='weapon_module'||[-32001,-32002,-32003].includes(template.id)));
     const prices = new Map(Object.entries(character.data?.merchant?.prices || {}).map(([key,value])=>[key,{...value}]));
+    const selectedWorkbenches = character.data?.merchant?.workbenches || [];
     modal.innerHTML = `<div class="modal-content character-trade merchant-editor">
         <div class="character-trade-heading"><h3>Торговля и услуги: ${escape(character.name)}</h3><button type="button" class="btn btn-secondary trade-close" aria-label="Закрыть">×</button></div>
         <label class="merchant-enable"><input type="checkbox" class="merchant-enabled" ${character.data?.merchant?.enabled ? 'checked' : ''}> НПС торгует по прайсу без отдельного согласия ГМа</label>
         <label class="merchant-enable"><input type="checkbox" class="merchant-repair-enabled" ${character.data?.merchant?.repair_enabled ? 'checked' : ''}> НПС оказывает платный ремонт</label>
         <label class="merchant-enable"><input type="checkbox" class="merchant-modification-enabled" ${character.data?.merchant?.modification_enabled ? 'checked' : ''}> НПС устанавливает модификации</label>
         <label class="merchant-enable"><input type="checkbox" class="merchant-scientist-enabled" ${character.data?.merchant?.scientist_enabled ? 'checked' : ''}> Учёный: устанавливает модификации экзоскелета</label>
+        <details class="merchant-workbenches"><summary>Станки специалиста: ${escape(selectedWorkbenches.join(', ') || 'не выбраны')}</summary><div class="merchant-workbench-options">${workbenchNames.map(name=>`<label class="merchant-enable"><input type="checkbox" data-workbench="${escape(name)}" ${selectedWorkbenches.includes(name)?'checked':''}> ${escape(name)}</label>`).join('')}</div></details>
         <label class="trade-money-label">Множитель стоимости услуг <input type="number" min="0.01" max="10" step="0.01" class="form-control merchant-repair-markup" value="${Number(character.data?.merchant?.repair_markup||1)}"></label>
         <label class="trade-money-label">Деньги НПС <input type="number" min="0" step="1" class="form-control merchant-money" value="${Number(character.data?.inventory?.money||0)}"></label>
         <p>Цены за один экземпляр. Пустое поле — не продаёт или не выкупает. Износ, содержимое и установленные модули автоматически цену не меняют.</p>
@@ -46,6 +49,10 @@ export function renderMerchantEditor(modal, {character, templates, onSave, onClo
         <div class="form-actions"><button type="button" class="btn btn-secondary merchant-reference">Заполнить ценами каталога</button>
             <button type="button" class="btn btn-secondary merchant-clear">Очистить прайс</button>
             <button type="button" class="btn btn-primary merchant-save">Сохранить</button></div></div>`;
+    modal.querySelectorAll('[data-workbench]').forEach(input=>input.onchange=()=>{
+        const names=[...modal.querySelectorAll('[data-workbench]:checked')].map(entry=>entry.dataset.workbench);
+        modal.querySelector('.merchant-workbenches summary').textContent=`Станки специалиста: ${names.join(', ') || 'не выбраны'}`;
+    });
     let saving = false, visibleLimit = 100;
     const render = (reset=true) => {
         if(reset) visibleLimit=100;
@@ -101,6 +108,7 @@ export function renderMerchantEditor(modal, {character, templates, onSave, onClo
                 repair_enabled:modal.querySelector('.merchant-repair-enabled').checked,repair_markup:repairMarkup,
                 modification_enabled:modal.querySelector('.merchant-modification-enabled').checked,
                 scientist_enabled:modal.querySelector('.merchant-scientist-enabled').checked,
+                workbenches:[...modal.querySelectorAll('[data-workbench]:checked')].map(input=>input.dataset.workbench),
                 character_revision:character.data?._revision??character.revision});
         }catch(error){
             saving=false;modal.querySelectorAll('button,input,select').forEach(element=>element.disabled=false);

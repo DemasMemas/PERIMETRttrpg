@@ -43,7 +43,8 @@ def retired_catalog_template(template):
     category = template.category if hasattr(template, 'category') else template.get('category')
     name = template.name if hasattr(template, 'name') else template.get('name')
     attributes = template.attributes if hasattr(template, 'attributes') else template.get('attributes')
-    return ((category == 'gloves' and name == 'Спортивные')
+    return (((attributes or {}).get('craft_workbench') is True)
+            or (category == 'gloves' and name == 'Спортивные')
             or (category == 'weapon_module' and (
                 name == 'Укорочение ствола' or (attributes or {}).get('moduleRuleId') == 'short_barrel'))
             or (category == 'container' and name in {'Блок-А', 'Барьер', 'Щит', 'Стена'}

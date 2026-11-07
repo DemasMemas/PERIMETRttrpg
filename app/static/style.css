@@ -3952,6 +3952,10 @@ input[type=range]::-webkit-slider-thumb {
 .merchant-editor p { margin: 5px 0; }
 .merchant-enable { display: flex; gap: 10px; align-items: center; margin: 16px 0; }
 .merchant-editor .merchant-enable { margin: 4px 0; }
+.merchant-workbenches { padding:4px 8px; border:1px solid rgba(185,188,139,.25); border-radius:6px; }
+.merchant-workbenches summary { cursor:pointer; font-size:13px; overflow-wrap:anywhere; }
+.merchant-workbench-options { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:2px 12px; max-height:95px; overflow:auto; }
+.merchant-workbench-options .merchant-enable { min-width:0; font-size:13px; }
 .merchant-editor .trade-error { min-height: 0; margin: 4px 0; }
 .merchant-editor .form-actions { margin-top: 4px; }
 .character-trade .merchant-money { width: 124px; max-width: 124px; }

@@ -59,6 +59,8 @@ def _prepare(location_id,user_id,payload):
         raise ValidationError('Выберите вид ремонта для этого предмета')
     if category not in WEAPON_CATEGORIES|ARMOR_CATEGORIES:
         raise ValidationError('Ремонтируются только оружие, броня и шлемы')
+    from app.services.workbenches import for_item, require
+    require(settings,for_item(category))
     repaired=deepcopy(item)
     if mode=='weapon':
         current,maximum=CombatService._weapon_durability(repaired)

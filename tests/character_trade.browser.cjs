@@ -6,6 +6,9 @@ module.exports=async({page,request,token,lobby,base,connect,debugPort,safeSessio
     const api=`/lobbies/${lobby.id}`,{fixture}=loadFixture();
     const location=await request(api+'/locations',{...fixture,objects:undefined,world_tile_x:7,world_tile_z:8},token),loc=api+'/locations/'+location.id;
     await request(loc+'/objects/batch',{objects:fixture.objects},token);
+    const station=await request(loc+'/objects',{name:'household_workbench',type:'household_workbench',tile_x:44,tile_y:48,
+        properties:{visual_asset:'station_gunsmith',craft_workbench:'Станок Оружейника',level:0,
+            dimensions:{width:1.6,depth:.7,height:.9},rotation:25}},token);
     const make=async(name,money,items,x)=>{
         const character=await request(api+'/characters',{name,data:{inventory:{money,pockets:items,backpack:[]},health:{current:700,max:700,effects:[]}}},token);
         const placed=await request(loc+'/spawn_character',{character_id:character.id,tile_x:x,tile_y:48},token);
@@ -16,6 +19,16 @@ module.exports=async({page,request,token,lobby,base,connect,debugPort,safeSessio
     const href=base+api+'/page?location='+location.id,epoch=await page.evaluate('performance.timeOrigin');
     await page.call('Page.navigate',{url:href});await waitForDocument(page,{href,afterEpoch:epoch,label:'Припять: обмен'});
     await page.until(`window.socket?.connected&&window.currentLocationId===${location.id}&&document.getElementById('scene-loading-screen').classList.contains('is-hidden')`,'Сцена готова');
+    const stationView=await page.evaluate(`(async()=>{const L=await import('/static/js/locationScene.js'),G=L.sceneGraphicsForTest();
+        const root=G.roots.find(item=>item.userData.locationObjectId===${station.id});if(!root)return null;
+        window.stationCamera={target:G.controls.target.clone(),position:G.camera.position.clone()};
+        G.controls.target.set(44.5,1,48.5);G.camera.position.set(49,7,54);G.controls.update();
+        let meshes=0,shadows=0;root.traverse(item=>{if(item.isMesh){meshes++;shadows+=Number(item.castShadow)}});
+        return {asset:root.userData.locationObject.properties.visual_asset,meshes,shadows}})()`);
+    assert.equal(stationView.asset,'station_gunsmith');assert.ok(stationView.meshes>=1&&stationView.shadows>0,JSON.stringify(stationView));
+    await new Promise(resolve=>setTimeout(resolve,300));
+    fs.writeFileSync(path.join(safeSession.artifacts,'station-gunsmith.png'),Buffer.from((await page.call('Page.captureScreenshot',{format:'png'})).data,'base64'));
+    await page.evaluate(`(async()=>{const G=(await import('/static/js/locationScene.js')).sceneGraphicsForTest();G.controls.target.copy(stationCamera.target);G.camera.position.copy(stationCamera.position);G.controls.update()})()`);
     const actorId=actor.placed.location_character_id;
     assert.ok(actorId,JSON.stringify(actor.placed).slice(0,400));
     await page.evaluate(`import('/static/js/locationScene.js').then(m=>m.showCharacterTradeMenu(${actorId},${actor.character.id},${target.character.id})).then(()=>true)`);
@@ -201,7 +214,7 @@ module.exports=async({page,request,token,lobby,base,connect,debugPort,safeSessio
     await page.evaluate(`import('/static/js/locationScene.js').then(m=>m.showCharacterTradeMenu(${actorId},${a.id},${b.id})).then(()=>true)`);
     await page.evaluate(`document.querySelector('.trade-configure').click();true`);
     await page.until(`document.querySelector('.merchant-repair-enabled')`,'Услуги механика настраиваются');
-    await page.evaluate(`(()=>{document.querySelector('.merchant-repair-enabled').checked=true;document.querySelector('.merchant-repair-markup').value='1.2';document.querySelector('.merchant-save').click();return true})()`);
+    await page.evaluate(`(()=>{document.querySelector('.merchant-repair-enabled').checked=true;document.querySelector('.merchant-workbenches').open=true;document.querySelector('[data-workbench="Станок Оружейника"]').click();if(!document.querySelector('.merchant-workbenches summary').textContent.includes('Станок Оружейника'))throw Error('Выбор станка не отображается');document.querySelector('.merchant-workbenches').open=false;document.querySelector('.merchant-repair-markup').value='1.2';document.querySelector('.merchant-save').click();return true})()`);
     await page.until(`document.querySelector('.trade-repair')`,'У механика доступен ремонт');
     await page.evaluate(`document.querySelector('.trade-repair').click();true`);
     await page.until(`document.querySelector('.repair-item option')`,'Окно ремонта содержит оружие персонажа');

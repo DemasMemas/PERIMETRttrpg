@@ -162,6 +162,18 @@ export const LOCATION_ASSETS = Object.freeze([
         visual:{renderMode:'procedural',family:'household',modelId,pivot:'bottom-center',orientation:0}
     })),
     ...[
+        ['distillery','Самогонный Аппарат','workbench',[1.6,.7,.9]],
+        ['oven','Печь','sauna_stove',[.65,.65,1]],
+        ['gunsmith','Станок Оружейника','workbench',[1.6,.7,.9]],
+        ['armorer','Станок Бронника','workbench',[1.6,.7,.9]],
+        ['mixer','Смесительный Станок','workbench',[1.6,.7,.9]],
+        ['electrician','Станок Электрика','workbench',[1.6,.7,.9]],
+    ].map(([id,label,modelId,dimensions])=>({
+        id:`station_${id}`,baseType:`household_${modelId}`,label,group:'Станки',kind:'structure',
+        icon:'⚙',color:'#86735b',dimensions,properties:{craft_workbench:label},
+        visual:{renderMode:'procedural',family:'household',modelId,pivot:'bottom-center',orientation:0},
+    })),
+    ...[
         ['oak','Дуб',[5.5,5,8]],['birch','Берёза',[3.8,3.5,9]],['pine','Сосна',[4.5,4,10]],
         ['bush','Куст',[1.6,1.4,1.3]],['tall_grass','Высокая трава',[1.2,1,.95]],
     ].flatMap(([species,label,dimensions])=>[

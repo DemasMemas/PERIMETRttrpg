@@ -24,7 +24,12 @@ def test_paid_npc_installation_requires_no_player_book_tools_or_roll(client, sho
     data.pop('crafting', None)
     shop['actor_character'].data = data
     db.session.commit()
-    configured = configure(client, shop, auth_headers, modification_enabled=True, repair_markup=1.2)
+    configured = configure(client, shop, auth_headers, modification_enabled=True, repair_markup=1.2,
+        workbenches=[])
+    assert configured.status_code == 200, configured.json
+    denied = request(client, shop, auth_headers)
+    assert denied.status_code == 400 and 'Станок Оружейника' in denied.json['error']['message']
+    configured = configure(client, shop, auth_headers, workbenches=['Станок Оружейника'])
     assert configured.status_code == 200, configured.json
     quoted = request(client, shop, auth_headers)
     assert quoted.status_code == 200, quoted.json

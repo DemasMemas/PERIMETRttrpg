@@ -27,6 +27,16 @@ def mechanic(client,shop,auth_headers):
     return shop
 
 
+def test_repair_requires_mechanic_with_matching_station(client,mechanic,auth_headers):
+    assert configure(client,mechanic,auth_headers,workbenches=[]).status_code==200
+    denied=request(client,mechanic,auth_headers)
+    assert denied.status_code==400 and 'Станок Оружейника' in denied.json['error']['message']
+    assert configure(client,mechanic,auth_headers,workbenches=['Станок Бронника']).status_code==200
+    assert request(client,mechanic,auth_headers).status_code==400
+    assert configure(client,mechanic,auth_headers,workbenches=['Станок Оружейника']).status_code==200
+    assert request(client,mechanic,auth_headers).status_code==200
+
+
 def request(client,case,auth_headers,**extra):
     payload={'actor_location_character_id':case['actor_location'].id,
         'mechanic_character_id':case['target_character'].id,'item_path':['weapons',0],

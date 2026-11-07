@@ -186,9 +186,15 @@ def _tools(character,data,recipe,option):
     if normalized(raw)=='обязателен' and recipe['group']=='Электроника':raw='Станок Электрика'
     if normalized(raw) in {'да','нужна'} and recipe['group']=='Ловушки':raw='Печь'
     required=[part.strip() for part in raw.split(',') if part.strip()]
-    names={name for _,item in entries(data) if item.get('quantity',1)>0
-        and (_available_uses(item)>0 or item_names(item)&{'котелок','кастрюля'})
-        for name in item_names(item)}
+    from app.services.workbenches import NAMES
+    station_keys={normalized(name) for name in NAMES}
+    names=set();stations=set()
+    for _,item in entries(data):
+        if item.get('quantity',1)<=0 or not (_available_uses(item)>0 or item_names(item)&{'котелок','кастрюля'}):
+            continue
+        for name in item_names(item):
+            names.add(name)
+            if item.get('category')=='tool' and name in station_keys:stations.add(name)
     # Станки/костёр на сцене доступны только рядом и на текущем этаже.
     placement=LocationCharacter.query.filter_by(character_id=character.id).order_by(LocationCharacter.last_action.desc().nullslast(),LocationCharacter.id.desc()).first()
     if placement:
@@ -198,14 +204,20 @@ def _tools(character,data,recipe,option):
             if ((obj.tile_x-placement.pos_x)**2+(obj.tile_y-placement.pos_y)**2)**.5>1.5:continue
             if obj.type in {'campfire','fire_barrel'}:
                 if props.get('is_lit',True):names.add('костер')
-            else:names.add(normalized(obj.name))
+            else:
+                station_name=normalized(props.get('craft_workbench') or obj.name)
+                if obj.type in {'workbench','household_workbench'} and station_name in station_keys:
+                    stations.add(station_name)
+                else:names.add(normalized(obj.name))
     missing=[]
     for part in required:
         if normalized(part) in {'не нужен','не нужна','не обязателен','не обязательна','не обязателен станок',''} or part in {'---','-'}:continue
         if normalized(part)=='самогонный апарат':part='Самогонный Аппарат'
         choices=part.split('/')
         chosen=choices[option] if len(choices)==count and count>1 else part
-        if not any(normalized(choice) in names for choice in (chosen.split('/') if count==1 else [chosen])):missing.append(chosen)
+        if not any((normalized(choice) in stations if normalized(choice) in station_keys
+                    else normalized(choice) in names) for choice in (chosen.split('/') if count==1 else [chosen])):
+            missing.append(chosen)
     return missing
 
 

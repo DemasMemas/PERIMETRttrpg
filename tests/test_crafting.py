@@ -51,6 +51,31 @@ def ammo_workshop(workshop,name='5.45x39'):
     return template
 
 
+def test_placed_station_is_available_only_nearby_on_same_floor(workshop):
+    from app.services.crafting import _tools, recipe_by_id
+    from app.services.equipment_catalog import load_catalog
+
+    character=workshop['actor_character']
+    placement=LocationCharacter.query.filter_by(character_id=character.id).first()
+    station=LocationObject(location_id=placement.location_id,name='Верстак',type='household_workbench',
+        tile_x=round(placement.pos_x),tile_y=round(placement.pos_y),
+        properties={'craft_workbench':'Смесительный Станок','level':placement.floor_level or 0,
+                    'visual_asset':'station_mixer'})
+    db.session.add(station);db.session.commit()
+    recipe=recipe_by_id('recipe-v26')
+    assert _tools(character,character.data,recipe,0)==[]
+    station.type='chair';station.name='Смесительный станок';station.properties={};db.session.commit()
+    assert any('смеситель' in name.casefold() for name in _tools(character,character.data,recipe,0))
+    station.type='household_workbench';station.name='Верстак'
+    station.properties={'craft_workbench':'Смесительный Станок','level':placement.floor_level or 0,
+                        'visual_asset':'station_mixer'}
+    station.tile_x+=3;db.session.commit()
+    assert any('смеситель' in name.casefold() for name in _tools(character,character.data,recipe,0))
+    station.tile_x-=3;station.properties={**station.properties,'level':(placement.floor_level or 0)+1};db.session.commit()
+    assert any('смеситель' in name.casefold() for name in _tools(character,character.data,recipe,0))
+    assert not any(entry['attributes'].get('craft_workbench') for entry in load_catalog())
+
+
 def test_ammo_recipe_requires_catalog_caliber_and_author_category_two_numbers(workshop):
     from app.services.crafting import quote
     from app.services.exceptions import ValidationError
@@ -728,8 +753,12 @@ def test_analgin_recipe_finishes_with_thirty_five_catalog_tablets_once(client,wo
     data=deepcopy(workshop['actor_character'].data)
     data['skills']['other']['medicine']={'base':20}
     data['inventory']['pockets'].extend({'name':name,'category':'crafting_material','quantity':1}
-        for name in ('Серная кислота','Натрий','Сахар','Смесительный Станок'))
+        for name in ('Серная кислота','Натрий','Сахар'))
     workshop['actor_character'].data=data
+    placement=LocationCharacter.query.filter_by(character_id=workshop['actor_character'].id).first()
+    db.session.add(LocationObject(location_id=placement.location_id,name='Смесительный Станок',
+        type='household_workbench',tile_x=round(placement.pos_x),tile_y=round(placement.pos_y),
+        properties={'craft_workbench':'Смесительный Станок','level':placement.floor_level or 0}))
     db.session.add(ItemTemplate(name='Анальгин (Таблетка)',category='consumable',price=100))
     db.session.commit()
     started=call(client,workshop,auth_headers,'start',recipe_id='recipe-aa21')

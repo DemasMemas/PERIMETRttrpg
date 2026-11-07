@@ -34,7 +34,8 @@ def shop(client, create_user, auth_headers):
 
 def configure(client, pair, auth_headers, **changes):
     body = {'character_revision':pair['target_character'].revision, 'enabled':True,
-        'prices':{str(pair['water'].id):{'buy':40,'sell':75}, str(pair['bandage'].id):{'buy':25,'sell':50}}}
+        'prices':{str(pair['water'].id):{'buy':40,'sell':75}, str(pair['bandage'].id):{'buy':25,'sell':50}},
+        'workbenches':['Станок Оружейника','Станок Бронника','Станок Электрика']}
     body.update(changes)
     return client.patch(f"/lobbies/{pair['lobby'].id}/characters/{pair['target_character'].id}/merchant",
                         headers=auth_headers(pair['actor_user']), json=body)

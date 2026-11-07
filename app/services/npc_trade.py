@@ -43,7 +43,7 @@ def configure(lobby_id, character_id, user_id, payload):
         raise ValidationError('Автоматическую торговлю можно включить только для НПС')
     if (not isinstance(payload, dict) or not {'enabled', 'prices', 'character_revision'} <= set(payload)
             or set(payload) - {'enabled', 'prices', 'character_revision', 'money','repair_enabled','repair_markup',
-                               'modification_enabled','scientist_enabled'}):
+                               'modification_enabled','scientist_enabled','workbenches'}):
         raise ValidationError('Некорректные настройки торговца')
     if type(payload['character_revision']) is not int or payload['character_revision'] != character.revision:
         raise ConflictError('Лист НПС изменился. Откройте настройки заново.')
@@ -53,6 +53,9 @@ def configure(lobby_id, character_id, user_id, payload):
     repair_markup=payload.get('repair_markup',((character.data or {}).get('merchant') or {}).get('repair_markup',1))
     modification_enabled=payload.get('modification_enabled',((character.data or {}).get('merchant') or {}).get('modification_enabled',False))
     scientist_enabled=payload.get('scientist_enabled',((character.data or {}).get('merchant') or {}).get('scientist_enabled',False))
+    from app.services.workbenches import validate as validate_workbenches
+    workbenches=validate_workbenches(payload.get('workbenches',
+        ((character.data or {}).get('merchant') or {}).get('workbenches',[])))
     if type(modification_enabled) is not bool or type(scientist_enabled) is not bool:
         raise ValidationError('Настройки платной установки должны быть логическими значениями')
     if type(repair_enabled) is not bool or type(repair_markup) not in {int,float} or not isfinite(repair_markup) or not 0<repair_markup<=10:
@@ -90,7 +93,8 @@ def configure(lobby_id, character_id, user_id, payload):
         data.setdefault('inventory', {})['money'] = money(payload['money'], label='Деньги торговца')
     data['merchant'] = {'enabled': payload['enabled'], 'prices': prices,
                         'repair_enabled':repair_enabled,'repair_markup':repair_markup,
-                        'modification_enabled':modification_enabled,'scientist_enabled':scientist_enabled}
+                        'modification_enabled':modification_enabled,'scientist_enabled':scientist_enabled,
+                        'workbenches':workbenches}
     character.data = data
     flag_modified(character, 'data')
     db.session.flush()
