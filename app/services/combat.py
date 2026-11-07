@@ -7296,11 +7296,13 @@ class CombatService:
             posture_multiplier = {'standing': 1, 'sitting': 0.75, 'prone': 0.1}.get(
                 posture_at_detonation, 1,
             )
+            from app.services.trap_catalog import radial_damage
+            band=radial_damage(profile,distance)
             fragment_damage = round(max(
-                0, profile['fragment'] * (1 - 0.1 * distance),
+                0, band['fragments'] if band else profile['fragment'] * (1 - 0.1 * distance),
             ) * posture_multiplier)
-            penetration = profile['penetration']
-            if not profile.get('fragment_keeps_penetration'):
+            penetration = band['penetration'] if band else profile['penetration']
+            if not band and not profile.get('fragment_keeps_penetration'):
                 penetration = max(0, penetration - 5 * distance)
             fragment_zone = CombatService._grenade_fragment_zone()
             fragment=CombatService._explosion_fragment_hit(target,fragment_damage,penetration,fragment_zone,cover,round_number,
@@ -7336,7 +7338,7 @@ class CombatService:
             armor_multiplier = max(0, 1 - blast_armor / 100)
             wave_incoming = max(
                 0,
-                profile['blast_base']*(1.5 if indoors else 1) - profile['blast_falloff'] * distance,
+                band['blast']*(1.5 if indoors else 1) if band else profile['blast_base']*(1.5 if indoors else 1) - profile['blast_falloff'] * distance,
             )
             # Дробная защита не должна превращать ровные 42,5 в 42,50000000001.
             blast = 0 if wave_blocked else round(round(wave_incoming * armor_multiplier, 9))
@@ -7463,8 +7465,10 @@ class CombatService:
             )
             if distance > radius or not CombatService._is_cover_object(obj):
                 continue
-            blast = max(0, round(profile['blast_base'] - profile['blast_falloff'] * distance))
-            fragment = max(0, round(profile['fragment'] * (1 - 0.1 * distance)))
+            from app.services.trap_catalog import radial_damage
+            band=radial_damage(profile,distance)
+            blast = max(0, round(band['blast'] if band else profile['blast_base'] - profile['blast_falloff'] * distance))
+            fragment = max(0, round(band['fragments'] if band else profile['fragment'] * (1 - 0.1 * distance)))
             fragment_state = CombatService.apply_cover_damage(obj, fragment, 'fragment')
             if fragment_state['destroyed']:
                 object_results.append({'object_id': obj.id, 'name': obj.name, 'fragment_damage': fragment, 'state': fragment_state})
@@ -13711,6 +13715,7 @@ class CombatService:
         if not character:
             raise NotFoundError("Character not found")
 
+        character._trap_end_turn=False
         if action_key in {'scout_location','brigadier_refusal'}:
             if not CombatService._can_end_turn_for_character(character,user_id,is_gm=is_gm):raise PermissionDenied('Вы не управляете персонажем')
             CombatService.ensure_character_can_act(character)
@@ -13889,6 +13894,7 @@ class CombatService:
         action = next((item for item in ACTION_CATALOG if item['key'] == action_key), None)
         if action_key=='place_cover':
             action={'key':'place_cover','label':'Установка укрытия','action_points':5,'free_actions':0,'movement_points':0}
+        if action_key=='trap':action={'key':'trap','label':'Ловушка','action_points':5,'free_actions':0,'movement_points':0}
         if not action:
             raise ValidationError("Unknown action")
 
@@ -13927,6 +13933,11 @@ class CombatService:
         order_plan=None
         reduction_plan=None
         cover_placement=None
+        if action_key=='trap':
+            from app.services.traps import prepare as trap_plan
+            trap_prepared=trap_plan(character,data,attribute_choice,user_id)
+            special_action_cost=trap_prepared['action_points']
+            action['label']={'place':'Установка ловушки','mask':'Маскировка ловушки','defuse':'Обезвреживание ловушки','recover':'Подбор ловушки','detect':'Поиск ловушек','escape_net':'Освободиться из сети','cut_net':'Разрезать сеть'}[trap_prepared['operation']]
         if action_key=='place_cover':
             from app.services.crafted_covers import plan as cover_plan
             cover_placement=cover_plan(character,data,attribute_choice)
@@ -17089,6 +17100,10 @@ class CombatService:
             character.character.data=data;flag_modified(character.character,'data')
             narrative_action_details={'name':action['label'],'action_points':special_action_cost,'roll_required':False,
                 'ground_object_id':obj.id,'ground_object_event':'deleted' if removed else 'created' if created else 'updated'}
+        if action_key=='trap':
+            from app.services.traps import execute as execute_trap
+            narrative_action_details=execute_trap(character,data,attribute_choice,user_id,state)
+            character.character.data=data;flag_modified(character.character,'data')
         if action_key=='prepare_water':
             from app.services.burning import water_item
             water,litres=water_item(data,item_path)
@@ -17731,6 +17746,8 @@ class CombatService:
             explosive_details['reaction_detonations']=begin(character,state)
         character.last_action = db.func.now()
         db.session.commit()
+        if getattr(character,'_trap_end_turn',False) and state.current_location_character_id==character.id:
+            CombatService.end_turn(location_id,user_id,location_character_id=character.id)
         if action_key == 'recover_from_shock':
             ended_state = CombatService.end_turn(
                 location_id,
@@ -17832,6 +17849,8 @@ class CombatService:
         require_balance(character)
         if character.grappled_by_id:
             raise ValidationError("A grappled character cannot move independently")
+        if (((character.character.data or {}).get('health') or {}).get('combatMeta') or {}).get('trappedNet'):
+            raise ValidationError('Сначала освободитесь из сети или разрежьте её')
 
         from app.services.body_transport import validate_move, move_plan, finish_move
         transported_body = validate_move(character)
@@ -17858,6 +17877,7 @@ class CombatService:
             raise ValidationError("Use the anomaly escape action to move")
 
         character._movement_fall = None
+        character._trap_end_turn=False
         character._movement_slip_checks = []
         character._movement_slip_stopped = False
         if special_action == 'drop_down':
@@ -17908,7 +17928,11 @@ class CombatService:
             CombatService._apply_periodic_health_effects(character,phase='movement_end')
             CombatService._sync_location_effects_from_character(character)
             CombatService._release_invalid_gunpoints(location_id)
+            from app.services.traps import after_landing
+            after_landing(character,state)
             db.session.commit()
+            if getattr(character,'_trap_end_turn',False) and state and state.status=='active' and state.current_location_character_id==character.id:
+                CombatService.end_turn(location_id,user_id,location_character_id=character.id)
             return character,0,CombatService.get_state(location_id,user_id)
 
         if special_action in {'climb','climb_up','descend'}:
@@ -17967,7 +17991,11 @@ class CombatService:
             CombatService._apply_periodic_health_effects(character, phase='movement_end')
             CombatService._sync_location_effects_from_character(character)
             CombatService._release_invalid_gunpoints(location_id)
+            from app.services.traps import after_landing
+            after_landing(character,state)
             db.session.commit()
+            if getattr(character,'_trap_end_turn',False) and state and state.status=='active' and state.current_location_character_id==character.id:
+                CombatService.end_turn(location_id,user_id,location_character_id=character.id)
             state_payload = (
                 CombatService._serialize_state(location, state) if state else
                 CombatService.get_state(location_id, user_id) if anomaly_changed else None
@@ -18018,6 +18046,14 @@ class CombatService:
         if not path:
             raise ValidationError("Path is blocked")
 
+        from app.services.traps import path_traps
+        stopper=next((trap for trap in path_traps(character,path) if trap.recipe_id in {'recipe-m4','recipe-m5','recipe-m13'}),None)
+        if stopper:
+            new_x,new_y,target_level=stopper.x,stopper.y,stopper.level
+            path=CombatService._find_movement_path(location,character.pos_x,character.pos_y,new_x,new_y,character.character_id,
+                ignored_character_ids=ignored_character_ids,companion_offset=companion_offset,end_level=target_level,
+                movement_mode=(movement_mode or 'walk') if state and state.status=='active' else None)
+            if not path:raise ValidationError('Путь недоступен')
         entered_anomaly = None
         if state and state.status == 'active':
             anomaly_candidates = CombatService._anomaly_candidates(location)
@@ -18286,12 +18322,16 @@ class CombatService:
         CombatService._apply_periodic_health_effects(character, phase='movement_end')
         CombatService._sync_location_effects_from_character(character)
         CombatService._release_invalid_gunpoints(location_id)
+        from app.services.traps import after_move
+        after_move(character,path,state)
         db.session.commit()
 
         state_payload = (
             CombatService._serialize_state(location, state) if state else
             CombatService.get_state(location_id, user_id) if anomaly_changed or transported_body else None
         )
+        if getattr(character,'_trap_end_turn',False) and state and state.status=='active' and state.current_location_character_id==character.id:
+            state_payload=CombatService.end_turn(location_id,user_id,location_character_id=character.id)
         return character, cost, state_payload
 
     @staticmethod

@@ -14,6 +14,10 @@ from app.services.exceptions import ConflictError, PermissionDenied, ValidationE
 def _bound_items(actor, payload):
     data = actor.character.data or {}
     result = {}
+    if payload.get('action_key')=='trap':
+        from app.services.traps import _item
+        choice=payload.get('attribute_choice') or {}
+        if choice.get('tool_path') is not None:result['trapTool']=deepcopy(_item(data,choice['tool_path']))
     if payload.get('action_key')=='attack' and payload.get('attribute_choice')=='paired_fire':
         from app.services.weapon_grip import pair,hands,primary_hand
         result['pairedWeapons']=deepcopy(pair(actor))
@@ -188,6 +192,9 @@ def validate_deferred_conditions(actor, row):
     if kind=='place_cover':
         from app.services.crafted_covers import plan
         plan(actor,actor.character.data,payload.get('attribute_choice'))
+    if kind=='trap':
+        from app.services.traps import prepare
+        prepare(actor,actor.character.data,payload.get('attribute_choice'),actor.location.lobby.gm_id)
     if kind=='prosthesis':
         from app.services.prostheses import plan
         plan(actor.character.data,payload.get('equipment_operation'),payload.get('equipment_slot'),payload.get('item_path'))
@@ -331,7 +338,7 @@ def preserve_action_payment(current_data, incoming_data):
     meta = health.setdefault('combatMeta', {})
     if not isinstance(meta, dict):
         meta = health['combatMeta'] = {}
-    for key in ('pendingAction', 'completedPendingActionId', 'unstableJump', 'jumpSupport', 'slipperyMovement', 'grenadeReaction','heldWaterItem','surgeonReductions','fencerUsed','observedDeathNotified','sniperTraumaChoices','socialMemory','socialCheckReceipts','diplomatRetry','standaloneEvasion','firefighterNearby','harmAllowedTargets','combatExplosionOccurred','grenadirCheck','grenadirMustExplode','breakthroughProgress','breakthroughProgressOP','breakthroughMovementImpossible','breakthroughWillPassed','breakthroughWillFailed','breakthroughCheck','sniperOldCover','sniperPositionCheck','hunterActivityDay','hunterProcessedDay','hunterStressDebt','brigadierOrder','brigadierRefusals','locationScout','locationScoutPoint','observerTargets'):
+    for key in ('pendingAction', 'completedPendingActionId', 'unstableJump', 'jumpSupport', 'slipperyMovement', 'grenadeReaction','heldWaterItem','trappedNet','surgeonReductions','fencerUsed','observedDeathNotified','sniperTraumaChoices','socialMemory','socialCheckReceipts','diplomatRetry','standaloneEvasion','firefighterNearby','harmAllowedTargets','combatExplosionOccurred','grenadirCheck','grenadirMustExplode','breakthroughProgress','breakthroughProgressOP','breakthroughMovementImpossible','breakthroughWillPassed','breakthroughWillFailed','breakthroughCheck','sniperOldCover','sniperPositionCheck','hunterActivityDay','hunterProcessedDay','hunterStressDebt','brigadierOrder','brigadierRefusals','locationScout','locationScoutPoint','observerTargets'):
         if key in current:
             meta[key] = deepcopy(current[key])
         else:

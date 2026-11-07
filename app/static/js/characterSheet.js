@@ -16358,7 +16358,7 @@ function renderBackpackItem(item, index, parentPath, parentContainer, allTemplat
     actionsDiv.style.alignItems = 'center';
     actionsDiv.style.justifyContent = 'flex-end';
 
-    if(item.attributes?.portable_station||item.attributes?.crafted_cover) {
+    if(item.attributes?.portable_station||item.attributes?.crafted_cover||item.attributes?.trap_recipe) {
         const placeBtn=document.createElement('button');placeBtn.type='button';placeBtn.className='btn btn-sm btn-primary';
         placeBtn.textContent='Разместить';placeBtn.dataset.widgetKey='place-station';
         placeBtn.onclick=async e=>{
@@ -16371,7 +16371,7 @@ function renderBackpackItem(item, index, parentPath, parentContainer, allTemplat
                 if(!current||current.id!==item.id)throw new Error('Предмет перемещён. Откройте инвентарь заново.');
                 const selection={characterId,revision:currentCharacterData._revision,itemPath:[...itemPath],
                     itemId:current.id,assetId:current.attributes.station_asset||current.attributes.placement_asset,
-                    coverKey:current.attributes.crafted_cover};
+                    coverKey:current.attributes.crafted_cover,trapKey:current.attributes.trap_recipe,trapKind:current.attributes.trap_kind};
                 const location=await import('./locationScene.js');
                 location.beginStationPlacement(selection);closeCharacterSheet();
             }catch(error){showNotification(error.message,'system');}

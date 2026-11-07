@@ -125,6 +125,15 @@ export async function showCrafting({characterId,lobbyId,onSaved,recipeId=''}){
                 if([...ammoVariant.options].some(option=>option.value===previous))ammoVariant.value=previous;
             };
             if(ammo){detail.append(el('label','Калибр'),ammo,el('label','Вид патронов'),ammoVariant);fillAmmoVariants();}
+            const grenades=snapshot.inventory.filter(e=>e.item.category==='grenade');
+            const grenadeChoices=[];
+            if(['recipe-m8','recipe-m9'].includes(recipe.id)){
+                for(let i=0;i<(recipe.id==='recipe-m9'?2:1);i++){
+                    const choice=select(`Граната ${i+1}`,grenades.map((entry,index)=>[index,`${entry.item.name} × ${entry.item.quantity||1}`]));
+                    if(grenades[i])choice.value=String(i);
+                    grenadeChoices.push(choice);detail.append(el('label',`Граната ${i+1}`),choice);
+                }
+            }
             const parts=recipe.tools_text.split(',').at(-1).split('/');
             const tool=select('Вариант приготовления',(ammoCategory===2?[65]:recipe.difficulty_options.length?recipe.difficulty_options:[0]).map((difficulty,i)=>[i,`${parts[i]?.trim()||'По рецепту'} · исходная СЛ ${difficulty}`]));
             if(recipe.difficulty_options.length>1)detail.append(tool);
@@ -134,6 +143,7 @@ export async function showCrafting({characterId,lobbyId,onSaved,recipeId=''}){
                 const quoteGeneration=++generation;preview.replaceChildren(el('p','Считаем компоненты…'));
                 try{
                     const ammoPayload=ammo?{ammo_template_id:Number(ammo.value),ammo_variant:ammoVariant.value}:{};
+                    if(grenadeChoices.length)ammoPayload.grenade_paths=grenadeChoices.map(choice=>grenades[Number(choice.value)]?.path||[]);
                     const response=await Server.craft(characterId,{operation:'quote',recipe_id:recipe.id,tool_option:Number(tool.value),approval_id:approval?.id,...ammoPayload});
                     if(quoteGeneration!==generation||!modal.isConnected)return;
                     const plan=response.result;preview.replaceChildren(el('p',`Результат: ${plan.recipe.output_name} × ${plan.recipe.output_count}`),
@@ -156,6 +166,7 @@ export async function showCrafting({characterId,lobbyId,onSaved,recipeId=''}){
                 }catch(error){if(quoteGeneration===generation)preview.replaceChildren(el('p',error.message));}
             };
             tool.onchange=updateQuote;
+            for(const choice of grenadeChoices)choice.onchange=updateQuote;
             if(ammo){ammo.onchange=()=>{fillAmmoVariants();void updateQuote();};ammoVariant.onchange=updateQuote;}
             await updateQuote();
             if(!modal.isConnected||selectedRecipe!==recipe.id)return;

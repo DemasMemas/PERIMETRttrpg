@@ -230,6 +230,9 @@ def handle_move_in_location(data):
         room=f"location_{location_id}",
     )
     revealed = getattr(moved_character, '_revealed_anomaly', None)
+    from app.services.traps import publish as publish_traps,publish_effects as publish_trap_effects
+    publish_traps(location_id,getattr(moved_character,'_trap_ids',[]))
+    publish_trap_effects(getattr(moved_character,'_trap_results',[]))
     if revealed:
         if revealed['object_id']:
             obj = db.session.get(LocationObject, revealed['object_id'])

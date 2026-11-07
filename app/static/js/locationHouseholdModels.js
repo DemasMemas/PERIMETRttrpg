@@ -280,7 +280,23 @@ function buildAdditionalHouseholdModel(T,id,{B,C,add,legs,markTrunk}) {
     const screen=(x,y,z,w,h)=>{B(x,y,z,w,h,.035,dark,2);B(x,y,z+.022,w*.9,h*.85,.008,'#4b6460',2);};
     const slats=(y,w=1,d=.8,n=5)=>{for(let i=0;i<n;i++)B(0,y,-d/2+(i+.5)*d/n,w,.055,d/n*.85,wood);};
     const stone=(x,y,z,sx,sy,sz,c=grey,angle=0)=>add(new T.DodecahedronGeometry(1,0),x,y,z,sx,sy,sz,c,2,.2,angle,angle*.7,0);
-    if(id==='curtain_panel'){
+    if(id.startsWith('trap_')){
+        const kind=id.slice(5);
+        if(kind==='mine'){C(0,.08,0,.42,.16,'#4d5945',2);C(0,.19,0,.15,.08,iron,2);}
+        else if(kind==='beartrap'){
+            B(0,.035,0,.9,.07,.65,iron,2);C(0,.09,0,.13,.04,rust,2);
+            for(const side of [-1,1])for(let i=0;i<7;i++)B(-.4+i*.13,.14,side*.28,.06,.2,.04,grey,2,side*.4);
+        }else if(kind==='net'){
+            for(let i=0;i<8;i++){const p=-.45+i*.13;rod([p,.02,-.45],[p,.025,.45],.012,cloth);rod([-.45,.02,p],[.45,.025,p],.012,cloth);}
+        }else if(kind==='tripwire'||kind==='alarm'){
+            for(const x of [-.45,.45])C(x,.15,0,.025,.3,iron,2);
+            rod([-.45,.12,0],[.45,.12,0],.006,dark);C(-.3,.08,.16,.1,.16,kind==='alarm'?grey:'#596044',2);
+        }else{
+            for(let i=0;i<5;i++){const x=Math.sin(i*4)*.35,z=Math.cos(i*3)*.35;
+                rod([x-.08,.01,z-.08],[x+.08,.2,z+.08],.018,iron);rod([x+.1,.01,z-.06],[x-.06,.16,z+.1],.018,iron);}
+        }
+        return true;
+    }else if(id==='curtain_panel'){
         for(let i=0;i<24;i++)B(-.5+(i+.5)/24,.5,Math.sin(i*Math.PI/3)*.32,1/24+.002,1,.18,cloth,1);
         C(0,.99,0,.01,.02,iron);
     }else if(id==='barricade_wood'){

@@ -2630,6 +2630,7 @@ def get_location_detail(lobby_id, location_id, lobby, participant):
 
     objects = LocationObject.query.filter_by(location_id=location.id).all()
     obj_schema = LocationObjectSchema(many=True)
+    from app.services.traps import projections
 
     return jsonify({
         'id': location.id,
@@ -2643,7 +2644,7 @@ def get_location_detail(lobby_id, location_id, lobby, participant):
         'tiles_data': location.tiles_data,
         'lighting': location.lighting,
         'spawn_points': location.spawn_points,
-        'objects': obj_schema.dump(objects)
+        'objects': obj_schema.dump(objects)+projections(location_id,participant.user_id)
     }), 200
 
 
@@ -3687,6 +3688,19 @@ def operate_crafted_cover(lobby_id,location_id,lobby,participant):
     socketio.emit('location_object_deleted' if removed else 'location_object_created' if created else 'location_object_updated',
         {'location_id':location_id,'object_id':obj.id,'object':serialized},room=f'location_{location_id}')
     return jsonify({'data':character.data_snapshot(),'object':serialized,'created':created,'removed':removed})
+
+
+@lobbies_bp.route('/<int:lobby_id>/locations/<int:location_id>/traps', methods=['POST'])
+@jwt_required()
+@requires_participant
+def operate_trap(lobby_id,location_id,lobby,participant):
+    from app.services.traps import operate,publish,publish_effects
+    character,result=operate(lobby_id,location_id,participant.user_id,request.get_json() or {})
+    publish(location_id,result['trap_ids'])
+    publish_effects(result)
+    socketio.emit('combat_state_updated',CombatService.get_state(location_id,lobby.gm_id),room=f'location_{location_id}')
+    emit_character_update({'character_id':character.id,'updates':{'data':character.data_snapshot()},'source':'trap'})
+    return jsonify({'data':character.data_snapshot(),'result':result})
 
 
 @lobbies_bp.route('/characters/<int:character_id>/treatment', methods=['POST'])
@@ -5359,6 +5373,12 @@ def perform_location_combat_action(lobby_id, location_id, lobby, participant):
             'facing_x':actor['facing_x'],'facing_y':actor['facing_y'],
             'path':result['jump']['path'],'jump':True},room=f'location_{location_id}')
     ground_object_events = {}
+    from app.services.traps import publish as publish_traps
+    publish_traps(location_id,(result.get('narrative_action') or {}).get('trap_ids',[]))
+    publish_traps(location_id,(result.get('jump') or {}).get('trap_ids',[]))
+    from app.services.traps import publish_effects as publish_trap_effects
+    if result.get('action')=='trap':publish_trap_effects(result.get('narrative_action'))
+    if result.get('jump'):publish_trap_effects(result['jump'].get('traps',[]))
     pending_nodes = [result]
     while pending_nodes:
         node = pending_nodes.pop()

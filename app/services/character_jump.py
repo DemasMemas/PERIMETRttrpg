@@ -87,6 +87,8 @@ def prepare_jump(location, actor, x, y, origin=None):
     from app.services.character_interaction import CharacterInteractionService
     CombatService.ensure_character_can_act(actor,'jump')
     require_balance(actor)
+    if _meta(actor).get('trappedNet'):
+        raise ValidationError('Сначала освободитесь из сети или разрежьте её')
     if CombatService._is_mutant_character(actor.character.data):
         raise ValidationError('Для мутанта используйте его специальную способность прыжка')
     if CombatService._posture_key(actor) != 'standing' or actor.grappled_by_id or actor.grapple_target_id:
@@ -158,6 +160,9 @@ def _place(location, actor, point, start, round_number, *, unstable=None):
         CombatService._enter_anomaly(actor,anomalies[0],round_number,previous_position=(start['x'],start['y']))
     CombatService._apply_periodic_health_effects(actor,phase='movement_end')
     CombatService._sync_location_effects_from_character(actor)
+    from app.models import LocationCombatState
+    from app.services.traps import after_landing
+    after_landing(actor,LocationCombatState.query.filter_by(location_id=actor.location_id).first())
     return fall
 
 
@@ -190,6 +195,7 @@ def execute_jump(location, actor, plan, round_number):
     fall = _place(location,actor,point,start,round_number,unstable=unstable)
     return dict(outcome=outcome,check=check,profile=plan['profile'],start=start,
                 planned_landing=planned,landing=point,fall=fall,distance=plan['distance'],path=animation_path(start,point),
+                traps=getattr(actor,'_trap_results',[]),trap_ids=getattr(actor,'_trap_ids',[]),
                 revealed_anomaly=getattr(actor,'_revealed_anomaly',None))
 
 
@@ -213,6 +219,7 @@ def recover_balance(location, actor, round_number):
     fall = _place(location,actor,point,current,round_number)
     return dict(outcome='balanced' if check['success'] else 'stumbled',check=check,
                 start=current,landing=point,fall=fall,action_points=0,path=animation_path(current,point),
+                traps=getattr(actor,'_trap_results',[]),trap_ids=getattr(actor,'_trap_ids',[]),
                 revealed_anomaly=getattr(actor,'_revealed_anomaly',None))
 
 

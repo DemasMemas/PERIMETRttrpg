@@ -746,14 +746,14 @@ export function beginStationPlacement(selection) {
     const actor=getLocationCharacterById(selection.characterId);
     if(!currentLocationData||!actor||!canControlCharacter(selection.characterId))throw new Error('Персонаж должен находиться на текущей подлокации');
     const coverKey=selection.coverKey||selection.object?.properties?.crafted_cover;
-    if(combatState?.status==='active'&&!coverKey)throw new Error('Размещение устройств доступно вне боя');
+    if(combatState?.status==='active'&&!coverKey&&!selection.trapKey)throw new Error('Размещение устройств доступно вне боя');
     if(combatState?.status==='active'&&!isCurrentCombatTurnForCharacter(selection.characterId))throw new Error('Сейчас не ход этого персонажа');
-    const asset=findLocationAsset(selection.object?.properties?.visual_asset||selection.assetId);
+    const asset=selection.trapKey?{id:'placed_trap',dimensions:[.65,.65,.08],properties:{trap_kind:selection.trapKind}}:findLocationAsset(selection.object?.properties?.visual_asset||selection.assetId);
     if(!asset)throw new Error('Не найден вид устройства');
     clearStationPlacement();clearPendingCombatAction();hideStructureInteraction();
     const placement=placementForLocationAsset(asset);
     const ghost=createLocationObjectMesh({type:placement.type,tile_x:0,tile_y:0,
-        properties:{visual_asset:placement.visualAsset,dimensions:{width:asset.dimensions[0],depth:asset.dimensions[1],height:asset.dimensions[2]}}},true);
+        properties:{...placement.properties,visual_asset:placement.visualAsset,dimensions:{width:asset.dimensions[0],depth:asset.dimensions[1],height:asset.dimensions[2]}}},true);
     ghost.traverse(child=>{if(child.isMesh){child.castShadow=false;const clone=mat=>{const copy=mat.clone();copy.transparent=true;copy.opacity=.45;copy.depthWrite=false;return copy;};
         if(child.material)child.material=Array.isArray(child.material)?child.material.map(clone):clone(child.material);}});
     ghost.visible=false;scene.add(ghost);
@@ -782,6 +782,7 @@ function updateStationPreview(clientX,clientY) {
     const state=pendingStationPlacement;if(!state||state.busy||state.request)return;
     const point=localMapToolPoint(clientX,clientY);
     state.point=point&&point.floor_level===state.actorLevel?point:null;
+    if(state.trapKey&&state.point){state.point.x=Math.floor(state.point.x)+.5;state.point.z=Math.floor(state.point.z)+.5;}
     if(state.coverKey==='recipe-m18'){
         const anchor=curtainAnchorAtScreen(clientX,clientY,state.actorLevel);
         state.anchor=anchor?.type==='window'&&structureLevel(anchor)===state.actorLevel?anchor:null;
@@ -809,14 +810,14 @@ async function commitStationPlacement(clientX,clientY) {
         x:state.point.x-.5,y:state.point.z-.5,rotation:state.rotation,floor_level:state.actorLevel,anchor_id:state.anchor?.id};
     try {
         let result;
-        if(state.coverKey&&combatState?.status==='active'){
+        if((state.coverKey||state.trapKey)&&combatState?.status==='active'){
             const actor=findCombatCharacterByCharacterId(state.characterId);
             result=await Server.performLocationCombatAction(window.currentLobbyId,state.locationId,{
-                location_character_id:actor?.location_character_id,action_key:'place_cover',attribute_choice:state.request,
+                location_character_id:actor?.location_character_id,action_key:state.trapKey?'trap':'place_cover',attribute_choice:state.request,
                 item_path:state.itemPath,item_id:state.itemId,target_object_id:state.object?.id,pending_action_id:state.request.operation_id});
-        }else result=await (state.coverKey?Server.operateCraftedCover:Server.operateStation)(window.currentLobbyId,state.locationId,state.request);
+        }else result=await (state.trapKey?Server.operateTrap:state.coverKey?Server.operateCraftedCover:Server.operateStation)(window.currentLobbyId,state.locationId,state.request);
         if(currentLocationId===state.locationId&&result.object){if(result.created)addLocationObject(result.object);else updateLocationObject(result.object);}
-        showNotification(result.pending_action?'Начата оплата установки укрытия':state.coverKey?'Укрытие размещено':state.object?'Устройство перемещено':'Устройство размещено','success');
+        showNotification(result.pending_action?'Начата оплата установки':state.trapKey?'Ловушка установлена':state.coverKey?'Укрытие размещено':state.object?'Устройство перемещено':'Устройство размещено','success');
         if(pendingStationPlacement===state)clearStationPlacement();
     }catch(error){
         if(error.status)state.request=null;
@@ -9006,6 +9007,11 @@ function getActionRequirement(object, actionKey) {
 }
 
 function getStructureActionLabel(object, actionKey) {
+    if(actionKey==='trap_mask')return 'Замаскировать · 5 ОД';
+    if(actionKey==='trap_defuse')return 'Обезвредить · 2 ОД';
+    if(actionKey==='trap_recover')return 'Подобрать';
+    if(actionKey==='trap_escape_net')return 'Освободиться из сети · 2 ОД';
+    if(actionKey==='trap_cut_net')return 'Разрезать сеть · 3 ОД';
     if(actionKey==='move_crafted_cover')return 'Переместить укрытие · 3 ОД';
     if(actionKey==='recover_crafted_cover')return 'Снять укрытие · 5 ОД';
     if (actionKey === 'drop_down') return 'Спрыгнуть вниз';
@@ -9024,6 +9030,11 @@ function getStructureActionLabel(object, actionKey) {
 }
 
 function getStructureActionIcon(actionKey) {
+    if(actionKey==='trap_mask')return '◌';
+    if(actionKey==='trap_defuse')return '⚒';
+    if(actionKey==='trap_recover')return '↑';
+    if(actionKey==='trap_escape_net')return '↗';
+    if(actionKey==='trap_cut_net')return '✂';
     if(actionKey==='move_crafted_cover')return '↔';
     if(actionKey==='recover_crafted_cover')return '↑';
     if (actionKey === 'drop_down') return '↧';
@@ -10428,6 +10439,13 @@ async function executeStructureAction(object, actionKey, actorCharacterId = pend
             return true;
         }catch(error){showNotification(error.message,'system');return false;}
     }
+    if(actionKey.startsWith('trap_')){
+        const {showTrapAction}=await import('./traps.js');
+        await showTrapAction({characterId:actorCharacterId,lobbyId:window.currentLobbyId,locationId:currentLocationId,
+            trap:object,operation:actionKey.slice(5),inCombat:combatState?.status==='active',
+            locationCharacterId:findCombatCharacterByCharacterId(actorCharacterId)?.location_character_id});
+        return true;
+    }
 
     if (actionKey === 'drop_down') return useLocationVerticalAccess(object.id,'drop',actorCharacterId);
     if (actionKey === 'level_up' || actionKey === 'level_down') {
@@ -11138,6 +11156,11 @@ function showObjectContextMenu(clientX, clientY, object) {
         }
     }
     getObjectActions(object).forEach(action => {
+        if(action.startsWith('trap_')){
+            const characterId=getCurrentInteractionActor()?.model?.userData?.characterId;
+            if(characterId&&canControlCharacter(characterId))actions.push({label:getStructureActionLabel(object,action),action:()=>executeStructureAction(object,action,characterId)});
+            return;
+        }
         if(['move_crafted_cover','recover_crafted_cover'].includes(action)){
             const characterId=getCurrentInteractionActor()?.model?.userData?.characterId;
             if(characterId&&canControlCharacter(characterId))actions.push({label:combatState?.status==='active'?getStructureActionLabel(object,action):action==='move_crafted_cover'?'Переместить':'Снять в инвентарь',
@@ -11578,7 +11601,7 @@ function createLocationObjectMesh(obj, forPreview = false, relatedObjects = curr
         && (asset?.visual?.renderMode !== 'pbr'
             || asset.id === 'art_worn_plaster' || asset.id === 'art_aged_wood');
     const usePbrMaterial = asset?.visual?.renderMode === 'pbr' && !quietHouseFinish;
-    const hasSeparateMaterials = ['anomaly','poster'].includes(obj.type) || household || ['fence', 'window', 'box', 'military_crate', 'shelf', 'ground_item'].includes(obj.type)
+    const hasSeparateMaterials = ['anomaly','poster','placed_trap'].includes(obj.type) || household || ['fence', 'window', 'box', 'military_crate', 'shelf', 'ground_item'].includes(obj.type)
         || properties.is_ground_item || isFireObject(obj) || isElectricFixture(obj);
     const material = hasSeparateMaterials ? null
         : new THREE.MeshStandardMaterial({
@@ -11614,6 +11637,8 @@ function createLocationObjectMesh(obj, forPreview = false, relatedObjects = curr
         const debrisMaterial=new THREE.MeshStandardMaterial({color:quietHouseColor(properties.color||'#aaa18e','wall'),roughness:.97});
         applySurfacePattern(debrisMaterial,getSurfaceTexture(THREE,kind==='wood'?'floor':'wall'),.5,'top');
         group.add(createWallDebris(THREE,{width,depth,height},debrisMaterial,kind,properties.structural_debris.seed));
+    } else if(obj.type==='placed_trap'){
+        group.add(createHouseholdModel(THREE,{id:'placed_trap',color:'#777367',visual:{modelId:'trap_'+(properties.trap_kind||'mine')}},{width,depth,height},properties.color));
     } else if (household) {
         group.add(createHouseholdModel(THREE, asset, {width, depth, height}, properties.color));
     } else if (['ladder','hatch','floor_opening'].includes(obj.type)) {
@@ -15044,6 +15069,7 @@ function pickEditorAsset(clientX, clientY) {
         let item = hit.object;
         let selection = null;
         while (item && item !== scene) {
+            if(item.userData?.locationObject?.type==='placed_trap')break;
             if (item.userData?.locationObjectId) {
                 selection = { kind: 'structure', id: item.userData.locationObjectId };
                 break;
@@ -18319,7 +18345,18 @@ function setupCharacterDragging() {
             showCombatActionMenu(e.clientX, e.clientY, charId);
             return;
         }
-        if (!locationObject) return;
+        if (!locationObject){
+            const actor=getCurrentInteractionActor(),characterId=actor?.model?.userData?.characterId,point=localMapToolPoint(e.clientX,e.clientY);
+            if(!characterId||!canControlCharacter(characterId)||!point)return;
+            createContextMenu();contextMenu.replaceChildren();
+            const search=document.createElement('button');search.type='button';search.textContent='Осмотреть клетку';search.className='btn btn-secondary';
+            search.onclick=async()=>{contextMenu.style.display='none';const {showTrapAction}=await import('./traps.js');
+                await showTrapAction({characterId,lobbyId:window.currentLobbyId,locationId:currentLocationId,operation:'detect',
+                    inCombat:combatState?.status==='active',locationCharacterId:findCombatCharacterByCharacterId(characterId)?.location_character_id,
+                    cell:{x:Math.floor(point.x),y:Math.floor(point.z)}});};
+            contextMenu.append(search);contextMenu.style.left=e.clientX+'px';contextMenu.style.top=e.clientY+'px';contextMenu.style.display='block';
+            return;
+        }
         if (combatState?.status === 'active') {
             if (pendingStructureAction) {
                 showStructureActionMenu(e.clientX, e.clientY, locationObject.userData.locationObject);

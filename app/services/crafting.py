@@ -167,9 +167,17 @@ def _craft_filter_charges(item):
     return int(filter_charges(item))*quantity
 
 
-def _allocate(data,recipe,*,with_status=False):
+def _allocate(data,recipe,*,with_status=False,grenade_paths=None):
     from app.services.trade import _contains_individual_items
     candidates=entries(data);spent={};allocations=[];missing=[];statuses=[]
+    grenade_counts=None
+    if grenade_paths is not None:
+        if recipe['id'] not in {'recipe-m8','recipe-m9'} or not isinstance(grenade_paths,list) or len(grenade_paths)!=(2 if recipe['id']=='recipe-m9' else 1):
+            raise ValidationError('Выберите гранаты для растяжки')
+        grenade_counts={}
+        for path in grenade_paths:
+            if not isinstance(path,list) or not path or any(type(part) not in {str,int} for part in path):raise ValidationError('Выберите гранату из инвентаря')
+            key=tuple(path);grenade_counts[key]=grenade_counts.get(key,0)+1
     for index,component in enumerate(recipe['components']):
         if _environment(component):continue
         ammo_template=db.session.get(ItemTemplate,component['ammo_template_id']) if component.get('ammo_template_id') else None
@@ -196,6 +204,9 @@ def _allocate(data,recipe,*,with_status=False):
                 if meat_component:
                     from app.services.cooked_meat import ingredient_matches
                     matches=ingredient_matches(recipe['id'],item)
+                elif names=={'граната'}:
+                    from app.services.combat import CombatService
+                    matches=item.get('category') in {'grenade','ammo'} and bool(CombatService._explosive_profile(item))
                 else:matches=(attrs.get('flamethrower_tank')==component.get('whole_tank') and charges(item)==0 if component.get('whole_tank')
                     else bool(attrs.get('flamethrower_air')) if component.get('whole_air') else matches_box or bool(item_names(item)&names))
                 if not matches or _contains_individual_items(item):continue
@@ -213,6 +224,8 @@ def _allocate(data,recipe,*,with_status=False):
                         (filter_available if filter_available is not None else packet_uses if packet_uses is not None else _available_uses(item))
                         if item.get('quantity',1)>0 else 0)-prior_spent.get(tuple(path),0)
                 key=tuple(path)
+                if names=={'граната'} and grenade_counts is not None:
+                    available=min(available,grenade_counts.get(key,0))
                 unit=10 if matches_box else 1
                 total+=max(0,available)*unit
                 take=min(left/unit if liquid else ceil(left/unit),available)
@@ -293,7 +306,7 @@ def quote(character,data,payload):
         from app.services.character_traits import trait_count,background_is
         if not trait_count(data,'Мастер на все руки') and not background_is(data,'Полевой ученый'):raise ValidationError('Изготовление инструментов требует «Мастера на все руки» или предыстории «Полевой учёный»')
     missing_tools=_tools(character,data,recipe,option)
-    allocations,missing,component_status=_allocate(data,recipe,with_status=True)
+    allocations,missing,component_status=_allocate(data,recipe,with_status=True,grenade_paths=payload.get('grenade_paths'))
     component_missing_count=len(missing)
     state=data.get('crafting') or {};approval=next((r for r in state.get('tool_requests',[]) if r['id']==payload.get('approval_id')
         and r['recipe_id']==recipe['id'] and r['status']=='approved' and r.get('environment') and not r.get('used')),None)
@@ -793,6 +806,8 @@ def operate(character_id,user_id,payload):
                 produced['uses']=job['output_count']%maximum or maximum
                 produced['attributes']['uses_remaining']=produced['uses']
             else:produced=item_from_template(output,job['output_count'])
+            from app.services.trap_catalog import bind_crafted_output
+            bind_crafted_output(produced,job['recipe_id'],job['escrow'],character.lobby_id)
             if job.get('ammo_template_id'):
                 variant=job.get('output_variant')
                 produced['ammo_variant']=variant if variant!='base' else None

@@ -2090,6 +2090,9 @@ if (socket) {
             });
         });
     });
+    socket.on('trap_alarm',data=>{
+        if(data.location_id===window.currentLocationId)showNotification(data.message,'system');
+    });
     socket.on('character_moved', (data) => {
         updateCharacterPosition(data.character_id, data.x, data.y, data);
         for (const check of data.slip_checks || []) {

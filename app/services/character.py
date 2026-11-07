@@ -26,6 +26,8 @@ def _preserve_intoxication_status(current_data, incoming_data, *, is_gm=True):
     preserve_crafting(current_data,incoming_data)
     from app.services.crafted_covers import preserve as preserve_covers
     preserve_covers(current_data,incoming_data)
+    from app.services.trap_catalog import preserve as preserve_traps
+    preserve_traps(current_data,incoming_data)
     from app.services.consumable_effects import normalize_owl_modifiers
     normalize_owl_modifiers(incoming_data)
     from app.services.equipment_care import preserve as preserve_care
