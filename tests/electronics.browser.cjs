@@ -73,6 +73,7 @@ module.exports=async({page,request,token,lobby,base,connect,debugPort,safeSessio
     await request('/lobbies/characters/'+player.id,{data:playerFresh.data},token,'PUT');
     const actorFresh=await request('/lobbies/characters/'+actor.id,null,token,'GET');
     await request('/lobbies/characters/'+actor.id+'/portable-lights',{operation:'pda_toggle',path:['inventory','pockets',0],source_id:'dynamo-device',character_revision:actorFresh.data._revision},token);
+    await request(api+'/weather',{sun:{enabled:true,intensity:1},rain:{enabled:false,intensity:0},fog:{enabled:false,intensity:0},emission:{enabled:false,intensity:0}},token,'PATCH');
     for(const [id,auth,login]of [[actor.id,token,'radio-actor'],[player.id,playerToken,'radio-player']])
         await request('/lobbies/characters/'+id+'/pda-account/register',{login,password:'synthetic-radio-password'},auth);
     let protocol,context,peer;
@@ -191,6 +192,7 @@ module.exports=async({page,request,token,lobby,base,connect,debugPort,safeSessio
         const firstAccount=await request('/lobbies/characters/'+actor.id+'/pda-account?item_path='+encodeURIComponent(JSON.stringify(['inventory','pockets',0]))+'&item_id=dynamo-device',null,token,'GET');
         assert.equal(firstAccount.account.login,'radio-actor');
         console.log('Физические аккаунты: два КПК одного персонажа имеют разные входы и заметки; регистрация и выход на втором не меняют первый.');
+        await require('./pda_access.browser.cjs')({page,peer,request,token,playerToken,actor,player,lobby,location,loc,api,open,safeSession});
     }finally{
         if(peer)peer.close();
         if(protocol){if(context)await protocol.call('Target.disposeBrowserContext',{browserContextId:context.browserContextId}).catch(()=>{});protocol.close();}

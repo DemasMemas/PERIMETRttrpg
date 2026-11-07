@@ -3311,6 +3311,7 @@ def spawn_character_in_location(lobby_id, location_id):
         existing.pos_x = tile_x
         existing.pos_y = tile_y
         existing.floor_level = target_level
+        existing.last_action = datetime.now(timezone.utc)
         combat_state = LocationCombatState.query.filter_by(location_id=location_id).first()
         anomaly_changed = False
         if not combat_state or combat_state.status != 'active':
@@ -5316,6 +5317,22 @@ def character_pda_proximity(character_id):
     return jsonify(proximity(character_id,int(get_jwt_identity()),request.args.get('location_id',type=int),request.args.get('lobby_id',type=int)))
 
 
+@lobbies_bp.route('/characters/<int:character_id>/pda-access',methods=['GET','POST'])
+@jwt_required()
+def character_pda_access(character_id):
+    from app.services.pda_access import snapshot,operate,target_snapshot,target_action,publish
+    user_id=int(get_jwt_identity())
+    if request.method=='GET':
+        try:path=json.loads(request.args.get('item_path','null'))
+        except (ValueError,TypeError):raise ValidationError('Выберите КПК')
+        payload={'item_path':path,'item_id':request.args.get('item_id'),'session_id':request.args.get('session_id')}
+        return jsonify((target_snapshot if payload['session_id'] else snapshot)(character_id,user_id,payload))
+    payload=request.get_json(silent=True) or {}
+    character,result=(target_action if payload.get('software') is True else operate)(character_id,user_id,payload)
+    publish(character.lobby_id,result)
+    return jsonify({'data':character.data_snapshot(),'result':result})
+
+
 @lobbies_bp.route('/characters/<int:character_id>/pda-network',methods=['GET','POST'])
 @jwt_required()
 def character_pda_network(character_id):
@@ -5469,6 +5486,9 @@ def perform_location_combat_action(lobby_id, location_id, lobby, participant):
     if result.get('action')=='controller':
         from app.services.item_controllers import publish as publish_controller
         publish_controller(lobby_id,result.get('narrative_action') or {})
+    if result.get('action')=='pda_access':
+        from app.services.pda_access import publish as publish_access
+        publish_access(lobby_id,result.get('narrative_action') or {})
     if result.get('jump'):publish_trap_effects(result['jump'].get('traps',[]))
     pending_nodes = [result]
     while pending_nodes:

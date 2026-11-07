@@ -14,3 +14,10 @@ def install(app, db, check_database, run_id):
         return original(quote,roll=100)
 
     crafting.resolve_creation=resolve
+    from types import SimpleNamespace
+    from app.services import pda_access
+    def percent(low,high):
+        check_database()
+        assert (low,high)==(1,100)
+        return 1
+    pda_access.random=SimpleNamespace(randint=percent)

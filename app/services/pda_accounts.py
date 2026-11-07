@@ -121,13 +121,21 @@ def account_action(character_id, user_id, operation, payload):
         return {'account': {'id': account.id, 'login': account.login, 'notes': account.notes}}
     if operation not in {'register', 'login'} or not isinstance(payload, dict):
         raise ValidationError('Неизвестное действие с аккаунтом КПК')
+    account = authenticate(character.lobby_id, operation, payload)
+    _assign(character,device,account)
+    return {'account': {'id': account.id, 'login': account.login, 'notes': account.notes or ''}}
+
+
+def authenticate(lobby_id, operation, payload):
+    """Общие правила аккаунта для своего КПК и действующего сеанса доступа."""
+    if operation not in {'register','login'}:raise ValidationError('Неизвестное действие с аккаунтом КПК')
     login, login_key = _login(payload)
     password = _password(payload)
-    account = PdaAccount.query.filter_by(lobby_id=character.lobby_id, login_key=login_key).first()
+    account = PdaAccount.query.filter_by(lobby_id=lobby_id, login_key=login_key).first()
     if operation == 'register':
         if account:
             raise ConflictError('Этот логин уже занят в данном мире')
-        account = PdaAccount(lobby_id=character.lobby_id, login=login, login_key=login_key)
+        account = PdaAccount(lobby_id=lobby_id, login=login, login_key=login_key)
         account.set_password(password)
         db.session.add(account)
         try:
@@ -137,5 +145,4 @@ def account_action(character_id, user_id, operation, payload):
             raise ConflictError('Этот логин уже занят в данном мире') from error
     elif not account or not account.check_password(password):
         raise ValidationError('Неверный логин или пароль', code=401)
-    _assign(character,device,account)
-    return {'account': {'id': account.id, 'login': account.login, 'notes': account.notes or ''}}
+    return account

@@ -61,6 +61,10 @@ export const Server = {
         ...(selection.item_path?{item_path:JSON.stringify(selection.item_path)}:{}),...(selection.item_id?{item_id:selection.item_id}:{})})}`),
     getPdaProximity: (characterId,lobbyId,locationId) => apiFetch(`/lobbies/characters/${characterId}/pda-proximity?${new URLSearchParams({
         lobby_id:lobbyId,...(locationId?{location_id:locationId}:{})})}`),
+    getPdaAccess: (characterId,selection) => apiFetch(`/lobbies/characters/${characterId}/pda-access?${new URLSearchParams({
+        item_path:JSON.stringify(selection.item_path),item_id:selection.item_id,...(selection.session_id?{session_id:selection.session_id}:{})})}`),
+    changePdaAccess: (characterId,payload) => apiFetch(`/lobbies/characters/${characterId}/pda-access`,{
+        method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}),
     getControllers: (characterId,selection={}) => apiFetch(`/lobbies/characters/${characterId}/controllers?${new URLSearchParams({
         ...(selection.item_path?{item_path:JSON.stringify(selection.item_path)}:{}),...(selection.item_id?{item_id:selection.item_id}:{}),
         ...(selection.location_id?{location_id:selection.location_id}:{})})}`),

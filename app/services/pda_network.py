@@ -164,6 +164,11 @@ def proximity(character_id,user_id,location_id=None,lobby_id=None):
 
 def snapshot(character_id,user_id,payload):
     character,item,source,devices=_source(character_id,user_id,payload)
+    return snapshot_source(source,devices)
+
+
+def snapshot_source(source,devices):
+    character=source['character'];item=source['item']
     account=source['account'];contacts=PdaContact.query.filter_by(account_id=account.id).all() if account else []
     signals=_signals(source,devices)
     messages=[]
@@ -207,7 +212,12 @@ def operate(character_id,user_id,payload):
         character,actor,result=use_device(character_id,user_id,{'operation':'pda_jammer','path':payload['item_path'],
             'source_id':payload.get('item_id'),'character_revision':payload.get('character_revision'),'enabled':payload['enabled']})
         return character,result
-    elif operation=='contact':
+    return character,operate_source(source,devices,payload)
+
+
+def operate_source(source,devices,payload):
+    character=source['character'];operation=payload.get('operation')
+    if operation=='contact':
         account=_account(source);login=unicodedata.normalize('NFKC',str(payload.get('login') or '')).strip().casefold()
         target=PdaAccount.query.filter_by(lobby_id=character.lobby_id,login_key=login).first()
         if not target:raise NotFoundError('Аккаунт в этом мире не найден')
@@ -234,7 +244,7 @@ def operate(character_id,user_id,payload):
         prior=db.session.get(PdaTransmission,identity)
         if prior:
             if prior.sender_account_id!=account.id or prior.signature!=signature:raise ConflictError('Идентификатор сообщения уже использован')
-            return character,{'message_id':prior.id,'replayed':True}
+            return {'message_id':prior.id,'replayed':True}
         reason=blocked(source,devices)
         if reason:raise ValidationError(reason)
         recipients={peer['account'].id for peer in devices if peer['account'] and peer['account'].id!=account.id
@@ -246,9 +256,9 @@ def operate(character_id,user_id,payload):
         try:db.session.flush()
         except IntegrityError:
             db.session.rollback();prior=db.session.get(PdaTransmission,identity)
-            if prior and prior.sender_account_id==account.id and prior.signature==signature:return character,{'message_id':identity,'replayed':True}
+            if prior and prior.sender_account_id==account.id and prior.signature==signature:return {'message_id':identity,'replayed':True}
             raise ConflictError('Идентификатор сообщения уже использован')
         db.session.add_all(PdaDelivery(account_id=account_id,transmission_id=identity) for account_id in recipients)
-        return character,{'message_id':identity,'replayed':False}
+        return {'message_id':identity,'replayed':False}
     else:raise ValidationError('Неизвестное действие сети КПК')
-    return character,{'operation':operation}
+    return {'operation':operation}

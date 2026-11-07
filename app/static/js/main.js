@@ -2098,6 +2098,12 @@ if (socket) {
     socket.on('pda_network_updated',data=>{
         if(Number(data.lobby_id)===Number(window.currentLobbyId))window.dispatchEvent(new Event('pda-network-updated'));
     });
+    socket.on('pda_access_updated',data=>{
+        if(Number(data.lobby_id)===Number(window.currentLobbyId))window.dispatchEvent(new Event('pda-access-updated'));
+    });
+    socket.on('pda_access_alert',data=>{
+        if(Number(data.lobby_id)===Number(window.currentLobbyId))showNotification(data.message,'system');
+    });
     socket.on('detonation_pending',data=>{
         if(Number(data.lobby_id)===Number(window.currentLobbyId)&&window.isGM){
             void import('./itemControllers.js').then(m=>m.refreshDetonations(window.currentLobbyId));

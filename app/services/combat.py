@@ -12974,6 +12974,8 @@ class CombatService:
             advance_ground(location_id,6)
             from app.services.item_controllers import advance as advance_controllers
             advance_controllers(location.lobby_id,6,location_id)
+            from app.services.pda_access import advance as advance_pda_access
+            advance_pda_access(location.lobby_id,6,location_id)
             state.round_number += 1
             from app.services.sniper_position import expire as expire_sniper_position
             expire_sniper_position(location_id,state)
@@ -13908,6 +13910,7 @@ class CombatService:
             action={'key':'place_cover','label':'Установка укрытия','action_points':5,'free_actions':0,'movement_points':0}
         if action_key=='trap':action={'key':'trap','label':'Ловушка','action_points':5,'free_actions':0,'movement_points':0}
         if action_key=='controller':action={'key':'controller','label':'Взрыватель','action_points':5,'free_actions':0,'movement_points':0}
+        if action_key=='pda_access':action={'key':'pda_access','label':'Подключение КПК','action_points':3,'free_actions':0,'movement_points':0}
         if not action:
             raise ValidationError("Unknown action")
 
@@ -13946,6 +13949,10 @@ class CombatService:
         order_plan=None
         reduction_plan=None
         cover_placement=None
+        if action_key=='pda_access':
+            from app.services.pda_access import prepare as access_plan,LABELS as access_labels
+            access_prepared=access_plan(character,data,attribute_choice,user_id)
+            special_action_cost=access_prepared['action_points'];action['label']=access_labels[access_prepared['operation']]
         if action_key=='controller':
             from app.services.item_controllers import prepare as controller_plan,LABELS
             controller_prepared=controller_plan(character,data,attribute_choice,user_id)
@@ -17124,6 +17131,10 @@ class CombatService:
             character.character.data=data;flag_modified(character.character,'data')
             narrative_action_details={'name':action['label'],'action_points':special_action_cost,'roll_required':False,
                 'ground_object_id':obj.id,'ground_object_event':'deleted' if removed else 'created' if created else 'updated'}
+        if action_key=='pda_access':
+            from app.services.pda_access import execute as execute_access
+            narrative_action_details=execute_access(character,data,attribute_choice,user_id,state)
+            character.character.data=data;flag_modified(character.character,'data')
         if action_key=='trap':
             from app.services.traps import execute as execute_trap
             narrative_action_details=execute_trap(character,data,attribute_choice,user_id,state)
@@ -18292,6 +18303,8 @@ class CombatService:
         if state and state.status=='active':record_approach(character,path,cost)
         previous_x, previous_y = character.pos_x, character.pos_y
         transported_plan = move_plan(character, path)
+        from app.services.pda_access import check_route as check_pda_route
+        check_pda_route(character,path)
         character.pos_x = new_x
         character.pos_y = new_y
         character.floor_level = path['surfaces'][-1]['level'] if path.get('surfaces') else target_level

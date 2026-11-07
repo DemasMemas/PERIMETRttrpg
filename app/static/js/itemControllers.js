@@ -13,7 +13,7 @@ function dialog(id,title){
     return {modal,panel,close};
 }
 
-export async function runController(characterId,payload,onSaved){
+export async function runController(characterId,payload,onSaved,{actionKey='controller',send=Server.operateController}={}){
     await Server.waitForCharacterSave(characterId);
     const character=await Server.getCharacter(characterId),combat=window.locationCombatState;
     const request={operation_id:crypto.randomUUID(),character_revision:character.data._revision,
@@ -22,13 +22,13 @@ export async function runController(characterId,payload,onSaved){
     if(combat?.status==='active'){
         const actor=combat.current_character;
         if(Number(actor?.character_id)!==Number(characterId))throw new Error('Сейчас не ход этого персонажа');
-        const action={location_character_id:actor.location_character_id,action_key:'controller',attribute_choice:request,pending_action_id:request.operation_id};
+        const action={location_character_id:actor.location_character_id,action_key:actionKey,attribute_choice:request,pending_action_id:request.operation_id};
         result=await Server.performLocationCombatAction(window.currentLobbyId,window.currentLocationId,action);
         if(result.pending_action){
             const scene=await import('./locationScene.js');scene.registerDeferredCombatAction(result.pending_action_id,action);
             showNotification('Действие начато и продолжится в следующем ходу','system');return result;
         }
-    }else result=await Server.operateController(characterId,request);
+    }else result=await send(characterId,request);
     const data=result.data||(await Server.getCharacter(characterId)).data;
     await onSaved?.(data);
     const detail=result.result||result.narrative_action;

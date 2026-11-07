@@ -2,7 +2,7 @@ import {Server} from './api.js';
 import {showNotification} from './utils.js';
 import {testPdaSignal} from './pdaProximity.js';
 
-export function createPdaNetworkView({characterId,findSource,getData,operateHardware,canEdit}){
+export function createPdaNetworkView({characterId,findSource,getData,operateHardware,canEdit,service=Server}){
     const element=document.createElement('section');element.className='pda-network';
     element.innerHTML=`<p data-radio-status></p><button type="button" data-radio-jammer hidden></button>
         <div data-radio-proximity hidden><label><input type="checkbox" data-radio-proximity-sound> Звуковой сигнал о незнакомом КПК</label><button type="button" data-radio-test-sound>Проверить звук</button></div><p role="alert" data-radio-error></p>
@@ -77,7 +77,7 @@ export function createPdaNetworkView({characterId,findSource,getData,operateHard
     async function refresh(){
         if(!active||closed||busy||loading)return;
         loading=true;
-        try{const fresh=await Server.getPdaNetwork(characterId,selection());if(closed||!active)return;snapshot=fresh;error.textContent=actionError;paint();}
+        try{const fresh=await service.getPdaNetwork(characterId,selection());if(closed||!active)return;snapshot=fresh;error.textContent=actionError;paint();}
         catch(failure){if(!closed){error.textContent=failure.message;controls();}}
         finally{loading=false;}
     }
@@ -87,7 +87,7 @@ export function createPdaNetworkView({characterId,findSource,getData,operateHard
             if(payload.operation==='jammer'){
                 const source=findSource();if(!source)throw Error('КПК перемещён');
                 await operateHardware({operation:'pda_jammer',path:source.path,source_id:source.item.id,enabled:payload.enabled});
-            }else await Server.changePdaNetwork(characterId,{...selection(),...payload,character_revision:getData()?._revision});
+            }else await service.changePdaNetwork(characterId,{...selection(),...payload,character_revision:getData()?._revision});
             if(payload.operation==='send'){pendingMessage=null;text.value='';showNotification('Сообщение передано в эфир','system');}
             if(payload.operation==='contact')login.value='';
         }catch(failure){actionError=failure.message;error.textContent=actionError;}

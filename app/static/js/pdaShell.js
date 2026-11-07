@@ -2,11 +2,13 @@ import { Server } from './api.js';
 import { showNotification } from './utils.js';
 import { createPdaNetworkView } from './pdaNetworkView.js';
 import { renderRemoteCharges } from './itemControllers.js';
+import {createPdaAccessView} from './pdaAccessView.js';
 
 const sections = [
     ['chat', 'Общий чат', 'Сообщения участников Зоны'],
     ['contacts', 'Контакты', 'Люди и каналы связи'],
     ['charges', 'Заряды', 'Дистанционные взрыватели'],
+    ['access', 'Подключения', 'Кабельное и дистанционное управление'],
     ['gallery', 'Галерея', 'Фото, видео и аудио'],
     ['files', 'Файлы', 'Электронные книги'],
     ['notes', 'Заметки', 'Личные записи'],
@@ -58,6 +60,7 @@ export function openPdaShell({ item, findItem, getData, operate, canEdit, charac
     let selectedMod = '';
     let selectedTool = '';
     let networkView=null;
+    let accessView=null;
     let pdaQuote = null;
     let accountSnapshot = null;
     let accountLoading = true;
@@ -136,6 +139,7 @@ export function openPdaShell({ item, findItem, getData, operate, canEdit, charac
         if(!item.id&&current.id)item.id=current.id;
         const state = powerState(current);
         networkView?.setActive(state.on&&['chat','contacts'].includes(selected),selected);
+        accessView?.setActive(state.on&&selected==='access');
         const power = modal.querySelector('[data-pda-power]');
         const accountButton = modal.querySelector('[data-pda-account]');
         const guestName = getData()?.basic?.name || getData()?.name || 'Персонаж';
@@ -351,6 +355,9 @@ export function openPdaShell({ item, findItem, getData, operate, canEdit, charac
                     content.append(save);
                 }
             }
+        } else if (selected === 'access') {
+            if(!accessView)accessView=createPdaAccessView({characterId,selection:accountSelection,onSaved,canEdit,getData});
+            content.append(accessView.element);accessView.setActive(true);
         } else if (selected === 'files') {
             if (!filesSnapshot || filesLoading) {
                 const message = document.createElement('p');
@@ -377,7 +384,7 @@ export function openPdaShell({ item, findItem, getData, operate, canEdit, charac
                 const status = document.createElement('p');
                 status.textContent = 'Сначала завершите текущую работу.';
                 content.append(status);
-                if(pdaQuote.station_name){
+                if(pdaQuote?.station_name){
                     const station=document.createElement('p');
                     station.textContent=`${pdaQuote.station_name}: один заряд инструмента; риск порчи результата ${pdaQuote.spoil_chance}%.`;
                     content.append(station);
@@ -646,9 +653,17 @@ export function openPdaShell({ item, findItem, getData, operate, canEdit, charac
         }catch(error){if(modal.isConnected)showNotification(error.message,'system');}
     };
     window.addEventListener('pda-game-time-updated', onTimeUpdated);
+    const onAccessUpdated=async()=>{
+        if(busy||!modal.isConnected)return;
+        await onTimeUpdated();
+        if(!busy&&modal.isConnected)void loadAccount();
+    };
+    window.addEventListener('pda-access-updated',onAccessUpdated);
     const close = () => {
         networkView?.close();
+        accessView?.close();
         window.removeEventListener('pda-game-time-updated', onTimeUpdated);
+        window.removeEventListener('pda-access-updated',onAccessUpdated);
         modal.remove();
     };
     modal.pdaClose = close;

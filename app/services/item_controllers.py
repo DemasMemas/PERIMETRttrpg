@@ -159,11 +159,11 @@ def _receiver(host):
         'tile_x':loc.world_tile_x,'tile_y':loc.world_tile_z,'location_id':loc.id,'x':x,'y':y,'level':level}
 
 
-def _radio(character,pda,host,location_id=None):
+def _radio(character,pda,host,location_id=None,*,source_position=None,devices=None):
     from app.services.pda_network import registry,blocked,distance,mods
-    source=_position(character,location_id);target=_receiver(host)
+    source=source_position if source_position is not None else _position(character,location_id);target=_receiver(host)
     if not source or not target:return False
-    devices=registry(character.lobby_id,location_id)
+    devices=devices if devices is not None else registry(character.lobby_id,location_id)
     sender={'character':character,'item':pda,'position':source,'mods':mods(pda)}
     receiver={'character':character,'item':{},'position':target,'mods':set()}
     return not blocked(sender,devices) and not blocked(receiver,devices) and distance(source,target)<=250+1e-7

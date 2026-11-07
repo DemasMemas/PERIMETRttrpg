@@ -14,6 +14,12 @@ from app.services.exceptions import ConflictError, PermissionDenied, ValidationE
 def _bound_items(actor, payload):
     data = actor.character.data or {}
     result = {}
+    if payload.get('action_key')=='pda_access':
+        from app.services.portable_lights import walk,pda_state
+        choice=payload.get('attribute_choice') or {}
+        item=next((item for path,item in walk(data) if path==choice.get('item_path')),None)
+        result['pdaAccessDevice']={'id':item.get('id'),'quantity':item.get('quantity',1),'modifications':deepcopy(item.get('modifications')),
+            'on':pda_state(item)['on'],'broken':pda_state(item).get('broken',False)} if item else None
     if payload.get('action_key')=='controller':
         from app.services.item_controllers import _get
         choice=payload.get('attribute_choice') or {}
@@ -202,6 +208,9 @@ def validate_deferred_conditions(actor, row):
         prepare(actor,actor.character.data,payload.get('attribute_choice'),actor.location.lobby.gm_id)
     if kind=='controller':
         from app.services.item_controllers import prepare
+        prepare(actor,actor.character.data,payload.get('attribute_choice'),actor.location.lobby.gm_id)
+    if kind=='pda_access':
+        from app.services.pda_access import prepare
         prepare(actor,actor.character.data,payload.get('attribute_choice'),actor.location.lobby.gm_id)
     if kind=='prosthesis':
         from app.services.prostheses import plan
