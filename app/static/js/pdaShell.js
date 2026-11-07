@@ -19,7 +19,7 @@ const sections = [
 function powerState(item) {
     const saved = item?.pdaState || {};
     const charge = Number(saved.charge_percent ?? 100);
-    return { on: saved.on !== false, charge: Number.isFinite(charge) ? Math.max(0, Math.min(100, charge)) : 0 };
+    return { on: saved.on !== false&&!saved.broken, broken:Boolean(saved.broken),charge: Number.isFinite(charge) ? Math.max(0, Math.min(100, charge)) : 0 };
 }
 
 const bookTitle = name => String(name || '').replace('?. Раздел:', '? Раздел:');
@@ -131,10 +131,10 @@ export function openPdaShell({ item, findItem, getData, operate, canEdit, charac
             : `АККАУНТ: ${guestName} (гость)${canEdit ? ' · Войти' : ''}`;
         accountButton.disabled = !state.on;
         accountButton.onclick = () => { selected = 'home'; render(); };
-        modal.querySelector('[data-pda-status]').textContent = state.on ? 'ВКЛЮЧЁН' : 'ВЫКЛЮЧЕН';
+        modal.querySelector('[data-pda-status]').textContent = state.broken?'НЕИСПРАВЕН':state.on ? 'ВКЛЮЧЁН' : 'ВЫКЛЮЧЕН';
         modal.querySelector('[data-pda-charge]').textContent = `ЗАРЯД ${state.charge.toFixed(1)}%`;
         power.textContent = state.on ? 'Выключить' : 'Включить';
-        power.disabled = busy || !canEdit || (!state.on && state.charge <= 0);
+        power.disabled = busy || !canEdit || state.broken || (!state.on && state.charge <= 0);
         nav.replaceChildren();
         for (const [id, label] of sections) {
             const button = document.createElement('button');
@@ -146,10 +146,23 @@ export function openPdaShell({ item, findItem, getData, operate, canEdit, charac
             nav.append(button);
         }
         content.replaceChildren();
+        modal.querySelector('[data-pda-dynamo]')?.remove();
+        if((current.modifications||[]).some(mod=>mod.ruleId==='pda-b7')){
+            const charging=getData()?.health?.combatMeta?.pdaDynamo?.id===current.id;
+            const dynamo=document.createElement('button');dynamo.type='button';dynamo.dataset.pdaDynamo='';dynamo.className='btn btn-secondary';
+            dynamo.textContent=charging?'Прекратить зарядку':'Крутить динамо-машину · 1%/мин';dynamo.disabled=busy||!canEdit||state.broken||!charging&&state.charge>=100;
+            dynamo.onclick=async()=>{
+                const source=findItem(item.id);if(!source||busy)return;
+                busy=true;render();
+                try{await operate({operation:charging?'pda_dynamo_stop':'pda_dynamo_start',path:source.path,source_id:source.item.id});}
+                finally{busy=false;if(modal.isConnected)render();}
+            };
+            modal.querySelector('.pda-shell-footer').append(dynamo);
+        }
         if (!state.on) {
             heading.textContent = 'Экран выключен';
             const message = document.createElement('p');
-            message.textContent = state.charge <= 0
+            message.textContent = state.broken?'КПК вышел из строя.':state.charge <= 0
                 ? 'Батарейка разряжена. Заменить её можно в разделе оборудования.'
                 : 'Включите КПК, чтобы открыть меню.';
             content.append(message);
@@ -593,7 +606,14 @@ export function openPdaShell({ item, findItem, getData, operate, canEdit, charac
             }
         }
     };
-    const onTimeUpdated = () => { if (selected === 'files' && modal.isConnected) void loadFiles(); };
+    const onTimeUpdated = async () => {
+        if(!modal.isConnected||busy)return;
+        try{
+            const fresh=await Server.getCharacter(characterId);if(!modal.isConnected||busy)return;
+            await onSaved?.(fresh.data);render();
+            if(selected==='files')void loadFiles();
+        }catch(error){if(modal.isConnected)showNotification(error.message,'system');}
+    };
     window.addEventListener('pda-game-time-updated', onTimeUpdated);
     const close = () => {
         window.removeEventListener('pda-game-time-updated', onTimeUpdated);

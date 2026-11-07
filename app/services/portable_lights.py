@@ -27,6 +27,8 @@ def glow_duration(item):
 
 
 def definition(item):
+    from app.services.electronics import is_dosimeter
+    if is_dosimeter(item):return 'dosimeter'
     attrs=(item or {}).get('attributes') or {}
     kind=attrs.get('portable_light') or NAMES.get(str((item or {}).get('name') or '').strip().casefold())
     if attrs.get('flashlight') or (str((item or {}).get('name') or '').strip().casefold()=='фонарик'
@@ -78,8 +80,12 @@ def power(item):
 
 
 def preserve(current,incoming):
+    from app.services.electronics import preserve as preserve_electronics
+    preserve_electronics(current,incoming)
     old=(((current or {}).get('health') or {}).get('combatMeta') or {})
     meta=incoming.setdefault('health',{}).setdefault('combatMeta',{})
+    if 'pdaDynamo' in old:meta['pdaDynamo']=deepcopy(old['pdaDynamo'])
+    else:meta.pop('pdaDynamo',None)
     if 'portableLights' in old:meta['portableLights']=deepcopy(old['portableLights'])
     else:meta.pop('portableLights',None)
     states={item.get('id'):item.get('lightPower') for _,item in walk(current or {}) if item.get('id')}
@@ -120,7 +126,14 @@ def preserve(current,incoming):
 
 def held_hand(data):
     ids={item.get('id') for _,item in walk(data)}
-    return any(binding.get('mount')=='hand' and binding.get('id') in ids for binding in bindings(data))
+    return bool(dynamo_device(data)) or any(binding.get('mount')=='hand' and binding.get('id') in ids for binding in bindings(data))
+
+
+def dynamo_device(data):
+    from app.services.equipment_modifications import installed
+    identity=(((data.get('health') or {}).get('combatMeta') or {}).get('pdaDynamo') or {}).get('id')
+    return next((item for _,item in walk(data) if identity and item.get('id')==identity and definition(item)=='pda'
+        and not pda_state(item).get('broken') and any(mod.get('ruleId')=='pda-b7' for mod in installed(item))),None)
 
 
 def pda_state(item):
@@ -128,7 +141,8 @@ def pda_state(item):
     if not isinstance(stored,dict):return {'on':True,'charge_percent':100.0}
     charge=stored.get('charge_percent',100)
     charge=float(charge) if type(charge) in {int,float} and math.isfinite(charge) else 0.0
-    return {'on':stored.get('on') is not False,'charge_percent':max(0.0,min(100.0,charge))}
+    return {'on':stored.get('on') is not False and not stored.get('broken'),'charge_percent':max(0.0,min(100.0,charge)),
+        **({'broken':True} if stored.get('broken') else {})}
 
 
 def pda_ready(data):
@@ -147,6 +161,18 @@ def advance_pda(data,seconds):
         endurance=2 if any(mod.get('ruleId')=='pda-b4' for mod in installed(item)) else 1
         state['charge_percent']=max(0.0,state['charge_percent']-seconds/(7200*endurance))
         item['pdaState']=state;changed=True
+    meta=(data.get('health') or {}).get('combatMeta') or {}
+    charging=meta.get('pdaDynamo')
+    if charging:
+        device=dynamo_device(data)
+        if not device:meta.pop('pdaDynamo',None)
+        else:
+            elapsed=max(0,float(charging.get('elapsed_seconds',0)))+seconds
+            minutes=int(elapsed//60);charging['elapsed_seconds']=elapsed%60
+            status=pda_state(device);status['charge_percent']=min(100,status['charge_percent']+minutes)
+            device['pdaState']=status
+            if status['charge_percent']>=100:meta.pop('pdaDynamo',None)
+        changed=True
     return changed
 
 
@@ -204,6 +230,8 @@ def advance(data,seconds=0,*,battle_end=False):
     items={item.get('id'):item for _,item in walk(data)}
     from app.services.equipment_care import advance as advance_care
     changed=advance_care(data,seconds)
+    from app.services.electronics import advance as advance_electronics
+    changed=advance_electronics(data,seconds) or changed
     changed=advance_glow(data,seconds) or changed
     changed=advance_pda(data,seconds) or changed
     for binding in bindings(data):
@@ -227,7 +255,7 @@ def advance(data,seconds=0,*,battle_end=False):
 
 
 def start_battle(data):
-    changed=False
+    changed=(data.get('health',{}).get('combatMeta',{}).pop('pdaDynamo',None) is not None)
     for binding in bindings(data):
         if binding.get('on'):
             binding['battle_used']=binding['period_used']=True;changed=True
@@ -244,7 +272,8 @@ def advance_lobby(lobby,seconds):
         has_glow=any(glow(item) and (item.get('glowState') or {}).get('remaining_seconds',0)>0
             for _,item in walk(character.data or {}))
         has_pda=any(definition(item)=='pda' for _,item in walk(character.data or {}))
-        if not bindings(character.data) and not nvg_items(character.data or {}) and not has_timers(character.data or {}) and not has_glow and not has_pda:continue
+        has_dosimeter=any(definition(item)=='dosimeter' for _,item in walk(character.data or {}))
+        if not bindings(character.data) and not nvg_items(character.data or {}) and not has_timers(character.data or {}) and not has_glow and not has_pda and not has_dosimeter:continue
         data=deepcopy(character.data or {})
         if advance(data,seconds):
             character.data=data;flag_modified(character,'data');updated.append(character)
@@ -424,11 +453,50 @@ def operate(character_id,user_id,payload):
     selected.setdefault('id',str(uuid4()));states=data.setdefault('health',{}).setdefault('combatMeta',{}).setdefault('portableLights',[])
     binding=next((item for item in states if item['id']==selected['id']),None)
     operation=payload.get('operation');cost=0
+    if definition(selected)=='dosimeter':
+        if selected.get('quantity',1)!=1:raise ValidationError('Разделите стопку дозиметров')
+        from app.services.electronics import state as device_state,DOSIMETER_SECONDS
+        dose_power=device_state(selected)
+        if operation=='dosimeter_toggle':
+            if not dose_power['on'] and dose_power['remaining_seconds']<=0:raise ValidationError('Сначала замените батарейку дозиметра')
+            dose_power['on']=not dose_power['on'];cost=1 if actor else 0
+        elif operation=='dosimeter_battery':
+            battery=CombatService._inventory_item_at_path(data,payload.get('battery_path'))
+            if str(battery.get('name') or '').strip().casefold()!='батарейки':raise ValidationError('Выберите батарейки')
+            if actor:
+                if not CombatService._has_usable_free_hand(actor):raise ValidationError('Для замены батарейки нужна свободная рука')
+                cost=3+int(calculate_inventory_access(data,payload['battery_path'],battery)['retrieval_action_points'])
+            CombatService._take_inventory_item(data,payload['battery_path'],1);dose_power['remaining_seconds']=DOSIMETER_SECONDS
+        else:raise ValidationError('Выберите действие дозиметра')
+        if actor and actor.action_points_current<cost:raise ValidationError('Недостаточно ОД для дозиметра')
+        selected['deviceState']=dose_power
+        if actor:actor.action_points_current-=cost
+        character.data=data;flag_modified(character,'data')
+        return character,actor,{'operation':operation,'action_points':cost,'source_id':selected['id']}
     if definition(selected)=='pda':
-        if operation not in {'pda_toggle','pda_battery','pda_import_book'}:
+        if operation not in {'pda_toggle','pda_battery','pda_import_book','pda_dynamo_start','pda_dynamo_stop'}:
             raise ValidationError('Выберите действие с КПК')
         status=pda_state(selected)
-        if operation=='pda_toggle':
+        if status.get('broken'):raise ValidationError('КПК вышел из строя')
+        if operation in {'pda_dynamo_start','pda_dynamo_stop'}:
+            meta=data.setdefault('health',{}).setdefault('combatMeta',{})
+            if operation=='pda_dynamo_stop':
+                if (meta.get('pdaDynamo') or {}).get('id')!=selected['id']:raise ValidationError('Динамо-машина этого КПК не используется')
+                meta.pop('pdaDynamo',None)
+            else:
+                if actor:raise ValidationError('Динамо-машина недоступна в бою')
+                from app.services.equipment_modifications import installed
+                if not any(mod.get('ruleId')=='pda-b7' for mod in installed(selected)):raise ValidationError('На КПК нет динамо-машины')
+                if status['charge_percent']>=100:raise ValidationError('КПК полностью заряжен')
+                from app.services.weapon_grip import functional_arms
+                present=LocationCharacter.query.filter_by(character_id=character_id).first()
+                if held_hand(data) or meta.get('pdaDynamo'):raise ValidationError('Рука уже занята переносным устройством')
+                if present:
+                    if not CombatService._has_usable_free_hand(present):raise ValidationError('Для динамо-машины нужна свободная рука')
+                elif functional_arms(data)-int(bool(meta.get('heldWaterItem')))-int(bool(meta.get('bodyTransport')))<1:
+                    raise ValidationError('Для динамо-машины нужна свободная рука')
+                meta['pdaDynamo']={'id':selected['id'],'elapsed_seconds':0}
+        elif operation=='pda_toggle':
             if not status['on'] and status['charge_percent']<=0:
                 raise ValidationError('Сначала замените батарейку КПК')
             status['on']=not status['on']

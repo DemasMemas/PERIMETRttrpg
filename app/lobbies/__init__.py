@@ -5149,6 +5149,22 @@ def get_extinguishing_options(lobby_id, location_id, actor_id, lobby, participan
     return jsonify(extinguishing_options(actor)), 200
 
 
+@lobbies_bp.route('/<int:lobby_id>/radiation-access', methods=['GET'])
+@jwt_required()
+@requires_participant
+def radiation_access(lobby_id,lobby,participant):
+    if participant.user_id==lobby.gm_id:return jsonify({'can_read':True}),200
+    character_id=request.args.get('character_id',type=int)
+    character=LobbyCharacter.query.filter_by(id=character_id,lobby_id=lobby_id).first()
+    if not character:return jsonify({'can_read':False}),200
+    CharacterService.check_access(character,participant.user_id,edit=True)
+    location_id=request.args.get('location_id',type=int)
+    if location_id and not LocationCharacter.query.filter_by(location_id=location_id,character_id=character.id).first():
+        return jsonify({'can_read':False}),200
+    from app.services.electronics import active
+    return jsonify({'can_read':active(character.data or {})}),200
+
+
 @lobbies_bp.route('/characters/<int:character_id>/portable-lights', methods=['GET','POST'])
 @jwt_required()
 def portable_lights(character_id):
@@ -5160,6 +5176,7 @@ def portable_lights(character_id):
     if request.method=='GET':
         items=[]
         for path,item in walk(character.data or {}):
+            if definition(item)=='dosimeter':continue
             binding=next((binding for binding in bindings(character.data) if binding.get('id')==item.get('id')),None)
             items.append({'path':path,'id':item.get('id'),'name':item.get('name'),'kind':definition(item),'binding':binding,
                 'uses_left':(item.get('lightPower') or {}).get('uses_left',10),

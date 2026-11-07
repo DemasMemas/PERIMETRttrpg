@@ -5548,6 +5548,7 @@ window.operatePortableLight = async function(payload) {
             ? await Server.sterilizeGloves(characterId,{...selection,character_revision:currentCharacterData._revision})
             : await Server.operatePortableLight(characterId,{...payload,character_revision:currentCharacterData._revision});
         currentCharacterData=result.data;showNotification(operation==='sterilize'?'Перчатки стерильны ещё час':'Состояние прибора обновлено','success');
+        window.dispatchEvent(new CustomEvent('character-item-operation-finished'));
     } catch (error) { showNotification(error.message || 'Не удалось изменить состояние фонаря','system'); }
     finally {
         if (locked) {
@@ -10071,6 +10072,10 @@ window.reloadGrenadeLauncher = async function(weaponIndex) {
 
 // Использование предмета из инвентаря (для расходников, гранат и т.д.)
 async function useItem(item, itemPath, options = {}) {
+    if(item.attributes?.device_kind==='dosimeter'||item.name==='Дозиметр'){
+        const {openDosimeter}=await import('./dosimeter.js');
+        return openDosimeter({characterId:currentCharacterId,itemId:item.id,itemPath,operate:payload=>window.operatePortableLight(payload)});
+    }
     if (item.category === 'misc' && item.name === 'КПК') {
         return openPdaShell({item, findItem: id => id
                 ? findInventoryItemById(currentCharacterData, id)

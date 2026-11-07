@@ -1,4 +1,5 @@
 import { renderTradeEditor, renderProfessionalRepairEditor, renderProfessionalModificationEditor, tradeResultNotice } from './characterTrade.js';
+import { radiationTooltipLine } from './radiationReadings.js';
 import { renderMerchantEditor } from './merchantEditor.js';
 import { terrainLineHit, terrainOpeningAt } from './terrainLineOfSight.js';
 import { createPortableLightRenderer } from './portableLights.js';
@@ -18658,7 +18659,7 @@ export function setupLocationEditing() {
                 <b>(${x}, ${z})</b><br>
                 Ландшафт: ${tile.terrain}<br>
                 Высота: ${tile.height}<br>
-                Радиация: ${tile.radiation !== undefined ? tile.radiation : '0'}<br>
+                ${radiationTooltipLine(tile.radiation)}
             `;
             locInfo.style.display = 'block';
             if (houseDrawStart && houseDrawPointerId === e.pointerId) {

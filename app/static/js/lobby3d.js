@@ -1,4 +1,5 @@
 import { createWaterProfileLayer } from './waterProfiles.js';
+import { radiationTooltipLine } from './radiationReadings.js';
 import { createWorldInstanceBatches } from './worldInstanceBatches.js';
 import * as THREE from 'three';
 import { OrbitControls } from 'https://unpkg.com/three@0.128.0/examples/jsm/controls/OrbitControls.js';
@@ -3019,7 +3020,7 @@ function performRaycast(clientX, clientY) {
                     tileInfoContent.innerHTML = `
                         <b>(${chunkX * CHUNK_SIZE + tileX}, ${chunkY * CHUNK_SIZE + tileY})</b><br>
                         Высота: ${window.worldEditorTool==='sculpt' ? Number(Number(tileData.height).toFixed(3)) : tileData.height}<br>
-                        Радиация: ${tileData.radiation ?? 0}
+                        ${radiationTooltipLine(tileData.radiation)}
                     `;
                     tileInfoDiv.style.display = 'block';
                 }

@@ -10674,7 +10674,7 @@ class CombatService:
         )
         if equipment_damage:
             result['equipment_damage'] = equipment_damage
-            if profile.get('blindness'):
+            if profile.get('blindness') and any(entry.get('slot')!='pda' for entry in equipment_damage):
                 apply_effect_to_health(health, {
                     'type': 'blindness', 'value': profile['blindness'],
                     'source': profile.get('name') or 'anomaly',
@@ -10696,12 +10696,15 @@ class CombatService:
 
     @staticmethod
     def _apply_anomaly_equipment_damage(character_data, damage, profile):
+        device_results=[]
         if profile.get('category',profile.get('damage_type'))=='electric':
             from app.services.prostheses import discharge
             discharge(character_data)
+            from app.services.electronics import expose_pdas
+            device_results=expose_pdas(character_data,damage)
         equipment = character_data.get('equipment') if isinstance(character_data, dict) else {}
         equipment = equipment if isinstance(equipment, dict) else {}
-        results = []
+        results = device_results
         armor_multiplier = max(
             1,
             CombatService._coerce_float(profile.get('armor_damage_multiplier'), 1),

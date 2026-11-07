@@ -53,6 +53,11 @@ def trap_templates():
     return templates()
 
 
+def electronic_templates():
+    from app.services.electronics import templates
+    return templates()
+
+
 def craft_mold_templates(creation):
     """Формы из книги создания с параметрами, утверждёнными автором."""
     from app.services.catalog_import import template
@@ -214,7 +219,7 @@ def parse_catalog(workbook_path):
     entries.extend(additional_water_templates(entries))
     from app.services.cooked_meat import templates as cooked_meat_templates
     entries.extend(cooked_meat_templates())
-    return prepare_catalog([*entries, *approved_component_templates(), *portable_station_templates(), *crafted_cover_templates(), *trap_templates()])
+    return prepare_catalog([*entries, *approved_component_templates(), *portable_station_templates(), *crafted_cover_templates(), *trap_templates(), *electronic_templates()])
 
 
 def prepare_catalog(entries):
@@ -269,7 +274,7 @@ def load_catalog(path=None):
         entries = [*entries, *craft_mold_templates(json.loads(creation_path.read_text(encoding='utf-8')))]
     from app.services.cooked_meat import templates as cooked_meat_templates
     return prepare_catalog([*entries, *additional_water_templates(entries), *cooked_meat_templates(),
-                            *approved_component_templates(), *portable_station_templates(), *crafted_cover_templates(), *trap_templates()])
+                            *approved_component_templates(), *portable_station_templates(), *crafted_cover_templates(), *trap_templates(), *electronic_templates()])
 
 
 def shifted_helmet_updates(previous,canonical):
