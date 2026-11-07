@@ -12,8 +12,9 @@ export async function openWorldFactionSettings(lobbyId) {
     root.style.display='flex';root.style.zIndex='1330';
     root.innerHTML=`<div class="modal-content npc-generator-dialog"><div class="character-trade-heading">
         <h3>Группировки мира</h3><button type="button" class="btn btn-secondary faction-close" aria-label="Закрыть">×</button></div>
-        <p>Создайте свои группировки и отделения внутри них. Названия и отношения задаёт ГМ. Готовые наборы появятся после утверждения автором.</p>
-        <div class="npc-generator-body"><h4>Группировки</h4><div class="faction-groups"></div>
+        <p>Готовый набор содержит группировки и явно названных врагов из авторской таблицы. Отделения в ней пока не перечислены; ГМ может добавить их в собственном наборе или копии готового.</p>
+        <div class="npc-generator-body"><button type="button" class="btn btn-secondary faction-copy-ready" hidden>Создать копию для донастройки</button>
+        <h4>Группировки</h4><div class="faction-groups"></div>
         <button type="button" class="btn btn-secondary faction-add-group">Добавить группировку</button>
         <h4>Отношения между группировками</h4><div class="faction-relations"></div>
         <button type="button" class="btn btn-secondary faction-add-relation">Добавить отношение</button>
@@ -24,6 +25,8 @@ export async function openWorldFactionSettings(lobbyId) {
     document.body.append(root);
     root.querySelector('.faction-close').onclick=()=>root.remove();
     const render=()=>{
+        const ready=config.source==='ready';
+        root.querySelector('.faction-copy-ready').hidden=!ready;
         const groups=root.querySelector('.faction-groups');groups.replaceChildren();
         config.groups.forEach((group,index)=>{
             const card=document.createElement('section');card.className='npc-generator-level';
@@ -64,6 +67,10 @@ export async function openWorldFactionSettings(lobbyId) {
             row.querySelector('button').onclick=()=>{config.relations.splice(index,1);render();};
             relations.append(row);
         });
+        for(const control of root.querySelectorAll('.faction-groups input,.faction-groups button,.faction-relations input,.faction-relations select,.faction-relations button'))
+            control.disabled=ready;
+        for(const selector of ['.faction-add-group','.faction-add-relation','.faction-save'])
+            root.querySelector(selector).disabled=ready;
         const assignments=root.querySelector('.faction-assignments');assignments.replaceChildren();
         characters.forEach((character,index)=>{
             const row=document.createElement('div');row.className='npc-generator-level';
@@ -96,6 +103,7 @@ export async function openWorldFactionSettings(lobbyId) {
             assignments.append(row);
         });
     };
+    root.querySelector('.faction-copy-ready').onclick=()=>{config.source='ready_customized';render();};
     root.querySelector('.faction-add-group').onclick=()=>{config.groups.push({...newEntry(),factions:[]});render();};
     root.querySelector('.faction-add-relation').onclick=()=>{
         if(config.groups.length<2){root.querySelector('.faction-error').textContent='Для отношения нужны две группировки';return;}

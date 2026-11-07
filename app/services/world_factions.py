@@ -8,6 +8,7 @@ from sqlalchemy.orm.exc import StaleDataError
 from app.extensions import db
 from app.models import LobbyCharacter, WorldFactionConfig
 from app.services.exceptions import ConflictError, PermissionDenied, ValidationError
+from app.services.world_factions_preset import ready_world_factions
 
 
 def _require_gm(lobby,user_id):
@@ -38,8 +39,9 @@ def _name(value,label):
 def validate_config(payload):
     if not isinstance(payload,dict) or set(payload)!={'revision','source','groups','relations'}:
         raise ValidationError('Некорректный справочник группировок')
-    if payload['source']!='custom':
-        raise ValidationError('Готовый набор пока не предоставлен автором')
+    source=payload['source']
+    if source not in ('custom','ready','ready_customized'):
+        raise ValidationError('Неизвестный источник группировок')
     groups=payload['groups'];relations=payload['relations']
     if not isinstance(groups,list) or len(groups)>100:
         raise ValidationError('Допустимо до 100 группировок')
@@ -69,15 +71,18 @@ def validate_config(payload):
     for relation in relations:
         if not isinstance(relation,dict) or set(relation)!={'from_id','to_id','value'}:
             raise ValidationError('Некорректное отношение группировок')
-        source,target=relation['from_id'],relation['to_id']
-        if not _identifier(source) or not _identifier(target) or source not in group_ids or target not in group_ids or source==target:
+        from_id,to_id=relation['from_id'],relation['to_id']
+        if not _identifier(from_id) or not _identifier(to_id) or from_id not in group_ids or to_id not in group_ids or from_id==to_id:
             raise ValidationError('Отношение ссылается на удалённую или ту же группировку')
-        pair=(source,target)
+        pair=(from_id,to_id)
         if pair in pairs:raise ValidationError('Отношение группировок повторяется')
         pairs.add(pair)
-        normalized.append({'from_id':source,'to_id':target,
+        normalized.append({'from_id':from_id,'to_id':to_id,
             'value':_name(relation['value'],'Отношение')})
-    return {'source':'custom','groups':result,'relations':normalized}
+    if source=='ready' and (result!=ready_world_factions()['groups']
+        or normalized!=ready_world_factions()['relations']):
+        raise ValidationError('Чтобы изменить готовый набор, сначала создайте его копию')
+    return {'source':source,'groups':result,'relations':normalized}
 
 
 def _check_removed_references(lobby_id,old,new):

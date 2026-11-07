@@ -299,12 +299,13 @@ export const Server = {
         });
     },
 
-    async createLobby(name, mapType, chunksWidth, chunksHeight, importData = null) {
+    async createLobby(name, mapType, chunksWidth, chunksHeight, importData = null, factionSource = 'custom') {
         // Для импорта используется FormData, для обычного — JSON
         if (mapType === 'imported' && importData) {
             const formData = new FormData();
             formData.append('name', name);
             formData.append('map_type', 'imported');
+            formData.append('faction_source', factionSource);
             formData.append('map_file', new Blob([JSON.stringify(importData)], { type: 'application/json' }), 'map.json');
             const response = await fetch('/lobbies/', {
                 method: 'POST',
@@ -320,7 +321,8 @@ export const Server = {
             return apiFetch('/lobbies/', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ name, map_type: mapType, chunks_width: chunksWidth, chunks_height: chunksHeight }),
+                body: JSON.stringify({ name, map_type: mapType, chunks_width: chunksWidth,
+                    chunks_height: chunksHeight, faction_source: factionSource }),
             });
         }
     },

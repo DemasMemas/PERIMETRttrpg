@@ -1,5 +1,6 @@
 """Собственные группировки мира без придуманных названий и отношений."""
 from app.models import WorldFactionConfig
+from app.services.world_factions_preset import ready_world_factions
 from test_character_interactions import _setup_pair
 
 
@@ -9,6 +10,48 @@ def settings(**changes):
             {'id':'faction-first','name':'Отделение автора'}]},
         {'id':'group-second','name':'Группа автора Б','factions':[]}],
         'relations':[{'from_id':'group-first','to_id':'group-second','value':'Отношение автора'}],**changes}
+
+
+def test_author_ready_groups_can_be_copied_without_changing_source(client,create_user,auth_headers):
+    pair=_setup_pair(client,create_user,auth_headers)
+    gm=auth_headers(pair['actor_user']);player=auth_headers(pair['target_user'])
+    payload={'name':'Мир с группировками автора','map_type':'empty',
+        'chunks_width':1,'chunks_height':1,'faction_source':'ready'}
+    created=client.post('/lobbies/',headers=gm,json=payload)
+    assert created.status_code==201,created.json
+    url=f"/lobbies/{created.json['id']}/world-factions"
+    ready=client.get(url,headers=gm)
+    assert ready.status_code==200 and ready.json['source']=='ready'
+    expected=ready_world_factions()
+    assert ready.json['groups']==expected['groups']
+    assert ready.json['relations']==expected['relations']
+    assert len(expected['groups'])==13 and len(expected['relations'])==34
+    assert all(not group['factions'] for group in expected['groups'])
+    names={group['id']:group['name'] for group in expected['groups']}
+    assert all(names[relation['from_id']]!='ЧНИГ Светило'
+        for relation in expected['relations'])
+    assert client.get(url,headers=player).status_code==403
+    changed={**ready.json,'groups':[dict(group) for group in ready.json['groups']]}
+    changed['groups'][0]={**changed['groups'][0],'name':'Название ГМа'}
+    rejected=client.put(url,headers=gm,json=changed)
+    assert rejected.status_code==400,(rejected.status_code,rejected.json)
+    copied={**changed,'source':'ready_customized'}
+    saved=client.put(url,headers=gm,json=copied)
+    assert saved.status_code==200,saved.json
+    assert saved.json['groups'][0]['id']==expected['groups'][0]['id']
+    assert saved.json['groups'][0]['name']=='Название ГМа'
+    second=client.post('/lobbies/',headers=gm,json={**payload,'name':'Другой готовый мир'})
+    assert second.status_code==201,second.json
+    other=client.get(f"/lobbies/{second.json['id']}/world-factions",headers=gm)
+    assert other.json['groups']==expected['groups'] and other.json['source']=='ready'
+    editable=client.post('/lobbies/',headers=gm,json={**payload,
+        'name':'Мир с донастройкой','faction_source':'ready_customized'})
+    assert editable.status_code==201,editable.json
+    edit_url=f"/lobbies/{editable.json['id']}/world-factions"
+    starting=client.get(edit_url,headers=gm).json
+    assert starting['source']=='ready_customized' and starting['groups']==expected['groups']
+    starting['groups'][0]['name']='Другое название ГМа'
+    assert client.put(edit_url,headers=gm,json=starting).status_code==200
 
 
 def test_gm_can_save_rename_and_replay_world_factions(client,create_user,auth_headers):

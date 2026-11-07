@@ -3,7 +3,7 @@ import logging
 import random
 import string
 from app.extensions import db
-from app.models import Lobby, LobbyParticipant, MapChunk
+from app.models import Lobby, LobbyParticipant, MapChunk, WorldFactionConfig
 from app.constants import MAX_CHUNKS_WIDTH, MAX_CHUNKS_HEIGHT
 from app.services.exceptions import ValidationError, NotFoundError, PermissionDenied
 
@@ -27,8 +27,8 @@ class LobbyService:
             raise ValidationError("Lobby name is required")
         if map_type not in ['empty', 'random', 'predefined', 'imported']:
             raise ValidationError("Invalid map type")
-        if faction_source!='custom':
-            raise ValidationError('Готовый набор группировок пока не предоставлен автором')
+        if faction_source not in ('custom','ready','ready_customized'):
+            raise ValidationError('Неизвестный источник группировок')
 
         if map_type == 'imported':
             if not import_data:
@@ -65,6 +65,11 @@ class LobbyService:
 
         db.session.add(lobby)
         db.session.flush()  # чтобы получить id
+        if faction_source!='custom':
+            from app.services.world_factions_preset import ready_world_factions
+            preset=ready_world_factions()
+            db.session.add(WorldFactionConfig(lobby_id=lobby.id,source=faction_source,
+                groups=preset['groups'],relations=preset['relations']))
 
         # Добавляем создателя как участника
         participant = LobbyParticipant(lobby_id=lobby.id, user_id=user_id)
