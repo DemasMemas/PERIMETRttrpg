@@ -2,9 +2,6 @@ import { acceptsDetail, edgePosition } from './locationGrassDetail.js';
 
 const ROOT = '/static/models/vegetation/polyhaven-d51/grass_medium_01/';
 const MODEL = '/static/models/vegetation/grass_medium_01_game_d8.glb';
-const BERMUDA_MODEL = '/static/models/vegetation/bermuda_d4_tuft.glb';
-const BERMUDA_TEXTURES = '/static/textures/vegetation/';
-export const NATURAL_GRASS_KINDS = ['medium01', 'bermuda'];
 const CHUNK_SIZE = 12;
 export const NATURAL_GRASS_ROOT_EMBED = 0.018;
 let assetPromise = null;
@@ -49,7 +46,6 @@ const emptyStats = () => ({ grassTiles: 0, plainTiles: 0, forestTiles: 0,
 
 export function naturalGrassPlacements(tiles, isCovered = () => false, chunk = null) {
     const medium01 = [];
-    const bermuda = [];
     const stats = emptyStats();
     const statsByChunk = new Map();
     const count = (field, local) => { if (local) { stats[field]++; local[field]++; } };
@@ -110,19 +106,17 @@ export function naturalGrassPlacements(tiles, isCovered = () => false, chunk = n
                 }
                 if (chunk && (Math.floor(px / CHUNK_SIZE) !== chunk.x
                     || Math.floor(pz / CHUNK_SIZE) !== chunk.z)) continue;
-                const plant = { x: px, z: pz,
+                medium01.push({ x: px, z: pz,
                     size: 0.86 + hash(x, z, 410 + index) * 0.28,
                     width: 0.9 + hash(x, z, 610 + index) * 0.25,
                     depth: 0.9 + hash(x, z, 710 + index) * 0.25,
                     lean: (hash(x, z, 810 + index) - 0.5) * 0.16,
                     tone: hash(x, z, 910 + index),
-                    turn: hash(x, z, 510 + index) * Math.PI * 2 };
-                // Заменяем часть существующих кустиков более низкой моделью, не добавляя корней.
-                (hash(x, z, 1010 + index) < 0.2 ? bermuda : medium01).push(plant);
+                    turn: hash(x, z, 510 + index) * Math.PI * 2 });
             }
         }
     }
-    return { medium01, bermuda, stats, statsByChunk };
+    return { medium01, stats, statsByChunk };
 }
 
 export function loadNaturalGrassAssets(THREE, outputEncoding = THREE.LinearEncoding) {
@@ -142,46 +136,33 @@ export function loadNaturalGrassAssets(THREE, outputEncoding = THREE.LinearEncod
                 texture(`${ROOT}textures/grass_medium_01_diff_1k.jpg`),
                 texture(`${ROOT}textures/grass_medium_01_alpha_1k.png`),
                 texture(`${ROOT}textures/grass_medium_01_nor_gl_1k.jpg`),
-                model(BERMUDA_MODEL),
-                texture(`${BERMUDA_TEXTURES}grass_bermuda_01_diff_2k.jpg`),
-                texture(`${BERMUDA_TEXTURES}grass_bermuda_01_alpha_2k.png`),
-                texture(`${BERMUDA_TEXTURES}grass_bermuda_01_nor_gl_2k.jpg`),
             ]);
-        }).then(([model, map, alphaMap, normalMap,
-            bermudaModel, bermudaMap, bermudaAlpha, bermudaNormal]) => {
-            const source = (gltf, name, maps, height, spread) => {
-                let mesh = null;
-                gltf.scene.traverse(child => {
-                    if (child.isMesh && child.name === name) mesh = child;
-                });
-                if (!mesh) throw new Error(`Missing grass mesh ${name}`);
-                const [colorMap, opacityMap, normal] = maps;
-                for (const texture of maps) {
-                    texture.flipY = false;
-                    texture.minFilter = THREE.LinearMipmapLinearFilter;
-                    texture.magFilter = THREE.LinearFilter;
-                }
-                // Локальный renderer выводит linear; атлас должен использовать ту же кодировку.
-                colorMap.encoding = outputEncoding;
-                const material = new THREE.MeshStandardMaterial({
-                    map: colorMap, alphaMap: opacityMap, normalMap: normal,
-                    normalScale: new THREE.Vector2(0.35, 0.35),
-                    alphaTest: 0.45, transparent: false, depthWrite: true,
-                    side: THREE.DoubleSide, roughness: 0.95, metalness: 0,
-                });
-                mesh.geometry.computeBoundingBox();
-                const bounds = mesh.geometry.boundingBox;
-                return { geometry: mesh.geometry, material,
-                    scale: height / (bounds.max.y - bounds.min.y),
-                    spread: spread / Math.max(bounds.max.x - bounds.min.x,
-                        bounds.max.z - bounds.min.z), bottom: bounds.min.y };
-            };
-            return {
-                medium01: source(model, 'grass_medium_01_mid_a_LOD0',
-                    [map, alphaMap, normalMap], 0.18, 0.34),
-                bermuda: source(bermudaModel, 'PolyHaven_Bermuda_D4_Tuft',
-                    [bermudaMap, bermudaAlpha, bermudaNormal], 0.13, 0.29),
-            };
+        }).then(([model, map, alphaMap, normalMap]) => {
+            let mesh = null;
+            model.scene.traverse(child => {
+                if (child.isMesh && child.name === 'grass_medium_01_mid_a_LOD0') mesh = child;
+            });
+            if (!mesh) throw new Error('Missing optimized grass mesh');
+            for (const texture of [map, alphaMap, normalMap]) {
+                texture.flipY = false;
+                texture.minFilter = THREE.LinearMipmapLinearFilter;
+                texture.magFilter = THREE.LinearFilter;
+            }
+            // Keep the atlas in the renderer's output space. The local scene currently
+            // outputs linear; decoding sRGB without re-encoding made these leaves black.
+            map.encoding = outputEncoding;
+            const material = new THREE.MeshStandardMaterial({
+                map, alphaMap, normalMap,
+                normalScale: new THREE.Vector2(0.35, 0.35),
+                alphaTest: 0.45, transparent: false, depthWrite: true,
+                side: THREE.DoubleSide, roughness: 0.95, metalness: 0,
+            });
+            mesh.geometry.computeBoundingBox();
+            const bounds = mesh.geometry.boundingBox;
+            return { medium01: { geometry: mesh.geometry, material,
+                scale: 0.18 / (bounds.max.y - bounds.min.y),
+                spread: 0.34 / Math.max(bounds.max.x - bounds.min.x,
+                    bounds.max.z - bounds.min.z), bottom: bounds.min.y } };
         }).catch(error => {
             assetPromise = null;
             throw error;
@@ -236,13 +217,13 @@ export function addNaturalGrassInstances(THREE, group, placements, assets, getHe
     const resources = group.userData.naturalGrassResources ??= {};
     group.userData.naturalGrassBaseTufts ??= group.userData.detailCounts.tufts;
     for (const [key, stats] of placements.statsByChunk || []) {
-        state.set(key, { stats, created: {}, added: {}, meshes: {} });
+        state.set(key, { stats, created: 0, added: 0, mesh: null });
     }
-    for (const kind of NATURAL_GRASS_KINDS) {
+    for (const kind of ['medium01']) {
         for (const plant of placements[kind]) {
             const key = `${Math.floor(plant.x / CHUNK_SIZE)},${Math.floor(plant.z / CHUNK_SIZE)}`;
-            if (!state.has(key)) state.set(key, { stats: emptyStats(), created: {}, added: {}, meshes: {} });
-            state.get(key).created[kind] = (state.get(key).created[kind] || 0) + 1;
+            if (!state.has(key)) state.set(key, { stats: emptyStats(), created: 0, added: 0, mesh: null });
+            state.get(key).created++;
         }
         const slopes = new Map();
         const plants = placements[kind].filter(plant => {
@@ -305,9 +286,7 @@ export function addNaturalGrassInstances(THREE, group, placements, assets, getHe
             mesh.receiveShadow = false;
             mesh.raycast = () => {};
             group.add(mesh);
-            const entry = state.get(`${cx},${cz}`);
-            entry.meshes[kind] = mesh;
-            entry.added[kind] = chunkPlants.length;
+            Object.assign(state.get(`${cx},${cz}`), { mesh, added: chunkPlants.length });
         }
     }
     refreshGrassBounds(THREE, group);
@@ -316,29 +295,25 @@ export function addNaturalGrassInstances(THREE, group, placements, assets, getHe
 
 function naturalGrassSummary(group, assets) {
     const stats = emptyStats();
-    const created = Object.fromEntries(NATURAL_GRASS_KINDS.map(kind => [kind, 0]));
-    const added = Object.fromEntries(NATURAL_GRASS_KINDS.map(kind => [kind, 0]));
-    const chunks = Object.fromEntries(NATURAL_GRASS_KINDS.map(kind => [kind, 0]));
+    let created = 0, added = 0, chunks = 0;
     for (const entry of group.userData.naturalGrassChunks.values()) {
         for (const field of Object.keys(stats)) stats[field] += entry.stats[field];
-        for (const kind of NATURAL_GRASS_KINDS) {
-            created[kind] += entry.created[kind] || 0;
-            added[kind] += entry.added[kind] || 0;
-            if (entry.meshes[kind]) chunks[kind]++;
-        }
+        created += entry.created;
+        added += entry.added;
+        if (entry.mesh) chunks++;
     }
-    group.userData.naturalGrassCounts = added;
-    group.userData.detailCounts.tufts = group.userData.naturalGrassBaseTufts
-        + Object.values(added).reduce((sum, count) => sum + count, 0);
-    return { stats, created, added,
-        slopeRejected: Object.fromEntries(NATURAL_GRASS_KINDS.map(kind =>
-            [kind, created[kind] - added[kind]])),
-        chunks,
-        triangles: Object.fromEntries(NATURAL_GRASS_KINDS.map(kind => {
+    const renderedCounts = { medium01: added };
+    group.userData.naturalGrassCounts = renderedCounts;
+    group.userData.detailCounts.tufts = group.userData.naturalGrassBaseTufts + added;
+    return { stats, created: { medium01: created },
+        added: renderedCounts,
+        slopeRejected: { medium01: created - added },
+        chunks: { medium01: chunks },
+        triangles: Object.fromEntries(['medium01'].map(kind => {
             const geometry = assets[kind].geometry;
             const triangles = (geometry.index ? geometry.index.count
                 : geometry.getAttribute('position').count) / 3;
-            return [kind, Math.round(added[kind] * triangles)];
+            return [kind, Math.round(renderedCounts[kind] * triangles)];
         })) };
 }
 
@@ -377,11 +352,8 @@ export function updateNaturalGrassInstances(THREE, group, tiles, assets, getHeig
         }
     }
     for (const key of keys) {
-        const previous = group.userData.naturalGrassChunks.get(key)?.meshes || {};
-        for (const mesh of Object.values(previous)) {
-            group.remove(mesh);
-            mesh.dispose?.();
-        }
+        const previous = group.userData.naturalGrassChunks.get(key)?.mesh;
+        if (previous) { group.remove(previous); previous.dispose?.(); }
     }
     // When every chunk is affected (e.g. a small location's shared corner),
     // generate once instead of repeatedly visiting overlapping source halos.
@@ -394,8 +366,7 @@ export function updateNaturalGrassInstances(THREE, group, tiles, assets, getHeig
                 naturalGrassPlacements(tiles, isCovered, { x, z }), assets, getHeight);
         }
     }
-    const meshes = [...keys].flatMap(key => Object.values(
-        group.userData.naturalGrassChunks.get(key)?.meshes || {}));
+    const meshes = [...keys].map(key => group.userData.naturalGrassChunks.get(key)?.mesh).filter(Boolean);
     releaseUnusedGrassResources(group);
     return { build: naturalGrassSummary(group, assets), meshes };
 }

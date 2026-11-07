@@ -112,6 +112,18 @@ test('swamp pools and reeds are batched, repeatable, and excluded beneath floors
     assert.doesNotMatch(source, /transparent: true, opacity: 0\.88, depthWrite: false/);
 });
 
+test('болотная лужа поворачивает вытянутый контур вместе с углом размещения', async () => {
+    const { swampPoolEdge } = await import(moduleUrl);
+    const pool = { x: 3.5, z: 4.5, radius: 0.25, turn: 0 };
+    const east = swampPoolEdge(pool, 0);
+    const north = swampPoolEdge({ ...pool, turn: Math.PI / 2 }, 0);
+    assert.ok(east[0] > pool.x);
+    assert.ok(Math.abs(east[1] - pool.z) < 1e-9);
+    assert.ok(Math.abs(north[0] - pool.x) < 1e-9);
+    assert.ok(north[1] > pool.z);
+    assert.ok(Math.abs((east[0] - pool.x) - (north[1] - pool.z)) < 1e-9);
+});
+
 test('в любом квадрате 3×3 м остаётся не более двух болотных луж', async () => {
     const { swampPlacements } = await import(moduleUrl);
     const layouts = [

@@ -133,6 +133,8 @@ export function initMapEdit(lobbyId, authToken) {
     });
     initWorldClipboardEditor(AppState,selectWorldEditorTool);
 
+    document.getElementById('world-water-level-mode')?.addEventListener('change', event => event.currentTarget.blur());
+
     document.getElementById('panel-tools')?.addEventListener('click', event => {
         const button = event.target.closest('[data-world-tool]');
         if (button) selectWorldEditorTool(button.dataset.worldTool);

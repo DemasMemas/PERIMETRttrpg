@@ -79,7 +79,7 @@ import { applySurfaceDarkness, writeDarknessPixels } from './locationDarknessSur
 import { applySurfacePattern, getSurfaceTexture, releaseSurfaceTextures } from './locationTerrainDetail.js';
 import { createGrassDetailGroup } from './locationGrassDetail.js';
 import { addNaturalGrassInstances, disposeNaturalGrassInstances, loadNaturalGrassAssets, updateNaturalGrassInstances,
-    naturalGrassPlacements, NATURAL_GRASS_KINDS } from './locationNaturalGrass.js';
+    naturalGrassPlacements } from './locationNaturalGrass.js';
 import { smoothWaterNormals, shoreOwners } from './waterGeometryUtils.js';
 import { buildRoundedWaterData, classifyWaterRegions, waterExposedSideMask,
     waterLevelForTile, waterSideCornerDrops } from './locationWaterEdge.js';
@@ -17085,7 +17085,7 @@ export function getLocationGrassDiagnostics() {
         frustum = new THREE.Frustum().setFromProjectionMatrix(new THREE.Matrix4()
             .multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse));
     }
-    const kinds = Object.fromEntries(NATURAL_GRASS_KINDS.map(kind => {
+    const kinds = Object.fromEntries(['medium01'].map(kind => {
         const matching = meshes.filter(mesh => mesh.userData.naturalGrassKind === kind);
         const sample = matching[0];
         let firstInstance = null;
@@ -17129,7 +17129,7 @@ export function getLocationGrassDiagnostics() {
     }));
     return {
         locationId: currentLocationId,
-        model: 'grass_medium_01_game_d8.glb + bermuda_d4_tuft.glb',
+        model: 'grass_medium_01_game_d8.glb',
         rendererOutputEncoding: renderer?.outputEncoding === THREE.sRGBEncoding
             ? 'sRGB' : 'linear',
         lighting: { ambient: locationAmbientLight?.intensity,
@@ -17148,12 +17148,12 @@ export function getLocationGrassDiagnostics() {
             density: naturalGrassBuild?.stats.densityRejected || 0,
             blend: naturalGrassBuild?.stats.blendRejected || 0,
             floor: naturalGrassBuild?.stats.floorRejected || 0,
-            slope: naturalGrassBuild?.slopeRejected || { medium01: 0, bermuda: 0 },
+            slope: naturalGrassBuild?.slopeRejected || { medium01: 0 },
         },
         kinds,
         understory: grassDetailGroup?.userData.detailCounts?.understory || 0,
         flowers: grassDetailGroup?.userData.detailCounts?.flowers || 0,
-        triangles: naturalGrassBuild?.triangles || { medium01: 0, bermuda: 0, understory: 0, total: 0 },
+        triangles: naturalGrassBuild?.triangles || { medium01: 0, understory: 0, total: 0 },
     };
 }
 
@@ -17236,7 +17236,7 @@ function rebuildGrassDetailMesh(changedTiles = null) {
         grassDetailGroup = details;
         const placements = naturalGrassPlacements(tiles, isCovered);
         naturalGrassBuild = { stats: placements.stats,
-            created: { medium01: placements.medium01.length, bermuda: placements.bermuda.length } };
+            created: { medium01: placements.medium01.length } };
         if (naturalGrassAssets) Object.assign(naturalGrassBuild,
             addNaturalGrassInstances(THREE, grassDetailGroup, placements, naturalGrassAssets, getHeight));
         attachStaticLightFieldToRoot(grassDetailGroup, 0);
@@ -17246,7 +17246,7 @@ function rebuildGrassDetailMesh(changedTiles = null) {
         naturalGrassBuild.triangles.understory =
             grassDetailGroup.userData.detailCounts.understoryTriangles;
         naturalGrassBuild.triangles.total = naturalGrassBuild.triangles.medium01
-            + naturalGrassBuild.triangles.bermuda + naturalGrassBuild.triangles.understory;
+            + naturalGrassBuild.triangles.understory;
     }
     if (naturalGrassAssets && !naturalGrassReported) {
         console.info('[game grass] scene:', {

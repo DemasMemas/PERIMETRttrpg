@@ -208,6 +208,17 @@ export function swampPlacements(tiles, isCovered = () => false) {
     return { pools, reeds };
 }
 
+export function swampPoolEdge(pool, side) {
+    const angle = side * Math.PI / 6;
+    const wobble = 0.78 + hash(Math.floor(pool.x * 100), Math.floor(pool.z * 100), side) * 0.38;
+    const localX = Math.cos(angle) * pool.radius * wobble;
+    const localZ = Math.sin(angle) * pool.radius * 0.72 * wobble;
+    const cosine = Math.cos(pool.turn);
+    const sine = Math.sin(pool.turn);
+    return [pool.x + localX * cosine - localZ * sine,
+        pool.z + localX * sine + localZ * cosine];
+}
+
 function makeGrassGeometry(THREE) {
     const positions = [];
     const blades = [
@@ -352,14 +363,7 @@ export function createGrassDetailGroup(THREE, tiles, getHeight, isCovered, useNa
         const shoreColor = new THREE.Color(0x34473a);
         for (const pool of pools) {
             color.setHSL(0.49 + pool.seed * 0.035, 0.37, 0.25 + pool.seed * 0.04);
-            const edge = side => {
-                const angle = pool.turn + side * Math.PI / 6;
-                const wobble = 0.78 + hash(Math.floor(pool.x * 100), Math.floor(pool.z * 100), side) * 0.38;
-                const x = pool.x + Math.cos(angle) * pool.radius * wobble;
-                const z = pool.z + Math.sin(angle) * pool.radius * 0.72 * wobble;
-                return [x, z];
-            };
-            const rim = Array.from({ length: 12 }, (_, side) => edge(side));
+            const rim = Array.from({ length: 12 }, (_, side) => swampPoolEdge(pool, side));
             const heights = [getHeight(pool.x, pool.z),
                 ...rim.map(([x, z]) => getHeight(x, z))];
             if (Math.max(...heights) - Math.min(...heights) > 0.06) continue;

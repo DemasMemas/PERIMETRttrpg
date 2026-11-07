@@ -689,6 +689,7 @@ window.enterLocation = async function(locationId, { scoutView = null } = {}) {
                     document.getElementById(id).onchange = () => {
                         const tile=getHoveredTileCoords();
                         if(tile) updateHighlightByCoords(tile.x,tile.z);
+                        if(id==='loc-water-level-mode') document.getElementById(id).blur();
                     };
                 const heightMode = sculptModeRow.querySelector('select');
                 const syncSculpt = () => {

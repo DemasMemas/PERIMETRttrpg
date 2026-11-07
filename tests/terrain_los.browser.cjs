@@ -46,6 +46,8 @@ module.exports=async({page,request,token,lobby,base,connect,debugPort,safeSessio
  await page.evaluate('(async()=>{window.T=await import("three");window.UI=await import("/static/js/ui_interactions.js");await enterLocation('+waterLocation.id+')})()');
  await page.until('document.getElementById("scene-loading-screen").classList.contains("is-hidden")','реальная водная сцена');
  await page.evaluate('(()=>{selectLocationEditorTool("height");L.setLocationEditMode(true);document.getElementById("loc-water-level-enabled").checked=true;locationControls.target.set(4,1,4);locationControls.object.position.set(10,12,13);locationControls.update();UI.collapseMapToolsPanel()})()');
+ assert.equal(await page.evaluate('(()=>{const select=document.getElementById("loc-water-level-mode");select.focus();select.value="exact";select.dispatchEvent(new Event("change",{bubbles:true}));return document.activeElement===select})()'),false,'список уровня воды подлокации освобождает клавиатуру');
+ await page.evaluate('document.getElementById("loc-water-level-mode").value="minimum"');
  const clickWater=async(height,expectedPreview)=>{
   const point=await page.evaluate('(()=>{locationControls.object.updateMatrixWorld(true);const v=new T.Vector3(2.5,'+height+',2.5).project(locationControls.object),r=document.querySelector("#location-canvas canvas").getBoundingClientRect();return{x:r.left+(v.x+1)*r.width/2,y:r.top+(1-v.y)*r.height/2}})()');
   await page.call('Input.dispatchMouseEvent',{type:'mouseMoved',...point,button:'none',buttons:0});
@@ -72,6 +74,7 @@ module.exports=async({page,request,token,lobby,base,connect,debugPort,safeSessio
   chunk_x:0,chunk_y:0,tile_x:x,tile_y:z,updates:{terrain:'water',height}}));
  await request(api+'/chunks/batch',worldUpdates,token);
  await page.until('sceneModule.chunksMap.get("0,0")?.tilesData[4][4]?.terrain==="water"','водоём глобальной карты загружен');
+ assert.equal(await page.evaluate('(()=>{const select=document.getElementById("world-water-level-mode");select.focus();select.value="exact";select.dispatchEvent(new Event("change",{bubbles:true}));return document.activeElement===select})()'),false,'список уровня воды глобальной карты освобождает клавиатуру');
  await page.evaluate('(async()=>{window.M=await import("/static/js/mapEdit.js");document.getElementById("world-water-level-mode").value="minimum";await M.levelWorldWaterBody({chunkX:0,chunkY:0,tileX:4,tileY:4,tileData:sceneModule.chunksMap.get("0,0").tilesData[4][4]})})()');
  await page.until('sceneModule.chunksMap.get("0,0").tilesData[4][4].height===.7','глобальный водоём выровнен');
  assert.equal(await page.evaluate('sceneModule.chunksMap.get("0,0").tilesData[10][10].height'),2.3);
@@ -82,7 +85,5 @@ module.exports=async({page,request,token,lobby,base,connect,debugPort,safeSessio
  result.checks.push({stage:'fog-visual-polygon-2',deepWater:true,noIndexTruncation:true});
  await require('./location_swamp_pools.browser.cjs')({page,request,token,lobby,safeSession});
  result.checks.push({stage:'swamp-pools',maximumPerThreeMeters:2});
- await require('./location_grass_variations.browser.cjs')({page,request,token,lobby,safeSession});
- result.checks.push({stage:'grass-variations',models:2});
  result.status='READY_FOR_REVIEW';save();
 };
