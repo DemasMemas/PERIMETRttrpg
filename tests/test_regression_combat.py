@@ -250,6 +250,16 @@ def test_pepper_hit_skips_the_next_turn_without_stacking(grenade_game,monkeypatc
     assert CombatService._can_take_combat_turn(actor)
 
 
+@pytest.mark.parametrize('shock_roll,expected',[(50,True),(51,False)])
+def test_pepper_head_hit_shock_chance_boundary(monkeypatch,shock_roll,expected):
+    health={'current':100,'max':100,'painLevel':0,'effects':[]}
+    data={'health':health}
+    monkeypatch.setattr(combat_module.random,'randint',lambda low,high:shock_roll)
+    result=CombatService._apply_pepper_head_hit(health,data)
+    assert result['shock'] is expected
+    assert (CombatService._character_condition(data)['state']=='pain_shock') is expected
+
+
 def test_pepper_skip_turn_advances_combat_automatically(grenade_game):
     actor=grenade_game['actor_location']
     target=grenade_game['target_location']

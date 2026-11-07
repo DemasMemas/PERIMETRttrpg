@@ -9195,6 +9195,20 @@ class CombatService:
                 f"{prefix} — попадание: {zone}, урон {damage}; "
                 f"защита {armor}%, пробитие {penetration}%."
             )
+            pepper = hit_result.get('pepper_head_hit')
+            if isinstance(pepper, dict):
+                lines.append(
+                    f"   Перцовка: попадание в голову {pepper['hits']}/3, "
+                    "следующий ход пропущен, −5 ко всем броскам до конца боя, "
+                    "+1 уровень боли каждый ход."
+                )
+                if pepper['hits'] >= 3:
+                    lines.append("   Болевой шок на 6 часов; −5 к атаке и внимательности на сутки.")
+                else:
+                    lines.append(
+                        f"   Болевой шок: d100 {pepper['shock_roll']} — "
+                        f"{'да' if pepper['shock'] else 'нет'} (шанс 50%)."
+                    )
             cover_impact = hit_result.get('cover_hit')
             if isinstance(cover_impact, dict):
                 cover_state = cover_impact.get('damage') or {}
