@@ -283,6 +283,68 @@ module.exports=async({page,request,token,lobby,base,connect,debugPort,safeSessio
         'Левая рука сохранена после перезахода');
     await page.evaluate(`window.closeCharacterSheet();true`);
     console.log(JSON.stringify({pistolLeftHandUi:true,noGenericDrawButton:true,gripAfterReload:true}));
+    const armorCatalog=await request(api+'/templates?category=armor',null,token,'GET');
+    const armorTemplate=armorCatalog.global.find(template=>template.price>0
+        && !template.attributes?.integrated_helmet);
+    assert.ok(armorTemplate,'Каталожная броня для проверки инвентаря');
+    const armorOwner=await read(a.id);
+    armorOwner.data.inventory.pockets.push({id:'browser-armor-equip',templateId:armorTemplate.id,
+        name:armorTemplate.name,category:'armor',quantity:1,weight:armorTemplate.weight,
+        volume:armorTemplate.volume,modifications:[{name:'Существующая запись',description:'Сохранить'}]});
+    await request('/lobbies/characters/'+a.id,{data:armorOwner.data},token,'PUT');
+    await page.evaluate(`window.openCharacterSheet(${a.id},'inventory');true`);
+    await page.until(`[...document.querySelectorAll('#pockets-container [data-path]')]
+        .some(node=>node.textContent.includes(${JSON.stringify(armorTemplate.name)}))`,
+        'Каталожная броня показана в инвентаре');
+    const armorButton=await page.evaluate(`(()=>{const row=[...document.querySelectorAll('#pockets-container [data-path]')]
+        .find(node=>node.textContent.includes(${JSON.stringify(armorTemplate.name)}));
+        return row?.querySelector('[data-widget-key="equip"]')?.textContent})()`);
+    assert.equal(armorButton,'Надеть');
+    await page.evaluate(`(()=>{const row=[...document.querySelectorAll('#pockets-container [data-path]')]
+        .find(node=>node.textContent.includes(${JSON.stringify(armorTemplate.name)}));
+        row.querySelector('[data-widget-key="equip"]').click();return true})()`);
+    await page.until(`document.querySelector('[data-equipment-group="armor"] button[onclick="unequipArmor()"]')
+        &&document.querySelector('[data-equipment-group="armor"]')?.textContent.includes(${JSON.stringify(armorTemplate.name)})`,
+        'Броня надета через инвентарь');
+    const equippedArmor=await read(a.id);
+    assert.equal(equippedArmor.data.equipment.armor.templateId,armorTemplate.id);
+    assert.equal(equippedArmor.data.equipment.armor.modifications[0].name,'Существующая запись');
+    assert.ok(!equippedArmor.data.inventory.pockets.some(item=>item.id==='browser-armor-equip'));
+    await page.evaluate(`window.closeCharacterSheet();true`);
+    const armorEpoch=await page.evaluate('performance.timeOrigin');
+    await page.call('Page.navigate',{url:href});
+    await waitForDocument(page,{href,afterEpoch:armorEpoch,label:'Припять: повторный вход с бронёй'});
+    await page.until(`window.socket?.connected&&window.currentLocationId===${location.id}
+        &&document.getElementById('scene-loading-screen').classList.contains('is-hidden')`,
+        'Сцена вновь готова с надетой бронёй');
+    await page.evaluate(`window.openCharacterSheet(${a.id},'equipment');true`);
+    await page.until(`document.querySelector('[data-equipment-group="armor"] button[onclick="unequipArmor()"]')`,
+        'Броня сохранена после перезахода');
+    await page.evaluate(`window.closeCharacterSheet();true`);
+    console.log(JSON.stringify({armorEquipButtonVisible:true,catalogArmorEquipped:true,
+        itemMoved:true,modificationPreserved:true,armorAfterReload:true}));
+    const throwOwner=await read(a.id);
+    throwOwner.data.inventory.pockets.push(
+        {id:'throw-light-object',name:'Лёгкий предмет для броска',category:'misc',weight:.3,quantity:1},
+        {id:'throw-heavy-armor',name:'Слишком тяжёлая броня',category:'armor',weight:16,quantity:1},
+        {id:'throw-grenade',name:'Граната для отдельного действия',category:'grenade',weight:.3,quantity:1},
+        {id:'throw-knife',name:'Нож для отдельного действия',category:'melee_weapon',weight:.3,quantity:1},
+        {id:'throw-unweighted',name:'Предмет без массы',category:'misc',quantity:1});
+    await request('/lobbies/characters/'+a.id,{data:throwOwner.data},token,'PUT');
+    await page.evaluate(`window.openCharacterSheet(${a.id},'inventory');true`);
+    await page.until(`[...document.querySelectorAll('#pockets-container [data-path]')]
+        .some(row=>row.querySelector('input[data-widget-key="name"]')?.value==='Предмет без массы')`,
+        'Все проверочные предметы показаны в инвентаре');
+    const throwButtons=await page.evaluate(`(()=>{const names=${JSON.stringify([
+        'Лёгкий предмет для броска','Слишком тяжёлая броня','Граната для отдельного действия',
+        'Нож для отдельного действия','Предмет без массы'])};
+        const rows=[...document.querySelectorAll('#pockets-container [data-path]')];
+        return names.map(name=>Boolean(rows.find(row=>row.querySelector('input[data-widget-key="name"]')?.value===name)
+            ?.querySelector('button[title="Метнуть предмет"]')));})()`);
+    assert.deepEqual(throwButtons,[true,false,false,false,false]);
+    await page.evaluate(`window.closeCharacterSheet();true`);
+    console.log(JSON.stringify({throwActionVisibility:true,allowedItem:true,
+        hiddenHeavyArmor:true,hiddenGrenadeAndKnife:true,hiddenMissingWeight:true}));
     await page.evaluate(`(async()=>{const generator=await import('/static/js/npcGenerator.js');
         await generator.openNpcCreation(${lobby.id});return true})()`);
     await page.until(`document.querySelector('.npc-generator-name')?.value.includes(' ')

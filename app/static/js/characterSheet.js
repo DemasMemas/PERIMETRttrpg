@@ -16248,11 +16248,11 @@ function renderBackpackItem(item, index, parentPath, parentContainer, allTemplat
         equipBtn.dataset.widgetKey = 'equip';
         equipBtn.type = 'button';
         equipBtn.className = 'btn btn-sm btn-primary';
-        equipBtn.textContent = '↑';
+        equipBtn.textContent = item.category === 'armor' ? 'Надеть' : '↑';
         equipBtn.title = 'Надеть';
-        equipBtn.style.width = '28px';
+        equipBtn.style.width = item.category === 'armor' ? 'auto' : '28px';
         equipBtn.style.height = '28px';
-        equipBtn.style.padding = '0';
+        equipBtn.style.padding = item.category === 'armor' ? '0 8px' : '0';
         equipBtn.style.fontSize = '14px';
         equipBtn.style.lineHeight = '1';
         equipBtn.onclick = (e) => {
@@ -16339,7 +16339,13 @@ function renderBackpackItem(item, index, parentPath, parentContainer, allTemplat
         actionsDiv.appendChild(useBtn);
     }
 
-    if (window.isLocationActive && item.category !== 'grenade' && item.category !== 'melee_weapon') {
+    const throwTemplate = item.templateId && allTemplates.find(template => Number(template.id) === Number(item.templateId));
+    const throwWeight = item.weight ?? throwTemplate?.weight;
+    const savedThrowItem = getItemByPath(itemPath);
+    if (window.isLocationActive && savedThrowItem?.id === item.id
+        && item.category !== 'grenade' && item.category !== 'melee_weapon'
+        && typeof throwWeight === 'number' && Number.isFinite(throwWeight)
+        && throwWeight >= 0 && throwWeight <= 15) {
         const throwButton = document.createElement('button');
         throwButton.type = 'button';
         throwButton.className = 'btn btn-sm btn-secondary';
