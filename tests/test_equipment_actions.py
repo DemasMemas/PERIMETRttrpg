@@ -21,7 +21,7 @@ def test_fragment_glasses_are_incompatible_in_both_equipment_orders(app):
         validate_glasses(data)
     data['equipment'].pop('gasMask')
     helmet = add_template('Шлем с забралом', 'helmet', attributes={'slots':[{'type':'visor'}]})
-    data['inventory']['pockets'].append(inventory_item(helmet))
+    data['inventory']['pockets'].append(inventory_item(helmet,installedModules=[{'slotType':'visor'}]))
     with pytest.raises(ValidationError, match='очк'):
         CombatService.equipment_action_details(data, 'equip', 'helmet', item_path=['inventory','pockets',1])
 
@@ -248,6 +248,54 @@ def test_visor_helmet_and_gas_mask_are_mutually_exclusive(app):
             "helmet",
             item_path=["inventory", "backpack", 0],
         )
+
+
+@pytest.mark.parametrize('first', ['helmet', 'gasMask'])
+def test_helmet_with_empty_visor_mount_can_be_worn_with_gas_mask_in_either_order(app,first):
+    helmet=add_template('Шлем без забрала','helmet',attributes={
+        'slots':[{'type':'visor'}], 'protection_zones':['crown','back','face']})
+    mask=add_template('Противогаз','gas_mask')
+    data={'inventory':{'backpack':[inventory_item(helmet),inventory_item(mask)],'pockets':[]},'equipment':{}}
+    for slot in (first,'gasMask' if first=='helmet' else 'helmet'):
+        category='helmet' if slot=='helmet' else 'gas_mask'
+        index=next(index for index,item in enumerate(data['inventory']['backpack']) if item['category']==category)
+        details=CombatService.equipment_action_details(data,'equip',slot,item_path=['inventory','backpack',index])
+        CombatService.apply_equipment_action(data,details)
+    assert data['equipment']['helmet']['templateId']==helmet.id
+    assert data['equipment']['gasMask']['templateId']==mask.id
+    for slot in (first,'gasMask' if first=='helmet' else 'helmet'):
+        details=CombatService.equipment_action_details(data,'unequip',slot)
+        CombatService.apply_equipment_action(data,details)
+    assert not data['equipment']
+    assert {item['templateId'] for item in data['inventory']['backpack']}=={helmet.id,mask.id}
+
+
+@pytest.mark.parametrize('helmet_attrs,installed_modules',[
+    ({'integrated_visor':True},[]),
+    ({'slots':[{'type':'visor'}]},[{'slotType':'visor','name':'Забрало'}]),
+    ({'requires_filter':True},[]),
+])
+@pytest.mark.parametrize('first',['helmet','gasMask'])
+def test_real_visor_or_gas_mask_helmet_blocks_both_equipment_orders(app,helmet_attrs,installed_modules,first):
+    helmet=add_template('Проверочный шлем','helmet',attributes=helmet_attrs)
+    mask=add_template('Противогаз','gas_mask')
+    helmet_item=inventory_item(helmet,installedModules=installed_modules)
+    mask_item=inventory_item(mask)
+    data={'inventory':{'backpack':[helmet_item,mask_item],'pockets':[]},
+        'equipment':{first:helmet_item if first=='helmet' else mask_item}}
+    other='gasMask' if first=='helmet' else 'helmet'
+    index=1 if first=='helmet' else 0
+    with pytest.raises(ValidationError,match='cannot be worn'):
+        CombatService.equipment_action_details(data,'equip',other,item_path=['inventory','backpack',index])
+
+
+def test_integrated_armor_helmet_blocks_gas_mask_even_without_generated_helmet(app):
+    armor=add_template('Броня со встроенным шлемом','armor',attributes={'integrated_helmet':True})
+    mask=add_template('Противогаз','gas_mask')
+    data={'inventory':{'backpack':[inventory_item(mask)],'pockets':[]},
+        'equipment':{'armor':inventory_item(armor)}}
+    with pytest.raises(ValidationError,match='integrated armor helmet'):
+        CombatService.equipment_action_details(data,'equip','gasMask',item_path=['inventory','backpack',0])
 
 
 def test_exoskeleton_requires_tools_and_engineering_and_is_blocked_in_combat(app):

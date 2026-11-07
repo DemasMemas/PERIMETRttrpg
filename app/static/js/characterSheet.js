@@ -1654,12 +1654,7 @@ function createItemFromTemplate(template, quantity = 1, options = {}) {
 }
 
 function helmetHasVisor(helmet, template = null) {
-    const templateSlots = template?.attributes?.slots || [];
-    const name = String(template?.name || helmet?.name || '').trim().toLowerCase();
-    return Boolean(template?.attributes?.integrated_visor)
-        || (template?.attributes?.protection_zones || []).includes('face')
-        || name.startsWith('шлем ')
-        || templateSlots.some(slot => slot?.type === 'visor')
+    return Boolean(template?.attributes?.integrated_visor || helmet?.attributes?.integrated_visor)
         || (helmet?.installedModules || []).some(module => module?.slotType === 'visor');
 }
 
@@ -1674,7 +1669,8 @@ const INTEGRATED_HELMET_ARMORS = new Set([
 
 function armorHasIntegratedHelmet(armor, template = null) {
     const name = String(template?.name || armor?.name || '').trim().toLowerCase().replace(/ё/g, 'е');
-    return Boolean(template?.attributes?.integrated_helmet)
+    return Boolean(template?.attributes?.integrated_helmet || armor?.attributes?.integrated_helmet
+        || armor?.integratedHelmet)
         || (template?.attributes?.protection_zones || []).includes('head')
         || INTEGRATED_HELMET_ARMORS.has(name);
 }
@@ -1778,6 +1774,10 @@ async function canEquipHelmetWithCurrentGasMask(template, helmet) {
 }
 
 async function canEquipGasMaskWithCurrentHelmet() {
+    if (armorHasIntegratedHelmet(currentCharacterData.equipment?.armor)) {
+        notifyHelmetGasMaskConflict();
+        return false;
+    }
     const helmet = currentCharacterData.equipment?.helmet;
     if (!helmet?.templateId) return true;
     if (helmet.integratedWithArmor) {

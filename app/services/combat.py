@@ -12003,17 +12003,12 @@ class CombatService:
         attributes.update(
             item.get('attributes') if isinstance(item.get('attributes'), dict) else {}
         )
-        slots = attributes.get('slots') if isinstance(attributes.get('slots'), list) else []
-        zones = attributes.get('protection_zones')
-        zones = zones if isinstance(zones, list) else item.get('protectionZones') or []
         modules = item.get('installedModules') if isinstance(item.get('installedModules'), list) else []
         name = str((template.name if template else None) or item.get('name') or '').lower()
         return bool(
             item.get('integratedWithArmor')
             or attributes.get('integrated_visor')
             or attributes.get('requires_filter')
-            or 'face' in zones
-            or any(isinstance(slot, dict) and slot.get('type') == 'visor' for slot in slots)
             or any(
                 isinstance(module, dict) and module.get('slotType') == 'visor'
                 for module in modules
@@ -12075,6 +12070,13 @@ class CombatService:
             elif slot == 'gasMask':
                 current_helmet = equipment.get('helmet')
                 helmet_template = CombatService._equipment_template(current_helmet)
+                armor = equipment.get('armor')
+                armor_template = CombatService._equipment_template(armor)
+                if (
+                    isinstance(armor, dict)
+                    and CombatService._integrated_helmet_from_armor(armor, armor_template)
+                ):
+                    raise ValidationError('This gas mask cannot be worn with integrated armor helmet')
                 if (
                     isinstance(current_helmet, dict)
                     and current_helmet.get('templateId')

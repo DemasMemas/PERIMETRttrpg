@@ -345,6 +345,44 @@ module.exports=async({page,request,token,lobby,base,connect,debugPort,safeSessio
     await page.evaluate(`window.closeCharacterSheet();true`);
     console.log(JSON.stringify({throwActionVisibility:true,allowedItem:true,
         hiddenHeavyArmor:true,hiddenGrenadeAndKnife:true,hiddenMissingWeight:true}));
+    const helmetCatalog=await request(api+'/templates?category=helmet',null,token,'GET');
+    const maskCatalog=await request(api+'/templates?category=gas_mask',null,token,'GET');
+    const helmetTemplate=helmetCatalog.global.find(template=>template.name.startsWith('Шлем ')
+        && !template.attributes?.integrated_visor && !template.attributes?.requires_filter);
+    const maskTemplate=maskCatalog.global.find(template=>template.category==='gas_mask');
+    assert.ok(helmetTemplate&&maskTemplate,'Шлем без забрала и противогаз есть в каталоге');
+    const maskOwner=await read(a.id);
+    for(const [id,template] of [['helmet',helmetTemplate],['mask',maskTemplate]]){
+        maskOwner.data.inventory.pockets.push({id:'browser-'+id,templateId:template.id,
+            name:template.name,category:template.category,quantity:1,weight:template.weight,
+            volume:template.volume,attributes:template.attributes,installedModules:[]});
+    }
+    await request('/lobbies/characters/'+a.id,{data:maskOwner.data},token,'PUT');
+    await page.evaluate(`window.openCharacterSheet(${a.id},'inventory');true`);
+    for(const [template,slot] of [[helmetTemplate,'helmet'],[maskTemplate,'gasMask']]){
+        await page.until(`[...document.querySelectorAll('#pockets-container [data-path]')]
+            .some(row=>row.textContent.includes(${JSON.stringify(template.name)}))`,
+            'Снаряжение для проверки совместимости в инвентаре');
+        await page.evaluate(`(()=>{const row=[...document.querySelectorAll('#pockets-container [data-path]')]
+            .find(node=>node.textContent.includes(${JSON.stringify(template.name)}));
+            row.querySelector('[data-widget-key="equip"]').click();return true})()`);
+        await page.until(`document.querySelector('[data-equipment-group="${slot}"] button[onclick="unequip${slot==='helmet'?'Helmet':'GasMask'}()"]')`,
+            'Шлем и противогаз надеты через интерфейс');
+    }
+    const maskAndHelmet=await read(a.id);
+    assert.equal(maskAndHelmet.data.equipment.helmet.templateId,helmetTemplate.id);
+    assert.equal(maskAndHelmet.data.equipment.gasMask.templateId,maskTemplate.id);
+    await page.evaluate(`window.closeCharacterSheet();true`);
+    const maskEpoch=await page.evaluate('performance.timeOrigin');
+    await page.call('Page.navigate',{url:href});
+    await waitForDocument(page,{href,afterEpoch:maskEpoch,label:'Припять: шлем и противогаз после перезахода'});
+    await page.until(`window.socket?.connected&&window.currentLocationId===${location.id}
+        &&document.getElementById('scene-loading-screen').classList.contains('is-hidden')`,
+        'Сцена вновь готова со шлемом и противогазом');
+    const savedMaskAndHelmet=await read(a.id);
+    assert.equal(savedMaskAndHelmet.data.equipment.helmet.templateId,helmetTemplate.id);
+    assert.equal(savedMaskAndHelmet.data.equipment.gasMask.templateId,maskTemplate.id);
+    console.log(JSON.stringify({bareHelmetWithGasMaskUi:true,compatibleAfterReload:true}));
     await page.evaluate(`(async()=>{const generator=await import('/static/js/npcGenerator.js');
         await generator.openNpcCreation(${lobby.id});return true})()`);
     await page.until(`document.querySelector('.npc-generator-name')?.value.includes(' ')
