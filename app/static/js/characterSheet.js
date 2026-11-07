@@ -4497,7 +4497,7 @@ async function renderEquipmentTab(data) {
                 </div>
             </div>
             ${renderSlotsUniversal(helmet, ['equipment', 'helmet']) ? `
-                <div style="margin-top:10px; padding:8px; background:rgba(0,0,0,0.1); border-radius:4px;">
+                <div class="equipment-slot-list" style="margin-top:10px; padding:8px; background:rgba(0,0,0,0.1); border-radius:4px;">
                     ${hasFilterSlot(helmet) ? `<label style="display:flex;align-items:center;gap:7px;margin-bottom:8px;cursor:pointer;"><input type="checkbox" name="equipment.helmet.autoReplaceFilters" ${helmet.autoReplaceFilters === true ? 'checked' : ''}> Автозамена фильтров</label>` : ''}
                     ${renderSlotsUniversal(helmet, ['equipment', 'helmet'])}
                 </div>

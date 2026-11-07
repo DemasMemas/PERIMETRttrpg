@@ -2476,8 +2476,8 @@ input[type="number"] {
   .equipment-workspace .loadout-figure-art { width: 115px; }
   .equipment-workspace .loadout-slot-mark { flex-basis: 21px; }
 }
-.equipment-panel-nav { display:flex; flex-wrap:wrap; gap:6px; margin:0 0 10px; }
-.equipment-panel-tab { padding:9px 12px; border:1px solid var(--panel-border); border-radius:8px; background:var(--panel-bg); color:var(--text-color); font-weight:600; cursor:pointer; }
+.equipment-panel-nav { display:grid; grid-template-columns:minmax(126px,1.8fr) repeat(5,minmax(0,1fr)); gap:4px; margin:0 0 6px; }
+.equipment-panel-tab { min-width:0; padding:7px 6px; font-size:12px; border:1px solid var(--panel-border); border-radius:8px; background:var(--panel-bg); color:var(--text-color); font-weight:600; cursor:pointer; }
 .equipment-panel-tab[aria-selected="true"] { border-color:var(--loadout-accent, #c8ad68); color:var(--loadout-accent, #c8ad68); background:rgba(200,173,104,.1); }
 .equipment-panel-tab:focus-visible { outline:2px solid var(--loadout-accent, #c8ad68); outline-offset:2px; }
 .loadout-heading,
@@ -3163,12 +3163,16 @@ body.light-theme #sheet-tab-equipment .loadout-weapon-details[open] > summary { 
 }
 .equipment-main-block.helmet-main-block .fields-container {
   display: grid !important;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  align-items: stretch !important;
   overflow: visible;
 }
 .equipment-main-block.helmet-main-block .field-group {
   width: auto !important;
   max-width: none !important;
+  display: grid !important;
+  grid-template-rows: minmax(0, 1fr) 30px;
+  align-items: end;
 }
 .equipment-main-block.helmet-main-block .field-name {
   grid-column: span 2;
@@ -3177,6 +3181,14 @@ body.light-theme #sheet-tab-equipment .loadout-weapon-details[open] > summary { 
   white-space: normal !important;
   overflow: visible !important;
   text-overflow: clip !important;
+}
+@media (max-height:850px) {
+  #sheet-tab-equipment .equipment-slot-list { margin-top:4px !important; padding:4px !important; }
+  #sheet-tab-equipment .equipment-slot-list .item-slots-container { font-size:12px; line-height:1.25; }
+  #sheet-tab-equipment .equipment-slot-list .item-slots-container > div { gap:6px !important; margin-top:2px !important; }
+  #sheet-tab-equipment .equipment-slot-list .item-slots-container > div > span:first-child { width:74px !important; flex:0 0 74px; }
+  #sheet-tab-equipment .equipment-slot-list .btn { font-size:11px; padding:4px 8px; }
+  #sheet-tab-equipment .helmet-main-block .form-control { font-size:12px !important; }
 }
 .equipment-main-block .field-number input,
 .equipment-main-block .field-select select,
