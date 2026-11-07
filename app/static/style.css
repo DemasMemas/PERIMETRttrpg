@@ -4089,6 +4089,9 @@ input[type=range]::-webkit-slider-thumb {
 .merchant-editor p { margin: 5px 0; }
 .merchant-enable { display: flex; gap: 10px; align-items: center; margin: 16px 0; }
 .merchant-editor .merchant-enable { margin: 4px 0; }
+.merchant-services, .merchant-funds { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:4px 24px; }
+.merchant-services .merchant-enable { min-width:0; }
+.merchant-funds .form-control { width:124px; flex:0 0 124px; }
 .merchant-workbenches { padding:4px 8px; border:1px solid rgba(185,188,139,.25); border-radius:6px; }
 .merchant-workbenches summary { cursor:pointer; font-size:13px; overflow-wrap:anywhere; }
 .merchant-workbench-options { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:2px 12px; max-height:95px; overflow:auto; }
@@ -4124,7 +4127,9 @@ input[type=range]::-webkit-slider-thumb {
 .modification-rule-details { min-height: 74px; line-height: 1.5; opacity: .83; }
 .modification-service-price { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-top: 16px; padding: 13px; border-radius: 10px; background: rgba(0,0,0,.24); }
 .modification-service-price strong { color: #e0d39d; font-size: 18px; }
-.npc-loot-editor { width: min(960px, calc(100vw - 24px)); max-width: 960px; max-height: 90vh; overflow: auto; box-sizing: border-box; }
+.npc-loot-editor { width: min(960px, calc(100vw - 24px)); max-width: 960px; max-height: 90vh; overflow: hidden; box-sizing: border-box; display:flex; flex-direction:column; }
+.npc-loot-editor > * { flex-shrink:0; }
+.npc-loot-editor .npc-loot-body { min-height:0; flex-shrink:1; overflow:auto; }
 .npc-loot-editor p { opacity: .8; }
 .loot-profile-fields, .loot-pool-filters, .loot-pool-numbers { display: grid; gap: 10px; margin: 12px 0; }
 .loot-profile-fields { grid-template-columns: repeat(4, minmax(0, 1fr)); }
@@ -4148,14 +4153,15 @@ input[type=range]::-webkit-slider-thumb {
 .npc-generator-profile { padding:12px; border:1px solid var(--panel-border); border-radius:10px; }
 .npc-generator-profile:empty { display:none; }
 .npc-generator-error { min-height:1.4em; }
-.faction-dialog { width:min(1100px,96vw); max-width:96vw; max-height:94vh; overflow:auto; box-sizing:border-box; }
-.faction-heading { position:sticky; top:0; z-index:3; background:var(--panel-bg); padding:4px 0 8px; }
+.faction-dialog { width:min(1100px,96vw); max-width:96vw; max-height:94vh; overflow:hidden; box-sizing:border-box; display:flex; flex-direction:column; }
+.faction-dialog > * { flex-shrink:0; }
+.faction-heading { background:var(--panel-bg); padding:4px 0 8px; }
 .faction-heading h3 { margin:0; }
-.faction-tabs { position:sticky; top:48px; z-index:2; display:flex; flex-wrap:wrap; gap:6px; padding:8px 0; background:var(--panel-bg); border-bottom:1px solid var(--panel-border); }
+.faction-tabs { display:flex; flex-wrap:wrap; gap:6px; padding:8px 0; background:var(--panel-bg); border-bottom:1px solid var(--panel-border); }
 .faction-tab { border:1px solid var(--panel-border); border-radius:8px; padding:9px 14px; background:transparent; color:var(--text-color); cursor:pointer; font-weight:600; }
 .faction-tab[aria-current="page"] { border-color:#bfa56b; color:#e4d29d; background:rgba(191,165,107,.13); }
 .faction-panel[hidden], .faction-relation-custom[hidden], .faction-assignment-row[hidden] { display:none; }
-.faction-panel { padding-top:12px; }
+.faction-dialog .faction-panel { padding-top:12px; min-height:0; flex-shrink:1; overflow:auto; }
 .faction-panel > p { margin:0 0 12px; line-height:1.45; }
 .faction-status { min-height:1.4em; padding-top:5px; color:#b6d8a2; }
 .faction-status.is-error { color:#e5a097; }
@@ -4228,7 +4234,8 @@ input[type=range]::-webkit-slider-thumb {
 
 /* Каталог создания: категории и рецепты остаются доступны без вложенных списков. */
 #crafting-modal .modal-content { box-sizing:border-box; width:min(1000px,96vw); max-width:96vw !important; }
-#crafting-modal .block-header { display:flex; align-items:center; justify-content:space-between; gap:12px; }
+#crafting-modal .block-header { display:flex; align-items:center; justify-content:space-between; gap:12px; flex-shrink:0; }
+#crafting-modal .crafting-body { min-height:0; overflow:auto; }
 #crafting-modal .block-header h3 { margin:0; }
 .crafting-tabs, .crafting-categories { display:flex; flex-wrap:wrap; gap:8px; margin:12px 0; }
 .crafting-tabs { border-bottom:1px solid var(--panel-border); padding-bottom:10px; }

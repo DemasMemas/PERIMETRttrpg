@@ -26,7 +26,7 @@ export async function openNpcLoot(lobbyId, characterId, characters = [], onChang
     const profiles = characters.filter(entry => entry.id !== characterId && entry.data?.npcLoot?.profile);
     modal.innerHTML = `<div class="modal-content npc-loot-editor">
         <div class="character-trade-heading"><h3>Добыча: ${escape(character.name)}</h3><button type="button" class="btn btn-secondary trade-close" aria-label="Закрыть">×</button></div>
-        <p>Каждый выбор — независимый случайный предмет из подходящих, с равными шансами. Бюджет ограничивает общую цену новых вещей. Деньги НПС задаются отдельно.</p>
+        <div class="npc-loot-body"><p>Каждый выбор — независимый случайный предмет из подходящих, с равными шансами. Бюджет ограничивает общую цену новых вещей. Деньги НПС задаются отдельно.</p>
         <p>Сохранение профиля не создаёт вещи. «Добавить добычу» разово применяет его сейчас; повторное нажатие добавит новую порцию.</p>
         <p>Наполнение добавляет вещи к имеющимся. Оружие появится в разделе «Оружие», остальные вещи — в рюкзаке или неразмещённом снаряжении. Заряжать, надевать и раскладывать их нужно отдельно.</p>
         <div class="loot-profile-fields">
@@ -37,7 +37,7 @@ export async function openNpcLoot(lobbyId, characterId, characters = [], onChang
         </div>
         ${profiles.length ? `<label>Взять настройки другого НПС<select class="form-control loot-profile-source"><option value="">Выберите профиль</option>${profiles.map(entry=>`<option value="${entry.id}">${escape(entry.name)} · ${escape(entry.data.npcLoot.profile.name)}</option>`).join('')}</select></label>` : ''}
         <div class="loot-pools"></div><button type="button" class="btn btn-secondary loot-add">Добавить пул</button>
-        <div class="trade-error loot-error" role="status"></div><div class="loot-receipt" role="status"></div>
+        <div class="trade-error loot-error" role="status"></div><div class="loot-receipt" role="status"></div></div>
         <div class="form-actions"><button type="button" class="btn btn-secondary loot-save">Сохранить профиль</button><button type="button" class="btn btn-primary loot-generate">Добавить добычу</button></div>
     </div>`;
     document.body.appendChild(modal);

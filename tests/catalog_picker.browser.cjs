@@ -43,4 +43,5 @@ module.exports=async({page,request,token,lobby,base,safeSession})=>{
     console.log('Каталог: старые и новые гранаты/подсумки/перчатки/детекторы/контейнеры вместе в тестовой БД; в интерфейсе один вариант, новая выдача каноническая, старый предмет сохранён. Окно 1920×1080 и 1366×768.');
     await page.evaluate("document.querySelector('#inventory-template-picker-modal .close').click();true");
     await require('./desktop_layout.browser.cjs')({page,request,token,actor,lobby,offered,safeSession});
+    await require('./desktop_forms.browser.cjs')({page,request,token,actor,lobby,safeSession});
 };

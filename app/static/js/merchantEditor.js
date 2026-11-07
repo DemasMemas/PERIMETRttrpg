@@ -32,13 +32,13 @@ export function renderMerchantEditor(modal, {character, templates, onSave, onClo
     const selectedWorkbenches = character.data?.merchant?.workbenches || [];
     modal.innerHTML = `<div class="modal-content character-trade merchant-editor">
         <div class="character-trade-heading"><h3>Торговля и услуги: ${escape(character.name)}</h3><button type="button" class="btn btn-secondary trade-close" aria-label="Закрыть">×</button></div>
-        <label class="merchant-enable"><input type="checkbox" class="merchant-enabled" ${character.data?.merchant?.enabled ? 'checked' : ''}> НПС торгует по прайсу без отдельного согласия ГМа</label>
+        <div class="merchant-services"><label class="merchant-enable"><input type="checkbox" class="merchant-enabled" ${character.data?.merchant?.enabled ? 'checked' : ''}> НПС торгует по прайсу без отдельного согласия ГМа</label>
         <label class="merchant-enable"><input type="checkbox" class="merchant-repair-enabled" ${character.data?.merchant?.repair_enabled ? 'checked' : ''}> НПС оказывает платный ремонт</label>
         <label class="merchant-enable"><input type="checkbox" class="merchant-modification-enabled" ${character.data?.merchant?.modification_enabled ? 'checked' : ''}> НПС устанавливает модификации</label>
-        <label class="merchant-enable"><input type="checkbox" class="merchant-scientist-enabled" ${character.data?.merchant?.scientist_enabled ? 'checked' : ''}> Учёный: устанавливает модификации экзоскелета</label>
+        <label class="merchant-enable"><input type="checkbox" class="merchant-scientist-enabled" ${character.data?.merchant?.scientist_enabled ? 'checked' : ''}> Учёный: устанавливает модификации экзоскелета</label></div>
         <details class="merchant-workbenches"><summary>Станки специалиста: ${escape(selectedWorkbenches.join(', ') || 'не выбраны')}</summary><div class="merchant-workbench-options">${workbenchNames.map(name=>`<label class="merchant-enable"><input type="checkbox" data-workbench="${escape(name)}" ${selectedWorkbenches.includes(name)?'checked':''}> ${escape(name)}</label>`).join('')}</div></details>
-        <label class="trade-money-label">Множитель стоимости услуг <input type="number" min="0.01" max="10" step="0.01" class="form-control merchant-repair-markup" value="${Number(character.data?.merchant?.repair_markup||1)}"></label>
-        <label class="trade-money-label">Деньги НПС <input type="number" min="0" step="1" class="form-control merchant-money" value="${Number(character.data?.inventory?.money||0)}"></label>
+        <div class="merchant-funds"><label class="trade-money-label">Множитель стоимости услуг <input type="number" min="0.01" max="10" step="0.01" class="form-control merchant-repair-markup" value="${Number(character.data?.merchant?.repair_markup||1)}"></label>
+        <label class="trade-money-label">Деньги НПС <input type="number" min="0" step="1" class="form-control merchant-money" value="${Number(character.data?.inventory?.money||0)}"></label></div>
         <p>Цены за один экземпляр. Пустое поле — не продаёт или не выкупает. Износ, содержимое и установленные модули автоматически цену не меняют.</p>
         <div class="trade-filters"><input type="search" class="form-control merchant-search" placeholder="Поиск товара" aria-label="Поиск товара">
             <select class="form-control merchant-category" aria-label="Категория"><option value="">Все категории</option>${[...new Set(eligible.map(template=>template.category))]

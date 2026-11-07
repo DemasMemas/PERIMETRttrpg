@@ -21,14 +21,14 @@ const recipeLabel=recipe=>{
 export async function showCrafting({characterId,lobbyId,onSaved,recipeId=''}){
     document.getElementById('crafting-modal')?.remove();
     const modal=el('div',null,'modal');modal.id='crafting-modal';modal.style.display='flex';
-    const panel=el('div',null,'modal-content');panel.style.cssText='max-width:900px;max-height:90vh;overflow:auto';
+    const panel=el('div',null,'modal-content');panel.style.cssText='max-width:900px;max-height:90vh;overflow:hidden;display:flex;flex-direction:column';
     modal.append(panel);document.body.append(modal);
     const header=el('div',null,'block-header');header.append(el('h3','Создание, модификации и разбор'));
     const socket=window.socket;let socketUpdateHandler;
     const close=()=>{document.removeEventListener('keydown',onKey);if(socketUpdateHandler)socket?.off?.('character_data_updated',socketUpdateHandler);modal.remove();};
     const onKey=event=>{if(event.key==='Escape')close();};document.addEventListener('keydown',onKey);
     header.append(button('×',close));panel.append(header);
-    const body=el('div');panel.append(body);
+    const body=el('div',null,'crafting-body');panel.append(body);
     let snapshot,busy=false,selectedRecipe=recipeId,searchValue='',generation=0,activeTab='creation',selectedGroup='Все';
     const modSelection={};
     const act=async(operation,payload={},targetId=characterId,revision=snapshot.revision)=>{
