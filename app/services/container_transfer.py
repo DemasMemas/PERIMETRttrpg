@@ -32,7 +32,7 @@ class ContainerTransferService:
         if created:
             obj = LocationObject(location_id=location_id, name='Пол', type='ground_item', tile_x=actor.pos_x,
                                  tile_y=actor.pos_y, properties={'contents': [], 'is_ground_item': True,
-                                 'passable': True, 'floor_level': actor.floor_level or 0,
+                                 'passable': True, 'level':actor.floor_level or 0,'floor_level': actor.floor_level or 0,
                                  'interactions': ['open_container']})
             db.session.add(obj)
             db.session.flush()

@@ -38,7 +38,7 @@ def _resolve_for_actor(state,event,actor):
 
 def _finish_events(state,events):
     from app.services.combat import CombatService
-    remaining=[];detonations=[]
+    remaining=[];detonations=[];original_ids={event.get('id') for event in events}
     present={c.id for c in LocationCharacter.query.filter_by(location_id=state.location_id).all()}
     for event in events:
         if event.get('trigger')=='short_fuse':
@@ -52,7 +52,7 @@ def _finish_events(state,events):
             state.area_effects=[*(state.area_effects or []),result['area']]
         detonations.append({'item_name':event['item_name'],'detonated':True,
             'impact':{'x':event['x'],'y':event['y']},'explosion':result})
-    state.pending_explosives=remaining
+    state.pending_explosives=remaining+[event for event in state.pending_explosives or [] if event.get('id') not in original_ids]
     return detonations
 
 

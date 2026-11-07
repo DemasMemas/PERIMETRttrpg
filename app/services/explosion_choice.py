@@ -70,6 +70,7 @@ def decide(location_id,user_id,event_id,actor_id,choice):
             {LocationCombatState.pending_explosives:events},synchronize_session=False)
     if claimed!=1:
         raise ConflictError('Состав участников взрыва уже изменился; обновите состояние боя')
+    original_ids={e.get('id') for e in expected}
     state.pending_explosives=events
     detonations=[]
     for ready in list(events):
@@ -84,7 +85,7 @@ def decide(location_id,user_id,event_id,actor_id,choice):
             state.area_effects=[*(state.area_effects or []),result['area']]
         detonations.append({'item_name':ready['item_name'],'impact':{'x':ready['x'],'y':ready['y']},
                             'detonated':True,'explosion':result})
-    state.pending_explosives=events
+    state.pending_explosives=events+[e for e in state.pending_explosives or [] if e.get('id') not in original_ids]
     current=db.session.get(LocationCharacter,state.current_location_character_id)
     if current:
         detonations.extend(begin(current,state))

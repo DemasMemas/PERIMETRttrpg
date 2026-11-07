@@ -12489,6 +12489,11 @@ async function useGrenade(item, itemPath, options = {}) {
             modal.querySelector('[data-fuse="normal"]').textContent='Бросить заряд с контроллером';
             modal.querySelector('[data-fuse="delay"]').remove();
         }
+        if(item.attributes?.fragile_explosive||/кустарная\s+бомба/i.test(item.name||'')){
+            modal.querySelector('p').textContent='Контактный подрыв: шанс 50%. При отказе бомба останется целой на земле.';
+            modal.querySelector('[data-fuse="normal"]').textContent='Метнуть бомбу';
+            modal.querySelector('[data-fuse="delay"]')?.remove();
+        }
         const close = () => modal.remove();
         modal.querySelector('.close').onclick = close;
         modal.querySelector('[data-cancel]').onclick = close;

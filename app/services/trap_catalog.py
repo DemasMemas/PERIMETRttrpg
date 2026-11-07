@@ -20,7 +20,7 @@ PROFILES={
 def radial_damage(profile,distance):
     table=profile.get('radial_damage')
     if not table:return None
-    index=max(0,min(len(table['blast'])-1,math.ceil(distance)-1))
+    index=max(0,min(len(table['blast'])-1,math.ceil(distance)-profile.get('radial_first_distance',1)))
     return {key:table[key][index] for key in ('fragments','blast','penetration')}
 
 

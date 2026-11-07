@@ -142,7 +142,10 @@ COVER_CLASSES = {
 }
 
 
+from app.services.improvised_explosives import PROFILE as IMPROVISED_BOMB_PROFILE
+
 EXPLOSIVE_PROFILES = {
+    'improvised_bomb':deepcopy(IMPROVISED_BOMB_PROFILE),
     'rgd5': {'label': '\u0420\u0413\u0414-5', 'fragment': 200, 'radius': 4, 'penetration': 25, 'blast_base': 800, 'blast_falloff': 100, 'projectile_range': None, 'fuse': 'round'},
     'rgn': {'label': '\u0420\u0413\u041d', 'fragment': 150, 'radius': 4, 'penetration': 20, 'blast_base': 900, 'blast_falloff': 100, 'projectile_range': None, 'fuse': 'turn_end'},
     'f1': {'label': '\u0424-1', 'fragment': 650, 'radius': 6, 'penetration': 50, 'blast_base': 200, 'blast_falloff': 40, 'projectile_range': None, 'fuse': 'round'},
@@ -518,6 +521,9 @@ class CombatService:
 
     @staticmethod
     def _cover_profile(obj):
+        from app.services.improvised_explosives import fragile_ground
+        if fragile_ground(obj):return {'class':'special','label':'Особое','hp':1,'max_hp':1,
+            'base_physical_protection':0,'physical_protection':0,'mesh_hit_chance':100}
         properties = dict(getattr(obj, 'properties', {}) or {})
         from app.services.movement_geometry import tree_trunk_box
         tree = tree_trunk_box(obj, CombatService._object_dimensions(obj, axis_aligned=False)) is not None
@@ -562,7 +568,9 @@ class CombatService:
         return CombatService._object_height(obj) >= 0.3
 
     @staticmethod
-    def apply_cover_damage(obj, damage, damage_type):
+    def apply_cover_damage(obj, damage, damage_type, *, source_character_id=None):
+        from app.services.improvised_explosives import fragile_ground,destroy
+        if fragile_ground(obj) and CombatService._coerce_float(damage,0)>0:return destroy(obj,source_character_id)
         profile = CombatService._cover_profile(obj)
         damage = max(0, CombatService._coerce_int(damage, 0))
         normalized_damage_type = str(damage_type or '').strip().lower()
@@ -6559,6 +6567,7 @@ class CombatService:
     def _explosive_key(value):
         normalized = re.sub(r'[^0-9a-z\u0430-\u044f]+', '', str(value or '').lower().replace('\u0451', '\u0435'))
         aliases = (
+            ('improvised_bomb',('кустарнаябомба',)),
             ('underbarrel_gas', ('\u043f\u043e\u0434\u0441\u0442\u0432\u043e\u043b\u044c\u043d\u044b\u0439\u0433\u0430\u0437\u043e\u0432\u044b\u0439',)),
             ('underbarrel_smoke', ('\u043f\u043e\u0434\u0441\u0442\u0432\u043e\u043b\u044c\u043d\u044b\u0439\u0434\u044b\u043c\u043e\u0432\u043e\u0439',)),
             ('underbarrel_flash', ('\u043f\u043e\u0434\u0441\u0442\u0432\u043e\u043b\u044c\u043d\u044b\u0439\u0441\u0432\u0435\u0442\u043e\u0448\u0443\u043c\u043e\u0432\u043e\u0439',)),
@@ -7211,6 +7220,9 @@ class CombatService:
                 from app.services.character_rules import after_kill
                 for victim in LocationCharacter.query.filter_by(location_id=location_id).all():
                     if victim.character:after_kill(source_actor,victim,victim.id in living)
+            if not scene_context:
+                from app.services.improvised_explosives import resolve_pending
+                resolve_pending(payload,round_number)
             return payload
         effect_type = str(profile.get('effect') or '').strip().lower()
         if effect_type == 'flash':
@@ -7469,17 +7481,26 @@ class CombatService:
             distance = CombatService._point_distance(
                 epicenter_x, epicenter_y, obj.tile_x, obj.tile_y,
             )
-            if distance > radius or not CombatService._is_cover_object(obj):
+            from app.services.improvised_explosives import fragile_ground
+            if distance > radius or not (CombatService._is_cover_object(obj) or fragile_ground(obj)):
                 continue
             from app.services.trap_catalog import radial_damage
             band=radial_damage(profile,distance)
             blast = max(0, round(band['blast'] if band else profile['blast_base'] - profile['blast_falloff'] * distance))
             fragment = max(0, round(band['fragments'] if band else profile['fragment'] * (1 - 0.1 * distance)))
-            fragment_state = CombatService.apply_cover_damage(obj, fragment, 'fragment')
+            if fragile_ground(obj):
+                from types import SimpleNamespace
+                receiver=SimpleNamespace(pos_x=obj.tile_x,pos_y=obj.tile_y,floor_level=floor_level,posture='prone')
+                shielding=CombatService._explosion_cover(location_id,epicenter_x,epicenter_y,receiver,floor_level)['protection']
+                blast=round(blast*max(0,1-shielding/100))
+                penetration=band['penetration'] if band else max(0,profile['penetration']-5*distance)
+                fragment=round(fragment*CombatService._penetration_damage_multiplier(penetration,shielding))
+            source={'source_character_id':profile.get('source_character_id')} if fragile_ground(obj) else {}
+            fragment_state = CombatService.apply_cover_damage(obj, fragment, 'fragment',**source)
             if fragment_state['destroyed']:
                 object_results.append({'object_id': obj.id, 'name': obj.name, 'fragment_damage': fragment, 'state': fragment_state})
                 continue
-            blast_state = CombatService.apply_cover_damage(obj, blast, 'blast')
+            blast_state = CombatService.apply_cover_damage(obj, blast, 'blast',**source)
             object_results.append({
                 'object_id': obj.id, 'name': obj.name,
                 'fragment_damage': fragment, 'blast_damage': blast,
@@ -8815,8 +8836,10 @@ class CombatService:
             'target_name': cover.name or cover.type,
         }
         cover_profile = CombatService._cover_profile(cover)
+        from app.services.improvised_explosives import fragile_ground
         cover_damage = CombatService.apply_cover_damage(
-            cover, profile.get('damage'), profile.get('damage_type') or 'bullet'
+            cover, profile.get('damage'), profile.get('damage_type') or 'bullet',
+            **({'source_character_id':attacker.character_id} if fragile_ground(cover) else {})
         )
         penetration = CombatService._coerce_float(profile.get('armor_piercing'), 0)
         penetrated = penetration >= cover_profile['physical_protection']
@@ -9493,7 +9516,7 @@ class CombatService:
             elif explosion.get('awaiting_gm'):
                 target_lines.append('Ожидается решение ГМа об участниках взрыва.')
             elif details.get('detonated') is False:
-                target_lines.append('3 секунды: реакция в ход каждого затронутого персонажа.' if (details.get('pending') or {}).get('trigger')=='short_fuse'
+                target_lines.append('Бомба не взорвалась и осталась целой на земле.' if details.get('dud') else '3 секунды: реакция в ход каждого затронутого персонажа.' if (details.get('pending') or {}).get('trigger')=='short_fuse'
                     else 'Взрыв в начале следующего хода метающего.')
             else:
                 target_lines.append("\u041f\u0435\u0440\u0441\u043e\u043d\u0430\u0436\u0438 \u043d\u0435 \u0437\u0430\u0434\u0435\u0442\u044b")
@@ -15935,7 +15958,8 @@ class CombatService:
                     id=target_object_id,
                     location_id=location_id,
                 ).first()
-                if not target_object or not CombatService._is_cover_object(target_object):
+                from app.services.improvised_explosives import fragile_ground
+                if not target_object or not (CombatService._is_cover_object(target_object) or fragile_ground(target_object)):
                     raise ValidationError("Target character or cover is required")
 
             magazine = weapon.get('installedMagazine') or {}
@@ -17214,6 +17238,8 @@ class CombatService:
                 profile=explosive_details['profile'];profile['fuse']='instant'
                 for key in ('fragment','blast_base','blast_falloff'):
                     if key in profile:profile[key]*=.5
+                if profile.get('radial_damage'):
+                    for key in ('fragments','blast'):profile['radial_damage'][key]=[value*.5 for value in profile['radial_damage'][key]]
                 if profile.get('effect') in {'gas','fire','smoke','smoke_growing'} or profile.get('area_effect'):
                     profile['half_duration']=True
                     for key in ('burn_rounds','direct_burn_rounds','incendiary_rounds'):
@@ -17230,6 +17256,9 @@ class CombatService:
                     explosive_details['weapon_index'],
                     1,
                 )
+            thrown_bomb=None
+            if source=='hand' and explosive_details['profile'].get('contact_chance'):
+                thrown_bomb=deepcopy(CombatService._inventory_item_at_path(data,item_path))
             if source == 'hand':
                 CombatService._take_inventory_item(data, item_path, 1)
             elif source == 'underbarrel':
@@ -17249,13 +17278,23 @@ class CombatService:
                 )
             fuse = str(explosive_details['profile'].get('fuse') or 'instant')
             controlled_item=explosive_details.get('controlled_item')
-            if controlled_item and not explosive_details.get('diamond_fumble'):
+            contact=explosive_details['profile'].get('contact_chance')
+            if contact and not explosive_details.get('diamond_fumble'):
+                roll=random.randint(1,100);explosive_details['contact_roll']=roll
+                explosive_details['dud']=roll>contact
+                if roll<=contact:fuse='instant';controlled_item=None
+            if explosive_details.get('dud'):
+                from app.services.improvised_explosives import ground
+                obj=ground(location_id,explosive_details['impact']['x'],explosive_details['impact']['y'],
+                    explosive_details['floor_level'],controlled_item or thrown_bomb)
+                explosive_details.update(ground_object_id=obj.id,ground_object_event='created',detonated=False)
+            elif controlled_item and not explosive_details.get('diamond_fumble'):
                 controlled_item['quantity']=1
                 controlled_item['controllerState']['explosive_profiles']=[deepcopy(explosive_details['profile'])]
                 obj=LocationObject(location_id=location_id,name=controlled_item.get('name') or 'Заряд',type='ground_item',
                     tile_x=explosive_details['impact']['x'],tile_y=explosive_details['impact']['y'],properties={
                         'contents':[controlled_item],'is_ground_item':True,'passable':True,
-                        'floor_level':explosive_details['floor_level'],'interactions':['open_container']})
+                        'level':explosive_details['floor_level'],'floor_level':explosive_details['floor_level'],'interactions':['open_container']})
                 db.session.add(obj);db.session.flush()
                 explosive_details.update(ground_object_id=obj.id,ground_object_event='created',detonated=False)
             elif fuse == 'instant':
@@ -17443,6 +17482,7 @@ class CombatService:
                             result['shot_number'] = shot_index + 1
                             result['weapon_jam_after_shot'] = deepcopy(jam)
                             resolved_hits.append(result)
+                            if (result.get('cover_damage') or {}).get('fragile_detonated'):break
                             if isinstance(jam, dict) and jam.get('triggered'):
                                 cover_jams.append({
                                     'shot_number': shot_index + 1,
@@ -17764,6 +17804,7 @@ class CombatService:
 
             return attack_details
 
+        secondary_explosions=[]
         if attack_details:
             if prepared_attacks:
                 resolved=[resolve_prepared_attack(details) for details in prepared_attacks]
@@ -17793,6 +17834,9 @@ class CombatService:
         if explosive_details and explosive_details['profile'].get('fuse')=='turn_end':
             from app.services.grenade_reaction import begin
             explosive_details['reaction_detonations']=begin(character,state)
+        if attack_details:
+            from app.services.improvised_explosives import resolve_pending
+            secondary_explosions=resolve_pending(attack_details,current_round)
         character.last_action = db.func.now()
         db.session.commit()
         if getattr(character,'_trap_end_turn',False) and state.current_location_character_id==character.id:
@@ -17831,6 +17875,7 @@ class CombatService:
             'action': action_key,
             'attack': attack_details,
             'explosive': explosive_details,
+            'secondary_explosions':secondary_explosions,
             'thrown_item': thrown_details,
             'aim': aim_details,
             'posture_change': posture_details,

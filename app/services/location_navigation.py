@@ -8,7 +8,9 @@ STOREY_HEIGHT = 2.4
 
 def level_of(item):
     props = item.get('properties', {}) if isinstance(item, dict) else (getattr(item, 'properties', None) or {})
-    value = props.get('level', item.get('level', 0) if isinstance(item, dict) else 0)
+    kind=item.get('type') if isinstance(item,dict) else getattr(item,'type',None)
+    legacy_ground=props.get('floor_level',0) if kind=='ground_item' or props.get('is_ground_item') else 0
+    value = props.get('level', item.get('level', legacy_ground) if isinstance(item, dict) else legacy_ground)
     try:
         number = float(value)
         return int(number) if math.isfinite(number) and number.is_integer() else 0

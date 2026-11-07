@@ -59,10 +59,13 @@ def publish_effects(result):
     while todo:
         value=todo.pop()
         if isinstance(value,dict):
-            for explosion in value.get('explosions',[]):
-                if value.get('location_id') and not explosion.get('awaiting_gm'):
-                    socketio.emit('combat_explosion',{'location_id':value['location_id'],'explosive':{
-                        'item_name':explosion.get('name'),'detonated':True,'impact':explosion.get('epicenter'),'explosion':explosion}},room=f"location_{value['location_id']}")
+            for entry in [*value.get('explosions',[]),*value.get('secondary_explosions',[])]:
+                explosion=entry.get('explosion',entry);location_id=entry.get('location_id') or value.get('location_id')
+                if location_id and not explosion.get('awaiting_gm'):
+                    socketio.emit('combat_explosion',{'location_id':location_id,'explosive':{
+                        'item_name':explosion.get('name'),'detonated':True,'impact':explosion.get('epicenter'),'explosion':explosion}},room=f"location_{location_id}")
+            if value.get('ground_object_id') and value.get('ground_object_event')=='deleted':
+                socketio.emit('location_object_deleted',{'location_id':value['location_id'],'object_id':value['ground_object_id']},room=f"location_{value['location_id']}")
             if type(value.get('object_id')) is int and 'state' in value:object_ids.add(value['object_id'])
             if value.get('audible_to_all') and value.get('location_id'):
                 socketio.emit('trap_alarm',{'location_id':value['location_id'],'message':'Сработала звуковая ловушка'},room=f"location_{value['location_id']}")

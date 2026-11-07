@@ -4410,6 +4410,8 @@ def _publish_detonations(lobby_id, location_id, user_id, detonations, *, chat=Tr
             _emit_lobby_chat_message(
                 lobby_id, user_id, summary, username='\u0412\u0437\u0440\u044b\u0432',
             )
+        from app.services.improvised_explosives import pending
+        _publish_detonations(lobby_id,location_id,user_id,pending(detonation.get('explosion') or {}),chat=chat)
 
 
 def _publish_object_fire_updates(location_id, events):
@@ -5532,6 +5534,7 @@ def perform_location_combat_action(lobby_id, location_id, lobby, participant):
         _publish_detonations(lobby_id, location_id, participant.user_id, [result['explosive']], chat=False)
     reaction_detonations = (result.get('explosive') or {}).get('reaction_detonations') or []
     _publish_detonations(lobby_id, location_id, participant.user_id, reaction_detonations)
+    _publish_detonations(lobby_id, location_id, participant.user_id, result.get('secondary_explosions') or [])
     actor = db.session.get(LobbyCharacter, result['character'].get('character_id'))
     if actor:
         emit_character_update(

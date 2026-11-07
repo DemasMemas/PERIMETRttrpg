@@ -5712,7 +5712,8 @@ async function resolveCombatStructureSelection(clientX, clientY) {
             : '';
         showNotification(
             directCoverAttack
-                ? `Атака укрытия: ${locationObject.name || 'объект'}${coverDetails}${result?.attack?.damage_total ? ` · урон за ним ${result.attack.damage_total}` : ''}`
+                ? coverState?.fragile_detonated ? `Корпус бомбы разрушен: ${locationObject.name || 'объект'}`
+                : `Атака укрытия: ${locationObject.name || 'объект'}${coverDetails}${result?.attack?.damage_total ? ` · урон за ним ${result.attack.damage_total}` : ''}`
                 : action.actionKey === 'take_cover'
                 ? `Укрытие занято: ${locationObject.name || 'объект'}`
                 : `Огонь на подавление: ${locationObject.name || 'укрытие'}`,
