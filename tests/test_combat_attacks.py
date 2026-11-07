@@ -3861,6 +3861,37 @@ def test_nonstandard_ammunition_doubles_weapon_wear_again():
     assert weapon["durability"] == 96
 
 
+def test_improved_ammunition_halves_wear_with_persisted_fraction():
+    weapon={"durability":100,"maxDurability":100}
+    first=CombatService._weapon_use_wear(weapon,fire_mode='single',ammo_profile={'ammo_variant':'improved'})
+    assert first['loss']==0
+    assert weapon['_wearRemainder']==.5
+    weapon['_usedInCurrentCombat']=False
+    second=CombatService._weapon_use_wear(weapon,fire_mode='single',ammo_profile={'ammo_variant':'improved'})
+    assert second['loss']==1
+    assert weapon['durability']==99
+    assert weapon['_wearRemainder']==0
+
+
+def test_handmade_ammunition_doubles_wear():
+    weapon={"durability":100,"maxDurability":100}
+    wear=CombatService._weapon_use_wear(weapon,fire_mode='burst',volley_count=1,
+        ammo_profile={'ammo_variant':'handmade'})
+    assert wear['loss']==4
+
+
+@pytest.mark.parametrize('variant,durability,roll,triggered',[
+    ('handmade',100,1,True),('handmade',91,1,True),('handmade',91,2,False),
+    ('improved',100,1,False),('improved',90,1,False),('improved',76,1,False),
+    ('improved',75,1,True),('base',100,1,False)])
+def test_crafted_ammo_jam_boundaries(monkeypatch,variant,durability,roll,triggered):
+    monkeypatch.setattr(combat_module.random,'randint',lambda *_:4)
+    weapon={'durability':durability,'maxDurability':100,'fixedAmmo':[
+        {'name':'5.45x39','quantity':1,'attributes':{'caliber':'5.45x39','ammo_variant':variant,'damage':80}}]}
+    result=CombatService._roll_weapon_jam(weapon,roll)
+    assert result['triggered'] is triggered
+
+
 def test_weapon_ammo_is_consumed_from_next_stack_on_server():
     weapon = {
         "installedMagazine": {

@@ -458,6 +458,15 @@ module.exports=async({page,request,token,lobby,base,connect,debugPort,safeSessio
         return ['base','bp','ep'].every(value=>[...variants.options].some(option=>option.value===value));
     })()`);
     assert.ok(ammoUi,'Рецепт категории 2 предлагает 5.45x39, БП и ЭП');
+    for(const [recipeId,label,variant] of [['recipe-v23','Кустарные патроны категории 2','handmade'],
+        ['recipe-v29','Улучшенные патроны категории 2','improved']]){
+        const actual=await page.evaluate(`(()=>{const recipes=document.querySelector('#crafting-modal select[aria-label=Рецепт]');
+            recipes.value=${JSON.stringify(recipeId)};recipes.dispatchEvent(new Event('change'));
+            const kind=document.querySelector('#crafting-modal select[aria-label="Вид патронов"]');
+            return {title:document.querySelector('#crafting-modal .crafting-recipe-detail h4')?.textContent,
+                variants:[...kind.options].map(option=>option.value)};})()`);
+        assert.deepEqual(actual,{title:label,variants:[variant]});
+    }
     await page.evaluate(`document.querySelector('#crafting-modal .block-header button').click();true`);
     console.log(JSON.stringify({armorBranchesGrouped:true,families:['Лёгкая','Средняя'],
         selfCrafting:true,professionalInstallation:true}));

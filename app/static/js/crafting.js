@@ -8,6 +8,14 @@ const select=(label,rows)=>{
     const e=el('select',null,'form-control');e.setAttribute('aria-label',label);
     for(const [value,text] of rows){const option=el('option',text);option.value=value;e.append(option);}return e;
 };
+const ammoRecipeCategory=id=>({'recipe-v22':1,'recipe-v23':2,'recipe-v24':3,
+    'recipe-v25':1,'recipe-v26':2,'recipe-v27':3,'recipe-v28':1,'recipe-v29':2,'recipe-v30':3})[id];
+const fixedAmmoVariant=id=>['recipe-v22','recipe-v23','recipe-v24'].includes(id)?'handmade':
+    ['recipe-v28','recipe-v29','recipe-v30'].includes(id)?'improved':null;
+const recipeLabel=recipe=>{
+    const fixed=fixedAmmoVariant(recipe.id),category=ammoRecipeCategory(recipe.id);
+    return fixed?`${fixed==='handmade'?'Кустарные':'Улучшенные'} патроны категории ${category}`:recipe.name;
+};
 
 export async function showCrafting({characterId,lobbyId,onSaved}){
     document.getElementById('crafting-modal')?.remove();
@@ -75,7 +83,7 @@ export async function showCrafting({characterId,lobbyId,onSaved}){
         };
         activateTab();
         const filter=el('input',null,'form-control');filter.type='search';filter.placeholder='Поиск рецепта';filter.setAttribute('aria-label','Поиск рецепта');filter.value=searchValue;panes.creation.append(filter);
-        const recipes=select('Рецепт',snapshot.catalog.recipes.map(r=>[r.id,`${r.group} · ${r.name}`]));recipes.hidden=true;panes.creation.append(recipes);
+        const recipes=select('Рецепт',snapshot.catalog.recipes.map(r=>[r.id,`${r.group} · ${recipeLabel(r)}`]));recipes.hidden=true;panes.creation.append(recipes);
         if(selectedRecipe&&snapshot.catalog.recipes.some(r=>r.id===selectedRecipe))recipes.value=selectedRecipe;
         const categories=el('div',null,'crafting-categories'),layout=el('div',null,'crafting-recipe-layout'),cards=el('div',null,'crafting-recipe-cards');
         const detail=el('div',null,'crafting-recipe-detail');layout.append(cards,detail);panes.creation.append(categories,layout);
@@ -85,18 +93,18 @@ export async function showCrafting({characterId,lobbyId,onSaved}){
             categories.replaceChildren();cards.replaceChildren();
             for(const group of groups){const category=button(group,()=>{selectedGroup=group;paintCards();});category.classList.toggle('is-active',selectedGroup===group);category.setAttribute('aria-pressed',String(selectedGroup===group));categories.append(category);}
             const matched=snapshot.catalog.recipes.filter(recipe=>(selectedGroup==='Все'||recipe.group===selectedGroup)&&
-                `${recipe.name} ${recipe.group} ${recipe.tools_text}`.toLocaleLowerCase().includes(searchValue.toLocaleLowerCase()));
+                `${recipeLabel(recipe)} ${recipe.group} ${recipe.tools_text}`.toLocaleLowerCase().includes(searchValue.toLocaleLowerCase()));
             for(const recipe of matched){
                 const card=button('',()=>{recipes.value=recipe.id;void show();paintCards();});card.className='crafting-recipe-card';card.classList.toggle('is-selected',recipes.value===recipe.id);
-                card.append(el('span','◈','crafting-recipe-icon'),el('strong',recipe.name),el('small',`${recipe.group} · ${recipe.duration_text}`));cards.append(card);
+                card.append(el('span','◈','crafting-recipe-icon'),el('strong',recipeLabel(recipe)),el('small',`${recipe.group} · ${recipe.duration_text}`));cards.append(card);
             }
             if(!matched.length)cards.append(el('p','Рецепты не найдены.'));
         };
         const show=async()=>{
             ++generation;selectedRecipe=recipes.value;detail.replaceChildren();
             const recipe=snapshot.catalog.recipes.find(r=>r.id===recipes.value);if(!recipe)return;
-            detail.append(el('small',recipe.group),el('h4',recipe.name),el('p',`Время: ${recipe.duration_text}. Нужно: ${recipe.tools_text}.`));
-            const ammoCategory={'recipe-v25':1,'recipe-v26':2,'recipe-v27':3}[recipe.id];
+            detail.append(el('small',recipe.group),el('h4',recipeLabel(recipe)),el('p',`Время: ${recipe.duration_text}. Нужно: ${recipe.tools_text}.`));
+            const ammoCategory=ammoRecipeCategory(recipe.id),fixedVariant=fixedAmmoVariant(recipe.id);
             const ammoChoices=ammoCategory?snapshot.ammo_options.filter(option=>option.category===ammoCategory):[];
             const ammo=ammoCategory?select('Калибр патронов',ammoChoices.map(option=>[option.id,`${option.name} · ${option.price} ₽/шт.`])):null;
             const ammoVariant=ammoCategory?select('Вид патронов',[]):null;
@@ -104,7 +112,8 @@ export async function showCrafting({characterId,lobbyId,onSaved}){
                 if(!ammoVariant)return;
                 const selected=ammoChoices.find(option=>option.id===Number(ammo.value));
                 const previous=ammoVariant.value;ammoVariant.replaceChildren();
-                for(const [kind,label] of [['base','Обычные'],['bp','БП'],['ep','ЭП']])if(kind==='base'||selected?.variants.includes(kind)){
+                const variants=fixedVariant?[[fixedVariant,fixedVariant==='handmade'?'Кустарные':'Улучшенные']]:[['base','Обычные'],['bp','БП'],['ep','ЭП']];
+                for(const [kind,label] of variants)if(fixedVariant||kind==='base'||selected?.variants.includes(kind)){
                     const option=el('option',label);option.value=kind;ammoVariant.append(option);
                 }
                 if([...ammoVariant.options].some(option=>option.value===previous))ammoVariant.value=previous;

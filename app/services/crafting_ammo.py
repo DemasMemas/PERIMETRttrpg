@@ -7,7 +7,11 @@ from app.services.exceptions import ValidationError
 
 
 BASE_RECIPES = {'recipe-v25': 1, 'recipe-v26': 2, 'recipe-v27': 3}
-VARIANTS = {'base': ('Обычные', 0, 0), 'bp': ('БП', 30, 15), 'ep': ('ЭП', 25, 10)}
+SPECIAL_RECIPES = {'recipe-v22': (1, 'handmade'), 'recipe-v23': (2, 'handmade'),
+                   'recipe-v24': (3, 'handmade'), 'recipe-v28': (1, 'improved'),
+                   'recipe-v29': (2, 'improved'), 'recipe-v30': (3, 'improved')}
+VARIANTS = {'base': ('Обычные', 0, 0), 'bp': ('БП', 30, 15), 'ep': ('ЭП', 25, 10),
+            'handmade': ('кустарные', 0, 0), 'improved': ('улучшенные', 0, 0)}
 
 
 def available_ammo():
@@ -25,7 +29,7 @@ def available_ammo():
 
 
 def chosen_ammo(recipe, payload):
-    category = BASE_RECIPES.get(recipe['id'])
+    category = BASE_RECIPES.get(recipe['id']) or (SPECIAL_RECIPES.get(recipe['id']) or (None,))[0]
     if category is None:
         return recipe, None, None
     template_id = payload.get('ammo_template_id')
@@ -35,10 +39,15 @@ def chosen_ammo(recipe, payload):
     options = {entry['id']: entry for entry in available_ammo()}
     if template_id not in options or not template or options[template_id]['category'] != category:
         raise ValidationError('Калибр не соответствует категории рецепта')
-    variant = payload.get('ammo_variant', 'base')
+    fixed_variant = (SPECIAL_RECIPES.get(recipe['id']) or (None, None))[1]
+    variant = payload.get('ammo_variant', fixed_variant or 'base')
     if not isinstance(variant, str) or variant not in VARIANTS:
         raise ValidationError('Неизвестный вид патронов')
-    if variant != 'base' and variant not in options[template_id]['variants']:
+    if fixed_variant and variant != fixed_variant:
+        raise ValidationError('Вид патронов не соответствует рецепту')
+    if not fixed_variant and variant in {'handmade', 'improved'}:
+        raise ValidationError('Выберите рецепт кустарных или улучшенных патронов')
+    if variant in {'bp', 'ep'} and variant not in options[template_id]['variants']:
         raise ValidationError('В каталоге для этого калибра нет выбранного вида БП/ЭП')
     selected = deepcopy(recipe)
     selected['output_name'] = template.name
@@ -46,10 +55,10 @@ def chosen_ammo(recipe, payload):
     selected['ammo_variant'] = variant
     selected['ammo_template_id'] = template.id
     # Уточнённый автором пример для второго класса имеет один порох и СЛ 65.
-    if category == 2:
+    if recipe['id'] == 'recipe-v26':
         selected['components'][2]['quantity'] = 1
         selected['difficulty_options'] = [65]
-    if variant != 'base':
+    if variant in {'bp', 'ep'}:
         label, rounds, difficulty = VARIANTS[variant]
         selected['components'] = [
             {'name': template.name, 'quantity': rounds, 'source_text': f'{template.name} × {rounds}',

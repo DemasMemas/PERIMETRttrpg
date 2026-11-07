@@ -1,6 +1,6 @@
 """Серверные работы: резерв компонентов, игровое время, к100 и решения ГМа."""
 from copy import deepcopy
-from math import ceil
+from math import ceil,floor
 import random
 import re
 from uuid import uuid4
@@ -612,6 +612,9 @@ def operate(character_id,user_id,payload):
                 produced['ammo_variant']=variant if variant!='base' else None
                 produced['attributes']['ammo_variant']=produced['ammo_variant']
                 if variant in {'bp','ep'}:produced['name']=f"{output.name} {'БП' if variant=='bp' else 'ЭП'}"
+                elif variant in {'handmade','improved'}:
+                    produced['name']=f"{output.name} {'кустарные' if variant=='handmade' else 'улучшенные'}"
+                    produced['price']=floor((output.price or 0)*(.25 if variant=='handmade' else 1.5))
             if job['recipe_id'] in {'recipe-aa15', 'recipe-aa16'}:
                 from app.services.cooked_meat import cooked_output
                 source=next(entry['item'] for entry in job['escrow'] if entry['component']==0)

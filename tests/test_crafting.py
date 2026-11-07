@@ -32,10 +32,10 @@ def call(client,workshop,auth_headers,operation,**payload):
 def units(data,name):return sum(_available_uses(i) for i in data['inventory']['pockets'] if i['name']==name)
 
 
-def ammo_workshop(workshop):
+def ammo_workshop(workshop,name='5.45x39'):
     from app.services.equipment_catalog import load_catalog
     from app.services.character_starting_purchase import item_from_template
-    template_data=next(item for item in load_catalog() if item['name']=='5.45x39' and item['category']=='ammo')
+    template_data=next(item for item in load_catalog() if item['name']==name and item['category']=='ammo')
     template=ItemTemplate(**template_data);db.session.add(template);db.session.flush()
     character=workshop['actor_character'];data=deepcopy(character.data)
     data['skills']['other']['engineering']={'base':20,'bonus':0}
@@ -117,6 +117,49 @@ def test_ammo_bp_ep_rejects_special_or_other_caliber_as_source(workshop):
     data['inventory']['pockets'].append({**deepcopy(ammo),'id':'wrong-caliber','name':'5.56x45','quantity':40})
     plan=quote(character,data,{'recipe_id':'recipe-v26','ammo_template_id':template.id,'ammo_variant':'bp'})
     assert any(message.startswith('5.45x39: не хватает 30') for message in plan['missing'])
+
+
+@pytest.mark.parametrize('recipe_id,variant,price,difficulty',[
+    ('recipe-v23','handmade',10,45),('recipe-v29','improved',60,75)])
+def test_ammo_special_recipes_use_catalog_caliber_price_and_cannot_feed_bp(
+        client,workshop,auth_headers,monkeypatch,recipe_id,variant,price,difficulty):
+    from app.services.crafting import quote
+    template=ammo_workshop(workshop);character=workshop['actor_character']
+    data=deepcopy(character.data)
+    next(item for item in data['inventory']['pockets'] if item['name']=='Порох')['quantity']=4
+    character.data=data;db.session.commit()
+    payload={'recipe_id':recipe_id,'ammo_template_id':template.id,'ammo_variant':variant}
+    plan=quote(character,character.data,payload)
+    assert plan['recipe']['difficulty_options']==[difficulty]
+    assert not plan['missing'],plan['missing']
+    started=call(client,workshop,auth_headers,'start',**payload)
+    assert started.status_code==200,started.json
+    workshop['lobby'].game_time_minutes+=30;db.session.commit()
+    monkeypatch.setattr('app.services.crafting.resolve_creation',lambda quote:{'success':True,'roll':100,'automatic':False})
+    finished=call(client,workshop,auth_headers,'finish',job_id=started.json['result']['id'],chosen_loss=[])
+    assert finished.status_code==200,finished.json
+    special=next(item for item in finished.json['data']['inventory']['pockets']
+        if item['attributes'].get('ammo_variant')==variant)
+    assert (special['quantity'],special['price'],special['templateId'])==(20,price,template.id)
+    no_base=deepcopy(finished.json['data']);special['quantity']=30
+    no_base['inventory']['pockets']=[special,{'name':'Металлические детали','category':'crafting_material','quantity':5}]
+    bp=quote(character,no_base,{'recipe_id':'recipe-v26','ammo_template_id':template.id,'ammo_variant':'bp'})
+    assert any(message.startswith('5.45x39: не хватает 30') for message in bp['missing'])
+
+
+def test_improved_ammo_fractional_catalog_price_rounds_down(client,workshop,auth_headers,monkeypatch):
+    template=ammo_workshop(workshop,'.45 ACP');character=workshop['actor_character']
+    data=deepcopy(character.data)
+    next(item for item in data['inventory']['pockets'] if item['name']=='Порох')['quantity']=4
+    character.data=data;db.session.commit()
+    started=call(client,workshop,auth_headers,'start',recipe_id='recipe-v29',ammo_template_id=template.id)
+    assert started.status_code==200,started.json
+    workshop['lobby'].game_time_minutes+=30;db.session.commit()
+    monkeypatch.setattr('app.services.crafting.resolve_creation',lambda quote:{'success':True,'roll':100,'automatic':False})
+    finished=call(client,workshop,auth_headers,'finish',job_id=started.json['result']['id'],chosen_loss=[])
+    assert finished.status_code==200,finished.json
+    item=next(item for item in finished.json['data']['inventory']['pockets'] if item['name']=='.45 ACP улучшенные')
+    assert template.price==35 and item['price']==52
 
 
 @pytest.mark.parametrize('recipe_id,name,count,price', [

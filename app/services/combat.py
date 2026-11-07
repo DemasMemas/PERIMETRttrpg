@@ -2658,7 +2658,9 @@ class CombatService:
             'пистолеты', 'снайперские винтовки', 'пулеметы'
         } else 1
         variant = str((ammo_profile or {}).get('ammo_variant') or '').strip().lower()
-        if variant and variant not in {'base', 'standard', 'обычный', 'обычная'}:
+        if variant == 'improved':
+            multiplier *= .5
+        elif variant and variant not in {'base', 'standard', 'обычный', 'обычная'}:
             multiplier *= 2
         return multiplier
 
@@ -2696,6 +2698,12 @@ class CombatService:
             return None
         current, _ = CombatService._weapon_durability(weapon)
         chance, die, bonus = CombatService._weapon_jam_profile(current)
+        ammo_profile, _ = CombatService._ranged_damage_profile(weapon)
+        variant = str(ammo_profile.get('ammo_variant') or '').strip().lower()
+        if variant == 'improved' and 76 <= current <= 100:
+            chance = 0
+        elif variant == 'handmade' and 90 <= current <= 100:
+            chance = max(chance, 1)
         if chance <= 0:
             return {'triggered': False, 'attack_roll': attack_roll, 'chance': 0}
         chance=min(20,chance+2*trait_count(character_data,'Клинически неуравновешенный'))
@@ -2860,7 +2868,10 @@ class CombatService:
         from app.services.equipment_modifications import rule as modification_rule
         chance=modification_rule(weapon,'burst_no_wear')
         if fire_mode=='burst' and chance and random.randint(1,100)<=chance*100:units=0
-        return CombatService._apply_weapon_wear(weapon, units * multiplier)
+        total=units*multiplier+max(0,CombatService._coerce_float(weapon.get('_wearRemainder'),0))
+        wear=math.floor(total+1e-9)
+        weapon['_wearRemainder']=round(total-wear,6)
+        return CombatService._apply_weapon_wear(weapon,wear)
 
     @staticmethod
     def _is_pistol_weapon(item):
