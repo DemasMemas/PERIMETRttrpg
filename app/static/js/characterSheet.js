@@ -4311,7 +4311,6 @@ async function renderEquipmentTab(data) {
     const helmetModTemplates = modificationTemplates.filter(t => t.attributes?.type === 'helmet');
     const gasMaskModTemplates = modificationTemplates.filter(t => t.attributes?.type === 'gas_mask');
     const armorModTemplates = modificationTemplates.filter(t => t.attributes?.type === 'armor');
-    const pdaModTemplates = modificationTemplates.filter(t => t.attributes?.type === 'pda');
     const weaponModuleTemplates = modificationTemplates.filter(t => t.attributes?.type === 'weapon_module' || t.attributes?.category === 'module');
     const weaponModTemplates = modificationTemplates.filter(t => t.attributes?.type === 'weapon_modification' || t.attributes?.category === 'modification');
 
@@ -4328,7 +4327,6 @@ async function renderEquipmentTab(data) {
     const groupedHelmetMods = groupByCategory(helmetModTemplates);
     const groupedGasMaskMods = groupByCategory(gasMaskModTemplates);
     const groupedArmorMods = groupByCategory(armorModTemplates);
-    const groupedPdaMods = groupByCategory(pdaModTemplates);
 
     function protectionGrid(prefix, prot) {
         prot = prot || {};
@@ -4717,12 +4715,6 @@ async function renderEquipmentTab(data) {
             </div>
         </div>
 
-        <div class="equipment-group" data-equipment-group="pda">
-            <div style="display:flex; align-items:center;">
-                <h4 style="margin:0;">Модификации КПК</h4>
-            </div>
-            <div id="pda-modifications-container">${renderPdaModifications(data.modifications?.pda?.items || [], groupedPdaMods)}</div>
-        </div>
     `;
 
     const viewState = captureSheetViewState();
@@ -5242,13 +5234,6 @@ function renderArmorContainers(containers) {
             </div>
         `;
     });
-    return html;
-}
-
-function renderPdaModifications(items, groupedTemplates) {
-    if (!items || items.length === 0) return '';
-    let html = '';
-    items.forEach(item => { html += renderLegacyModification(item); });
     return html;
 }
 
@@ -6198,6 +6183,7 @@ async function renderWeapons(weapons, weaponTemplates, moduleTemplates, weaponMo
         weaponsHtml.push(`
             <div data-weapon-index="${index}" ${weapon.templateId ? `data-item-template-id="${weapon.templateId}"` : ''} style="border:1px solid var(--panel-border); padding:10px; margin-bottom:10px;">
                 ${renderCreatedByPlayerBadge(weapon)}
+                <strong>${escapeHtml(weapon.name || weapon.model || 'Оружие')}</strong>
                 ${modelBlock}
                 ${jamHtml}
                 <div class="loadout-weapon-actions">
@@ -17536,26 +17522,6 @@ window.addBackpackItemManual = function() {
     }
     currentCharacterData.inventory.backpack.push(newItem);
     renderInventoryTab(currentCharacterData);
-    scheduleAutoSave();
-};
-
-window.addPdaItem = function() {
-    updateDataFromFields();
-    if (!currentCharacterData.modifications) currentCharacterData.modifications = {};
-    if (!currentCharacterData.modifications.pda) currentCharacterData.modifications.pda = {};
-    if (!Array.isArray(currentCharacterData.modifications.pda.items)) {
-        currentCharacterData.modifications.pda.items = [];
-    }
-    currentCharacterData.modifications.pda.items.push({ name: '', effect: '' });
-    renderEquipmentTab(currentCharacterData);
-    scheduleAutoSave();
-};
-
-window.removePdaItem = function(index) {
-    updateDataFromFields();
-    if (!currentCharacterData.modifications?.pda?.items) return;
-    currentCharacterData.modifications.pda.items.splice(index, 1);
-    renderEquipmentTab(currentCharacterData);
     scheduleAutoSave();
 };
 

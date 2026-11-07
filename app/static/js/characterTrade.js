@@ -286,7 +286,7 @@ export function renderProfessionalModificationEditor(modal,{targets,rules,balanc
     const rule=()=>((rules||[]).find(entry=>entry.id===ruleSelect.value));
     const renderRule=()=>{
         reset();const selected=rule(),entry=current();
-        details.textContent=selected ? `${selected.description||selected.name} · Уровень ${selected.level}` : '';
+        details.textContent=selected ? `${selected.description||selected.name}${selected.kind==='pda'?' · '+selected.difficulty_group:' · Уровень '+selected.level}` : '';
         const installed=(entry?.item?.modifications||[]).filter(value=>value?.ruleId&&value.level===selected?.level);
         replaceSelect.innerHTML='<option value="">Без замены</option>'+installed.map(value=>
             `<option value="${escape(value.ruleId)}">${escape(value.name||value.ruleId)}</option>`).join('');
@@ -294,18 +294,24 @@ export function renderProfessionalModificationEditor(modal,{targets,rules,balanc
     const renderItem=()=>{
         reset();const entry=current();if(!entry)return;
         const item=entry.item,slots=entry.slots,installed=(item.modifications||[]).filter(value=>value?.ruleId);
-        if(unlock)unlock.disabled=slots.available>=slots.maximum;
+        const pda=slots.family==='КПК';
+        if(unlock){unlock.hidden=pda;unlock.disabled=pda||slots.available>=slots.maximum;}
         const glyph=entry.path?.[0]==='weapons'||item.category==='weapon'?'⌖':'◇';
-        card.innerHTML=`<div class="modification-item-heading"><span class="modification-item-glyph" aria-hidden="true">${glyph}</span>
+        card.innerHTML=pda?`<div class="modification-item-heading"><span class="modification-item-glyph" aria-hidden="true">▣</span>
+            <div><strong>${escape(item.name||'КПК')}</strong><small>Электронные модификации</small></div></div>
+            <div class="modification-installed">${installed.length?installed.map(value=>`<span>${escape(value.name||value.ruleId)}</span>`).join(''):'Пока нет улучшений'}</div>`:
+            `<div class="modification-item-heading"><span class="modification-item-glyph" aria-hidden="true">${glyph}</span>
             <div><strong>${escape(item.name||item.model||'Предмет')}</strong><small>${escape(slots.family)} · Класс ${escape(slots.factor??'—')}</small></div></div>
             <div class="modification-slots" aria-label="Слоты модификаций">${Array.from({length:slots.maximum},(_,index)=>
                 `<span class="${index<installed.length?'filled':index>=slots.available?'locked':''}" title="${index<installed.length?'Занят':index>=slots.available?'Закрыт':'Свободен'}"></span>`).join('')}</div>
             <small>${installed.length} занято · ${Math.max(0,slots.available-installed.length)} свободно · ${slots.maximum-slots.available} закрыто</small>
             <div class="modification-installed">${installed.length?installed.map(value=>`<span>${escape(value.name||value.ruleId)}</span>`).join(''):'Пока нет улучшений'}</div>`;
-        const available=(rules||[]).filter(value=>value.automatic_installation && value.family===slots.family);
+        const available=(rules||[]).filter(value=>pda?value.kind==='pda'&&!installed.some(mod=>mod.ruleId===value.id)
+            :value.automatic_installation && value.family===slots.family);
         fillModificationOptions(ruleSelect,available);
         if(!available.length)ruleSelect.innerHTML='<option value="">Нет доступных улучшений</option>';
         modal.querySelector('.modification-check').disabled=!available.length;
+        replaceSelect.parentElement.hidden=pda;
         renderRule();
     };
     itemSelect.onchange=renderItem;ruleSelect.onchange=renderRule;replaceSelect.onchange=reset;

@@ -49,6 +49,9 @@ export function openPdaShell({ item, findItem, getData, operate, canEdit, charac
     let busy = false;
     let filesSnapshot = null;
     let filesLoading = false;
+    let selectedMod = '';
+    let selectedTool = '';
+    let pdaQuote = null;
 
     async function loadFiles() {
         if (filesLoading) return;
@@ -89,7 +92,7 @@ export function openPdaShell({ item, findItem, getData, operate, canEdit, charac
             button.textContent = label;
             button.className = id === selected ? 'active' : '';
             button.disabled = !state.on;
-            button.onclick = () => { selected = id; render(); if (id === 'files') void loadFiles(); };
+            button.onclick = () => { selected = id; render(); if (id === 'files' || id === 'mods') void loadFiles(); };
             nav.append(button);
         }
         content.replaceChildren();
@@ -248,10 +251,9 @@ export function openPdaShell({ item, findItem, getData, operate, canEdit, charac
                 }
             }
         } else if (selected === 'mods') {
-            const mods = getData()?.modifications?.pda?.items || [];
-            const recorded = mods.filter(mod => String(mod?.name || '').trim());
+            const recorded = (current.modifications || []).filter(mod => mod?.ruleId);
             const label = document.createElement('p');
-            label.textContent = recorded.length ? 'Записанные модификации:' : 'Модификаций пока нет.';
+            label.textContent = recorded.length ? 'Установленные модификации:' : 'Модификаций пока нет.';
             content.append(label);
             for (const mod of recorded) {
                 const entry = document.createElement('div');
@@ -259,14 +261,117 @@ export function openPdaShell({ item, findItem, getData, operate, canEdit, charac
                 const name = document.createElement('strong');
                 name.textContent = mod.name;
                 const effect = document.createElement('span');
-                effect.textContent = mod.effect || 'Описание не указано';
+                effect.textContent = mod.description || 'Описание не указано';
                 entry.append(name, effect);
                 content.append(entry);
             }
-            const note = document.createElement('p');
-            note.className = 'pda-shell-note';
-            note.textContent = 'Установка и действия модификаций появятся в следующем этапе.';
-            content.append(note);
+            if (!filesSnapshot || filesLoading) {
+                const loading = document.createElement('p');
+                loading.textContent = 'Загрузка каталога улучшений…';
+                content.append(loading);
+                return;
+            }
+            const job = filesSnapshot.state?.current;
+            if (job?.kind === 'pda_modification') {
+                const status = document.createElement('p');
+                status.textContent = `${job.name}: ${job.remaining_seconds > 0
+                    ? `осталось ${Math.ceil(job.remaining_seconds / 60)} мин игрового времени`
+                    : 'установка готова к завершению'}`;
+                content.append(status);
+                const chosenCount = job.quote?.automatic_success || job.quote?.failure_loss?.all
+                    ? 0 : Math.min(job.quote?.failure_loss?.chosen || 0,
+                        (job.escrow || []).reduce((sum, entry) => sum + entry.amount, 0));
+                const loss = document.createElement('select');
+                if (chosenCount) {
+                    loss.className = 'form-control';
+                    loss.setAttribute('aria-label', 'Материал на случай неудачи');
+                    for (const [index, entry] of (job.escrow || []).entries()) {
+                        const option = document.createElement('option');
+                        option.value = String(index);
+                        option.textContent = `${entry.item.name} · ${entry.amount}`;
+                        loss.append(option);
+                    }
+                    const hint = document.createElement('p');
+                    hint.textContent = 'Выберите материал, который может быть потерян при неудаче.';
+                    content.append(hint, loss);
+                }
+                for (const [operation, text] of [['finish', 'Завершить установку'], ['cancel', 'Отменить установку']]) {
+                    const button = document.createElement('button');
+                    button.type = 'button'; button.className = 'btn btn-secondary'; button.textContent = text;
+                    button.disabled = busy || !canEdit || (operation === 'finish' && job.remaining_seconds > 0);
+                    button.onclick = () => fileAction(operation, { job_id: job.id,
+                        ...(operation === 'finish' ? {chosen_loss: chosenCount ? [Number(loss.value)] : []} : {}) });
+                    content.append(button);
+                }
+                return;
+            }
+            if (job) {
+                const status = document.createElement('p');
+                status.textContent = 'Сначала завершите текущую работу.';
+                content.append(status);
+                return;
+            }
+            if (!canEdit) return;
+            const available = (filesSnapshot.catalog?.modifications || []).filter(rule => rule.kind === 'pda'
+                && !recorded.some(mod => mod.ruleId === rule.id));
+            if (!available.length) return;
+            if (!available.some(rule => rule.id === selectedMod)) selectedMod = available[0].id;
+            const choice = document.createElement('select');
+            choice.className = 'form-control'; choice.setAttribute('aria-label', 'Модификация КПК');
+            for (const rule of available) {
+                const option = document.createElement('option');
+                option.value = rule.id; option.textContent = `${rule.name} · ${rule.difficulty_group}`;
+                choice.append(option);
+            }
+            choice.value = selectedMod;
+            choice.onchange = () => { selectedMod = choice.value; pdaQuote = null; render(); };
+            const rule = available.find(entry => entry.id === selectedMod);
+            const description = document.createElement('p');
+            description.textContent = rule.description;
+            const tool = document.createElement('select');
+            tool.className = 'form-control'; tool.setAttribute('aria-label', 'Инструмент для КПК');
+            const station = document.createElement('option');
+            station.value = ''; station.textContent = 'Станок Электрика поблизости'; tool.append(station);
+            const solder = filesSnapshot.inventory.filter(entry => /паяльные инструменты/i.test(entry.item.name)
+                && entry.uses > 0);
+            solder.forEach((entry, index) => {
+                const option = document.createElement('option');
+                option.value = String(index + 1); option.textContent = `${entry.item.name} · ${entry.uses} зарядов`;
+                tool.append(option);
+            });
+            if (selectedTool && !solder[Number(selectedTool) - 1]) selectedTool = '';
+            tool.value = selectedTool;
+            tool.onchange = () => { selectedTool = tool.value; pdaQuote = null; render(); };
+            const payload = () => ({ target_path: findItem(item.id)?.path, item_id: item.id,
+                rule_id: selectedMod, tool_path: selectedTool ? solder[Number(selectedTool) - 1]?.path : null });
+            const check = document.createElement('button');
+            check.type = 'button'; check.className = 'btn btn-secondary'; check.textContent = 'Проверить установку';
+            check.disabled = busy;
+            check.onclick = async () => {
+                busy = true; pdaQuote = null; render();
+                try {
+                    const response = await Server.craft(characterId, {operation: 'quote_pda_modification', ...payload()});
+                    pdaQuote = response.result;
+                } catch (error) { showNotification(error.message, 'system'); }
+                finally { busy = false; if (modal.isConnected) render(); }
+            };
+            content.append(choice, description, tool, check);
+            if (pdaQuote) {
+                const status = document.createElement('p');
+                status.textContent = pdaQuote.missing?.length ? pdaQuote.missing.join('; ')
+                    : `СЛ ${pdaQuote.difficulty}; время 1 час. При неудаче материалы могут быть потеряны.`;
+                content.append(status);
+                if (!pdaQuote.missing?.length) {
+                    const install = document.createElement('button');
+                    install.type = 'button'; install.className = 'btn btn-primary'; install.textContent = 'Начать установку';
+                    install.disabled = busy;
+                    install.onclick = async () => {
+                        const request = payload(); pdaQuote = null;
+                        await fileAction('install_pda_modification', request);
+                    };
+                    content.append(install);
+                }
+            }
         } else {
             const note = document.createElement('p');
             note.className = 'pda-shell-note';

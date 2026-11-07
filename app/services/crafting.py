@@ -451,6 +451,9 @@ def operate(character_id,user_id,payload):
     data=deepcopy(character.data or {});state=data.setdefault('crafting',{})
     if action=='quote':return character,quote(character,data,payload)
     if action=='quote_modification':return character,modification_plan(character,data,payload)
+    if action=='quote_pda_modification':
+        from app.services.pda_modifications import plan
+        return character,plan(character,data,payload)
     if action=='quote_salvage':
         from app.services.salvage import plan
         return character,plan(data,payload)
@@ -459,7 +462,7 @@ def operate(character_id,user_id,payload):
     previous=next((r['result'] for r in state.get('receipts',[]) if r['id']==operation_id),None)
     if previous is not None:return character,{**deepcopy(previous),'replayed':True}
     if type(payload.get('character_revision')) is not int or payload['character_revision']!=character.revision:raise ConflictError()
-    if action in {'start','read_book','modify','finish','salvage'}:
+    if action in {'start','read_book','modify','finish','salvage','install_pda_modification'}:
         from app.services.combat import CombatService
         if CombatService._character_condition(data)['state']!='active':raise ValidationError('Персонаж не может работать')
         if LocationCharacter.query.join(LocationCombatState,LocationCombatState.location_id==LocationCharacter.location_id).filter(
@@ -485,6 +488,25 @@ def operate(character_id,user_id,payload):
         if type(modifier) is not int or (not -15<=modifier<=-5 if pending['tool_id'] else modifier!=0):raise ValidationError('Скидка инструмента: от −5 до −15')
         pending.update(status='approved' if payload.get('approved') is True else 'rejected',modifier=modifier)
         result=deepcopy(pending)
+    elif action=='install_pda_modification':
+        from app.services.pda_modifications import plan, record
+        from app.services.equipment_modifications import installed
+        if state.get('current'):raise ConflictError('Сначала завершите или отмените текущую работу')
+        prepared=plan(character,data,payload)
+        if prepared['missing']:raise ValidationError('; '.join(prepared['missing']))
+        target=next(item for _,item in walk(data,True) if item.get('id')==prepared['target_id'])
+        previous=[m['ruleId'] for m in installed(target)]
+        if prepared['tool_path']:
+            tool=next(item for path,item in entries(data) if path==prepared['tool_path'])
+            tool['uses']=_available_uses(tool)-1
+            tool.setdefault('attributes',{})['uses_remaining']=tool['uses']
+        reserve=_escrow(data,prepared['allocations'])
+        result={'id':str(uuid4()),'kind':'pda_modification','name':prepared['rule']['name'],
+            'record':record(prepared['rule'],character.id),'target_id':prepared['target_id'],
+            'previous':previous,
+            'quote':{k:deepcopy(prepared[k]) for k in ('difficulty','automatic_success','failure_loss')},
+            'escrow':reserve,'output_count':0,'started_at':now(character),'ready_at':now(character)+3600}
+        state['current']=result
     elif action=='modify':
         from app.services.character_traits import background_is
         from app.services.equipment_modifications import make_record,installed
@@ -609,6 +631,14 @@ def operate(character_id,user_id,payload):
             target=next((item for _,item in walk(data,True) if item.get('id')==job['target_id']),None)
             if not target or [m['ruleId'] for m in installed(target)]!=job['previous']:raise ConflictError('Предмет или его модификации изменились')
             install(target,job['record'],job['replace_rule_id'])
+        if success and job['kind']=='pda_modification':
+            from app.services.equipment_modifications import installed,install
+            from app.services.portable_lights import definition
+            target=next((item for _,item in walk(data,True) if item.get('id')==job['target_id']
+                and definition(item)=='pda'),None)
+            if not target or [m['ruleId'] for m in installed(target)]!=job['previous']:
+                raise ConflictError('КПК или его модификации изменились')
+            install(target,job['record'])
         if success and job['kind']=='recipe':
             output=db.session.get(ItemTemplate,job['output_id'])
             if not output:raise ConflictError('Шаблон результата удалён')

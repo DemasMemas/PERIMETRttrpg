@@ -9877,6 +9877,7 @@ export async function showCharacterTradeMenu(actorLocationCharacterId, actorChar
                 const request=(entry,rule,replace,extra={})=>Server.professionalModification(window.currentLobbyId,getCurrentLocationId(),{
                     actor_location_character_id:actorLocationCharacterId,specialist_character_id:targetCharacterId,
                     target_path:entry.path,item_id:entry.item.id,rule_id:rule.id,
+                    ...(rule.kind==='pda'?{action:'install_pda'}:{}),
                     ...(replace?{replace_rule_id:replace}:{}),...extra,
                 });
                 const unlockRequest=(entry,extra={})=>Server.professionalModification(window.currentLobbyId,getCurrentLocationId(),{
@@ -9884,7 +9885,9 @@ export async function showCharacterTradeMenu(actorLocationCharacterId, actorChar
                     target_path:entry.path,item_id:entry.item.id,action:'unlock_slot',...extra,
                 });
                 renderProfessionalModificationEditor(modal,{
-                    targets:snapshot.targets,rules,balance:Number(actorCharacter?.data?.inventory?.money||0),
+                    targets:[...snapshot.targets,...snapshot.inventory.filter(entry=>entry.item?.name?.trim().toLowerCase()==='кпк')
+                        .map(entry=>({...entry,slots:{family:'КПК'}}))],rules,
+                    balance:Number(actorCharacter?.data?.inventory?.money||0),
                     onUnlockQuote:targetData.merchant?.repair_enabled?entry=>unlockRequest(entry):null,
                     onUnlockSubmit:targetData.merchant?.repair_enabled?async(entry,operationId)=>{
                         const result=await unlockRequest(entry,{execute:true,operation_id:operationId,

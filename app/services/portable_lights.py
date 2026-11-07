@@ -143,7 +143,9 @@ def advance_pda(data,seconds):
         if definition(item)!='pda':continue
         state=pda_state(item)
         if not state['on'] or state['charge_percent']<=0:continue
-        state['charge_percent']=max(0.0,state['charge_percent']-seconds/7200)
+        from app.services.equipment_modifications import installed
+        endurance=2 if any(mod.get('ruleId')=='pda-b4' for mod in installed(item)) else 1
+        state['charge_percent']=max(0.0,state['charge_percent']-seconds/(7200*endurance))
         item['pdaState']=state;changed=True
     return changed
 

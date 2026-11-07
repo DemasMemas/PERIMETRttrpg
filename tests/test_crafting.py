@@ -32,6 +32,107 @@ def call(client,workshop,auth_headers,operation,**payload):
 def units(data,name):return sum(_available_uses(i) for i in data['inventory']['pockets'] if i['name']==name)
 
 
+def test_pda_modification_is_installed_on_selected_device(client,workshop,auth_headers,monkeypatch):
+    character=workshop['actor_character'];data=deepcopy(character.data)
+    data['features']={'specialTraits':[{'name':'Программист'}]}
+    data['inventory']['pockets']=[
+        {'id':'pda-first','name':'КПК','category':'misc','quantity':1},
+        {'id':'pda-second','name':'КПК','category':'misc','quantity':1},
+        {'name':'Электронные материалы','category':'crafting_material','quantity':4},
+        {'name':'Паяльные инструменты 50/50','category':'tool','quantity':1,'uses':3,'maxUses':50},
+    ]
+    character.data=data;db.session.commit()
+    target_path=['inventory','pockets',0]
+    tool_path=['inventory','pockets',3]
+    args={'target_path':target_path,'item_id':'pda-first','rule_id':'pda-b2','tool_path':tool_path}
+    quote=call(client,workshop,auth_headers,'quote_pda_modification',**args)
+    assert quote.status_code==200,quote.json
+    assert quote.json['result']['missing']==[]
+    assert quote.json['result']['difficulty']==30
+    started=call(client,workshop,auth_headers,'install_pda_modification',**args)
+    assert started.status_code==200,started.json
+    pockets=started.json['data']['inventory']['pockets']
+    assert next(item for item in pockets if item.get('name','').startswith('Паяльные'))['uses']==2
+    assert units(started.json['data'],'Электронные материалы')==3
+    workshop['lobby'].game_time_minutes+=60;db.session.commit()
+    monkeypatch.setattr('app.services.crafting.resolve_creation',lambda quote:{'success':True,'roll':100,'automatic':False})
+    finished=call(client,workshop,auth_headers,'finish',job_id=started.json['result']['id'],chosen_loss=[0])
+    assert finished.status_code==200,finished.json
+    devices=[item for item in finished.json['data']['inventory']['pockets'] if item.get('name')=='КПК']
+    assert [m['ruleId'] for m in devices[0]['modifications']]==['pda-b2']
+    assert not devices[1].get('modifications')
+    duplicate=call(client,workshop,auth_headers,'quote_pda_modification',**args)
+    assert duplicate.status_code==400
+
+
+def test_electrician_installs_pda_modification_for_catalog_formula(workshop):
+    from app.services.professional_modification import quote,perform
+    pair=workshop;actor=pair['actor_character'];specialist=pair['target_character']
+    owned=deepcopy(actor.data);owned['inventory']['money']=1000
+    owned['inventory']['pockets']=[{'id':'paid-pda','name':'КПК','category':'misc','quantity':1}]
+    actor.data=owned
+    specialist.data={**deepcopy(specialist.data),'is_npc':True,
+        'merchant':{'modification_enabled':True,'workbenches':['Станок Электрика']},
+        'inventory':{'money':0,'pockets':[],'backpack':[]}}
+    db.session.commit()
+    payload={'actor_location_character_id':pair['actor_location'].id,
+        'specialist_character_id':specialist.id,'target_path':['inventory','pockets',0],
+        'item_id':'paid-pda','rule_id':'pda-b2','action':'install_pda'}
+    planned=quote(pair['location'].id,pair['actor_user']['id'],payload)
+    assert planned['price']==700
+    outcome=perform(pair['location'].id,pair['actor_user']['id'],{**payload,'operation_id':'paid-pda-once',
+        'actor_revision':actor.revision,'specialist_revision':specialist.revision})
+    assert outcome['price']==700
+    assert actor.data['inventory']['money']==300
+    assert specialist.data['inventory']['money']==700
+    assert actor.data['inventory']['pockets'][0]['modifications'][0]['ruleId']=='pda-b2'
+
+
+def test_high_pda_modification_needs_nearby_electrician_station(workshop):
+    from app.services.pda_modifications import plan
+    character=workshop['actor_character'];data=deepcopy(character.data)
+    data['features']={'specialTraits':[{'name':'Программист'}]}
+    data['inventory']['pockets']=[{'id':'complex-pda','name':'КПК','category':'misc','quantity':1},
+        {'name':'Плата','category':'crafting_material','quantity':1},
+        {'name':'Электронные материалы','category':'crafting_material','quantity':1},
+        {'name':'Паяльные инструменты 50/50','category':'tool','quantity':1,'uses':2,'maxUses':50}]
+    payload={'target_path':['inventory','pockets',0],'item_id':'complex-pda',
+        'rule_id':'pda-b15','tool_path':['inventory','pockets',3]}
+    without=plan(character,data,payload)
+    assert any('Станок Электрика' in reason for reason in without['missing'])
+    placement=LocationCharacter.query.filter_by(character_id=character.id).first()
+    db.session.add(LocationObject(location_id=placement.location_id,name='Станок Электрика',type='workbench',
+        tile_x=round(placement.pos_x),tile_y=round(placement.pos_y),properties={'level':placement.floor_level or 0}))
+    db.session.flush()
+    assert plan(character,data,payload)['missing']==[]
+
+
+def test_pda_rule_record_survives_sheet_save_and_cannot_be_forged(client,workshop,auth_headers):
+    from app.services.pda_modifications import record,rule_by_id
+    character=workshop['actor_character'];data=deepcopy(character.data)
+    data['inventory']['pockets']=[{'id':'saved-pda','name':'КПК','category':'misc','quantity':1,
+        'modifications':[record(rule_by_id('pda-b2'),character.id)]}]
+    character.data=data;db.session.commit()
+    incoming=character.data_snapshot()
+    incoming['inventory']['pockets'][0]['modifications']=[record(rule_by_id('pda-b3'),character.id)]
+    saved=client.put(f'/lobbies/characters/{character.id}',headers=auth_headers(workshop['actor_user']),
+        json={'data':incoming})
+    assert saved.status_code==200,saved.json
+    assert [mod['ruleId'] for mod in character.data['inventory']['pockets'][0]['modifications']]==['pda-b2']
+
+
+def test_high_voltage_pda_battery_doubles_runtime(app):
+    from app.services.portable_lights import advance_pda
+    from app.services.pda_modifications import record,rule_by_id
+    normal={'inventory':{'pockets':[{'name':'КПК','pdaState':{'on':True,'charge_percent':100}}]}}
+    upgraded=deepcopy(normal)
+    upgraded['inventory']['pockets'][0]['modifications']=[record(rule_by_id('pda-b4'),1)]
+    advance_pda(normal,7200)
+    advance_pda(upgraded,7200)
+    assert normal['inventory']['pockets'][0]['pdaState']['charge_percent']==99
+    assert upgraded['inventory']['pockets'][0]['pdaState']['charge_percent']==99.5
+
+
 def ammo_workshop(workshop,name='5.45x39'):
     from app.services.equipment_catalog import load_catalog
     from app.services.character_starting_purchase import item_from_template

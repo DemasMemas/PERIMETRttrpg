@@ -55,6 +55,21 @@ def _prepare(location_id, user_id, payload):
             raise ValidationError('Все слоты уже открыты')
         return actor, specialist, {'action': 'unlock_slot', 'item_name': target.get('name') or target.get('model'),
             'target_path': path, 'price': 2500, 'slots': status}
+    if payload.get('action') == 'install_pda':
+        from app.services.pda_modifications import GROUPS, rule_by_id, target as pda_target
+        from app.services.workbenches import require
+        if settings.get('modification_enabled') is not True:
+            raise ValidationError('Этот НПС не устанавливает модификации КПК')
+        require(settings, 'Станок Электрика')
+        device = pda_target(actor.character.data or {}, {'target_path': path, 'item_id': payload.get('item_id')})
+        rule = rule_by_id(payload.get('rule_id'))
+        if any(m.get('ruleId') == rule['id'] for m in device.get('modifications') or [] if isinstance(m, dict)):
+            raise ValidationError('Модификация уже установлена на этот КПК')
+        difficulty, equivalent, _ = GROUPS[rule['difficulty_group']]
+        price = money(int(Decimal(equivalent) * (Decimal(100 + difficulty) / 100)), label='Цена установки')
+        return actor, specialist, {'action': 'install_pda', 'rule_id': rule['id'], 'rule_name': rule['name'],
+            'item_name': device['name'], 'target_path': path, 'price': price,
+            'previous': [m.get('ruleId') for m in device.get('modifications') or [] if isinstance(m, dict) and m.get('ruleId')]}
     if payload.get('action') not in {None, 'install'}:
         raise ValidationError('Неизвестная услуга специалиста')
     common = modification_target_plan(actor.character.data or {}, payload)
@@ -113,6 +128,15 @@ def perform(location_id, user_id, payload):
         target['unlockedModificationSlots'] = int(target.get('unlockedModificationSlots') or 0) + 1
         label = 'Открытие слота у механика'
         outcome = f"{plan['item_name']}: открыт слот, {plan['price']} ₽"
+    elif plan.get('action') == 'install_pda':
+        from app.services.pda_modifications import record, rule_by_id, target as pda_target
+        from app.services.equipment_modifications import installed
+        target = pda_target(actor_data, {'target_path': plan['target_path'], 'item_id': payload.get('item_id')})
+        if [m['ruleId'] for m in installed(target)] != plan['previous']:
+            raise ConflictError('Модификации КПК изменились')
+        install(target, record(rule_by_id(plan['rule_id']), specialist.character_id))
+        label = 'Установка модификации КПК у электрика'
+        outcome = f"{plan['item_name']}: {plan['rule_name']}, {plan['price']} ₽"
     else:
         common = modification_target_plan(actor_data, payload)
         target = common['target']
@@ -138,5 +162,5 @@ def perform(location_id, user_id, payload):
     db.session.flush()
     return {'duplicate': False, 'price': plan['price'], 'action': plan.get('action', 'install'),
         'rule_id': plan.get('rule_id'), 'item_name': plan['item_name'], 'rule_name': plan.get('rule_name'),
-        'slots': item_slots(target),
+        'slots': None if plan.get('action') == 'install_pda' else item_slots(target),
         'actor_character_id': actor.character_id, 'specialist_character_id': specialist.character_id}

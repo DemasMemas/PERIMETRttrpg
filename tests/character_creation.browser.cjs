@@ -209,6 +209,11 @@ module.exports=async({page,request,token,lobby,base,connect,debugPort,safeSessio
     assert.ok((await page.evaluate('document.querySelector("#pda-shell-modal .pda-shell-brand").textContent')).includes('PERIMETR / КПК'));
     await click('#pda-shell-modal .pda-shell-nav button:nth-child(5)');
     assert.ok((await page.evaluate('document.querySelector("#pda-shell-modal [data-pda-content]").textContent')).includes('пока недоступны'));
+    await click('#pda-shell-modal .pda-shell-nav button:nth-child(12)');
+    await page.until('document.querySelector("#pda-shell-modal .pda-shell-main select option")','каталог модификаций КПК загружен');
+    assert.equal(await page.evaluate('document.querySelectorAll("#pda-shell-modal .pda-shell-main select:first-of-type option").length'),25);
+    await screenshot('pda-modifications');
+    await click('#pda-shell-modal .pda-shell-nav button:nth-child(5)');
     await screenshot('creation-pda-desktop');
     await page.call('Emulation.setDeviceMetricsOverride',{width:430,height:860,deviceScaleFactor:1,mobile:false});
     await screenshot('creation-pda-mobile');
