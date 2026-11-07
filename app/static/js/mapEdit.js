@@ -649,6 +649,24 @@ function scheduleBatchUpdate() {
 window.clearPendingWorldBrushUpdates=()=>{clearTimeout(batchUpdateTimeout);batchUpdateTimeout=null;pendingTileUpdates=[];};
 
 let waterBasinPending=false;
+let waterLevelPending=false;
+export async function levelWorldWaterBody(centerTile){
+    if(!AppState.isGM||waterLevelPending)return;
+    if(centerTile?.tileData?.terrain!=='water'){
+        showNotification('Выберите клетку водоёма');return;
+    }
+    const x=(centerTile.chunk?.chunkX??centerTile.chunkX)*32+centerTile.tileX;
+    const z=(centerTile.chunk?.chunkY??centerTile.chunkY)*32+centerTile.tileY;
+    waterLevelPending=true;
+    try{
+        const result=await Server.setWorldWaterLevel(currentLobbyId,{
+            x,z,mode:document.getElementById('world-water-level-mode')?.value||'minimum',
+            height:window.tileHeight,
+        });
+        for(const u of result.updates)updateTileInChunk(u.chunk_x,u.chunk_y,u.tile_x,u.tile_y,u.updates);
+    }catch(error){showNotification(error.message);}finally{waterLevelPending=false;}
+}
+window.levelWorldWaterBody=levelWorldWaterBody;
 export async function applyWorldWaterProfile(centerTile,profile,radius=0){
     if(!AppState.isGM)return;
     const cx=centerTile.chunk?.chunkX??centerTile.chunkX,cz=centerTile.chunk?.chunkY??centerTile.chunkY,

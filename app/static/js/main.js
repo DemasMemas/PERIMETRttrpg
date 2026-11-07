@@ -676,6 +676,14 @@ window.enterLocation = async function(locationId, { scoutView = null } = {}) {
                     <input class="form-control" id="loc-sculpt-softness" type="number" min="0.05" max="1" step="any" aria-label="Мягкость скульптора"></label>
                     <span>Удерживайте ЛКМ и ведите кисть. Esc — отмена мазка. Используется общий радиус кисти; вода сохраняет свой уровень.</span>`;
                 sections.height.appendChild(sculptControls);
+                const waterLevelControls = document.createElement('div');
+                waterLevelControls.className = 'location-water-level-controls';
+                waterLevelControls.innerHTML = `<label><input type="checkbox" id="loc-water-level-enabled"> Выровнять связанный водоём щелчком</label>
+                    <label>Уровень воды <select class="form-control" id="loc-water-level-mode">
+                        <option value="minimum">По текущему минимуму водоёма</option>
+                        <option value="exact">По высоте, указанной выше</option>
+                    </select></label>`;
+                sections.height.appendChild(waterLevelControls);
                 const heightMode = sculptModeRow.querySelector('select');
                 const syncSculpt = () => {
                     const settings = getLocationSculptSettings();

@@ -493,7 +493,8 @@ export function getLocationSculptSettings() { return { ...sculptSettings }; }
 export function getLocationSculptDiagnostics() {
     return sculptPreview?.diagnostics() || lastSculptDiagnostics;
 }
-function sculpting() { return window.locationEditorTool === 'height' && sculptSettings.mode !== 'exact'; }
+function sculpting() { return window.locationEditorTool === 'height' && sculptSettings.mode !== 'exact'
+    && !document.getElementById('loc-water-level-enabled')?.checked; }
 
 function updateLocationSculpt(now = performance.now(), final = false) {
     const stroke = objectEdit?.phase === 'stroke' && objectEdit.sculpt;
@@ -17512,6 +17513,20 @@ export function applyLocationWaterProfile(centers,profile,radius=0,basin=false) 
 }
 export function getLocationWaterProfileDiagnostics(){return locationWaterProfiles?.diagnostics();}
 
+export function levelLocationWaterBody(x,z,mode='minimum',requestedHeight=null) {
+    if(!currentLocationData||!window.isGM)return 0;
+    const tiles=currentLocationData.tiles_data,getTile=(cx,cz)=>tiles[cz]?.[cx];
+    const cells=connectedWaterCells(getTile,x,z);
+    if(!cells.length){showNotification('Выберите клетку водоёма');return 0;}
+    const minimum=cells.reduce((value,[cx,cz])=>Math.min(value,Number(getTile(cx,cz).height??1)),Infinity);
+    const target=mode==='exact'?Number(requestedHeight):minimum;
+    if(!Number.isFinite(target)||target<.5||target>3){
+        showNotification('Высота воды должна быть от 0,5 до 3 м');return 0;
+    }
+    applyLocationBrush(cells,null,{height:target},0);
+    return cells.length;
+}
+
 export function applyLocationBrush(centerX, centerZ, updates, radius) {
     if(updates.water_profile!==undefined&&(updates.terrain!=='water'||document.getElementById('loc-water-basin')?.checked))return applyLocationWaterProfile(
         Array.isArray(centerX)?centerX:[[centerX,centerZ]],updates.water_profile,radius,
@@ -18621,6 +18636,12 @@ export function setupLocationEditing() {
         canvas.setPointerCapture(e.pointerId);
         const { x, z } = hoveredTileCoords;
         if (!(buildMode === 'structure' && !eraserMode) && !beginLocationBrushStroke(e.pointerId)) return;
+        if (window.locationEditorTool === 'height' && document.getElementById('loc-water-level-enabled')?.checked) {
+            const mode=document.getElementById('loc-water-level-mode')?.value || 'minimum';
+            levelLocationWaterBody(x,z,mode,currentBrushHeight);
+            lastBrushTile = { x, z };
+            return;
+        }
         if (sculpting() && objectEdit?.phase === 'stroke') {
             const planeHeight = getTileHeight(x,z);
             const point = getPointerWorldPoint(e.clientX,e.clientY,planeHeight);
@@ -18653,6 +18674,7 @@ export function setupLocationEditing() {
         if (!hoveredTileCoords) return;
         if (e.target !== canvas) return;
         if (objectEdit.sculpt) return; // Time-based updates run in the render loop.
+        if (window.locationEditorTool === 'height' && document.getElementById('loc-water-level-enabled')?.checked) return;
         const { x, z } = hoveredTileCoords;
         if (window.locationEditorTool === 'light' && !e.altKey && !e.shiftKey) {
             for (const [cx, cz] of lastBrushTile ? brushStrokeTiles(lastBrushTile.x, lastBrushTile.z, x, z) : [[x, z]]) {

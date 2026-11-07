@@ -2272,6 +2272,21 @@ def set_connected_water_profile(lobby_id, lobby):
     return jsonify({'updates': updates}), 200
 
 
+@lobbies_bp.route('/<int:lobby_id>/water-level', methods=['POST'])
+@jwt_required()
+@requires_gm
+@record_world_editor_command
+def set_connected_water_level(lobby_id, lobby):
+    from app.services.water_profiles import connected_world_water_level_updates
+    data = request.get_json(silent=True) or {}
+    updates = connected_world_water_level_updates(
+        lobby, data.get('x'), data.get('z'), data.get('mode'), data.get('height'))
+    if updates:
+        MapService.batch_update_tiles(lobby_id, lobby.gm_id, updates)
+        socketio.emit('tiles_updated', updates, room=f"lobby_{lobby_id}")
+    return jsonify({'updates': updates}), 200
+
+
 @lobbies_bp.route('/<int:lobby_id>/chunks/batch', methods=['POST'])
 @jwt_required()
 @requires_gm

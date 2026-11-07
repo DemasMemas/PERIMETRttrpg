@@ -23,7 +23,7 @@ async function requestJson(url, options = {}) {
 }
 
 function apiFetch(url,options={}) {
-    const match=String(url).match(/^\/lobbies\/(\d+)\/(?:chunks\/(?:batch|\d+\/\d+\/tile\/\d+\/\d+)|world-objects\/edit|world-roads\/(?:build|connect)|water-profile)$/);
+    const match=String(url).match(/^\/lobbies\/(\d+)\/(?:chunks\/(?:batch|\d+\/\d+\/tile\/\d+\/\d+)|world-objects\/edit|world-roads\/(?:build|connect)|water-(?:profile|level))$/);
     return match&&options.method&&options.method!=='GET'&&globalThis.window?.runWorldEditorRequest
         ? window.runWorldEditorRequest(Number(match[1]),()=>requestJson(url,options)) : requestJson(url,options);
 }
@@ -93,6 +93,9 @@ export const Server = {
     },
     async setWorldWaterProfile(lobbyId,payload) {
         return apiFetch(`/lobbies/${lobbyId}/water-profile`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+    },
+    async setWorldWaterLevel(lobbyId,payload) {
+        return apiFetch(`/lobbies/${lobbyId}/water-level`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
     },
     async prepareDeferredConsumable(lobbyId, locationId, actionId) {
         return apiFetch(`/lobbies/${lobbyId}/locations/${locationId}/combat/deferred-consumable/${encodeURIComponent(actionId)}`);

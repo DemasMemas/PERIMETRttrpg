@@ -39,6 +39,22 @@ def test_world_basin_crosses_chunks_and_batch_validation_is_atomic(client, creat
     client.post(root+'/water-profile',headers=headers,json={'x':31,'z':8,'profile':'auto'})
     assert MapService.get_tile_data(lobby['id'],31,8)['water_profile'] == 'auto'
     assert MapService.get_tile_data(lobby['id'],31,8)['height'] == before['height']
+    for x, height in ((31, 1.8), (32, .7), (33, 1.3), (2, 2.2)):
+        assert client.patch(f'{root}/chunks/{x//32}/0/tile/{x%32}/{8 if x > 30 else 2}',
+                            headers=headers, json={'height': height}).status_code == 200
+    leveled = client.post(root+'/water-level', headers=headers,
+                          json={'x':31,'z':8,'mode':'minimum'})
+    assert leveled.status_code == 200 and len(leveled.get_json()['updates']) == 2
+    assert [MapService.get_tile_data(lobby['id'],x,8)['height'] for x in (31,32,33)] == [.7]*3
+    assert MapService.get_tile_data(lobby['id'],2,2)['height'] == 2.2
+    exact = client.post(root+'/water-level', headers=headers,
+                        json={'x':32,'z':8,'mode':'exact','height':1.6})
+    assert exact.status_code == 200 and len(exact.get_json()['updates']) == 3
+    assert [MapService.get_tile_data(lobby['id'],x,8)['height'] for x in (31,32,33)] == [1.6]*3
+    invalid = client.post(root+'/water-level', headers=headers,
+                          json={'x':32,'z':8,'mode':'exact','height':4})
+    assert invalid.status_code == 400
+    assert MapService.get_tile_data(lobby['id'],32,8)['height'] == 1.6
 
 
 def test_local_socket_full_save_and_repaint_preserve_rules(client, app, create_user, auth_headers):

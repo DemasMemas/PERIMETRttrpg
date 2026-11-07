@@ -430,7 +430,7 @@ test('switching between global map and location hides only global UI and restore
     const restored=[];
     for(const id of ['chat-toggle','common-tools-toggle','edit-toggle'])nodes.set(id,{id});
     const menu={insertBefore:(node,anchor)=>restored.push([node.id,anchor.id])};
-    const context = vm.createContext({ document: {
+    const context = vm.createContext({ closeSettings:()=>{}, document: {
         querySelector:selector=>selector==='.lobby-menu'?menu:null,
         body: { classList: { toggle(name, enabled) {
             if (enabled) classes.add(name);

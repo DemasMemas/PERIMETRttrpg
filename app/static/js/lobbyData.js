@@ -118,7 +118,9 @@ export async function loadLobbyInfo() {
                     window.applyBrush(tile, { terrain: window.currentTileType }, window.brushRadius);
 
                 } else if (window.worldEditorTool === 'height') {
-                    window.applyBrush(tile, { height: window.tileHeight }, window.brushRadius);
+                    if (document.getElementById('world-water-level-enabled')?.checked)
+                        window.levelWorldWaterBody?.(tile);
+                    else window.applyBrush(tile, { height: window.tileHeight }, window.brushRadius);
                 } else if (window.worldEditorTool === 'radiation') {
                     window.applyBrush(tile, { radiation: window.worldBrushRadiation ?? 0 }, window.brushRadius);
                 } else if (window.worldEditorTool === 'objects') {

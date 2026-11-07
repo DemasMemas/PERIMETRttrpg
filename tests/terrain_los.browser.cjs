@@ -37,5 +37,45 @@ module.exports=async({page,request,token,lobby,base,safeSession})=>{
  const clear=await page.evaluate('L.hasLineOfSight(0,2,4,2)');assert.equal(clear,true);
  const allowed=await attack();result.clearAttempt={status:allowed.status,error:allowed.body.error,pending:allowed.body.pending_action};save();assert.equal(allowed.status,200,'после удаления холма штатное прицельное действие принято');
  result.checks.push({stage:'hill-removed',clientLos:clear,attackStatus:allowed.status,scope:'Принятие действия, не завершённый оплаченный выстрел'});
+ await page.evaluate('exitLocation()');
+ const waterTiles=Array.from({length:8},()=>Array.from({length:8},()=>({terrain:'grass',height:1,objects:[]})));
+ for(const [x,z,height] of [[2,2,1.4],[3,2,.8],[2,3,1.2],[6,6,2.4]])waterTiles[z][x]={terrain:'water',height,objects:[]};
+ const waterLocation=await request(api+'/locations',{name:'№216 выравнивание водоёма',world_tile_x:11,world_tile_z:7,
+  grid_width:8,grid_height:8,tiles_data:waterTiles},token);
+ const waterUrl=api+'/locations/'+waterLocation.id;
+ await page.evaluate('(async()=>{window.T=await import("three");window.UI=await import("/static/js/ui_interactions.js");await enterLocation('+waterLocation.id+')})()');
+ await page.until('document.getElementById("scene-loading-screen").classList.contains("is-hidden")','реальная водная сцена');
+ await page.evaluate('(()=>{selectLocationEditorTool("height");L.setLocationEditMode(true);document.getElementById("loc-water-level-enabled").checked=true;locationControls.target.set(4,1,4);locationControls.object.position.set(10,12,13);locationControls.update();UI.collapseMapToolsPanel()})()');
+ const clickWater=async(height)=>{
+  const point=await page.evaluate('(()=>{locationControls.object.updateMatrixWorld(true);const v=new T.Vector3(2.5,'+height+',2.5).project(locationControls.object),r=document.querySelector("#location-canvas canvas").getBoundingClientRect();return{x:r.left+(v.x+1)*r.width/2,y:r.top+(1-v.y)*r.height/2}})()');
+  await page.call('Input.dispatchMouseEvent',{type:'mouseMoved',...point,button:'none',buttons:0});
+  await page.call('Input.dispatchMouseEvent',{type:'mousePressed',...point,button:'left',buttons:1,clickCount:1});
+  await page.call('Input.dispatchMouseEvent',{type:'mouseReleased',...point,button:'left',buttons:0,clickCount:1});
+ };
+ await clickWater(1.4);
+ await page.until('!L.getLocationEditorHistoryState().busy','выравнивание сохранено');
+ await page.until('(async()=>{const r=await fetch("'+waterUrl+'",{headers:{Authorization:"Bearer "+localStorage.getItem("access_token")}});const d=await r.json();return d.tiles_data?.[2]?.[2]?.height===.8&&d.tiles_data?.[3]?.[2]?.height===.8})()','водоём выровнен на сервере');
+ const leveled=await request(waterUrl,null,token,'GET');
+ assert.equal(leveled.tiles_data[6][6].height,2.4,'другой водоём остался без изменений');
+ fs.writeFileSync(path.join(safeSession.artifacts,'water-level-minimum.png'),Buffer.from((await page.call('Page.captureScreenshot',{format:'png'})).data,'base64'));
+ result.checks.push({stage:'water-level-minimum',connectedCells:3,height:.8,separateBodyUnchanged:true});
+ await page.evaluate('(()=>{document.getElementById("loc-water-level-mode").value="exact";L.setLocationBrushHeight(1.6)})()');
+ await clickWater(.8);
+ await page.until('!L.getLocationEditorHistoryState().busy','заданная высота сохранена');
+ await page.until('(async()=>{const r=await fetch("'+waterUrl+'",{headers:{Authorization:"Bearer "+localStorage.getItem("access_token")}});const d=await r.json();return d.tiles_data?.[2]?.[2]?.height===1.6&&d.tiles_data?.[2]?.[3]?.height===1.6&&d.tiles_data?.[3]?.[2]?.height===1.6})()','заданная высота водоёма сохранена');
+ assert.equal((await request(waterUrl,null,token,'GET')).tiles_data[6][6].height,2.4);
+ result.checks.push({stage:'water-level-exact',height:1.6,separateBodyUnchanged:true});
+ await page.evaluate('exitLocation()');
+ await page.until('!window.isLocationActive&&!!sceneModule.chunksMap.get("0,0")','глобальная карта после выхода');
+ const worldUpdates=[[4,4,1.5],[5,4,.7],[4,5,1.2],[10,10,2.3]].map(([x,z,height])=>({
+  chunk_x:0,chunk_y:0,tile_x:x,tile_y:z,updates:{terrain:'water',height}}));
+ await request(api+'/chunks/batch',worldUpdates,token);
+ await page.until('sceneModule.chunksMap.get("0,0")?.tilesData[4][4]?.terrain==="water"','водоём глобальной карты загружен');
+ await page.evaluate('(async()=>{window.M=await import("/static/js/mapEdit.js");document.getElementById("world-water-level-mode").value="minimum";await M.levelWorldWaterBody({chunkX:0,chunkY:0,tileX:4,tileY:4,tileData:sceneModule.chunksMap.get("0,0").tilesData[4][4]})})()');
+ await page.until('sceneModule.chunksMap.get("0,0").tilesData[4][4].height===.7','глобальный водоём выровнен');
+ assert.equal(await page.evaluate('sceneModule.chunksMap.get("0,0").tilesData[10][10].height'),2.3);
+ await page.evaluate('(async()=>{document.getElementById("world-water-level-mode").value="exact";window.tileHeight=1.6;await M.levelWorldWaterBody({chunkX:0,chunkY:0,tileX:4,tileY:4,tileData:sceneModule.chunksMap.get("0,0").tilesData[4][4]})})()');
+ await page.until('sceneModule.chunksMap.get("0,0").tilesData[5][4].height===1.6','заданная высота глобального водоёма');
+ result.checks.push({stage:'world-water-level',minimum:.7,exact:1.6,separateBodyUnchanged:true});
  result.status='READY_FOR_REVIEW';save();
 };

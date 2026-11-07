@@ -3344,6 +3344,7 @@ window.addEventListener('pointermove', (event) => {
     }
     performRaycast(event.clientX, event.clientY);
 
+    if(window.worldEditorTool==='height'&&document.getElementById('world-water-level-enabled')?.checked)return;
     if(window.worldEditorTool==='terrain'&&window.currentTileType==='water'&&document.getElementById('world-water-basin')?.checked)return;
     if ((event.buttons === 1) && brushActive && editMode && hoveredTile && window.applyBrush) {
         const tileKey = `${hoveredTile.chunk.chunkX},${hoveredTile.chunk.chunkY},${hoveredTile.tileX},${hoveredTile.tileY}`;
