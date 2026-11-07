@@ -11,6 +11,10 @@ module.exports = async ({ page, request, token, safeSession }) => {
     assert.equal(ready.source, 'ready');
     assert.equal(ready.groups.length, 13);
     assert.equal(ready.relations.length, 34);
+    const person = await request(`/lobbies/${world.id}/characters`,
+        {name:'Проверочный НПС',data:{basic:{is_npc:true}}},token);
+    await request(`/lobbies/${world.id}/characters`,
+        {name:'Проверочный мутант',data:{basic:{is_mutant:true,mutant_type:'Кабан'}}},token);
     await page.evaluate(`(async()=>{
         const {openWorldFactionSettings}=await import('/static/js/worldFactions.js');
         await openWorldFactionSettings(${world.id});return true;
@@ -19,16 +23,29 @@ module.exports = async ({ page, request, token, safeSession }) => {
         'готовый набор открыт');
     assert.equal(await page.evaluate('document.querySelector(".world-faction-modal .faction-group-name").disabled'),true);
     await page.evaluate('document.querySelector(".world-faction-modal .faction-copy-ready").click();true');
+    await page.until('document.querySelector(".world-faction-modal .faction-group-name")?.disabled===false',
+        'копия готового набора сохранена автоматически');
     assert.equal(await page.evaluate('document.querySelector(".world-faction-modal .faction-group-name").disabled'),false);
     await page.evaluate(`(()=>{const input=document.querySelector('.world-faction-modal .faction-group-name');
-        input.value='Название ГМа';input.dispatchEvent(new Event('input',{bubbles:true}));
-        document.querySelector('.world-faction-modal .faction-save').click();return true})()`);
-    await page.until('document.querySelector(".world-faction-modal .faction-error").textContent.includes("сохранены")',
-        'копия авторского набора сохранена');
+        window._beforeFactionName=input;
+        input.value='Название ГМа';input.dispatchEvent(new Event('change',{bubbles:true}));return true})()`);
+    await page.until('document.querySelector(".world-faction-modal .faction-group-name")?.value==="Название ГМа" && document.querySelector(".world-faction-modal .faction-group-name")!==window._beforeFactionName && document.querySelector(".world-faction-modal .faction-status")?.textContent==="Сохранено"',
+        'название группировки сохранено без нижней кнопки');
     const copy = await request(url, null, token, 'GET');
     assert.equal(copy.source, 'ready_customized');
     assert.equal(copy.groups[0].name, 'Название ГМа');
     assert.equal(copy.groups[0].id, ready.groups[0].id);
+    await page.evaluate('document.querySelector(".world-faction-modal [data-tab=characters]").click();true');
+    assert.equal(await page.evaluate(`(()=>{const names=[...document.querySelectorAll('.faction-assignment-row strong')].map(item=>item.textContent);
+        return names.includes('Проверочный НПС')&&!names.includes('Проверочный мутант')})()`),true);
+    await page.evaluate(`(()=>{const select=document.querySelector('.faction-assignment-group');
+        select.value='${copy.groups[0].id}';select.dispatchEvent(new Event('change',{bubbles:true}));return true})()`);
+    await page.until('document.querySelector(".faction-assignment-status")?.textContent==="Сохранено"',
+        'выбор группировки сохраняется без кнопки назначения');
+    const assigned = await request(`/lobbies/characters/${person.id}`,null,token,'GET');
+    assert.equal(assigned.data.basic.group_id,copy.groups[0].id);
+    await page.evaluate('document.querySelector(".world-faction-modal [data-tab=relations]").click();true');
+    assert.equal(await page.evaluate('document.querySelectorAll(".faction-relation-row").length'),12);
     const another = await request('/lobbies/', { ...payload, name: 'Второй готовый мир' }, token);
     const original = await request(`/lobbies/${another.id}/world-factions`, null, token, 'GET');
     assert.deepEqual(original.groups, ready.groups);

@@ -4047,6 +4047,34 @@ input[type=range]::-webkit-slider-thumb {
 .npc-generator-profile { padding:12px; border:1px solid var(--panel-border); border-radius:10px; }
 .npc-generator-profile:empty { display:none; }
 .npc-generator-error { min-height:1.4em; }
+.faction-dialog { width:min(1100px,96vw); max-width:96vw; max-height:94vh; overflow:auto; box-sizing:border-box; }
+.faction-heading { position:sticky; top:0; z-index:3; background:var(--panel-bg); padding:4px 0 8px; }
+.faction-heading h3 { margin:0; }
+.faction-tabs { position:sticky; top:48px; z-index:2; display:flex; flex-wrap:wrap; gap:6px; padding:8px 0; background:var(--panel-bg); border-bottom:1px solid var(--panel-border); }
+.faction-tab { border:1px solid var(--panel-border); border-radius:8px; padding:9px 14px; background:transparent; color:var(--text-color); cursor:pointer; font-weight:600; }
+.faction-tab[aria-current="page"] { border-color:#bfa56b; color:#e4d29d; background:rgba(191,165,107,.13); }
+.faction-panel[hidden], .faction-relation-custom[hidden], .faction-assignment-row[hidden] { display:none; }
+.faction-panel { padding-top:12px; }
+.faction-panel > p { margin:0 0 12px; line-height:1.45; }
+.faction-status { min-height:1.4em; padding-top:5px; color:#b6d8a2; }
+.faction-status.is-error { color:#e5a097; }
+.faction-add-row { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:8px; margin:8px 0 14px; align-items:center; }
+.faction-groups { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; }
+.faction-group-card { padding:12px; border:1px solid var(--panel-border); border-radius:10px; min-width:0; }
+.faction-group-heading, .faction-member-row { display:flex; gap:8px; align-items:center; margin-bottom:8px; }
+.faction-group-heading input, .faction-member-row input { min-width:0; flex:1; }
+.faction-group-card .faction-add-row { margin:8px 0 0; }
+.faction-relation-source { display:grid; gap:5px; max-width:420px; margin-bottom:12px; }
+.faction-relations { display:grid; gap:5px; }
+.faction-relation-row { display:grid; grid-template-columns:minmax(160px,1fr) 200px minmax(0,1fr); gap:8px; align-items:center; padding:8px; border:1px solid var(--panel-border); border-radius:8px; }
+.faction-relation-row > span { font-weight:600; }
+.faction-character-search { width:100%; box-sizing:border-box; margin-bottom:12px; }
+.faction-assignments { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; }
+.faction-assignment-row { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:6px; align-items:center; padding:10px; border:1px solid var(--panel-border); border-radius:8px; min-width:0; }
+.faction-assignment-row strong { grid-column:1/-1; }
+.faction-assignment-row select { min-width:0; }
+.faction-assignment-status { grid-column:1/-1; min-height:1em; color:#b6d8a2; }
+@media (max-width:800px) { .faction-groups, .faction-assignments { grid-template-columns:1fr; } .faction-relation-row { grid-template-columns:minmax(0,1fr) 180px; } .faction-relation-custom:not([hidden]) { grid-column:1/-1; } }
 @media(max-width: 640px) {
     .modification-service-grid { grid-template-columns: minmax(0,1fr); }
     .loot-profile-fields, .loot-pool-filters, .loot-pool-numbers { grid-template-columns: repeat(2, minmax(0, 1fr)); }
