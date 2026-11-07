@@ -3066,6 +3066,28 @@ def update_location_object(lobby_id, object_id, lobby, participant):
     if not isinstance(data, dict):
         raise ValidationError('Object update must be an object')
     properties = data.get('properties') if isinstance(data.get('properties'), dict) else {}
+    cover_fields = {'cover_class', 'cover_max_hp', 'cover_hp',
+                    'cover_base_physical_protection', 'cover_physical_protection'}
+    if cover_fields & properties.keys():
+        from app.services.combat import COVER_CLASSES
+        if participant.user_id != lobby.gm_id:
+            raise PermissionDenied('Настраивать укрытия может только ГМ')
+        if not CombatService._is_cover_object(obj):
+            raise ValidationError('Этот объект не является укрытием')
+        current = obj.properties or {}
+        cover_class = properties.get('cover_class', current.get('cover_class', 'medium'))
+        if type(cover_class) is not str or cover_class not in COVER_CLASSES:
+            raise ValidationError('Выберите класс укрытия из списка')
+        max_hp = properties.get('cover_max_hp', current.get('cover_max_hp', COVER_CLASSES[cover_class]['max_hp']))
+        hp = properties.get('cover_hp', current.get('cover_hp', max_hp))
+        base_protection = properties.get('cover_base_physical_protection',
+                                         current.get('cover_base_physical_protection', COVER_CLASSES[cover_class]['physical_protection']))
+        protection = properties.get('cover_physical_protection', current.get('cover_physical_protection', base_protection))
+        if (type(max_hp) is not int or not 1 <= max_hp <= 1000000
+                or type(hp) is not int or not 0 <= hp <= max_hp
+                or type(base_protection) is not int or not 0 <= base_protection <= 100
+                or type(protection) is not int or not 0 <= protection <= base_protection):
+            raise ValidationError('Проверьте ОЗ и защиту укрытия')
     if obj.type == 'hatch':
         is_gm = participant.user_id == lobby.gm_id
         if not is_gm and (set(data) - {'properties','actor_character_id'} or set(properties) != {'is_open'}):

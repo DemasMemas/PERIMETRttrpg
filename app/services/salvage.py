@@ -39,8 +39,10 @@ def plan(data,payload):
     if type(quantity) is not int or quantity<1 or quantity>int(item.get('quantity',1)):raise ValidationError('Неверное количество для разбора')
     if kind!='ammo' and quantity!=1:raise ValidationError('Оружие и снаряжение разбирают по одному экземпляру')
     if kind=='ammo' and quantity<20:raise ValidationError('Для разбора нужно не меньше 20 одинаковых патронов')
-    tool=next((item for path,item in entries(data) if path==payload.get('tool_path')),None)
-    if not tool or not tool_bonus(tool):raise ValidationError('Выберите один инструмент для разбора')
+    tool_path=payload.get('tool_path')
+    tool=next((item for path,item in entries(data) if path==tool_path),None) if tool_path is not None else None
+    if tool_path is not None and (not tool or not tool_bonus(tool)):
+        raise ValidationError('Выберите подходящий инструмент для разбора')
     if tool is item:raise ValidationError('Разбираемый предмет нельзя использовать как инструмент')
     attrs=CombatService._template_attributes(item)
     raw_class=str(item.get('itemClass',item.get('item_class',attrs.get('item_class',''))))
@@ -56,7 +58,7 @@ def plan(data,payload):
     book_subject=family(item) or {'ammo':'Боеприпасы','grenade':'Гранаты','electronics':'Электроника'}.get(kind)
     library=(data.get('crafting') or {}).get('library',[])
     book=25 if any(b.get('book_kind')=='equipment' and normalized(b.get('book_subject')).replace(' броня','')==normalized(book_subject) for b in library) else 0
-    bonus=CombatService._base_skill_modifier(data,'skills.other.engineering')*10+tool_bonus(tool)+book
+    bonus=CombatService._base_skill_modifier(data,'skills.other.engineering')*10+(tool_bonus(tool) if tool else 0)+book
     bonus+=amount_bonus if kind=='ammo' else factor+condition if kind in {'weapon','armor'} else factor if kind=='grenade' else 0
     missing=[m['name'] for band in catalog()['salvage'][kind] for m in band['materials'] if not _template(m['name'])]
     if missing:raise ValidationError('В каталоге нет компонентов результата: '+', '.join(sorted(set(missing))))

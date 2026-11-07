@@ -50,6 +50,18 @@ def test_actual_start_wait_cancel_and_finish_once(client,salvage_workshop,auth_h
     assert repeated.json['data']['inventory']==finished.json['data']['inventory']
 
 
+def test_salvage_without_tool_is_available_with_lower_bonus(client,salvage_workshop,auth_headers):
+    case=salvage_workshop
+    path=['inventory','pockets',4]
+    with_tool=call(client,case,auth_headers,'quote_salvage',path=path,tool_path=['inventory','pockets',3])
+    without_tool=call(client,case,auth_headers,'quote_salvage',path=path)
+    assert without_tool.status_code==200,without_tool.json
+    assert with_tool.json['result']['bonus']>without_tool.json['result']['bonus']
+    started=call(client,case,auth_headers,'salvage',path=path)
+    assert started.status_code==200,started.json
+    assert started.json['result']['kind']=='salvage'
+
+
 def test_contents_and_tool_self_scrapping_are_rejected(salvage_workshop):
     data=deepcopy(salvage_workshop['actor_character'].data)
     data['inventory']['pockets'][4]['installedModules']=[{'name':'Прицел'}]

@@ -10997,37 +10997,21 @@ function showObjectContextMenu(clientX, clientY, object) {
     const tree = object.type === 'tree' || /^nature_(?:oak|birch|pine|spruce|poplar|willow)/.test(object.type || '');
     const coverProtection = object.properties?.cover_physical_protection
         ?? object.properties?.cover_base_physical_protection ?? (tree ? 20 : coverDefaults.protection);
+    const coverNames = [object.name, visualAssetForLocationObject(object.type, object.properties)?.label,
+        findLocationAsset(object.type)?.label].filter(Boolean);
+    const rawCoverName = coverNames.find(name => /[А-Яа-яЁё]/.test(name)) || coverNames[0] || '';
+    const cleanCoverName = rawCoverName.replace(/\s*(?:\(|\[)?PBR(?:\)|\])?/gi, ' ').trim();
+    const coverName = /[А-Яа-яЁё]/.test(cleanCoverName) ? cleanCoverName : ({
+        wall: 'Стена', fence: 'Забор', door: 'Дверь', window: 'Окно', table: 'Стол',
+        chair: 'Стул', shelf: 'Стеллаж', box: 'Ящик', barrel: 'Бочка',
+    }[object.type] || 'Укрытие');
     const actions = [{
         label: 'Осмотреть',
         action: () => showNotification(
-            isCover ? `${object.name || object.type}: ${coverDefaults.label}, ОЗ ${coverHp}/${object.properties?.cover_max_hp ?? coverDefaults.maxHp}, защита ${coverProtection}%` : [object.name || object.properties?.anomalyName || object.type,object.properties?.description || object.description || (object.type==='anomaly'?'Аномалия':'')].filter(Boolean).join(' · '),
+            isCover ? `${coverName}: ОЗ ${coverHp}/${object.properties?.cover_max_hp ?? coverDefaults.maxHp}, защита ${coverProtection}%` : [object.name || object.properties?.anomalyName || object.type,object.properties?.description || object.description || (object.type==='anomaly'?'Аномалия':'')].filter(Boolean).join(' · '),
             'system'
         )
     }];
-    if (window.isGM && isCover) {
-        actions.push({
-            label: `Класс укрытия: ${coverDefaults.label}`,
-            action: async () => {
-                const keys = Object.keys(COVER_CLASS_DEFAULTS);
-                const promptText = keys
-                    .map(key => `${key} — ${COVER_CLASS_DEFAULTS[key].label}`)
-                    .join('\n');
-                const selected = window.prompt(`Выберите класс укрытия:\n${promptText}`, coverClass);
-                if (!selected || !COVER_CLASS_DEFAULTS[selected]) return;
-                const profile = COVER_CLASS_DEFAULTS[selected];
-                await updateInteractiveObject(object.id, {
-                    properties: {
-                        cover_class: selected,
-                        cover_max_hp: profile.maxHp,
-                        cover_hp: profile.maxHp,
-                        cover_base_physical_protection: profile.protection,
-                        cover_physical_protection: profile.protection,
-                    }
-                });
-                showNotification(`Класс укрытия изменён: ${profile.label}`, 'success');
-            }
-        });
-    }
     getObjectActions(object).forEach(action => {
         if (action === 'level_up' || action === 'level_down' || action === 'drop_down') {
             const actorId = getCurrentInteractionActor()?.model?.userData.characterId;
@@ -14548,6 +14532,12 @@ export function getSelectedLocationEditorAsset() {
                 : `decor:${editorSelection.x}:${editorSelection.z}:${editorSelection.index}`,
         roofEditing:roofEditPending,
         traversalCategory:editorSelection.kind==='structure'&&!PASSABLE_OBJECT_TYPES.has(source?.type)?(source?.properties?.traversal_category||'auto'):null,
+        cover:editorSelection.kind==='structure'&&isStructureCoverObject(source) ? {
+            coverClass:source.properties?.cover_class||'medium',
+            maxHp:source.properties?.cover_max_hp??COVER_CLASS_DEFAULTS[source.properties?.cover_class||'medium']?.maxHp??COVER_CLASS_DEFAULTS.medium.maxHp,
+            hp:source.properties?.cover_hp??source.properties?.cover_max_hp??COVER_CLASS_DEFAULTS[source.properties?.cover_class||'medium']?.maxHp??COVER_CLASS_DEFAULTS.medium.maxHp,
+            protection:source.properties?.cover_physical_protection??source.properties?.cover_base_physical_protection??COVER_CLASS_DEFAULTS[source.properties?.cover_class||'medium']?.protection??COVER_CLASS_DEFAULTS.medium.protection,
+        } : null,
         hidden: Boolean(editorSelection.kind === 'structure' ? source?.properties?.gm_hidden : source?.gm_hidden) } : null;
 }
 
@@ -15712,6 +15702,26 @@ export async function setSelectedLocationTraversalCategory(category) {
         });
     } catch(error) {
         showNotification(error.message||'Не удалось изменить проходимость','system');return false;
+    }
+}
+export async function setSelectedLocationCover({coverClass,maxHp,hp,protection}) {
+    if (!window.isGM||editorSelections.length!==1||editorSelection?.kind!=='structure'
+        ||!COVER_CLASS_DEFAULTS[coverClass]||![maxHp,hp,protection].every(Number.isInteger)
+        ||maxHp<1||maxHp>1000000||hp<0||hp>maxHp||protection<0||protection>100) {
+        showNotification('Проверьте класс, ОЗ и защиту укрытия', 'system');return false;
+    }
+    try {
+        return await runLocationObjectCommand(async()=>{
+            const source=getSelectedEditorSource();
+            if (!source||!isStructureCoverObject(source)) return false;
+            const updated=await editorUpdateObject(window.currentLobbyId,source.id,{properties:{
+                cover_class:coverClass,cover_max_hp:maxHp,cover_hp:hp,
+                cover_base_physical_protection:protection,cover_physical_protection:protection,
+            }});
+            updateLocationObject(updated);notifyEditorSelection();return true;
+        });
+    } catch(error) {
+        showNotification(error.message||'Не удалось сохранить укрытие','system');return false;
     }
 }
 async function updateSelectedLocationAssetDetailsImpl({ x, z, height, elevation, intensity, distance, color, rotation, dimensions, roofType, buildingId, level, detachRoof } = {}) {

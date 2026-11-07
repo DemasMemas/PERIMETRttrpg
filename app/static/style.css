@@ -1783,6 +1783,11 @@ body.light-theme .lobby-time-field input[type="time"] {
 .location-asset-fields input {
   width: 100%;
 }
+.location-cover-settings { margin-top: 10px; color: var(--text-secondary); font-size: 0.8rem; }
+.location-cover-settings summary { cursor: pointer; }
+.location-cover-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin: 9px 0; }
+.location-cover-fields label { display: grid; gap: 4px; min-width: 0; }
+.location-cover-fields input, .location-cover-fields select { width: 100%; min-width: 0; }
 .location-environment-body {
   padding-top: 8px;
 }
@@ -2255,16 +2260,17 @@ input[type="number"] {
 .pda-shell-footer { border-top: 1px solid #8eb87844; border-bottom: 0; color: #8bab83; font-size: .67rem; letter-spacing: .12em; }
 .pda-shell-account { border: 0; padding: 0; background: none; color: inherit; font: inherit; letter-spacing: inherit; cursor: pointer; text-align: left; }
 .pda-shell-account:hover, .pda-shell-account:focus-visible { color: #cce7c0; text-decoration: underline; }
-.pda-account-switch { display: flex; gap: 8px; margin: 16px 0 8px; }
-.pda-account-switch .active { border-color: #acd48e; background: #456739; color: #fff; }
-.pda-account-introduction { margin: 8px 0; }
+.pda-account-title { margin: 0 0 8px; }
+.pda-account-rules { max-width: 540px; margin: 0; color: #bdd1af; }
 .pda-account-form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; max-width: 540px; margin-top: 12px; }
-.pda-account-field { display: grid; gap: 5px; min-width: 0; font-weight: 600; }
-.pda-account-field .form-control { width: 100%; min-width: 0; }
-.pda-account-field small { color: #bdd1af; font-weight: 400; line-height: 1.35; }
+.pda-account-field { display: flex; flex-direction: column; align-self: start; gap: 5px; min-width: 0; font-weight: 600; }
+.pda-account-field .form-control { width: 100%; min-width: 0; margin: 0; }
 .pda-account-error, .pda-account-submit { grid-column: 1 / -1; }
 .pda-account-error { margin: 0; }
 .pda-account-submit { justify-self: start; }
+.pda-account-switch { margin: 10px 0 0; }
+.pda-account-mode-link { border: 0; padding: 0; background: none; color: #cce7c0; font: inherit; text-decoration: underline; cursor: pointer; }
+.pda-account-mode-link:hover, .pda-account-mode-link:focus-visible { color: #fff; }
 .pda-account-success { padding: 10px 12px; border: 1px solid #91b973; border-radius: 6px; background: #45673955; color: #ecf9da; }
 .pda-account-notes { display: block; width: 100%; min-height: 220px; margin: 12px 0; resize: vertical; }
 .pda-shell-close { display: block; margin: 14px auto 0; }

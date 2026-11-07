@@ -160,9 +160,7 @@ export function openPdaShell({ item, findItem, getData, operate, canEdit, charac
             const lead = document.createElement('p');
             lead.className = 'pda-shell-lead';
             lead.textContent = 'Добро пожаловать!';
-            const hint = document.createElement('p');
-            hint.textContent = 'Выберите раздел слева.';
-            content.append(lead, hint);
+            content.append(lead);
             if (accountLoading) {
                 const loading = document.createElement('p');
                 loading.textContent = 'Загрузка аккаунта…';
@@ -176,7 +174,7 @@ export function openPdaShell({ item, findItem, getData, operate, canEdit, charac
                     content.append(message);
                 }
                 const name = document.createElement('p');
-                name.textContent = `Вы вошли как ${accountSnapshot.account.login}. Заметки аккаунта доступны с другого КПК в этом мире; книги остаются на устройстве.`;
+                name.textContent = `Аккаунт: ${accountSnapshot.account.login}`;
                 content.append(name);
                 if (canEdit) {
                     const logout = document.createElement('button');
@@ -188,24 +186,16 @@ export function openPdaShell({ item, findItem, getData, operate, canEdit, charac
                     content.append(logout);
                 }
             } else if (canEdit) {
-                const switcher = document.createElement('div');
-                switcher.className = 'pda-account-switch';
-                for (const [mode, label] of [['login', 'Вход'], ['register', 'Создать аккаунт']]) {
-                    const button = document.createElement('button');
-                    button.type = 'button';
-                    button.className = `btn btn-secondary${accountMode === mode ? ' active' : ''}`;
-                    button.textContent = label;
-                    button.setAttribute('aria-pressed', String(accountMode === mode));
-                    button.disabled = busy;
-                    button.onclick = () => { accountMode = mode; accountError = ''; render(); };
-                    switcher.append(button);
+                const title = document.createElement('h3');
+                title.className = 'pda-account-title';
+                title.textContent = accountMode === 'register' ? 'Регистрация' : 'Вход в аккаунт';
+                content.append(title);
+                if (accountMode === 'register') {
+                    const rules = document.createElement('p');
+                    rules.className = 'pda-account-rules';
+                    rules.textContent = 'Логин: 3–32 символа (буквы, цифры, точка, дефис или _). Пароль: 6–128 символов. После регистрации вход выполнится автоматически.';
+                    content.append(rules);
                 }
-                const introduction = document.createElement('p');
-                introduction.className = 'pda-account-introduction';
-                introduction.textContent = accountMode === 'register'
-                    ? 'Создайте аккаунт в этом мире. После создания вход выполнится автоматически.'
-                    : 'Войдите в существующий аккаунт этого мира.';
-                content.append(switcher, introduction);
                 const form = document.createElement('form');
                 form.className = 'pda-account-form';
                 form.autocomplete = 'off';
@@ -253,15 +243,9 @@ export function openPdaShell({ item, findItem, getData, operate, canEdit, charac
                 const loginField = document.createElement('label');
                 loginField.className = 'pda-account-field';
                 loginField.append('Логин', login);
-                const loginHelp = document.createElement('small');
-                loginHelp.textContent = '3–32 символа: буквы, цифры, точка, дефис или _.';
-                loginField.append(loginHelp);
                 const passwordField = document.createElement('label');
                 passwordField.className = 'pda-account-field';
                 passwordField.append('Пароль', password);
-                const passwordHelp = document.createElement('small');
-                passwordHelp.textContent = 'От 6 до 128 символов.';
-                passwordField.append(passwordHelp);
                 form.append(loginField, passwordField);
                 if (accountError) {
                     const error = document.createElement('p');
@@ -279,6 +263,17 @@ export function openPdaShell({ item, findItem, getData, operate, canEdit, charac
                 form.append(button);
                 form.onsubmit = event => { event.preventDefault(); submit(); };
                 content.append(form);
+                const switcher = document.createElement('p');
+                switcher.className = 'pda-account-switch';
+                switcher.append(accountMode === 'register' ? 'Уже есть аккаунт? ' : 'Нет аккаунта? ');
+                const switchButton = document.createElement('button');
+                switchButton.type = 'button';
+                switchButton.className = 'pda-account-mode-link';
+                switchButton.textContent = accountMode === 'register' ? 'Перейти ко входу' : 'Перейти к регистрации';
+                switchButton.disabled = busy;
+                switchButton.onclick = () => { accountMode = accountMode === 'register' ? 'login' : 'register'; accountError = ''; render(); };
+                switcher.append(switchButton);
+                content.append(switcher);
             }
             return;
         }

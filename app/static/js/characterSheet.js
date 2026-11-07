@@ -4806,7 +4806,7 @@ async function renderEquipmentTab(data) {
     if(renderVersion===equipmentRenderVersion)renderProstheses(loadout,data,window.operateProsthesis,currentCharacterCanEdit&&!medicalOperationInProgress,currentCharacterId);
     if(renderVersion===equipmentRenderVersion){
         const craftingButton=document.createElement('button');craftingButton.type='button';craftingButton.className='btn btn-secondary';
-        craftingButton.id='character-crafting-open';craftingButton.textContent='Создание и модификации';craftingButton.disabled=!currentCharacterCanEdit;
+        craftingButton.id='character-crafting-open';craftingButton.textContent='Создание, модификации и разбор';craftingButton.disabled=!currentCharacterCanEdit;
         craftingButton.onclick=window.openCharacterCrafting;container.prepend(craftingButton);
     }
     restoreSheetViewState(viewState);

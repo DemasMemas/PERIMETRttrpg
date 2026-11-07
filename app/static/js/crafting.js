@@ -23,7 +23,7 @@ export async function showCrafting({characterId,lobbyId,onSaved}){
     const modal=el('div',null,'modal');modal.id='crafting-modal';modal.style.display='flex';
     const panel=el('div',null,'modal-content');panel.style.cssText='max-width:900px;max-height:90vh;overflow:auto';
     modal.append(panel);document.body.append(modal);
-    const header=el('div',null,'block-header');header.append(el('h3','Создание и модификации'));
+    const header=el('div',null,'block-header');header.append(el('h3','Создание, модификации и разбор'));
     const socket=window.socket;let socketUpdateHandler;
     const close=()=>{document.removeEventListener('keydown',onKey);if(socketUpdateHandler)socket?.off?.('character_data_updated',socketUpdateHandler);modal.remove();};
     const onKey=event=>{if(event.key==='Escape')close();};document.addEventListener('keydown',onKey);
@@ -79,8 +79,8 @@ export async function showCrafting({characterId,lobbyId,onSaved}){
             return;
         }
         const tabs=el('div',null,'crafting-tabs');tabs.setAttribute('role','tablist');body.append(tabs);
-        const panes={creation:el('section',null,'crafting-pane'),modifications:el('section',null,'crafting-pane'),other:el('section',null,'crafting-pane')};
-        for(const [key,label] of [['creation','Создание'],['modifications','Модификации'],['other','Другое']]){
+        const panes={creation:el('section',null,'crafting-pane'),modifications:el('section',null,'crafting-pane'),salvage:el('section',null,'crafting-pane'),other:el('section',null,'crafting-pane')};
+        for(const [key,label] of [['creation','Создание'],['modifications','Модификации'],['salvage','Разбор'],['other','Другое']]){
             const tab=button(label,()=>{activeTab=key;activateTab();});tab.setAttribute('role','tab');tab.dataset.craftingTab=key;tabs.append(tab);
             panes[key].dataset.craftingPane=key;body.append(panes[key]);
         }
@@ -174,7 +174,7 @@ export async function showCrafting({characterId,lobbyId,onSaved}){
         await show();
         if(snapshot.targets.length)renderModifications(panes.modifications);
         else panes.modifications.append(el('p','Нет снаряжения для модификации.'));
-        renderSalvage(panes.other);
+        renderSalvage(panes.salvage);
         renderFlamethrowers(panes.other);
         if(snapshot.state.history?.length){panes.other.append(el('h4','Последние работы'));for(const result of snapshot.state.history.slice(-5).reverse())panes.other.append(el('p',`${result.name}: ${result.cancelled?'отменено':result.success?'готово':'неудача'}${result.roll!=null?(result.kind==='salvage'?` · к100 ${result.roll} + ${result.bonus} = ${result.total} · ${result.materials.map(m=>`${m.name} ×${m.quantity}`).join(', ')||'без добычи'}`:` · к100 ${result.roll}, СЛ ${result.difficulty}`):''}`));}
     };
@@ -220,17 +220,21 @@ export async function showCrafting({characterId,lobbyId,onSaved}){
         }
     };
     const renderSalvage=container=>{
-        const candidates=snapshot.inventory.filter(e=>e.salvage_kind);
+        container.append(el('h4','Разбор предметов'));
+        const candidates=snapshot.inventory.filter(e=>e.salvage_kind && (e.item.category!=='ammo'||Number(e.item.quantity)>=20));
         const tools=snapshot.inventory.filter(e=>e.salvage_tool_bonus>0);
-        if(!candidates.length||!tools.length)return;
-        const section=el('details',null,'crafting-salvage');section.append(el('summary','Разобрать предмет'));container.append(section);
+        if(!candidates.length)container.append(el('p','Нет предметов для разбора. Подходят оружие, броня, гранаты, электроника и стопки от 20 одинаковых патронов.'));
+        if(!candidates.length)return;
+        container.append(el('p','Инструмент не обязателен, но даёт бонус к броску разбора.'));
+        const section=el('div',null,'crafting-salvage');container.append(section);
         const target=select('Предмет для разбора',candidates.map((e,i)=>[i,e.item.name]));
-        const tool=select('Один инструмент',tools.map((e,i)=>[i,e.item.name]));
+        const tool=select('Инструмент для разбора',[['','Без инструмента'],...tools.map((e,i)=>[i,`${e.item.name} · +${e.salvage_tool_bonus}`])]);
         const amount=el('input',null,'form-control');amount.type='number';amount.min=1;amount.step=1;amount.value=1;amount.setAttribute('aria-label','Количество для разбора');
         const update=()=>{const item=candidates[Number(target.value)].item;amount.disabled=item.category!=='ammo';amount.value=item.category==='ammo'?Math.min(Number(item.quantity)||1,20):1;amount.max=item.quantity||1;};
         target.onchange=update;update();
-        section.append(target,tool,amount,button('Начать разбор',async()=>{
-            const payload={path:candidates[Number(target.value)].path,tool_path:tools[Number(tool.value)].path,quantity:Number(amount.value)};
+        section.append(el('label','Предмет'),target,el('label','Инструмент (необязательно)'),tool,el('label','Количество (для патронов)'),amount,button('Начать разбор',async()=>{
+            const payload={path:candidates[Number(target.value)].path,quantity:Number(amount.value)};
+            if(tool.value!=='')payload.tool_path=tools[Number(tool.value)].path;
             try{
                 const result=(await Server.craft(characterId,{operation:'quote_salvage',...payload})).result;
                 if(window.confirm(`${result.name}: разбор займёт ${result.duration_seconds/60} мин. Бросок к100 + ${result.bonus}. После завершения предмет исчезнет. Начать?`))await act('salvage',payload);

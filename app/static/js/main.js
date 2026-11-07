@@ -68,7 +68,7 @@ import {
     setLocationAssetResizeAxis, getLocationAssetResizeState,
     deleteSelectedLocationAsset, toggleSelectedLocationAssetsHidden, toggleSelectedLocationFire,
     updateSelectedLocationAssetDetails, previewSelectedLocationLamp, updateSelectedLocationRoof, generateSelectedLocationRoof,
-    setSelectedLocationTraversalCategory,
+    setSelectedLocationTraversalCategory, setSelectedLocationCover,
     setLocationDarknessOverlayVisible,
 } from './locationScene.js';
 import { getUserColorHex, updateMyColor } from './colors.js';
@@ -1061,6 +1061,7 @@ window.enterLocation = async function(locationId, { scoutView = null } = {}) {
                     }
                     const keepPreciseOpen = assetInspector.querySelector('.location-asset-precise')?.open || false;
                     const keepRoofOpen=assetInspector.querySelector('[data-roof-section-fields]')?.open||false;
+                    const keepCoverOpen=assetInspector.querySelector('[data-selected-cover-fields]')?.open||false;
                     assetInspector.replaceChildren();
                     if (!selection) {
                         const hint = document.createElement('p');
@@ -1112,6 +1113,21 @@ window.enterLocation = async function(locationId, { scoutView = null } = {}) {
                             <button type="button" data-roof-apply>Применить к крыше</button>
                         </details>
                         <div data-roof-wall-fields hidden><small>Высота этой стороны изменяет кровлю корпуса. Для независимой ручной правки можно отвязать стену.</small><button type="button" data-roof-wall-detach>Отвязать стену от крыши</button></div>
+                        <details class="location-cover-settings" data-selected-cover-fields hidden>
+                            <summary>Настройка укрытия</summary>
+                            <div class="location-cover-fields">
+                                <label>Класс укрытия <select class="form-control" data-cover-field="coverClass">
+                                    <option value="conditional">Условное</option><option value="flimsy">Хлипкое</option>
+                                    <option value="medium">Средней прочности</option><option value="strong">Прочное</option>
+                                    <option value="very_strong">Очень прочное</option><option value="titanium">Титановое</option>
+                                    <option value="special">Особое</option>
+                                </select></label>
+                                <label>Текущие ОЗ <input class="form-control" type="number" min="0" max="1000000" step="1" data-cover-field="hp"></label>
+                                <label>Максимальные ОЗ <input class="form-control" type="number" min="1" max="1000000" step="1" data-cover-field="maxHp"></label>
+                                <label>Защита, % <input class="form-control" type="number" min="0" max="100" step="1" data-cover-field="protection"></label>
+                            </div>
+                            <button type="button" class="btn btn-secondary" data-cover-save>Сохранить укрытие</button>
+                        </details>
                         <div class="location-asset-resize-tools" data-resize-tools hidden>
                             <strong data-resize-status></strong>
                             <span>Ось размера:</span>
@@ -1163,6 +1179,29 @@ window.enterLocation = async function(locationId, { scoutView = null } = {}) {
                         ? (selection.isLit ? 'Выключить' : 'Включить')
                         : (selection.isLit ? 'Потушить' : 'Зажечь');
                     if (keepPreciseOpen) assetInspector.querySelector('.location-asset-precise').open = true;
+                    const coverFields = assetInspector.querySelector('[data-selected-cover-fields]');
+                    coverFields.hidden = !selection.cover || selection.selectedCount !== 1;
+                    if (selection.cover && selection.selectedCount === 1) {
+                        coverFields.open = keepCoverOpen;
+                        for (const [key,value] of Object.entries(selection.cover)) {
+                            const input = coverFields.querySelector(`[data-cover-field="${key}"]`);
+                            if (input) input.value = value;
+                        }
+                        coverFields.querySelector('[data-cover-save]').onclick = async event => {
+                            const read = key => {
+                                const value = coverFields.querySelector(`[data-cover-field="${key}"]`).value;
+                                return value === '' ? NaN : Number(value);
+                            };
+                            const button = event.currentTarget;
+                            button.disabled = true;
+                            try {
+                                if (await setSelectedLocationCover({
+                                    coverClass: coverFields.querySelector('[data-cover-field="coverClass"]').value,
+                                    hp: read('hp'), maxHp: read('maxHp'), protection: read('protection'),
+                                })) showNotification('Укрытие обновлено', 'success');
+                            } finally { if (button.isConnected) button.disabled = false; }
+                        };
+                    }
                     assetInspector.querySelector('[data-asset-position]').textContent = `Клетка ${Math.floor(selection.x)}, ${Math.floor(selection.z)}`;
                     const heightInput = assetInspector.querySelector('[data-asset-elevation]');
                     heightInput.min = selection.kind === 'lamp' ? String((selection.level || 0)*STOREY_HEIGHT) : '0';

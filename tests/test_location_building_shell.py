@@ -156,6 +156,33 @@ def test_generated_objects_keep_rest_socket_permissions_and_round_trip(client, a
             connection.disconnect()
 
 
+def test_cover_settings_accept_custom_hp_and_protection_only_from_gm(client, create_user, auth_headers):
+    gm, player = create_user('cover-gm'), create_user('cover-player')
+    headers = auth_headers(gm)
+    lobby = client.post('/lobbies/', headers=headers, json={
+        'name': 'Cover settings', 'map_type': 'empty', 'chunks_width': 1, 'chunks_height': 1,
+    }).get_json()
+    api = f"/lobbies/{lobby['id']}"
+    assert client.post(api + '/join', headers=auth_headers(player)).status_code == 200
+    location = client.post(api + '/locations', headers=headers, json={
+        'name': 'Cover test', 'world_tile_x': 1, 'world_tile_z': 1,
+        'grid_width': 6, 'grid_height': 6,
+    }).get_json()
+    created = client.post(f"{api}/locations/{location['id']}/objects", headers=headers, json={
+        'name': 'Сетчатый забор PBR', 'type': 'fence', 'tile_x': 2, 'tile_y': 2,
+        'properties': {'dimensions': {'width': 2, 'depth': 0.2, 'height': 2}},
+    }).get_json()
+    url = f"{api}/locations/objects/{created['id']}"
+    properties = {'cover_class': 'strong', 'cover_max_hp': 8500, 'cover_hp': 7000,
+                  'cover_base_physical_protection': 60, 'cover_physical_protection': 60}
+    assert client.patch(url, headers=auth_headers(player), json={'properties': properties}).status_code == 403
+    assert client.patch(url, headers=headers, json={'properties': {**properties, 'cover_hp': 9000}}).status_code == 400
+    response = client.patch(url, headers=headers, json={'properties': properties})
+    assert response.status_code == 200, response.get_json()
+    profile = CombatService._cover_profile(db.session.get(LocationObject, created['id']))
+    assert (profile['hp'], profile['max_hp'], profile['physical_protection']) == (7000, 8500, 60)
+
+
 def test_atomic_building_edits_isolate_levels_and_clients(client, app, create_user, auth_headers):
     gm, player = create_user('batch-gm'), create_user('batch-player')
     headers = auth_headers(gm)
