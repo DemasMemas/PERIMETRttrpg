@@ -293,6 +293,29 @@ def test_weapon_levels_require_every_previous_level_even_with_open_slots(client,
     assert quote.status_code==200,quote.json
 
 
+def test_armor_branch_order_allows_multiple_first_levels_and_checks_replacement(app):
+    from app.services.crafting import modification_target_plan
+    from app.services.exceptions import ValidationError
+
+    armor={'id':'light-armor','name':'Лёгкая броня','category':'armor','itemClass':'4',
+        'attributes':{'modification_category':'Лёгкая'},'modifications':[]}
+    data={'equipment':{'armor':armor}}
+    def plan(rule_id,**extra):
+        return modification_target_plan(data,{'rule_id':rule_id,
+            'target_path':['equipment','armor'],**extra})
+
+    for rule_id in ('armor-a5','armor-a9','armor-a13'):
+        assert plan(rule_id)['rule']['level']==1
+        armor['modifications'].append(make_record(rule_id))
+    with pytest.raises(ValidationError,match='последовательно'):
+        plan('armor-a11')
+    assert plan('armor-a10')['rule']['level']==2
+    assert plan('armor-a6')['rule']['level']==2
+    armor['modifications']=[make_record(rule_id) for rule_id in ('armor-a5','armor-a6','armor-a7')]
+    with pytest.raises(ValidationError,match='последовательно'):
+        plan('armor-a9',replace_rule_id='armor-a5')
+
+
 def test_weapon_slot_counts_follow_item_class(app):
     from app.services.equipment_modifications import slots
     for item_class,expected in [('1',1),('2',2),('3',3),('Н',3)]:
