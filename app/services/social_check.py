@@ -141,6 +141,13 @@ def run(character_id,user_id,payload):
         if check.get('weather_modifier'):modifiers['rules'].append(f"Погода на улице: {check['weather_modifier']:+d}")
         if check.get('weather_disadvantage'):modifiers['rules'].append('Ливень: Помеха')
         check.update(difficulty=difficulty,success=None if quick else not check.get('automatic_failure') and check['total']>=difficulty,rules=modifiers['rules'])
+        if path=='skills.other.stealth' and active:
+            from app.services.portable_lights import active_his_sources
+            ambient=[source for source in active_his_sources(active.location_id)
+                if source['floor_level']==(active.floor_level or 0)]
+            if ambient:
+                check['ambient_noise_sources']=[{'kind':'conversation','continuous':True} for _ in ambient]
+                check['rules'].append('На этом этаже работает ХИС: непрерывный шум как разговор')
         if lie_check:check['will_check']=lie_check
         if path=='skills.social.deception':memory['firstLieUsed']=True
         if target and social and background_is(data,'Балабол'):memory['skills'][path]=max(-4,min(4,int(memory['skills'].get(path,0))+(1 if check['success'] else -1)))

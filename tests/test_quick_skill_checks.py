@@ -31,6 +31,20 @@ def run(client,checks,auth_headers,**changes):
                       headers=auth_headers(checks['actor_user']),json=body)
 
 
+def test_stealth_check_reports_continuous_his_conversation_sound(client,checks,auth_headers):
+    data=deepcopy(checks['actor_character'].data)
+    data['skills'].setdefault('other',{})['stealth']={'base':10,'bonus':0}
+    data['inventory']['pockets']=[{'id':'his-stealth','name':'ХИС',
+        'glowState':{'activated':True,'remaining_seconds':900}}]
+    checks['actor_character'].data=data;db.session.commit()
+    result=run(client,checks,auth_headers,operation_id='his-stealth-check',
+        skill_path='skills.other.stealth',difficulty=10)
+    assert result.status_code==200,result.json
+    check=result.json['check']
+    assert check['ambient_noise_sources'][0]['kind']=='conversation'
+    assert any('ХИС' in line for line in check['rules'])
+
+
 @pytest.mark.parametrize('path,equipment,weather',[
     ('skills.physical.awareness.visual',-2,-3),('skills.physical.shooting',-2,-2),
     ('skills.physical.awareness.hearing',3,-2),

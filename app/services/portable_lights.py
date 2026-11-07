@@ -290,6 +290,32 @@ def ground_sources(location_id,objects=None):
     return sources
 
 
+def active_his_sources(location_id):
+    """Непрерывные звуковые источники ХИС для проверок и будущей аудиосистемы."""
+    result=[]
+    for actor in LocationCharacter.query.filter_by(location_id=location_id).all():
+        if not actor.character:continue
+        seen=set()
+        for _,item in walk(actor.character.data or {},True):
+            if str(item.get('name') or '').strip().casefold()!='хис':continue
+            if (item.get('glowState') or {}).get('remaining_seconds',0)<=0:continue
+            identity=item.get('id') or id(item)
+            if identity in seen:continue
+            seen.add(identity)
+            result.append({'id':f'his-{actor.id}-{identity}','kind':'conversation','continuous':True,
+                'x':actor.pos_x+.5,'z':actor.pos_y+.5,'floor_level':actor.floor_level or 0,
+                'remaining_seconds':item['glowState']['remaining_seconds'],'holder_character_id':actor.character_id})
+    for obj in LocationObject.query.filter_by(location_id=location_id,type='ground_item').all():
+        for item in (obj.properties or {}).get('contents') or []:
+            if str(item.get('name') or '').strip().casefold()!='хис':continue
+            if (item.get('glowState') or {}).get('remaining_seconds',0)<=0:continue
+            result.append({'id':f'his-ground-{obj.id}-{item.get("id") or "item"}',
+                'kind':'conversation','continuous':True,'x':obj.tile_x+.5,'z':obj.tile_y+.5,
+                'floor_level':(obj.properties or {}).get('floor_level',0),
+                'remaining_seconds':item['glowState']['remaining_seconds'],'holder_character_id':None})
+    return result
+
+
 def covers(actor,target,*,wide=False,objects=None):
     from app.services.combat import CombatService
     sources=ready_sources(actor,objects=objects)

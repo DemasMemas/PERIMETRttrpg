@@ -202,6 +202,7 @@ def test_glow_stick_can_be_placed_on_own_floor(client,grenade_game,auth_headers)
 
 
 def test_his_uses_eight_meter_light_for_thirty_minutes(client,grenade_game,auth_headers):
+    from app.services.portable_lights import active_his_sources
     actor=grenade_game['actor_location']
     data=deepcopy(actor.character.data)
     data['inventory']['pockets']=[{'id':'his-1','name':'ХИС','category':'misc','quantity':1}]
@@ -214,6 +215,9 @@ def test_his_uses_eight_meter_light_for_thirty_minutes(client,grenade_game,auth_
     assert response.status_code==200,response.json
     source=ready_sources(actor)[0]
     assert source['radial'] and source['range']==8
+    sound=active_his_sources(actor.location_id)
+    assert len(sound)==1 and sound[0]['kind']=='conversation' and sound[0]['continuous']
+    assert sound[0]['holder_character_id']==actor.character_id
     assert actor.character.data['inventory']['pockets'][0]['glowState']['remaining_seconds']==1800
     from app.services.portable_lights import advance_glow
     data=deepcopy(actor.character.data)
@@ -229,8 +233,11 @@ def test_his_uses_eight_meter_light_for_thirty_minutes(client,grenade_game,auth_
             'item_path':['inventory','pockets',0],'expected_item':item,'amount':1})
     assert response.status_code==200,response.json
     assert ground_sources(actor.location_id)[0]['range']==8
+    dropped=active_his_sources(actor.location_id)
+    assert len(dropped)==1 and dropped[0]['holder_character_id'] is None
     advance_ground(actor.location_id,1800)
     assert not ground_sources(actor.location_id)
+    assert not active_his_sources(actor.location_id)
 
 
 def test_nvg_charge_is_preserved_when_helmet_leaves_belt_mount():
