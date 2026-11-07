@@ -125,6 +125,7 @@ def _allocate(data,recipe,*,with_status=False):
     candidates=entries(data);spent={};allocations=[];missing=[];statuses=[]
     for index,component in enumerate(recipe['components']):
         if _environment(component):continue
+        ammo_template=db.session.get(ItemTemplate,component['ammo_template_id']) if component.get('ammo_template_id') else None
         meat_component = index == 0 and recipe['id'] in {'recipe-aa15', 'recipe-aa16'}
         variants=component.get('alternatives') or [component]
         remaining=None;picked=None;options=[];prior_spent=spent.copy()
@@ -138,6 +139,9 @@ def _allocate(data,recipe,*,with_status=False):
                 from app.services.flamethrower import charges
                 attrs=item.get('attributes') or {};whole=bool(meat_component or component.get('whole_tank') or component.get('whole_air')
                     or normalized(variant['name']) in {'стеклянная бутылка','пластиковая бутылка','канистра','кастрюля','котелок'})
+                if component.get('ammo_template_id'):
+                    from app.services.crafting_ammo import is_plain_ammo
+                    if not ammo_template or not is_plain_ammo(item,ammo_template):continue
                 matches_box=(recipe['id']=='recipe-aa4' and variant['name']=='Спички'
                     and normalized(item.get('name'))=='спички 10 штук')
                 if meat_component:
@@ -207,7 +211,9 @@ def _tools(character,data,recipe,option):
 def quote(character,data,payload):
     from app.services.combat import CombatService
     from app.services.equipment_passives import craft_difficulty_modifier
+    from app.services.crafting_ammo import chosen_ammo
     recipe=recipe_by_id(payload.get('recipe_id'));option=payload.get('tool_option',0)
+    recipe,ammo_template,ammo_variant=chosen_ammo(recipe,payload)
     if recipe.get('requires_tool_crafting'):
         from app.services.character_traits import trait_count,background_is
         if not trait_count(data,'Мастер на все руки') and not background_is(data,'Полевой ученый'):raise ValidationError('Изготовление инструментов требует «Мастера на все руки» или предыстории «Полевой учёный»')
@@ -226,7 +232,7 @@ def quote(character,data,payload):
         if recipe.get('maintenance') else creation_quote(level,difficulty,base_automatic=recipe['automatic'],
             difficulty_modifier=(approval.get('modifier',0) if approval else 0)+craft_difficulty_modifier(data)))
     tool_output=CRAFTED_TOOLS.get(recipe['id'])
-    output=_template(tool_output[0] if tool_output else recipe['output_name'])
+    output=ammo_template or _template(tool_output[0] if tool_output else recipe['output_name'])
     if not output:missing.append('В каталоге нет шаблона результата: '+recipe['output_name'])
     if tool_output and output and (output.category!='tool' or type((output.attributes or {}).get('uses')) is not int
             or not tool_output[1]<output.attributes['uses']):
@@ -235,7 +241,8 @@ def quote(character,data,payload):
     if recipe.get('duration_seconds') is None:missing.append('В рецепте не задан срок работы')
     return {**result,'recipe':recipe,'allocations':allocations,'missing':missing,
         'component_status':component_status,'other_missing':missing[component_missing_count:],
-        'output_id':output.id if output else None,
+        'output_id':output.id if output else None,'output_variant':ammo_variant,
+        'ammo_template_id':ammo_template.id if ammo_template else None,
         'output_uses':tool_output[1] if tool_output else None,
         'approval_id':approval['id'] if approval else None,'duration_seconds':recipe.get('duration_seconds')}
 
@@ -312,6 +319,7 @@ def _return_materials(data,escrow,lost):
 
 def snapshot(character,user_id):
     from app.services.character_creation import _catalog
+    from app.services.crafting_ammo import available_ammo
     from app.services.equipment_modifications import supported
     from app.services.flamethrower import resources
     from app.services.salvage import kind_of,tool_bonus
@@ -322,7 +330,7 @@ def snapshot(character,user_id):
     rules=catalog()
     placement=LocationCharacter.query.filter_by(character_id=character.id).order_by(LocationCharacter.last_action.desc().nullslast(),LocationCharacter.id.desc()).first()
     for entry in rules['modifications']:entry['automatic_installation']=supported(entry)
-    return {'catalog':rules,'state':state,'inventory':[{'path':path,'item':item,'uses':_available_uses(item),'salvage_kind':kind_of(item),'salvage_tool_bonus':tool_bonus(item)} for path,item in entries(data)],
+    return {'catalog':rules,'ammo_options':available_ammo(),'state':state,'inventory':[{'path':path,'item':item,'uses':_available_uses(item),'salvage_kind':kind_of(item),'salvage_tool_bonus':tool_bonus(item)} for path,item in entries(data)],
         'targets':modification_targets(data),'is_gm':character.lobby.gm_id==user_id,'revision':character.revision,
         'placement':{'lobby_id':character.lobby_id,'location_id':placement.location_id,'actor_id':placement.id} if placement else None,
         'flamethrowers':[{'index':index,'weapon':weapon,'resources':[deepcopy(i) for i in resources(data,weapon)]}
@@ -522,7 +530,8 @@ def operate(character_id,user_id,payload):
         result={'id':str(uuid4()),'kind':'recipe','recipe_id':plan['recipe']['id'],'name':plan['recipe']['name'],
             'quote':{k:deepcopy(plan[k]) for k in ('difficulty','automatic_success','failure_loss')},
             'escrow':reserve,'output_id':plan['output_id'],'output_count':plan['recipe']['output_count'],
-            'output_uses':plan['output_uses'],
+            'output_uses':plan['output_uses'],'output_variant':plan['output_variant'],
+            'ammo_template_id':plan['ammo_template_id'],
             'started_at':now(character),'ready_at':now(character)+plan['duration_seconds']}
         state['current']=result
         if plan['approval_id']:
@@ -598,6 +607,11 @@ def operate(character_id,user_id,payload):
                 produced['uses']=job['output_count']%maximum or maximum
                 produced['attributes']['uses_remaining']=produced['uses']
             else:produced=item_from_template(output,job['output_count'])
+            if job.get('ammo_template_id'):
+                variant=job.get('output_variant')
+                produced['ammo_variant']=variant if variant!='base' else None
+                produced['attributes']['ammo_variant']=produced['ammo_variant']
+                if variant in {'bp','ep'}:produced['name']=f"{output.name} {'БП' if variant=='bp' else 'ЭП'}"
             if job['recipe_id'] in {'recipe-aa15', 'recipe-aa16'}:
                 from app.services.cooked_meat import cooked_output
                 source=next(entry['item'] for entry in job['escrow'] if entry['component']==0)

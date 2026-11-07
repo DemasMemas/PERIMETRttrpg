@@ -96,20 +96,36 @@ export async function showCrafting({characterId,lobbyId,onSaved}){
             ++generation;selectedRecipe=recipes.value;detail.replaceChildren();
             const recipe=snapshot.catalog.recipes.find(r=>r.id===recipes.value);if(!recipe)return;
             detail.append(el('small',recipe.group),el('h4',recipe.name),el('p',`Время: ${recipe.duration_text}. Нужно: ${recipe.tools_text}.`));
+            const ammoCategory={'recipe-v25':1,'recipe-v26':2,'recipe-v27':3}[recipe.id];
+            const ammoChoices=ammoCategory?snapshot.ammo_options.filter(option=>option.category===ammoCategory):[];
+            const ammo=ammoCategory?select('Калибр патронов',ammoChoices.map(option=>[option.id,`${option.name} · ${option.price} ₽/шт.`])):null;
+            const ammoVariant=ammoCategory?select('Вид патронов',[]):null;
+            const fillAmmoVariants=()=>{
+                if(!ammoVariant)return;
+                const selected=ammoChoices.find(option=>option.id===Number(ammo.value));
+                const previous=ammoVariant.value;ammoVariant.replaceChildren();
+                for(const [kind,label] of [['base','Обычные'],['bp','БП'],['ep','ЭП']])if(kind==='base'||selected?.variants.includes(kind)){
+                    const option=el('option',label);option.value=kind;ammoVariant.append(option);
+                }
+                if([...ammoVariant.options].some(option=>option.value===previous))ammoVariant.value=previous;
+            };
+            if(ammo){detail.append(el('label','Калибр'),ammo,el('label','Вид патронов'),ammoVariant);fillAmmoVariants();}
             const parts=recipe.tools_text.split(',').at(-1).split('/');
-            const tool=select('Вариант приготовления',(recipe.difficulty_options.length?recipe.difficulty_options:[0]).map((difficulty,i)=>[i,`${parts[i]?.trim()||'По рецепту'} · исходная СЛ ${difficulty}`]));
+            const tool=select('Вариант приготовления',(ammoCategory===2?[65]:recipe.difficulty_options.length?recipe.difficulty_options:[0]).map((difficulty,i)=>[i,`${parts[i]?.trim()||'По рецепту'} · исходная СЛ ${difficulty}`]));
             if(recipe.difficulty_options.length>1)detail.append(tool);
             const approval=snapshot.state.tool_requests?.filter(r=>r.recipe_id===recipe.id&&r.status==='approved'&&!r.used).at(-1);
             const preview=el('div');detail.append(preview);
             const updateQuote=async()=>{
                 const quoteGeneration=++generation;preview.replaceChildren(el('p','Считаем компоненты…'));
                 try{
-                    const response=await Server.craft(characterId,{operation:'quote',recipe_id:recipe.id,tool_option:Number(tool.value),approval_id:approval?.id});
+                    const ammoPayload=ammo?{ammo_template_id:Number(ammo.value),ammo_variant:ammoVariant.value}:{};
+                    const response=await Server.craft(characterId,{operation:'quote',recipe_id:recipe.id,tool_option:Number(tool.value),approval_id:approval?.id,...ammoPayload});
                     if(quoteGeneration!==generation||!modal.isConnected)return;
-                    const plan=response.result;preview.replaceChildren(el('p',`Итоговая СЛ ${plan.difficulty}${plan.automatic_success?' · автоуспех':''}`));
+                    const plan=response.result;preview.replaceChildren(el('p',`Результат: ${plan.recipe.name} × ${plan.recipe.output_count}`),
+                        el('p',`Итоговая СЛ ${plan.difficulty}${plan.automatic_success?' · автоуспех':''}`));
                     if(approval)preview.append(el('p',`ГМ одобрил: ${approval.tool_name||'условия'} · СЛ ${approval.modifier}`));
                     let statusIndex=0;
-                    for(const component of recipe.components){
+                    for(const component of plan.recipe.components){
                         if(component.name.toLocaleLowerCase().startsWith('доступ к ')){
                             preview.append(el('p',component.name));continue;
                         }
@@ -119,11 +135,13 @@ export async function showCrafting({characterId,lobbyId,onSaved}){
                             `${option.name} ${option.available ?? 0}/${option.required ?? option.quantity}`).join(' или ')));
                     }
                     for(const missing of plan.other_missing || plan.missing)preview.append(el('p',missing,'error-message'));
-                    const start=button('Начать создание',()=>act('start',{recipe_id:recipe.id,tool_option:Number(tool.value),approval_id:approval?.id}));
+                    const start=button('Начать создание',()=>act('start',{recipe_id:recipe.id,tool_option:Number(tool.value),approval_id:approval?.id,...ammoPayload}));
                     start.disabled=plan.missing.length>0;preview.append(start);
                 }catch(error){if(quoteGeneration===generation)preview.replaceChildren(el('p',error.message));}
             };
-            tool.onchange=updateQuote;await updateQuote();
+            tool.onchange=updateQuote;
+            if(ammo){ammo.onchange=()=>{fillAmmoVariants();void updateQuote();};ammoVariant.onchange=updateQuote;}
+            await updateQuote();
             if(!modal.isConnected||selectedRecipe!==recipe.id)return;
             const extra=select('Дополнительный инструмент',[['','Без дополнительного инструмента'],...snapshot.inventory.map((e,i)=>[i,e.item.name])]);
             detail.append(el('h4','Дополнительный инструмент'),extra);

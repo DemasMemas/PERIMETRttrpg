@@ -444,6 +444,20 @@ module.exports=async({page,request,token,lobby,base,connect,debugPort,safeSessio
                 .map(group=>group.label)})()`);
         assert.deepEqual(actual,expected);
     }
+    await page.evaluate(`document.querySelector('[data-crafting-tab=creation]').click();
+        const recipes=document.querySelector('#crafting-modal select[aria-label=Рецепт]');
+        recipes.value='recipe-v26';recipes.dispatchEvent(new Event('change'));true`);
+    await page.until(`document.querySelector('#crafting-modal select[aria-label="Калибр патронов"]')`,
+        'Конкретные патроны доступны в рецепте');
+    const ammoUi=await page.evaluate(`(()=>{
+        const ammo=document.querySelector('#crafting-modal select[aria-label="Калибр патронов"]');
+        const selected=[...ammo.options].find(option=>option.textContent.includes('5.45x39'));
+        if(!selected)return false;
+        ammo.value=selected.value;ammo.dispatchEvent(new Event('change'));
+        const variants=document.querySelector('#crafting-modal select[aria-label="Вид патронов"]');
+        return ['base','bp','ep'].every(value=>[...variants.options].some(option=>option.value===value));
+    })()`);
+    assert.ok(ammoUi,'Рецепт категории 2 предлагает 5.45x39, БП и ЭП');
     await page.evaluate(`document.querySelector('#crafting-modal .block-header button').click();true`);
     console.log(JSON.stringify({armorBranchesGrouped:true,families:['Лёгкая','Средняя'],
         selfCrafting:true,professionalInstallation:true}));

@@ -32,6 +32,93 @@ def call(client,workshop,auth_headers,operation,**payload):
 def units(data,name):return sum(_available_uses(i) for i in data['inventory']['pockets'] if i['name']==name)
 
 
+def ammo_workshop(workshop):
+    from app.services.equipment_catalog import load_catalog
+    from app.services.character_starting_purchase import item_from_template
+    template_data=next(item for item in load_catalog() if item['name']=='5.45x39' and item['category']=='ammo')
+    template=ItemTemplate(**template_data);db.session.add(template);db.session.flush()
+    character=workshop['actor_character'];data=deepcopy(character.data)
+    data['skills']['other']['engineering']={'base':20,'bonus':0}
+    data['inventory']['pockets']=[item_from_template(template,35),
+        {'name':'Форма для патронов','category':'crafting_material','quantity':1},
+        {'name':'Металлические детали','category':'crafting_material','quantity':5},
+        {'name':'Порох','category':'crafting_material','quantity':1}]
+    character.data=data
+    placement=LocationCharacter.query.filter_by(character_id=character.id).first()
+    db.session.add(LocationObject(location_id=placement.location_id,name='Смесительный станок',type='workbench',
+        tile_x=round(placement.pos_x),tile_y=round(placement.pos_y),properties={}))
+    db.session.commit()
+    return template
+
+
+def test_ammo_recipe_requires_catalog_caliber_and_author_category_two_numbers(workshop):
+    from app.services.crafting import quote
+    from app.services.exceptions import ValidationError
+    template=ammo_workshop(workshop)
+    character=workshop['actor_character']
+    plan=quote(character,character.data,{'recipe_id':'recipe-v26','ammo_template_id':template.id})
+    assert plan['recipe']['output_name']=='5.45x39'
+    assert plan['recipe']['output_count']==20
+    assert plan['recipe']['components'][2]['quantity']==1
+    assert plan['recipe']['difficulty_options']==[65]
+    assert plan['output_id']==template.id
+    with pytest.raises(ValidationError,match='категории'):
+        quote(character,character.data,{'recipe_id':'recipe-v25','ammo_template_id':template.id})
+    with pytest.raises(ValidationError,match='Выберите конкретный калибр'):
+        quote(character,character.data,{'recipe_id':'recipe-v26'})
+    with pytest.raises(ValidationError,match='Неизвестный вид'):
+        quote(character,character.data,{'recipe_id':'recipe-v26','ammo_template_id':template.id,'ammo_variant':['bp']})
+
+
+def test_ammo_base_recipe_creates_catalog_rounds(client,workshop,auth_headers,monkeypatch):
+    template=ammo_workshop(workshop)
+    started=call(client,workshop,auth_headers,'start',recipe_id='recipe-v26',ammo_template_id=template.id)
+    assert started.status_code==200,started.json
+    workshop['lobby'].game_time_minutes+=30;db.session.commit()
+    monkeypatch.setattr('app.services.crafting.resolve_creation',lambda quote:{'success':True,'roll':100,'automatic':False})
+    finished=call(client,workshop,auth_headers,'finish',job_id=started.json['result']['id'],chosen_loss=[])
+    assert finished.status_code==200,finished.json
+    produced=[item for item in finished.json['data']['inventory']['pockets'] if item['name']=='5.45x39']
+    assert len(produced)==2
+    assert sorted(item['quantity'] for item in produced)==[20,35]
+    assert all(item['price']==template.price and item['attributes']['ammo_variant'] is None for item in produced)
+
+
+@pytest.mark.parametrize('variant,rounds,metal,difficulty', [('bp',30,3,80),('ep',25,2,75)])
+def test_ammo_bp_ep_uses_plain_same_caliber_and_catalog_price(client,workshop,auth_headers,monkeypatch,variant,rounds,metal,difficulty):
+    from app.services.crafting import quote
+    template=ammo_workshop(workshop)
+    character=workshop['actor_character'];payload={'recipe_id':'recipe-v26','ammo_template_id':template.id,'ammo_variant':variant}
+    plan=quote(character,character.data,payload)
+    assert plan['recipe']['output_count']==20
+    assert [part['quantity'] for part in plan['recipe']['components']]==[rounds,metal]
+    assert plan['recipe']['difficulty_options']==[difficulty]
+    assert not plan['missing'],plan['missing']
+    started=call(client,workshop,auth_headers,'start',**payload)
+    assert started.status_code==200,started.json
+    workshop['lobby'].game_time_minutes+=30;db.session.commit()
+    monkeypatch.setattr('app.services.crafting.resolve_creation',lambda quote:{'success':True,'roll':100,'automatic':False})
+    finished=call(client,workshop,auth_headers,'finish',job_id=started.json['result']['id'],chosen_loss=[])
+    assert finished.status_code==200,finished.json
+    produced=next(item for item in finished.json['data']['inventory']['pockets'] if item['name']==f"5.45x39 {'БП' if variant=='bp' else 'ЭП'}")
+    assert produced['quantity']==20
+    assert produced['price']==template.price
+    assert produced['templateId']==template.id
+    assert produced['attributes']['ammo_variant']==variant
+    assert units(finished.json['data'],'5.45x39')==35-rounds
+
+
+def test_ammo_bp_ep_rejects_special_or_other_caliber_as_source(workshop):
+    from app.services.crafting import quote
+    template=ammo_workshop(workshop);character=workshop['actor_character']
+    data=deepcopy(character.data)
+    ammo=data['inventory']['pockets'][0]
+    ammo['name']='5.45x39 +';ammo['attributes']['ammo_variant']='improved'
+    data['inventory']['pockets'].append({**deepcopy(ammo),'id':'wrong-caliber','name':'5.56x45','quantity':40})
+    plan=quote(character,data,{'recipe_id':'recipe-v26','ammo_template_id':template.id,'ammo_variant':'bp'})
+    assert any(message.startswith('5.45x39: не хватает 30') for message in plan['missing'])
+
+
 @pytest.mark.parametrize('recipe_id,name,count,price', [
     ('recipe-v38','Форма для патронов',1,200),
     ('recipe-v41','Форма гранаты',2,650),
