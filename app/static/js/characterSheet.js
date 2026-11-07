@@ -7547,7 +7547,7 @@ function formatAmmoStackLabel(ammoItem) {
 }
 
 
-window.openVisorModificationsModal = async function(itemPathStr, slotType) {
+window.openVisorModificationsModal = function(itemPathStr, slotType) {
     const targetPath = JSON.parse(itemPathStr);
     const helmet = getItemByPath(targetPath);
     if (!helmet || !helmet.installedModules) {
@@ -7560,8 +7560,6 @@ window.openVisorModificationsModal = async function(itemPathStr, slotType) {
         return;
     }
 
-    const modTemplates = await loadTemplatesForLobby('modification');
-
     const oldModal = document.getElementById('visor-modifications-modal');
     if (oldModal) oldModal.remove();
 
@@ -7572,72 +7570,19 @@ window.openVisorModificationsModal = async function(itemPathStr, slotType) {
         <div class="modal-content">
             <span class="close" onclick="this.closest('.modal').remove()">&times;</span>
             <h3>Модификации забрала</h3>
-            <div id="installed-mods-list"></div>
-            <hr>
-            <h4>Добавить модификацию</h4>
-            <select id="visor-mod-select" class="form-control">
-                <option value="">-- Выберите --</option>
-                ${modTemplates.map(t => `<option value="${t.id}">${t.name}</option>`).join('')}
-            </select>
+            <div id="installed-mods-list">
+                ${(visor.modifications || []).length
+                    ? visor.modifications.map(mod => mod.ruleId ? renderRuleModification(mod) : renderLegacyModification(mod)).join('')
+                    : '<p>Нет установленных модификаций</p>'}
+            </div>
             <div class="form-actions" style="margin-top:15px;">
-                <button class="btn btn-primary" id="add-mod-btn">Добавить</button>
                 <button class="btn btn-secondary" id="close-modal-btn">Закрыть</button>
             </div>
         </div>
     `;
     document.body.appendChild(modal);
 
-    const installedList = modal.querySelector('#installed-mods-list');
-    const select = modal.querySelector('#visor-mod-select');
-    const addBtn = modal.querySelector('#add-mod-btn');
-    const closeBtn = modal.querySelector('#close-modal-btn');
-
-    function renderInstalled() {
-        const installed = visor.modifications || [];
-        installedList.innerHTML = installed.length ? installed.map((mod, idx) => `
-            <div style="display: flex; align-items: center; gap: 5px; margin-bottom: 5px;">
-                <span style="flex:1;">${escapeHtml(mod.name)}</span>
-                <button type="button" class="btn btn-sm btn-danger" data-mod-index="${idx}">✕</button>
-            </div>
-        `).join('') : '<p>Нет установленных модификаций</p>';
-
-        installedList.querySelectorAll('[data-mod-index]').forEach(btn => {
-            btn.onclick = () => {
-                const idx = parseInt(btn.dataset.modIndex, 10);
-                visor.modifications.splice(idx, 1);
-                renderInstalled(); // обновляем список
-                scheduleAutoSave();
-                forceSyncCharacter();
-                showNotification('Модификация удалена', 'success');
-            };
-        });
-    }
-
-    renderInstalled();
-
-    addBtn.onclick = async () => {
-        const templateId = select.value;
-        if (!templateId) return;
-
-        const template = modTemplates.find(t => t.id == templateId);
-        if (!template) return;
-
-        if (!visor.modifications) visor.modifications = [];
-        visor.modifications.push({
-            id: generateItemId(),
-            templateId: template.id,
-            name: template.name,
-            attributes: { ...template.attributes }
-        });
-
-        renderInstalled(); // обновляем список
-        select.value = '';  // сбрасываем выбор
-        scheduleAutoSave();
-        forceSyncCharacter();
-        showNotification(`Модификация "${template.name}" добавлена`, 'success');
-    };
-
-    closeBtn.onclick = () => modal.remove();
+    modal.querySelector('#close-modal-btn').onclick = () => modal.remove();
     modal.querySelector('.close').onclick = () => modal.remove();
 
     modal.style.display = 'flex';

@@ -5,6 +5,27 @@ async function rules(){
     await module.link(()=>{throw Error('Неожиданная зависимость');});await module.evaluate();return module.namespace;
 }
 
+test('окно забрала показывает установленные улучшения без бесплатного добавления и удаления',()=>{
+    const source=fs.readFileSync(path.join(__dirname,'../app/static/js/characterSheet.js'),'utf8');
+    const begin=source.indexOf('window.openVisorModificationsModal ='),end=source.indexOf('window.selectWeaponModel =',begin);
+    const visor={slotType:'visor',modifications:[{name:'Старая модификация',description:'Сохранена'},
+        {ruleId:'armor-g25',name:'Крепление ПНВ',level:1,description:'Крепление ПНВ'}]};
+    const helmet={installedModules:[visor]};
+    let modal;
+    const document={getElementById:()=>null,createElement:()=>({style:{},querySelector:()=>({})}),
+        body:{appendChild:element=>{modal=element;}}};
+    const context=vm.createContext({window:{},document,JSON,getItemByPath:()=>helmet,
+        showNotification:()=>{throw Error('Забрало не найдено');},
+        renderRuleModification:mod=>`<strong>${mod.name}</strong>`,
+        renderLegacyModification:mod=>`<strong>${mod.name}</strong>`});
+    vm.runInContext(source.slice(begin,end),context);
+    context.window.openVisorModificationsModal('["equipment","helmet"]','visor');
+    assert.match(modal.innerHTML,/Старая модификация/);
+    assert.match(modal.innerHTML,/Крепление ПНВ/);
+    assert.doesNotMatch(modal.innerHTML,/Добавить модификацию|visor-mod-select|data-mod-index|add-mod-btn/);
+    assert.equal(visor.modifications.length,2);
+});
+
 test('фиксированные бонусы и дробные значения модификаций доходят до предпросмотра',async()=>{
     const api=await rules();
     const item={modifications:[{name:'Старая заметка',modifiers:{ergonomics:999}},

@@ -33,6 +33,24 @@ def test_player_cannot_assign_free_modifications_but_existing_records_remain(app
     preserve(current,added,is_gm=True)
 
 
+def test_player_cannot_change_visor_modifications_but_gm_can():
+    from app.services.equipment_modifications import preserve
+    from app.services.exceptions import ValidationError
+
+    current={'equipment':{'helmet':{'id':'helmet','category':'helmet',
+        'installedModules':[{'id':'visor','slotType':'visor','category':'visor',
+            'modifications':[{'name':'Старая модификация'}]}]}}}
+    unchanged=deepcopy(current)
+    preserve(current,unchanged,is_gm=False)
+    visor=unchanged['equipment']['helmet']['installedModules'][0]
+    assert visor['modifications']==[{'name':'Старая модификация'}]
+    visor['modifications'].append({'name':'Бесплатная модификация'})
+    with pytest.raises(ValidationError,match='через игровой процесс'):
+        preserve(current,unchanged,is_gm=False)
+    preserve(current,unchanged,is_gm=True)
+    assert visor['modifications'][-1]['name']=='Бесплатная модификация'
+
+
 def test_exoskeleton_run_upgrade_changes_actual_movement(grenade_game):
     actor=grenade_game['actor_location'];location=grenade_game['location']
     data=deepcopy(actor.character.data)
