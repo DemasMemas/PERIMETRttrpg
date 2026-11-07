@@ -162,6 +162,34 @@ def test_sausage_uses_two_boiled_mutant_meat_portions_and_removes_radiation(
     assert 'radiation' not in sausage['attributes']
 
 
+def test_scientist_mechanic_recharges_reanimation_for_five_percent(workshop):
+    from app.services.equipment_modifications import make_record
+    from app.services.professional_repair import quote,perform
+    pair=workshop;actor=pair['actor_character'];specialist=pair['target_character']
+    template=ItemTemplate(name='Проверочный экзоскелет',category='armor',price=10000,
+        weight=20,volume=10,attributes={'import_source':'equipment_workbook'})
+    db.session.add(template);db.session.flush()
+    owned=deepcopy(actor.data);owned['inventory']['money']=1000
+    owned['inventory']['pockets']=[{'id':'protocol-armor','templateId':template.id,
+        'name':template.name,'category':'armor','quantity':1,'reanimationCharge':False,
+        'modifications':[make_record('armor-d31')]}]
+    actor.data=owned
+    specialist.data={**deepcopy(specialist.data),'is_npc':True,
+        'merchant':{'repair_enabled':True,'scientist_enabled':True,
+            'workbenches':['Станок Электрика']},
+        'inventory':{'money':0,'pockets':[],'backpack':[]}}
+    db.session.commit()
+    payload={'actor_location_character_id':pair['actor_location'].id,
+        'mechanic_character_id':specialist.id,'item_path':['inventory','pockets',0],
+        'item_id':'protocol-armor','mode':'protocol_recharge'}
+    assert quote(pair['location'].id,pair['actor_user']['id'],payload)['price']==500
+    outcome=perform(pair['location'].id,pair['actor_user']['id'],{**payload,'operation_id':'protocol-once',
+        'actor_revision':actor.revision,'mechanic_revision':specialist.revision})
+    assert outcome['price']==500
+    assert actor.data['inventory']['money']==500
+    assert actor.data['inventory']['pockets'][0]['reanimationCharge'] is True
+
+
 def ammo_workshop(workshop,name='5.45x39'):
     from app.services.equipment_catalog import load_catalog
     from app.services.character_starting_purchase import item_from_template

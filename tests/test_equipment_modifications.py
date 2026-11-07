@@ -377,6 +377,30 @@ def test_missing_book_or_insufficient_tool_grade_does_not_spend_charges(client,g
     assert gunsmith['actor_character'].data['inventory']['pockets'][4]['uses']==50
 
 
+def test_reanimation_protocol_heals_each_zone_once_and_needs_recharge(app):
+    from app.services.equipment_care import consume_reanimation,reanimation_ready
+    armor={'category':'armor','modifications':[make_record('armor-d31')]}
+    data={'equipment':{'armor':armor},'health':{'current':100,'max':700,'painLevel':9,
+        'zones':{'head':{'current':40,'max':50},'chest':{'current':100,'max':150}}}}
+    assert reanimation_ready(data)
+    assert consume_reanimation(data)
+    assert data['health']['painLevel']==0
+    assert data['health']['zones']['head']['current']==50
+    assert data['health']['zones']['chest']['current']==110
+    assert data['health']['current']==120
+    assert armor['reanimationCharge'] is False
+    assert not consume_reanimation(data)
+
+
+def test_sheet_save_cannot_recharge_reanimation_protocol(app):
+    from app.services.equipment_care import preserve
+    current={'equipment':{'armor':{'id':'armor-one','category':'armor','reanimationCharge':False}}}
+    incoming=deepcopy(current)
+    incoming['equipment']['armor']['reanimationCharge']=True
+    preserve(current,incoming)
+    assert incoming['equipment']['armor']['reanimationCharge'] is False
+
+
 def test_sheet_cannot_forge_rule_records(client,gunsmith,auth_headers):
     character=gunsmith['actor_character'];data=character.data_snapshot()
     data['weapons'][0]['modifications']=[make_record('weapon-c42',gunsmith=True)]

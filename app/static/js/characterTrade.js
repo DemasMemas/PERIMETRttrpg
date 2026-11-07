@@ -211,8 +211,8 @@ export function renderProfessionalRepairEditor(modal,{entries,balance,onQuote,on
     const options=entries.filter(entry=>entry.item&&(
         ['weapon','melee_weapon','armor','helmet','gas_mask'].includes(entry.item.category)||entry.path[0]==='weapons'||entry.item.model));
     modal.innerHTML=`<div class="modal-content character-trade merchant-editor">
-        <div class="character-trade-heading"><h3>Ремонт у механика</h3><button type="button" class="btn btn-secondary repair-close" aria-label="Закрыть">×</button></div>
-        <p>Доступно: ${rubles(balance)}. Цена рассчитывается по каталогу, износу и наценке механика.</p>
+        <div class="character-trade-heading"><h3>Ремонт и обслуживание у механика</h3><button type="button" class="btn btn-secondary repair-close" aria-label="Закрыть">×</button></div>
+        <p>Доступно: ${rubles(balance)}. Цена рассчитывается по каталогу и виду услуги.</p>
         <label>Предмет <select class="form-control repair-item">${options.map((entry,index)=>
             `<option value="${index}">${escape(entry.item.name||entry.item.model||'Предмет')}</option>`).join('')}</select></label>
         <label>Вид ремонта <select class="form-control repair-mode"></select></label>
@@ -226,10 +226,14 @@ export function renderProfessionalRepairEditor(modal,{entries,balance,onQuote,on
         const entry=options[Number(itemSelect.value)];
         modeSelect.innerHTML=entry?.path[0]==='weapons'||entry?.item?.model||['weapon','melee_weapon'].includes(entry?.item?.category)
             ? '<option value="weapon">Починить оружие</option>'
-            : '<option value="armor_stage">Восстановить стадию брони</option><option value="armor_durability">Восстановить прочность текущей стадии</option>';
+            : '<option value="armor_stage">Восстановить стадию брони</option><option value="armor_durability">Восстановить прочность текущей стадии</option>'
+                +(entry?.item?.category==='armor'&&entry.item.reanimationCharge===false
+                    &&entry.item.modifications?.some(mod=>mod.ruleId==='armor-d31')
+                    ? '<option value="protocol_recharge">Перезарядить протокол реанимации</option>' : '');
         quoted=null;operationId=null;confirm.disabled=true;summary.textContent='';message.textContent='';
     };
-    itemSelect.onchange=refresh;modeSelect.onchange=()=>{quoted=null;operationId=null;confirm.disabled=true;summary.textContent='';};
+    itemSelect.onchange=refresh;modeSelect.onchange=()=>{quoted=null;operationId=null;confirm.disabled=true;summary.textContent='';
+        confirm.textContent=modeSelect.value==='protocol_recharge'?'Оплатить перезарядку':'Оплатить ремонт';};
     modal.querySelector('.repair-close').onclick=()=>{if(!busy)onClose();};
     modal.querySelector('.repair-check').onclick=async()=>{
         const entry=options[Number(itemSelect.value)];if(!entry)return;
@@ -238,7 +242,7 @@ export function renderProfessionalRepairEditor(modal,{entries,balance,onQuote,on
             quoted={entry,mode:modeSelect.value,result:await onQuote(entry,modeSelect.value)};
             operationId=crypto.randomUUID();
             const outcome=quoted.result.result;
-            const after=outcome.kind==='weapon'
+            const after=outcome.kind==='protocol_recharge' ? 'Протокол реанимации снова заряжен.' : outcome.kind==='weapon'
                 ? `Прочность после ремонта: ${outcome.after} из ${outcome.maximum_after}.`
                 : `Стадия после ремонта: ${outcome.stage_after}. Прочность: ${outcome.durability_after}.`;
             summary.textContent=`${quoted.result.item_name}: ${rubles(quoted.result.price)}. ${after}`;

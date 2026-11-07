@@ -14592,10 +14592,16 @@ class CombatService:
             difficulty, will_bonus = CombatService._pain_shock_recovery_difficulty(
                 data, medicine_bonus
             )
-            advantage = bool(meta.get('willShockAdvantage'))
-            from app.services.brigadier_order import boost_roll
-            rolls,roll,order_bonus=boost_roll(data,[],advantage=advantage)
-            success = roll == 20 or (roll != 1 and roll+order_bonus >= difficulty)
+            from app.services.equipment_care import consume_reanimation
+            reanimation=consume_reanimation(data)
+            if reanimation:
+                rolls,roll,order_bonus=[],None,0
+                success=True
+            else:
+                advantage = bool(meta.get('willShockAdvantage'))
+                from app.services.brigadier_order import boost_roll
+                rolls,roll,order_bonus=boost_roll(data,[],advantage=advantage)
+                success = roll == 20 or (roll != 1 and roll+order_bonus >= difficulty)
             if success:
                 health['effects'] = [
                     effect for effect in normalize_effect_list(health.get('effects') or [])
@@ -14622,6 +14628,7 @@ class CombatService:
                 'difficulty': difficulty,
                 'total': roll,
                 'success': success,
+                'reanimation_protocol': reanimation,
                 'ends_turn': True,
             }
         if (

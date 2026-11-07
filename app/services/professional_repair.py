@@ -55,6 +55,22 @@ def _prepare(location_id,user_id,payload):
         raise ValidationError('Для предмета нет подтверждённой каталожной цены ремонта')
     category=str(item.get('category') or template.category or '').casefold()
     mode=payload.get('mode')
+    if mode=='protocol_recharge':
+        from app.services.equipment_modifications import installed
+        from app.services.workbenches import require
+        if category!='armor' or not any(mod.get('ruleId')=='armor-d31' for mod in installed(item)):
+            raise ValidationError('На броне нет протокола реанимации')
+        if item.get('reanimationCharge') is not False:
+            raise ValidationError('Протокол реанимации уже заряжен')
+        if settings.get('scientist_enabled') is not True:
+            raise ValidationError('Перезарядку выполняет механик учёных')
+        require(settings,'Станок Электрика')
+        repaired=deepcopy(item);repaired['reanimationCharge']=True
+        price=money(int((Decimal(str(template.price))*Decimal('0.05')).to_integral_value(rounding=ROUND_CEILING)),
+            label='Цена перезарядки')
+        return actor,mechanic,{'item_path':path,'item_name':item.get('name') or template.name,'mode':mode,
+            'price':price,'base_price':template.price,'markup':1,'discount':0,
+            'result':{'kind':'protocol_recharge','charged':True},'repaired':repaired}
     if category in WEAPON_CATEGORIES and mode!='weapon' or category in ARMOR_CATEGORIES and mode not in {'armor_stage','armor_durability'}:
         raise ValidationError('Выберите вид ремонта для этого предмета')
     if category not in WEAPON_CATEGORIES|ARMOR_CATEGORIES:

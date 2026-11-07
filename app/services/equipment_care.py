@@ -27,6 +27,32 @@ def regenerating_armor(item):
         and type(current) in {int,float} and 0<=current<capacity)
 
 
+def reanimation_ready(data):
+    from app.services.equipment_modifications import installed
+    armor=((data or {}).get('equipment') or {}).get('armor') or {}
+    return (isinstance(armor,dict) and not armor.get('protectionDisabled')
+        and armor.get('reanimationCharge') is not False
+        and any(mod.get('ruleId')=='armor-d31' for mod in installed(armor)))
+
+
+def consume_reanimation(data):
+    if not reanimation_ready(data):return False
+    armor=data['equipment']['armor'];health=data.setdefault('health',{})
+    armor['reanimationCharge']=False
+    health['painLevel']=0
+    recovered=0
+    for zone in (health.get('zones') or {}).values():
+        if not isinstance(zone,dict):continue
+        before=max(0,float(zone.get('current') or 0))
+        maximum=max(0,float(zone.get('max') or 0))
+        after=min(maximum,before+10)
+        zone['current']=after
+        zone['destructionDamage']=max(0,maximum-after)
+        recovered+=after-before
+    health['current']=min(float(health.get('max') or 700),float(health.get('current') or 0)+recovered)
+    return True
+
+
 def preserve(current,incoming):
     from app.services.portable_lights import walk
     previous={item.get('id'):item for _,item in walk(current or {},True) if item.get('id')}
@@ -37,6 +63,8 @@ def preserve(current,incoming):
             if old and old.get('stage3DamageType') is not None:
                 item['stage3DamageType']=old['stage3DamageType']
             else:item.pop('stage3DamageType',None)
+            if old and 'reanimationCharge' in old:item['reanimationCharge']=old['reanimationCharge']
+            else:item.pop('reanimationCharge',None)
         if not medical_gloves(item):continue
         old=previous.get(item.get('id'))
         if not old and not item.get('id') and path==['equipment','gloves'] and medical_gloves(old_worn):old=old_worn

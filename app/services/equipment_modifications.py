@@ -97,6 +97,7 @@ def install(item,record,replacing=None):
         for key in ('durability','maxDurability','stageDurability','currentStageDurability'):
             if key in item:item[key]=max(0,item[key]+delta)
     item['modifications']=proposed
+    if record['ruleId']=='armor-d31':item['reanimationCharge']=True
     if container_delta:item['containers']=containers
 
 
