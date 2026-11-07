@@ -95,7 +95,7 @@ def test_shattered_mount_preserves_and_switches_off_devices_without_free_reactiv
 
 
 @pytest.mark.parametrize('rule_id,family,previous',[('armor-d11','Аномальная',['armor-d9','armor-d10']),
-    ('armor-d31','Экзоскелет',[])])
+    ('armor-d31','Экзоскелет',[]),('armor-d14','Аномальная',[])])
 def test_existing_sealing_and_reanimation_effects_are_installable_at_specialist(workshop,rule_id,family,previous):
     from app.services.professional_modification import quote,perform
     from app.services.equipment_care import consume_reanimation
@@ -120,11 +120,14 @@ def test_existing_sealing_and_reanimation_effects_are_installable_at_specialist(
     if rule_id=='armor-d11':
         assert CombatService._armor_stage_penalty(armor,'electric')==0
         armor['stage']=4;assert CombatService._armor_stage_penalty(armor,'electric')==10
-    else:
+    elif rule_id=='armor-d31':
         owner.data['health'].update(current=350,max=700,zones={'head':{'current':50,'max':100}},painLevel=5)
         assert armor['reanimationCharge'] is True and consume_reanimation(owner.data)
         assert owner.data['health']['painLevel']==0 and owner.data['health']['zones']['head']['current']==60
         assert not consume_reanimation(owner.data)
+    else:
+        from app.services.electronics import electric_protection
+        assert electric_protection(owner.data,{'name':'КПК'})
     assert perform(pair['location'].id,pair['actor_user']['id'],command)=={'duplicate':True}
 
 

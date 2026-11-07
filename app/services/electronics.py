@@ -103,6 +103,22 @@ def switch(item,data,on):
     else:raise ValidationError('Этот предмет не имеет включения и выключения')
 
 
+def electric_protection(data,item):
+    """Изоляция надетой брони защищает перечисленную автором электронику."""
+    from app.services.portable_lights import definition
+    from app.services.equipment_modifications import rule,installed
+    if not isinstance(item,dict):return False
+    kind=definition(item);attrs=item.get('attributes') or {}
+    if kind=='improved':return True
+    if kind=='pda' and any(mod.get('ruleId')=='pda-b13' for mod in installed(item)):return True
+    electronic=(kind in {'pda','dosimeter','hand','head','module'} or item.get('category')=='detector'
+        or item.get('slotType')=='nvg' or attrs.get('night_vision') or attrs.get('type') in {'anomaly','artifact','radio'}
+        or str(item.get('name') or '').strip().casefold() in {'рация','радиостанция','радио'})
+    armor=((data or {}).get('equipment') or {}).get('armor') or {}
+    return bool(electronic and isinstance(armor,dict) and not armor.get('protectionDisabled')
+        and (rule(armor,'electronics_insulation') or any(mod.get('ruleId')=='armor-d14' for mod in installed(armor))))
+
+
 def expose_pdas(data,damage):
     """Разовый урон электроаномалии до защиты тела; ОЗ устройства не вводятся."""
     from app.services.portable_lights import walk,definition,pda_state
@@ -114,7 +130,7 @@ def expose_pdas(data,damage):
         status=pda_state(item)
         if status.get('broken'):continue
         mods={mod['ruleId'] for mod in installed(item)}
-        protected='pda-b13' in mods;recharged=False
+        protected=electric_protection(data,item);recharged=False
         if 'pda-b23' in mods:
             broken=not protected and random.randint(1,100)<=10
             if not broken:status['charge_percent']=100;recharged=True

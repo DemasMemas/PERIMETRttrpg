@@ -34,6 +34,7 @@ SPECIAL_ARMOR={
  'a24':({'physical':5,'durability':5},{'incoming_trauma_disadvantage':True}),
  'a14':({}, {'stealth_hiding_bonus':4}),
  'd23':({}, {'anomaly_escape_reduction':3}),'a34':({}, {'fixed_reload_extra':1}),
+ 'd14':({}, {'electronics_insulation':True}),
  'd26':({}, {'polymer_regeneration':True}),
  'd30':({}, {'worn_burst_accuracy_reduction':2,'snatch_difficulty_bonus':6}),
  'd24':({'radiation':30,'anomaly':-10},{}),'g40':({'explosive_physical':20},{}),

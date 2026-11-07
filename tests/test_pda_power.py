@@ -39,6 +39,38 @@ def test_dielectric_alone_survives_electricity_without_recharging(grenade_game):
     assert data['inventory']['pockets'][0]['pdaState']=={'on':True,'charge_percent':20}
 
 
+def test_worn_armor_insulation_prevents_actual_pda_burn_and_still_allows_lightning_rod(grenade_game,monkeypatch):
+    from app.services.combat import CombatService
+    from app.services.equipment_modifications import make_record,supported,definition
+    assert supported(definition('armor-d14'))
+    data={'equipment':{'armor':{'category':'armor','modifications':[make_record('armor-d14')]}},
+        'inventory':{'pockets':[{'id':'pda','name':'КПК','pdaState':{'on':True,'charge_percent':20}}]}}
+    assert CombatService._apply_anomaly_equipment_damage(data,1000,{'category':'electric'})==[]
+    item=data['inventory']['pockets'][0];assert item['pdaState']=={'on':True,'charge_percent':20}
+    item['modifications']=[{'ruleId':'pda-b23'}]
+    monkeypatch.setattr('app.services.electronics.random.randint',lambda *args:1)
+    result=CombatService._apply_anomaly_equipment_damage(data,1000,{'category':'electric'})
+    assert result[0]['recharged'] and not result[0]['broken'] and item['pdaState']['charge_percent']==100
+    item['modifications']=[];data['equipment']['armor']['protectionDisabled']=True
+    CombatService._apply_anomaly_equipment_damage(data,1000,{'category':'electric'})
+    assert item['pdaState']['broken']
+
+
+def test_insulation_only_while_worn_and_only_for_electronic_equipment():
+    from app.services.electronics import electric_protection
+    from app.services.equipment_modifications import make_record
+    armor={'modifications':[make_record('armor-d14')]}
+    items=[{'name':'КПК'},{'category':'detector','name':'ДА-2'},
+        {'attributes':{'night_vision':True}},{'name':'Рация'},{'name':'Фонарик'}]
+    data={'equipment':{'armor':armor}}
+    assert all(electric_protection(data,item) for item in items)
+    assert not electric_protection(data,{'name':'Сапёрная лопатка','category':'tool'})
+    assert not electric_protection({'inventory':{'backpack':[armor]}},{'name':'КПК'})
+    assert electric_protection({}, {'name':'Улучшенный фонарик'})
+    armor['modifications']=[{'ruleId':'armor-d14'}]
+    assert electric_protection(data,{'name':'КПК'})
+
+
 def test_holding_pda_uses_one_hand_and_stowing_broken_device_is_allowed(client,grenade_game,auth_headers):
     from app.models import LocationCombatState
     from app.services.portable_lights import held_hand,held_pda
