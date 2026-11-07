@@ -9937,7 +9937,12 @@ async function useItem(item, itemPath, options = {}) {
                 ? findInventoryItemById(currentCharacterData, id)
                 : (getItemByPath(itemPath)?.name === 'КПК' ? {item: getItemByPath(itemPath), path: itemPath} : null),
             getData: () => currentCharacterData, operate: payload => window.operatePortableLight(payload),
-            canEdit: currentCharacterCanEdit});
+            canEdit: currentCharacterCanEdit, characterId: currentCharacterId,
+            onSaved: async data => {
+                currentCharacterData = data;
+                await renderInventoryTab(currentCharacterData);
+                recalculateInventoryTotals();
+            }});
     } else if (item.category === 'consumable') {
         if (!options.consumableSideEffects) {
             return useCharacterInventoryItem(currentCharacterId, itemPath, options);

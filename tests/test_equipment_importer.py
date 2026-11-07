@@ -75,6 +75,40 @@ def test_pda_volume_migration_updates_only_unchanged_catalog_template(monkeypatc
     assert volumes == [.5, 1, .75]
 
 
+def test_electronic_book_volume_migration_updates_only_books(monkeypatch):
+    import importlib
+    import sqlalchemy as sa
+    migration = importlib.import_module('migrations.versions.e62b9c3d0f51_zero_electronic_book_volume')
+    engine = sa.create_engine('sqlite://')
+    metadata = sa.MetaData()
+    templates = sa.Table('item_templates', metadata,
+        sa.Column('id', sa.Integer, primary_key=True), sa.Column('category', sa.String),
+        sa.Column('weight', sa.Float), sa.Column('volume', sa.Float), sa.Column('attributes', sa.JSON))
+    characters = sa.Table('lobby_characters', metadata,
+        sa.Column('id', sa.Integer, primary_key=True), sa.Column('data', sa.JSON),
+        sa.Column('revision', sa.Integer))
+    metadata.create_all(engine)
+    book = {'attributes': {'book_kind': 'skill'}, 'name': 'Книга', 'volume': 1}
+    with engine.begin() as connection:
+        connection.execute(templates.insert(), [
+            {'id': 1, 'category': 'misc', 'weight': 0, 'volume': 1,
+             'attributes': {'import_source': 'equipment_workbook', 'book_kind': 'skill'}},
+            {'id': 2, 'category': 'misc', 'weight': 0, 'volume': 1,
+             'attributes': {'book_kind': 'skill'}},
+        ])
+        connection.execute(characters.insert(), {'id': 1, 'revision': 1,
+            'data': {'inventory': {'pockets': [book, {'name': 'КПК', 'volume': .5,
+                'contents': [book]}]}, 'crafting': {'history': [book]}}})
+        monkeypatch.setattr(migration.op, 'get_bind', lambda: connection)
+        migration.upgrade()
+        assert connection.execute(sa.select(templates.c.volume).order_by(templates.c.id)).scalars().all() == [0, 1]
+        row = connection.execute(sa.select(characters)).mappings().one()
+        assert row['revision'] == 2
+        assert row['data']['inventory']['pockets'][0]['volume'] == 0
+        assert row['data']['inventory']['pockets'][1]['contents'][0]['volume'] == 0
+        assert row['data']['crafting']['history'][0]['volume'] == 1
+
+
 def test_new_equipment_book_includes_side_tables_and_all_rig_variants():
     import pytest
 

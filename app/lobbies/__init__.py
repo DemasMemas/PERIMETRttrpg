@@ -2437,6 +2437,9 @@ def get_lobby_templates(lobby_id, lobby, participant):
     local_schema = LobbyItemTemplateSchema(many=True)
 
     serialized_global=global_schema.dump(global_templates)
+    for template in serialized_global:
+        if (template.get('attributes') or {}).get('book_kind'):
+            template['volume']=0
     from app.services.character_creation import builtin_templates
     known={str((t.get('attributes') or {}).get('ruleId')) for t in serialized_global}
     serialized_global.extend(t for t in builtin_templates(category) if t['attributes']['ruleId'] not in known and not subcategory)

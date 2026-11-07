@@ -11451,7 +11451,7 @@
       "item_class": null,
       "price": 5000,
       "weight": 0,
-      "volume": 1,
+      "volume": 0,
       "description": "Электронная книга по навыку из категории \"Физические\". Чтение занимает 4 часа. При обучении по этой книге дополнительное очко навыка +1; действует до уровня навыка 16.",
       "attributes": {
         "import_source": "equipment_workbook",
@@ -11472,7 +11472,7 @@
       "item_class": null,
       "price": 7500,
       "weight": 0,
-      "volume": 1,
+      "volume": 0,
       "description": "Электронная книга по навыку из категории \"Социальные\". Чтение занимает 4 часа. При обучении по этой книге дополнительное очко навыка +1; действует до уровня навыка 16.",
       "attributes": {
         "import_source": "equipment_workbook",
@@ -11493,7 +11493,7 @@
       "item_class": null,
       "price": 3000,
       "weight": 0,
-      "volume": 1,
+      "volume": 0,
       "description": "Электронная книга по навыку из категории \"Прочие\". Чтение занимает 4 часа. При обучении по этой книге дополнительное очко навыка +1; действует до уровня навыка 16.",
       "attributes": {
         "import_source": "equipment_workbook",
@@ -11514,7 +11514,7 @@
       "item_class": null,
       "price": 1000,
       "weight": 0,
-      "volume": 1,
+      "volume": 0,
       "description": "Электронная книга: Пистолеты. Чтение занимает 4 часа. Разрешает модификации этого вида снаряжения и даёт +25 к его разбору.",
       "attributes": {
         "import_source": "equipment_workbook",
@@ -11535,7 +11535,7 @@
       "item_class": null,
       "price": 2000,
       "weight": 0,
-      "volume": 1,
+      "volume": 0,
       "description": "Электронная книга: Дробовики. Чтение занимает 4 часа. Разрешает модификации этого вида снаряжения и даёт +25 к его разбору.",
       "attributes": {
         "import_source": "equipment_workbook",
@@ -11556,7 +11556,7 @@
       "item_class": null,
       "price": 1500,
       "weight": 0,
-      "volume": 1,
+      "volume": 0,
       "description": "Электронная книга: Пистолеты-пулеметы. Чтение занимает 4 часа. Разрешает модификации этого вида снаряжения и даёт +25 к его разбору.",
       "attributes": {
         "import_source": "equipment_workbook",
@@ -11577,7 +11577,7 @@
       "item_class": null,
       "price": 3000,
       "weight": 0,
-      "volume": 1,
+      "volume": 0,
       "description": "Электронная книга: Штурмовые винтовки и карабины. Чтение занимает 4 часа. Разрешает модификации этого вида снаряжения и даёт +25 к его разбору.",
       "attributes": {
         "import_source": "equipment_workbook",
@@ -11598,7 +11598,7 @@
       "item_class": null,
       "price": 4000,
       "weight": 0,
-      "volume": 1,
+      "volume": 0,
       "description": "Электронная книга: Снайперские винтовки. Чтение занимает 4 часа. Разрешает модификации этого вида снаряжения и даёт +25 к его разбору.",
       "attributes": {
         "import_source": "equipment_workbook",
@@ -11619,7 +11619,7 @@
       "item_class": null,
       "price": 4000,
       "weight": 0,
-      "volume": 1,
+      "volume": 0,
       "description": "Электронная книга: Гранатометы. Чтение занимает 4 часа. Разрешает модификации этого вида снаряжения и даёт +25 к его разбору.",
       "attributes": {
         "import_source": "equipment_workbook",
@@ -11640,7 +11640,7 @@
       "item_class": null,
       "price": 5000,
       "weight": 0,
-      "volume": 1,
+      "volume": 0,
       "description": "Электронная книга: Пулемёты. Чтение занимает 4 часа. Разрешает модификации этого вида снаряжения и даёт +25 к его разбору.",
       "attributes": {
         "import_source": "equipment_workbook",
@@ -11661,7 +11661,7 @@
       "item_class": null,
       "price": 3500,
       "weight": 0,
-      "volume": 1,
+      "volume": 0,
       "description": "Электронная книга: Лёгкая броня. Чтение занимает 4 часа. Разрешает модификации этого вида снаряжения и даёт +25 к его разбору.",
       "attributes": {
         "import_source": "equipment_workbook",
@@ -11682,7 +11682,7 @@
       "item_class": null,
       "price": 5000,
       "weight": 0,
-      "volume": 1,
+      "volume": 0,
       "description": "Электронная книга: Средняя броня. Чтение занимает 4 часа. Разрешает модификации этого вида снаряжения и даёт +25 к его разбору.",
       "attributes": {
         "import_source": "equipment_workbook",
@@ -11703,7 +11703,7 @@
       "item_class": null,
       "price": 7500,
       "weight": 0,
-      "volume": 1,
+      "volume": 0,
       "description": "Электронная книга: Тяжелая броня. Чтение занимает 4 часа. Разрешает модификации этого вида снаряжения и даёт +25 к его разбору.",
       "attributes": {
         "import_source": "equipment_workbook",
@@ -11724,7 +11724,7 @@
       "item_class": null,
       "price": 10000,
       "weight": 0,
-      "volume": 1,
+      "volume": 0,
       "description": "Электронная книга: Аномальная броня. Чтение занимает 4 часа. Разрешает модификации этого вида снаряжения и даёт +25 к его разбору.",
       "attributes": {
         "import_source": "equipment_workbook",
@@ -11745,7 +11745,7 @@
       "item_class": null,
       "price": 30000,
       "weight": 0,
-      "volume": 1,
+      "volume": 0,
       "description": "Электронная книга: Экзоскелеты. Чтение занимает 4 часа. Разрешает модификации этого вида снаряжения и даёт +25 к его разбору.",
       "attributes": {
         "import_source": "equipment_workbook",
@@ -11766,7 +11766,7 @@
       "item_class": null,
       "price": 2500,
       "weight": 0,
-      "volume": 1,
+      "volume": 0,
       "description": "Электронная книга: Противогазы. Чтение занимает 4 часа. Разрешает модификации этого вида снаряжения и даёт +25 к его разбору.",
       "attributes": {
         "import_source": "equipment_workbook",
@@ -11787,7 +11787,7 @@
       "item_class": null,
       "price": 3500,
       "weight": 0,
-      "volume": 1,
+      "volume": 0,
       "description": "Электронная книга: Шлема без забрала. Чтение занимает 4 часа. Разрешает модификации этого вида снаряжения и даёт +25 к его разбору.",
       "attributes": {
         "import_source": "equipment_workbook",
@@ -11808,7 +11808,7 @@
       "item_class": null,
       "price": 5000,
       "weight": 0,
-      "volume": 1,
+      "volume": 0,
       "description": "Электронная книга: Шлема с забралом. Чтение занимает 4 часа. Разрешает модификации этого вида снаряжения и даёт +25 к его разбору.",
       "attributes": {
         "import_source": "equipment_workbook",
@@ -11829,7 +11829,7 @@
       "item_class": null,
       "price": 7500,
       "weight": 0,
-      "volume": 1,
+      "volume": 0,
       "description": "Электронная книга: Шлема-противогазы. Чтение занимает 4 часа. Разрешает модификации этого вида снаряжения и даёт +25 к его разбору.",
       "attributes": {
         "import_source": "equipment_workbook",

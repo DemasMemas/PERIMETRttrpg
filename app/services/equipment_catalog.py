@@ -179,6 +179,9 @@ def prepare_catalog(entries):
         elif 'volume' in missing:
             item['volume']=1
             missing.discard('volume')
+        if attrs.get('book_kind'):
+            item['volume']=0
+            missing.discard('volume')
         if attrs.get('book_kind') or item['category'] in {'gloves','glasses','jewelry','headphones'}:
             item['weight']=0
             missing.discard('weight')

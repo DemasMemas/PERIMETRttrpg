@@ -372,7 +372,7 @@ def operate(character_id,user_id,payload):
     from app.services.character import CharacterService
     from app.services.combat import CombatService
     from app.services.inventory_access import calculate_inventory_access
-    if not isinstance(payload,dict) or set(payload)-{'operation','path','mount','weapon_index','character_revision','battery_path','source_id'}:
+    if not isinstance(payload,dict) or set(payload)-{'operation','path','mount','weapon_index','character_revision','battery_path','source_id','book_path'}:
         raise ValidationError('Некорректные параметры фонаря')
     character=db.session.get(LobbyCharacter,character_id)
     if not character:raise NotFoundError('Персонаж не найден')
@@ -397,7 +397,7 @@ def operate(character_id,user_id,payload):
     binding=next((item for item in states if item['id']==selected['id']),None)
     operation=payload.get('operation');cost=0
     if definition(selected)=='pda':
-        if operation not in {'pda_toggle','pda_battery'}:
+        if operation not in {'pda_toggle','pda_battery','pda_import_book'}:
             raise ValidationError('Выберите действие с КПК')
         status=pda_state(selected)
         if operation=='pda_toggle':
@@ -405,6 +405,29 @@ def operate(character_id,user_id,payload):
                 raise ValidationError('Сначала замените батарейку КПК')
             status['on']=not status['on']
             cost=1 if actor else 0
+        elif operation=='pda_import_book':
+            if actor:raise ValidationError('Запись файла на КПК доступна вне боя')
+            if not status['on'] or status['charge_percent']<=0:
+                raise ValidationError('Для записи файла нужен включённый заряженный КПК')
+            book_path=payload.get('book_path')
+            book=next((item for item_path,item in walk(data,True) if item_path==book_path
+                and item_path[:1]==['inventory'] and item_path[:len(path)]!=path),None)
+            from app.services.item_template_lookup import resolve_item_template
+            template=resolve_item_template(book,character.lobby_id) if book else None
+            if not template or (template.attributes or {}).get('book_kind') not in {'skill','equipment'}:
+                raise ValidationError('Выберите электронную книгу из инвентаря')
+            from app.services.magazine import inventory_slot
+            parent,index=inventory_slot(data,book_path)
+            moved=deepcopy(book)
+            quantity=book.get('quantity',1)
+            if type(quantity) is not int or quantity<1:raise ValidationError('Некорректное количество книг')
+            if quantity==1:parent.pop(index)
+            else:
+                book['quantity']=quantity-1
+                moved['quantity']=1
+                moved['id']=str(uuid4())
+            moved['volume']=0
+            selected.setdefault('contents',[]).append(moved)
         else:
             battery=CombatService._inventory_item_at_path(data,payload.get('battery_path'))
             if str(battery.get('name') or '').strip().casefold()!='батарейки':

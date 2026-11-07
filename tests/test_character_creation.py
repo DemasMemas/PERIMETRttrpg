@@ -966,6 +966,9 @@ def test_helper_and_three_specialists_fill_all_skills_but_hardening_cannot_add_s
     before=deepcopy(data)
     with pytest.raises(ValidationError,match='нельзя получить через Закалку'):
         settle_history(data,{'1':{'trait':trait('Специалист',skill=remaining[0])}})
+    negative=next(entry for entry in catalog()['traits'] if entry['cost']<0)
+    with pytest.raises(ValidationError,match='положительной стоимостью'):
+        settle_history(data,{'1':{'trait':{'id':negative['id']}}})
     assert data==before
     resolved=settle_history(data,{'1':{'decline':True}})
     assert resolved['skills']['skillPoints']==data['skills']['skillPoints']+5

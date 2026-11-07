@@ -58,7 +58,7 @@ def item_from_template(template,quantity=1):
     item={**attrs,'id':uuid.uuid4().hex,'templateId':template.id,'name':template.name,
           'category':template.category,'subcategory':template.subcategory,'itemClass':template.item_class,
           'description':template.description,'price':template.price or 0,'weight':template.weight or 0,
-          'volume':template.volume or 0,'quantity':quantity,'attributes':attrs,
+          'volume':0 if attrs.get('book_kind') else template.volume or 0,'quantity':quantity,'attributes':attrs,
           'installedModules':[],'modifications':[],'contents':[], 'compatible_ids':deepcopy(template.compatible_ids or [])}
     if template.category in {'container', 'backpack', 'pouch'}:
         item.update(isContainer=True, capacity=attrs.get('capacity', attrs.get('limit', template.volume or 0)))

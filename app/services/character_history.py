@@ -34,7 +34,7 @@ def _apply_month(data,event,selected,day):
         else:
             if set(selected)!={'trait'}:raise ValidationError('Выберите черту Закалки или откажитесь от неё')
             choice=selected['trait'];entry=next((t for t in catalog['traits'] if isinstance(choice,dict) and t['id']==choice.get('id')),None)
-            if not entry or entry['cost']>limit:raise ValidationError('Черта дороже выпавшего потолка Закалки')
+            if not entry or not 0<entry['cost']<=limit:raise ValidationError('Закалка допускает только черту с положительной стоимостью в пределах выпавшего потолка')
             if entry['name']=='Специалист':raise ValidationError('Черту «Специалист» нельзя получить через Закалку')
             levels={p:data['skills'][p.split('.')[0]][p.split('.')[1]]['base'] for p in paths}
             specialized={p for p in paths if data['skills'][p.split('.')[0]][p.split('.')[1]].get('specialized')}

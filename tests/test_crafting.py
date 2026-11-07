@@ -1090,6 +1090,29 @@ def test_electronic_book_requires_powered_pda_at_start_and_finish(client,worksho
     workshop['actor_character'].data=data;db.session.commit()
     started=call(client,workshop,auth_headers,'read_book',path=['inventory','pockets',4])
     assert started.status_code==200,started.json
+
+
+def test_electronic_book_moves_into_pda_files_without_duplication(client,workshop,auth_headers):
+    from app.services.character_starting_purchase import item_from_template
+    book=ItemTemplate(name='Файл для КПК',category='misc',price=100,weight=0,volume=1,
+        attributes={'book_kind':'equipment','book_subject':'Пистолеты','reading_seconds':60})
+    db.session.add(book);db.session.flush()
+    character=workshop['actor_character'];data=deepcopy(character.data)
+    file_item=item_from_template(book)
+    assert file_item['volume']==0
+    data['inventory']['pockets'].append(file_item)
+    character.data=data;db.session.commit()
+    response=client.post(f'/lobbies/characters/{character.id}/portable-lights',
+        headers=auth_headers(workshop['actor_user']),json={
+            'operation':'pda_import_book','path':['inventory','pockets',2],
+            'book_path':['inventory','pockets',4], 'character_revision':character.revision})
+    assert response.status_code==200,response.json
+    pockets=response.json['data']['inventory']['pockets']
+    assert len(pockets)==4
+    assert [entry['id'] for entry in pockets[2]['contents']]==[file_item['id']]
+    assert pockets[2]['contents'][0]['volume']==0
+    started=call(client,workshop,auth_headers,'read_book',path=['inventory','pockets',2,'contents',0])
+    assert started.status_code==200,started.json
     workshop['lobby'].game_time_minutes+=1
     data=deepcopy(workshop['actor_character'].data)
     data['inventory']['pockets'][2]['pdaState']['on']=False

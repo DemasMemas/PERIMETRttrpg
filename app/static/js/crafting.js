@@ -48,6 +48,10 @@ export async function showCrafting({characterId,lobbyId,onSaved}){
         const job=snapshot.state.current;
         if(job){
             body.append(el('h4',job.name),el('p',job.remaining_seconds>0?`Работа идёт. Осталось ${Math.ceil(job.remaining_seconds/60)} мин игрового времени.`:'Время работы прошло. Можно завершить создание.'));
+            if(job.kind==='book'){
+                body.append(el('p','Чтение книги продолжается в КПК → Файлы.'));
+                return;
+            }
             if(job.kind==='salvage')body.append(el('p',`Разбор: к100 + ${job.bonus} по таблице добычи.`));
             else if(job.kind!=='book')body.append(el('p',`Итоговая СЛ: ${job.quote.difficulty}. ${job.quote.automatic_success?'Автоуспех.':'Успех: к100 строго выше СЛ.'}`));
             const choices=[];
@@ -169,23 +173,6 @@ export async function showCrafting({characterId,lobbyId,onSaved}){
         else panes.modifications.append(el('p','Нет снаряжения для модификации.'));
         renderSalvage(panes.other);
         renderFlamethrowers(panes.other);
-        const books=snapshot.inventory.filter(e=>e.item.attributes?.book_kind);
-        if(books.length){
-            panes.other.append(el('h4','Электронные книги'));
-            const book=select('Книга для чтения',books.map((entry,i)=>[i,entry.item.name]));panes.other.append(book);
-            const skill=select('Навык книги',[]);panes.other.append(skill);
-            const update=()=>{
-                const entry=books[Number(book.value)],attrs=entry.item.attributes;
-                skill.replaceChildren();skill.hidden=attrs.book_kind!=='skill';
-                const subject=String(attrs.book_subject).toLowerCase();
-                const group=subject.includes('физическ')?'physical':subject.includes('социальн')?'social':'other';
-                for(const item of snapshot.skills.filter(s=>s.path.startsWith(group+'.'))){const option=el('option',item.label);option.value=item.path;skill.append(option);}
-                const assigned=snapshot.state.book_assignments?.[entry.item.id];if(assigned){skill.value=assigned;skill.disabled=true;}else skill.disabled=false;
-            };
-            book.onchange=update;update();
-            panes.other.append(button('Читать · 4 часа',()=>act('read_book',{path:books[Number(book.value)].path,skill_path:skill.hidden?null:skill.value})));
-        }
-        if(snapshot.state.library?.length){panes.other.append(el('h4','Прочитано'));for(const book of snapshot.state.library)panes.other.append(el('p',`${book.name}${book.skill_path?' · '+(snapshot.skills.find(s=>s.path===book.skill_path)?.label||''):''}`));}
         if(snapshot.state.history?.length){panes.other.append(el('h4','Последние работы'));for(const result of snapshot.state.history.slice(-5).reverse())panes.other.append(el('p',`${result.name}: ${result.cancelled?'отменено':result.success?'готово':'неудача'}${result.roll!=null?(result.kind==='salvage'?` · к100 ${result.roll} + ${result.bonus} = ${result.total} · ${result.materials.map(m=>`${m.name} ×${m.quantity}`).join(', ')||'без добычи'}`:` · к100 ${result.roll}, СЛ ${result.difficulty}`):''}`));}
     };
     const renderFlamethrowers=container=>{

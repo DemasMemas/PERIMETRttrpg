@@ -205,8 +205,9 @@ module.exports=async({page,request,token,lobby,base,connect,debugPort,safeSessio
     const pdaIndex=character.data.inventory.pockets.findIndex(item=>item.name==='КПК');
     await click(`#pockets-container > [data-path="inventory,pockets,${pdaIndex}"] [data-widget-key=use]`);
     await page.until('document.querySelector("#pda-shell-modal .pda-shell-nav button")','оболочка КПК открыта');
-    assert.equal(await page.evaluate('document.querySelectorAll("#pda-shell-modal .pda-shell-nav button").length'),11);
-    await click('#pda-shell-modal .pda-shell-nav button:nth-child(4)');
+    assert.equal(await page.evaluate('document.querySelectorAll("#pda-shell-modal .pda-shell-nav button").length'),12);
+    assert.ok((await page.evaluate('document.querySelector("#pda-shell-modal .pda-shell-brand").textContent')).includes('PERIMETR / КПК'));
+    await click('#pda-shell-modal .pda-shell-nav button:nth-child(5)');
     assert.ok((await page.evaluate('document.querySelector("#pda-shell-modal [data-pda-content]").textContent')).includes('пока недоступны'));
     await screenshot('creation-pda-desktop');
     await page.call('Emulation.setDeviceMetricsOverride',{width:430,height:860,deviceScaleFactor:1,mobile:false});
@@ -280,6 +281,7 @@ module.exports=async({page,request,token,lobby,base,connect,debugPort,safeSessio
     await click('#character-history-modal [type=submit]');
     await page.until('document.querySelector("#character-history-modal [data-hardening]")','Закалка на третьем месяце');
     assert.equal(await page.evaluate(`Boolean(document.querySelector('#character-history-modal [data-hardening] option[value="${trait('Специалист')}"]'))`),false);
+    assert.equal(await page.evaluate('Array.from(document.querySelectorAll("#character-history-modal [data-hardening] option")).some(option => Number(option.textContent.match(/· (-?\\d+)$/)?.[1]) < 0)'),false,'отрицательные черты отсутствуют в Закалке');
     await set('#character-history-modal [data-hardening]',trait('Пироманьяк'));
     await screenshot('history-hardening');
     await click('#character-history-modal [type=submit]');
@@ -339,5 +341,31 @@ module.exports=async({page,request,token,lobby,base,connect,debugPort,safeSessio
     assert.match(gmBooks,/Книги навыков.*Книги снаряжения/s);
     await page.evaluate(`window.selectInventoryTemplate(${books[0].id})`);
     await page.until(`document.querySelector('#pockets-container [data-item-template-id="${books[0].id}"]')||document.querySelector('#pockets-container').textContent.includes(${JSON.stringify(books[0].name)})`,'выданная книга появилась в карманах');
+    await page.until(`(async()=>{const r=await fetch('/lobbies/characters/${character.id}',{headers:{Authorization:'Bearer '+localStorage.getItem('access_token')}});const data=(await r.json()).data;return data.inventory.pockets.some(item=>item.templateId===${books[0].id}&&item.volume===0)})()`,'электронная книга не занимает объём');
+    await page.evaluate('window.closeInventoryTemplatePicker()');
+    const dataAfterBook=(await request(`/lobbies/characters/${character.id}`,null,token,'GET')).data;
+    const packedBag=dataAfterBook.inventory.pockets.find(item=>item.category==='backpack');
+    const packedPda=packedBag?.contents?.find(item=>item.name==='КПК');
+    if(packedPda){
+        packedBag.contents=packedBag.contents.filter(item=>item!==packedPda);
+        dataAfterBook.inventory.pockets.push(packedPda);
+        await request(`/lobbies/characters/${character.id}`,{data:dataAfterBook},token,'PUT');
+        await page.until('document.querySelector("#pockets-container [data-widget-key=use]")','КПК вынут из рюкзака');
+    }
+    const inventoryAfterBook=(await request(`/lobbies/characters/${character.id}`,null,token,'GET')).data.inventory;
+    const pdaPocket=inventoryAfterBook.pockets.findIndex(item=>item.name==='КПК');
+    const pdaBag=inventoryAfterBook.backpack.findIndex(item=>item.name==='КПК');
+    assert.ok(pdaPocket>=0||pdaBag>=0,'КПК остаётся у персонажа');
+    await click(pdaPocket>=0
+        ? `#pockets-container > [data-path="inventory,pockets,${pdaPocket}"] [data-widget-key=use]`
+        : `#backpack-container > [data-path="inventory,backpack,${pdaBag}"] [data-widget-key=use]`);
+    await page.until('document.querySelector("#pda-shell-modal .pda-shell-nav button")','КПК открыт после выдачи книги');
+    await click('#pda-shell-modal .pda-shell-nav button:nth-child(4)');
+    await page.until(`document.querySelector('#pda-shell-modal [aria-label="Книга для записи в КПК"] option')?.textContent.includes(${JSON.stringify(books[0].name)})`,'книга доступна для записи');
+    await click('#pda-shell-modal [data-pda-content] button');
+    await page.until(`document.querySelector('#pda-shell-modal [aria-label="Электронная книга"] option')?.textContent.includes(${JSON.stringify(books[0].name)})`,'книга появилась в файлах КПК');
+    await screenshot('pda-files');
+    await click('#pda-shell-modal [data-pda-content] button');
+    await page.until(`(async()=>{const r=await fetch('/lobbies/characters/${character.id}/crafting',{headers:{Authorization:'Bearer '+localStorage.getItem('access_token')}});return (await r.json()).state?.current?.kind==='book'})()`,'чтение началось из КПК');
     fs.writeFileSync(path.join(safeSession.artifacts,'character-creation.json'),JSON.stringify({catalogBackgrounds:56,catalogTraits:90,serverPoints:14,initialAgility:10,health:840,capital:3960,threeTraits:true,templateFileRoundtrip:true,unplacedInventoryVisible:true,backpackEquipPreservesItems:true,rewardBothClients:true,rewardAgility:11,rewardHalfXp:.5,reloadStable:true},null,2));
 };
