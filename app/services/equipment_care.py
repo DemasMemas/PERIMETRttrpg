@@ -32,6 +32,11 @@ def preserve(current,incoming):
     previous={item.get('id'):item for _,item in walk(current or {},True) if item.get('id')}
     old_worn=((current or {}).get('equipment') or {}).get('gloves') or {}
     for path,item in walk(incoming,True):
+        if item.get('category') in {'armor','helmet','gas_mask'} and item.get('id'):
+            old=previous.get(item['id'])
+            if old and old.get('stage3DamageType') is not None:
+                item['stage3DamageType']=old['stage3DamageType']
+            else:item.pop('stage3DamageType',None)
         if not medical_gloves(item):continue
         old=previous.get(item.get('id'))
         if not old and not item.get('id') and path==['equipment','gloves'] and medical_gloves(old_worn):old=old_worn
@@ -114,6 +119,7 @@ def use_spare_plates(character_id,user_id,payload):
         raise ValidationError('Персонаж не может использовать запасные пластины')
     new_stage=max(1,stage-2)
     armor['stage']=new_stage;armor['condition']=ARMOR_STAGE_LABELS[new_stage-1]
+    if new_stage<3:armor.pop('stage3DamageType',None)
     template=CombatService._equipment_template(armor)
     attributes={**(template.attributes or {} if template else {}),**(armor.get('attributes') or {})}
     armor['stageDurability']=CombatService._armor_stage_capacity(armor,attributes)

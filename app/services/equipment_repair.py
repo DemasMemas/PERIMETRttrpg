@@ -181,6 +181,7 @@ def _repair_armor(target: Dict[str, Any], profile: Dict[str, Any], template: Any
     durability_loss = armor_repair_durability_loss(stage)
     target["durability"] = max(0, current_base - durability_loss)
     target["stage"] = repaired_stage
+    if repaired_stage < 3:target.pop('stage3DamageType',None)
     target["stageDurability"] = CombatService._armor_stage_capacity(target, attributes)
     target["currentStageDurability"] = target["stageDurability"]
     if target["durability"] <= 0:

@@ -2771,6 +2771,34 @@ def test_armor_damage_advances_stage_and_carries_over_damage():
     assert armor["currentStageDurability"] == 50
 
 
+def test_stage_three_reduces_only_damage_type_that_broke_the_armor():
+    armor={'name':'Костюм','category':'armor','durability':10,'stage':2,
+        'stageDurability':100,'currentStageDurability':5}
+    CombatService._damage_armor_item(armor,{},6,'thermal')
+    assert armor['stage']==3 and armor['stage3DamageType']=='thermal'
+    assert CombatService._armor_stage_penalty(armor,'thermal')==10
+    assert CombatService._armor_stage_penalty(armor,'physical')==0
+    assert CombatService._armor_stage_penalty(armor,'chemical')==0
+    armor['modifications']=[{'ruleId':'armor-d11'}]
+    assert CombatService._armor_stage_penalty(armor,'thermal')==0
+    armor['stage']=4
+    assert CombatService._armor_stage_penalty(armor,'thermal')==10
+    assert CombatService._armor_stage_penalty(armor,'physical')==10
+
+
+def test_electric_anomaly_records_stage_three_damage_type():
+    from app.services.equipment_modifications import make_record
+    armor={'name':'Костюм','category':'armor','durability':10,'stage':2,
+        'stageDurability':100,'currentStageDurability':5,
+        'modifications':[make_record('armor-d11')]}
+    result=CombatService._apply_anomaly_equipment_damage({'equipment':{'armor':armor}},4,
+        {'category':'electric','damage_type':'electric','armor_damage_multiplier':2})
+    assert result[0]['stage_after']==3
+    assert armor['stage3DamageType']=='electric'
+    assert CombatService._armor_stage_penalty(armor,'electric')==0
+    assert CombatService._armor_stage_penalty(armor,'physical')==0
+
+
 def test_broken_armor_loses_durability_and_protection_per_50_damage():
     armor = {
         "durability": 10,

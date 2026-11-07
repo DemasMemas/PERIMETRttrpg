@@ -4924,8 +4924,12 @@ class CombatService:
     def _armor_stage_penalty(item, damage_type='physical'):
         stage = max(1, min(5, CombatService._coerce_int(item.get('stage'), 1)))
         penalty = 0
-        if stage >= 3 and damage_type == 'physical':
-            penalty += 10
+        stage_type=item.get('stage3DamageType') or 'physical'
+        if stage >= 3 and damage_type == stage_type:
+            from app.services.equipment_modifications import installed
+            sealed=any(mod.get('ruleId')=='armor-d11' for mod in installed(item))
+            if not (sealed and stage_type in {'thermal','chemical','electric','radiation'}):
+                penalty += 10
         if stage >= 4:
             penalty += 10
         if stage >= 5:
@@ -4955,7 +4959,7 @@ class CombatService:
         return max(1, math.floor(10 * coefficient * max(0, base_durability)))
 
     @staticmethod
-    def _damage_armor_item(item, attributes, incoming_damage):
+    def _damage_armor_item(item, attributes, incoming_damage, damage_type='physical'):
         damage = max(0, CombatService._coerce_float(incoming_damage, 0))
         if damage <= 0:
             return None
@@ -4982,6 +4986,9 @@ class CombatService:
                 break
             remaining -= available
             stage += 1
+            if stage == 3:
+                kind=str(damage_type or 'physical').strip().lower()
+                item['stage3DamageType']=kind if kind in {'physical','thermal','chemical','electric','radiation'} else 'physical'
             current = capacity if stage < 5 else 0
 
         if stage >= 5 and remaining > 0:
@@ -5047,6 +5054,7 @@ class CombatService:
         item.pop('stage', None)
         item.pop('stageDurability', None)
         item.pop('currentStageDurability', None)
+        item.pop('stage3DamageType', None)
         item.pop('brokenDamage', None)
         item.pop('brokenProtectionLoss', None)
         item['condition'] = 'Целый' if after > 0 else 'Сломан'
@@ -10562,6 +10570,9 @@ class CombatService:
                 from app.services.equipment_modifications import rule as modification_rule
                 result = CombatService._damage_armor_item(
                     item, attributes, damage * armor_multiplier*max(0,1-modification_rule(item,'anomaly_wear_reduction')),
+                    {'fire':'thermal','burn':'thermal','heat':'thermal','acid':'chemical','poison':'chemical',
+                     'electricity':'electric'}.get(str(profile.get('damage_type') or profile.get('category') or '').lower(),
+                         profile.get('damage_type') or profile.get('category') or 'physical'),
                 )
             else:
                 result = None
