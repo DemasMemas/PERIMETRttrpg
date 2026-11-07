@@ -154,7 +154,7 @@ module.exports=async({page,request,token,lobby,safeSession})=>{
             const root=roots.find(item=>item.querySelector(':scope > summary span')?.textContent===name);
             return root?[...root.querySelectorAll(':scope > details > summary span:first-child')].map(item=>item.textContent):[];
         };
-        return {weapons:section('Оружие'),armor:section('Броня'),helmets:section('Головное снаряжение'),
+        return {weapons:section('Оружие'),armor:section('Броня'),helmets:section('Шлемы'),
             vests:section('Разгрузки'),devices:section('Приборы'),
             artifacts:section('Артефакты'),
             duplicateIds:(()=>{const ids=[...root.querySelectorAll('[data-item-template-id]')].map(item=>item.dataset.itemTemplateId);return ids.length-new Set(ids).size})()};

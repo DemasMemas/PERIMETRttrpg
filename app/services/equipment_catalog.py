@@ -1,6 +1,7 @@
 """Полный каталог из книги и принятых игровых правил; без изменения исходного XLSX."""
 from copy import deepcopy
 import json
+import re
 from functools import lru_cache
 from pathlib import Path
 
@@ -77,6 +78,12 @@ def canonical_catalog_templates(templates):
         item['attributes'].get('explosive_key') for item in by_key.values()
         if item['category'] == 'grenade' and item['attributes'].get('explosive_key')
     }
+    # Старый импорт называл гранаты без префикса и не сохранял explosive_key.
+    def grenade_name(value):
+        return _normalize_equipment_name(re.sub(
+            r'^(?:(?:подствольная|светошумовая|зажигательная|термобарическая|химическая|дымовая)\s+)?граната\s+',
+            '', str(value or ''), flags=re.I))
+    grenade_names = {grenade_name(item['name']) for item in by_key.values() if item['category'] == 'grenade'}
     selected = {}
     order = []
     def field(item, name):
@@ -92,6 +99,8 @@ def canonical_catalog_templates(templates):
         if category == 'pouch' and key not in by_key:
             continue
         if key not in by_key:
+            if category == 'grenade' and grenade_name(name) in grenade_names:
+                continue
             if category == 'grenade' and attrs.get('explosive_key') in canonical_grenades:
                 continue
             if category == 'container' and any(name == f'Контейнер для ношения {alias}' for alias in ('Блок-А', 'Барьер', 'Щит', 'Стена')):

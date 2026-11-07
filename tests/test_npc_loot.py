@@ -147,6 +147,24 @@ def test_old_catalog_aliases_do_not_reappear_in_item_picker():
     assert retired_catalog_template(aliases[-1])
 
 
+def test_grenade_picker_hides_old_names_without_keys_and_preserves_records(client,prepared,auth_headers):
+    import re
+    from app.services.equipment_catalog import load_catalog
+    definitions=[entry for entry in load_catalog() if entry['category']=='grenade']
+    originals=[];canonical=[]
+    for index,entry in enumerate(definitions):
+        short=re.sub(r'^(?:(?:подствольная|светошумовая|зажигательная|термобарическая|химическая|дымовая)\s+)?граната\s+',
+            '',entry['name'],flags=re.I)
+        originals.append(ItemTemplate(id=156+index,name=short,category='grenade',attributes={}))
+        canonical.append(ItemTemplate(id=1090+index,**entry))
+    db.session.add_all([*originals,*canonical]);db.session.commit()
+    response=client.get(f"/lobbies/{prepared['lobby'].id}/templates?category=grenade",
+        headers=auth_headers(prepared['actor_user']))
+    assert response.status_code==200,response.json
+    assert {entry['id'] for entry in response.json['global']}=={item.id for item in canonical}
+    assert all(db.session.get(ItemTemplate,item.id) is item for item in originals)
+
+
 def test_budget_exhaustion_and_zero_chance_are_visible_without_exceeding_cost(prepared):
     items,result=roll_loot(profile(budget=50,pools=[pool(draws=3),pool(category='no-items',chance=0)]),prepared['templates'])
     assert len(items)==1 and result['spent']==50 and result['skipped_pools']==[1]

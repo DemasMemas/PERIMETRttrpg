@@ -276,7 +276,7 @@ export function getCategoryDisplay(cat) {
         'weapon': 'Оружие',
         'melee_weapon': 'Оружие ближнего боя',
         'armor': 'Броня',
-        'helmet': 'Головное снаряжение',
+        'helmet': 'Шлемы',
         'gas_mask': 'Противогазы',
         'detector': 'Приборы',
         'container': 'Контейнеры',
@@ -522,7 +522,7 @@ const WEAPON_SUBCATEGORY_ORDER = [
     'Оружие ближнего боя',
 ];
 const ITEM_CATEGORY_ORDER = [
-    'Оружие', 'Оружие ближнего боя', 'Броня', 'Головное снаряжение', 'Противогазы',
+    'Оружие', 'Оружие ближнего боя', 'Броня', 'Шлемы', 'Противогазы',
     'Магазины', 'Патроны', 'Гранаты', 'Оружейные модули',
     'Рюкзаки', 'Разгрузки', 'Подсумки', 'Контейнеры',
     'Расходники', 'Приборы', 'Фильтры противогазов',
@@ -15209,6 +15209,7 @@ function inventoryPickerSection(template) {
     if (template.category === 'vest') return 'Разгрузки';
     if (template.category === 'exoskeleton_module') return 'Аккумуляторы экзоскелета';
     if (template.category === 'device' && template.subcategory === 'battery') return 'Батарейки';
+    if (attrs.flamethrower_tank || attrs.flamethrower_air) return 'Баки и Баллоны Огнеметов';
     if (template.category === 'detector') return 'Детекторы';
     if (attrs.night_vision || attrs.slot_type === 'nvg') return 'ПНВ';
     if (attrs.portable_light || /фонар/i.test(template.name || '')) return 'Фонари';
@@ -15290,7 +15291,7 @@ export function renderInventoryTemplatePicker(templates, query = '', options = {
                     <div style="display:flex; gap:6px; align-items:stretch; min-width:0;"><button type="button" data-item-template-id="${t.id}" ${options.purchase ? `data-purchase-select="${t.id}" aria-pressed="${Number(options.selectedId)===t.id}"` : `onclick="selectInventoryTemplate(${t.id})"`} style="text-align:left; flex:1; min-width:0; border:1px solid rgba(255,255,255,0.12); border-radius:8px; padding:10px; background: rgba(255,255,255,0.03); color:inherit; cursor:pointer;">
                         <div style="display:flex; justify-content:space-between; gap:8px;">
                             <div style="font-weight:600;">${escapeHtml(t.name)}</div>
-                            <div style="opacity:0.75; font-size:12px; white-space:nowrap;">${options.purchase ? `${Number(t.price||0).toLocaleString('ru-RU')} ₽` : `ID ${t.id}`}</div>
+                            <div style="opacity:0.75; font-size:12px; white-space:nowrap;">${options.purchase ? `${Number(t.price||0).toLocaleString('ru-RU')} ₽` : (Number(t.id) > 0 ? `ID ${t.id}` : '')}</div>
                         </div>
                         <div style="display:flex; flex-wrap:wrap; gap:5px; margin-top:6px;">
                             ${chips.map(chip => `<span style="font-size:11px; padding:2px 6px; border-radius:999px; background: rgba(255,255,255,0.08);">${chip}</span>`).join('')}
@@ -15333,7 +15334,7 @@ export function renderInventoryTemplatePicker(templates, query = '', options = {
                     <summary style="cursor:pointer; font-weight:600; display:flex; justify-content:space-between; gap:10px;"><span>${section}</span><span style="opacity:.6; font-weight:400;">${sectionItems.length}</span></summary>
                     ${renderCards(sectionItems)}
                 </details>`).join('');
-        } else if (['Оружие', 'Броня', 'Головное снаряжение', 'Артефакты', 'Разгрузки', 'Приборы', 'Контейнеры', 'Прочее'].includes(group)) {
+        } else if (['Оружие', 'Броня', 'Шлемы', 'Артефакты', 'Разгрузки', 'Приборы', 'Контейнеры', 'Прочее'].includes(group)) {
             const sections = {};
             items.forEach(template => {
                 const section = inventoryPickerSection(template) || 'Другие предметы';
@@ -15341,7 +15342,7 @@ export function renderInventoryTemplatePicker(templates, query = '', options = {
             });
             const sectionOrder = group === 'Оружие' ? WEAPON_SUBCATEGORY_ORDER
                 : group === 'Броня' ? ['Лёгкая', 'Средняя', 'Тяжёлая', 'Аномальная', 'Экзоскелет']
-                : group === 'Головное снаряжение' ? ['Головные уборы', 'Шлемы без забрала', 'Шлемы-противогазы', 'Шлемы с забралом']
+                : group === 'Шлемы' ? ['Головные уборы', 'Шлемы без забрала', 'Шлемы-противогазы', 'Шлемы с забралом']
                 : group === 'Разгрузки' ? ['Разгрузки', 'Пояса', 'Бронеплиты']
                 : group === 'Приборы' ? ['Детекторы', 'ПНВ', 'Фонари', 'Батарейки', 'Аккумуляторы экзоскелета']
                 : group === 'Контейнеры' ? ['Кейсы', 'Контейнеры для ношения артефактов', 'Контейнеры для хранения артефактов']
