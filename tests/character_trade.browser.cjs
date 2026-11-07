@@ -103,13 +103,14 @@ module.exports=async({page,request,token,lobby,base,connect,debugPort,safeSessio
     assert.equal(new Set(a.data.inventory.backpack.map(item=>item.id)).size,a.data.inventory.backpack.length,'Повторная передача не дублирует ID стопок');
     assert.match(a.data.health.combatMeta.actionJournal.at(-1).label,/Торговля/);
     await page.evaluate(`import('/static/js/characters.js').then(m=>m.loadLobbyCharacters()).then(()=>true)`);
-    await page.until(`document.querySelector('[data-character-id="${b.id}"] .npc-loot-open')`,'У НПС доступна кнопка пулов добычи');
-    await page.evaluate(`document.querySelector('[data-character-id="${b.id}"] .npc-merchant-open').click();true`);
-    await page.until(`document.querySelector('.merchant-editor .merchant-money')`,'Настройка торговли доступна напрямую из списка НПС');
+    await page.evaluate(`window.openCharacterSheet(${b.id},'settings');true`);
+    await page.until(`document.querySelector('#sheet-tab-settings.active #npc-loot-settings')`,'Настройки НПС открыты в листе');
+    await page.evaluate(`document.querySelector('#npc-merchant-settings').click();true`);
+    await page.until(`document.querySelector('.merchant-editor .merchant-money')`,'Настройка торговли доступна во вкладке НПС');
     assert.equal(await page.evaluate(`Number(document.querySelector('.merchant-money').value)`),625);
     await page.evaluate(`document.querySelector('.merchant-editor .trade-close').click();true`);
-    await page.evaluate(`document.querySelector('[data-character-id="${b.id}"] .npc-loot-open').click();true`);
-    await page.until(`document.querySelector('.npc-loot-editor')`,'Редактор добычи открыт из списка НПС');
+    await page.evaluate(`document.querySelector('#npc-loot-settings').click();true`);
+    await page.until(`document.querySelector('.npc-loot-editor')`,'Редактор добычи открыт из настроек НПС');
     await page.evaluate(`(()=>{for(const [key,value] of Object.entries({name:'Проверка бинтов',budget:80,money_min:7,money_max:7})){const input=document.querySelector('[data-profile="'+key+'"]');input.value=value;input.dispatchEvent(new Event('input'));}for(const [key,value] of Object.entries({subcategory:'Кровь',item_class:'1',min_price:40,max_price:40,draws:2,quantity:1})){const input=document.querySelector('[data-pool="'+key+'"]');input.value=value;input.dispatchEvent(new Event(input.tagName==='SELECT'?'change':'input'));}return true})()`);
     assert.match(await page.evaluate(`document.querySelector('.loot-match-count').textContent`),/1$/);
     assert.equal(await page.evaluate(`document.querySelector('.loot-generate').disabled`),true);
@@ -279,6 +280,17 @@ module.exports=async({page,request,token,lobby,base,connect,debugPort,safeSessio
     await page.evaluate(`window.openCharacterSheet(${a.id},'equipment');true`);
     await page.until(`document.querySelector('[data-weapon-draw-hand="left"][data-weapon-draw-index="0"]')`,
         'У пистолета есть выбор левой руки');
+    await page.call('Emulation.setDeviceMetricsOverride',{width:1920,height:1080,deviceScaleFactor:1,mobile:false});
+    assert.ok(await page.evaluate(`(()=>{const tab=document.querySelector('#sheet-tab-equipment'),
+        figure=tab.querySelector('.loadout-figure').getBoundingClientRect(),
+        loadout=tab.querySelector('.equipment-loadout').getBoundingClientRect(),
+        panels=tab.querySelector('.equipment-panels').getBoundingClientRect(),
+        first=tab.querySelector('.equipment-panels > details').getBoundingClientRect(),
+        viewport=tab.getBoundingClientRect();
+        return figure.width>100&&figure.top<viewport.bottom&&figure.bottom>viewport.top
+            &&first.top<viewport.bottom&&panels.left>=loadout.right-2&&panels.right<=viewport.right+1})()`),
+        'Силуэт и прежние панели экипировки одновременно видны на 1920×1080');
+    await page.call('Emulation.clearDeviceMetricsOverride');
     assert.equal(await page.evaluate(`[...document.querySelectorAll('[data-weapon-index="0"] button')]
         .some(button=>button.textContent.trim()==='Взять в руки'||button.textContent.trim().startsWith('Достать оружие'))`),false);
     await page.evaluate(`document.querySelector('[data-weapon-draw-hand="left"][data-weapon-draw-index="0"]').click();true`);

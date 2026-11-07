@@ -5001,7 +5001,7 @@ function renderEquipmentFigure(equipment, armorTemplates, helmetTemplates) {
 
 function renderEquipmentLoadout(container, data, weaponTemplates, helmetTemplates, gasMaskTemplates, armorTemplates) {
     const groups = [...container.querySelectorAll(':scope > .equipment-group[data-equipment-group]')];
-    if (groups.length < 7) return;
+    if (groups.length < 6) return;
     const equipment = data.equipment || {};
     const weapons = data.weapons || [];
     const weaponEntries = weapons.map((item, index) => ({
@@ -5063,6 +5063,13 @@ function renderEquipmentLoadout(container, data, weaponTemplates, helmetTemplate
         <div class="loadout-cosmetics"><span class="loadout-section-label">Косметика</span><div class="loadout-cosmetics-grid">${cosmetics.map(([label, key, code]) => slot(label, equipment[key]?.templateId ? equipment[key] : null, 'cosmetic', code)).join('')}</div></div>
         ${statusLines.length ? `<div class="loadout-resources">${statusLines.map(line => `<span>${escapeHtml(line)}</span>`).join('')}</div>` : ''}
     </section>`);
+    const loadout = container.querySelector(':scope > .equipment-loadout');
+    const workspace = document.createElement('div');
+    workspace.className = 'equipment-workspace';
+    const panels = document.createElement('div');
+    panels.className = 'equipment-panels';
+    loadout.before(workspace);
+    workspace.append(loadout, panels);
 
     const panelLabels = {
         weapons: 'Оружие и действия', helmet: 'Шлем', gasMask: 'Противогаз',
@@ -5078,6 +5085,7 @@ function renderEquipmentLoadout(container, data, weaponTemplates, helmetTemplate
         summary.textContent = panelLabels[key];
         group.before(details);
         details.append(summary, group);
+        panels.append(details);
     });
     container.querySelectorAll('#weapons-container > [data-weapon-index]').forEach(card => {
         const key = `weapon-${card.dataset.weaponIndex}`;
@@ -16803,6 +16811,8 @@ function renderSettingsTab(data) {
     const currentUserId = parseInt(localStorage.getItem('user_id'));
     const isOwner = currentCharacterData.ownerId === currentUserId;
     const isGM = window.isGM === true;
+    const isNpc = data?.is_npc === true || data?.basic?.is_npc === true
+        || data?.character_type === 'npc' || data?.basic?.character_type === 'npc';
 
     let html = `
         <h4>Владелец: ${escapeHtml(ownerUsername)}</h4>
@@ -16816,6 +16826,16 @@ function renderSettingsTab(data) {
             <button type="button" class="btn btn-sm" onclick="applyVisibilityFromSheet()">Применить видимость</button>
         `;
     }
+    if (isGM && isNpc) {
+        html += `
+            <hr>
+            <h4>Настройки НПС</h4>
+            <div class="form-actions">
+                <button type="button" class="btn btn-sm btn-secondary" id="npc-merchant-settings">Торговля и ремонт</button>
+                <button type="button" class="btn btn-sm btn-secondary" id="npc-loot-settings">Пулы добычи</button>
+            </div>
+        `;
+    }
     if (isOwner || isGM) {
         html += `
             ${isGM ? '<hr>' : ''}
@@ -16824,6 +16844,36 @@ function renderSettingsTab(data) {
     }
 
     container.innerHTML = html;
+
+    const openNpcSettings = async kind => {
+        const characterId = currentCharacterId;
+        try {
+            await forceSyncCharacter();
+            await Server.waitForCharacterSave(characterId);
+            if (currentCharacterId !== characterId) return;
+            const refresh = async () => {
+                const characters = await import('./characters.js');
+                await characters.loadLobbyCharacters();
+                if (currentCharacterId === characterId) {
+                    const updated = await Server.getCharacter(characterId);
+                    await queueRemoteSheetData(updated.data, characterId);
+                }
+            };
+            if (kind === 'loot') {
+                const [editor, characters] = await Promise.all([
+                    import('./npcLoot.js'), Server.getLobbyCharacters(currentLobbyId),
+                ]);
+                await editor.openNpcLoot(currentLobbyId, characterId, characters, refresh);
+            } else {
+                const editor = await import('./merchantEditor.js');
+                await editor.openNpcMerchant(currentLobbyId, characterId, refresh);
+            }
+        } catch (error) {
+            showNotification(error.message || 'Не удалось открыть настройки НПС', 'error');
+        }
+    };
+    container.querySelector('#npc-loot-settings')?.addEventListener('click', () => openNpcSettings('loot'));
+    container.querySelector('#npc-merchant-settings')?.addEventListener('click', () => openNpcSettings('merchant'));
 
     const visContainer = document.getElementById('visibility-settings-container');
     if (visContainer && lobbyParticipants && lobbyParticipants.length) {

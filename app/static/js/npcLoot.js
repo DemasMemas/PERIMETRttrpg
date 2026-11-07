@@ -27,6 +27,7 @@ export async function openNpcLoot(lobbyId, characterId, characters = [], onChang
     modal.innerHTML = `<div class="modal-content npc-loot-editor">
         <div class="character-trade-heading"><h3>Добыча: ${escape(character.name)}</h3><button type="button" class="btn btn-secondary trade-close" aria-label="Закрыть">×</button></div>
         <p>Каждый выбор — независимый случайный предмет из подходящих, с равными шансами. Бюджет ограничивает общую цену новых вещей. Деньги НПС задаются отдельно.</p>
+        <p>Сохранение профиля не создаёт вещи. «Добавить добычу» разово применяет его сейчас; повторное нажатие добавит новую порцию.</p>
         <p>Наполнение добавляет вещи к имеющимся. Оружие появится в разделе «Оружие», остальные вещи — в рюкзаке или неразмещённом снаряжении. Заряжать, надевать и раскладывать их нужно отдельно.</p>
         <div class="loot-profile-fields">
             <label>Название профиля<input class="form-control" data-profile="name" maxlength="100"></label>
