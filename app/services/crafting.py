@@ -36,6 +36,16 @@ def preserve(current,incoming):
 def now(character):return ((character.lobby.game_day or 1)*1440+(character.lobby.game_time_minutes or 0))*60
 
 
+def readable_book(character,data,job):
+    if job.get('remote_source'):
+        from app.services.pda_access import readable_book as remote_book
+        from app.services.exceptions import ServiceError
+        try:remote_book(character,data,job['remote_source'],job['book_id'])
+        except ServiceError:return False
+        return True
+    return any(item.get('id')==job['book_id'] for _,item in entries(data))
+
+
 def complete_ready_book(character):
     source=character.data or {}
     job=(source.get('crafting') or {}).get('current')
@@ -44,7 +54,7 @@ def complete_ready_book(character):
     data=deepcopy(source)
     state=data['crafting']
     from app.services.portable_lights import pda_ready
-    if not pda_ready(data) or not any(item.get('id')==job['book_id'] for _,item in entries(data)):
+    if not pda_ready(data) or not readable_book(character,data,job):
         return False
     learned={key:job[key] for key in ('book_kind','book_subject','skill_path','name')}
     library=state.setdefault('library',[])
@@ -673,7 +683,10 @@ def operate(character_id,user_id,payload):
         from app.services.character_creation import _catalog
         from app.services.item_template_lookup import resolve_item_template
         if state.get('current'):raise ConflictError('Сначала завершите или отмените текущую работу')
-        item=next((item for path,item in entries(data) if path==payload.get('path')),None)
+        if payload.get('remote_source'):
+            from app.services.pda_access import readable_book as remote_book
+            item=remote_book(character,data,payload['remote_source'],payload.get('book_id'),register=True)
+        else:item=next((item for path,item in entries(data) if path==payload.get('path')),None)
         template=resolve_item_template(item,character.lobby_id) if item else None
         attrs=(template.attributes or {}) if template else {}
         if attrs.get('book_kind') not in {'skill','equipment'}:raise ValidationError('Выберите электронную книгу')
@@ -695,6 +708,8 @@ def operate(character_id,user_id,payload):
             'book_kind':attrs['book_kind'],'book_subject':attrs.get('book_subject'),'skill_path':path,
             'quote':{'difficulty':0,'automatic_success':True,'failure_loss':{'random':0,'chosen':0,'all':False}},
             'escrow':[],'output_count':0,'started_at':now(character),'ready_at':now(character)+int(attrs.get('reading_seconds',14400))}
+        if payload.get('remote_source'):
+            result['remote_source']={key:payload['remote_source'].get(key) for key in ('session_id','source_id')}
         state['current']=result
     elif action=='start':
         if state.get('current'):raise ConflictError('Сначала завершите или отмените текущую работу')
@@ -724,7 +739,7 @@ def operate(character_id,user_id,payload):
         if action=='finish' and now(character)<job['ready_at']:raise ValidationError('Время работы ещё не прошло')
         lost={};roll=None;success=bool(action=='finish' and job['kind']=='book')
         if success:
-            if not any(item.get('id')==job['book_id'] for _,item in entries(data)):raise ConflictError('Книга больше не доступна')
+            if not readable_book(character,data,job):raise ConflictError('Книга больше не доступна')
             from app.services.portable_lights import pda_ready
             if not pda_ready(data):raise ConflictError('КПК выключен или разряжен')
             learned={key:job[key] for key in ('book_kind','book_subject','skill_path','name')}

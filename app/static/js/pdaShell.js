@@ -3,6 +3,7 @@ import { showNotification } from './utils.js';
 import { createPdaNetworkView } from './pdaNetworkView.js';
 import { renderRemoteCharges } from './itemControllers.js';
 import {createPdaAccessView} from './pdaAccessView.js';
+import {bookTitle,createBookCard} from './pdaBookFile.js';
 
 const sections = [
     ['chat', 'Общий чат', 'Сообщения участников Зоны'],
@@ -26,8 +27,6 @@ function powerState(item) {
     const charge = Number(saved.charge_percent ?? 100);
     return { on: saved.on !== false&&!saved.broken, broken:Boolean(saved.broken),charge: Number.isFinite(charge) ? Math.max(0, Math.min(100, charge)) : 0 };
 }
-
-const bookTitle = name => String(name || '').replace('?. Раздел:', '? Раздел:');
 
 export function openPdaShell({ item, findItem, getData, operate, canEdit, characterId, onSaved }) {
     const previous = document.getElementById('pda-shell-modal');
@@ -440,41 +439,9 @@ export function openPdaShell({ item, findItem, getData, operate, canEdit, charac
                     const storedList = document.createElement('div');
                     storedList.className = 'pda-file-list';
                     for (const entry of books) {
-                        const attrs = entry.item.attributes || {};
-                        const card = document.createElement('article');
-                        card.className = 'pda-file-card';
-                        const name = document.createElement('strong');
-                        name.textContent = bookTitle(entry.item.name);
-                        card.append(name);
-                        const assigned = filesSnapshot.state.book_assignments?.[entry.item.id];
-                        let skillPath = attrs.book_skill_path || assigned || null;
-                        if (attrs.book_kind === 'skill' && !skillPath) {
-                            const subject = String(attrs.book_subject || '').toLowerCase();
-                            const group = subject.includes('физическ') ? 'physical'
-                                : subject.includes('социальн') ? 'social' : 'other';
-                            const skills = filesSnapshot.skills.filter(row => row.path.startsWith(group + '.'));
-                            const choices = document.createElement('div');
-                            choices.className = 'pda-file-skills';
-                            const selectedPath = selectedBookSkills.get(entry.item.id) || skills[0]?.path;
-                            skillPath = selectedPath;
-                            for (const row of skills) {
-                                const choice = document.createElement('button');
-                                choice.type = 'button';
-                                choice.className = row.path === selectedPath ? 'active' : '';
-                                choice.textContent = row.label;
-                                choice.onclick = () => { selectedBookSkills.set(entry.item.id, row.path); render(); };
-                                choices.append(choice);
-                            }
-                            card.append(choices);
-                        }
-                        const read = document.createElement('button');
-                        read.type = 'button';
-                        read.className = 'btn btn-secondary';
-                        read.textContent = 'Читать · 4 часа';
-                        read.disabled = busy || !canEdit || (attrs.book_kind === 'skill' && !skillPath);
-                        read.onclick = () => fileAction('read_book', { path: entry.path, skill_path: skillPath });
-                        card.append(read);
-                        storedList.append(card);
+                        storedList.append(createBookCard(entry,{skills:filesSnapshot.skills,assignments:filesSnapshot.state.book_assignments,
+                            selectedSkills:selectedBookSkills,learned:filesSnapshot.state.library,canEdit,busy,onSkillChange:render,
+                            onRead:skillPath=>fileAction('read_book',{path:entry.path,skill_path:skillPath})}));
                     }
                     content.append(storedList);
                 }

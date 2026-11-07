@@ -2,6 +2,7 @@ import {Server} from './api.js';
 import {showNotification} from './utils.js';
 import {runController} from './itemControllers.js';
 import {createPdaNetworkView} from './pdaNetworkView.js';
+import {createBookCard,bookTitle} from './pdaBookFile.js';
 
 const node=(tag,text)=>{const el=document.createElement(tag);if(text!=null)el.textContent=text;return el;};
 const modeName=mode=>mode==='physical'?'кабель':'радиосвязь';
@@ -10,6 +11,7 @@ export function createPdaAccessView({characterId,selection,onSaved,canEdit,getDa
     const element=node('section');element.className='pda-access';
     const status=node('p'),error=node('p'),body=node('div');error.setAttribute('role','alert');element.append(status,error,body);
     let active=false,closed=false,busy=false,loading=false,timer=null,snapshot=null,selected=null,network=null,tab='account';
+    let reading=null;const selectedSkills=new Map();
     const request=extra=>({...selection(),...extra});
     const button=(text,handler)=>{const el=node('button',text);el.type='button';el.className='btn btn-secondary';el.disabled=busy||!canEdit;
         el.onclick=handler;return el;};
@@ -21,7 +23,9 @@ export function createPdaAccessView({characterId,selection,onSaved,canEdit,getDa
             if(software){const result=await Server.changePdaAccess(characterId,{...data,software:true});await onSaved?.(result.data);
                 if(payload.operation==='save_notes')showNotification('Заметки сохранены','system');}
             else await runController(characterId,data,onSaved,{actionKey:'pda_access',send:Server.changePdaAccess});
-            network?.close();network=null;body.replaceChildren();
+            if(!['send','contact','remove_contact','proximity_sound'].includes(payload.operation)){
+                network?.close();network=null;body.replaceChildren();
+            }
         }catch(failure){error.textContent=failure.message;showNotification(failure.message,'system');}
         finally{busy=false;controls();await refresh();}
     }
@@ -29,9 +33,10 @@ export function createPdaAccessView({characterId,selection,onSaved,canEdit,getDa
         if(!active||closed||loading||busy)return;loading=true;
         try{
             const fresh=await Server.getPdaAccess(characterId,request(selected?{session_id:selected}:{}));
+            if(selected&&tab==='files')reading=await Server.getCrafting(characterId);
             if(closed||!active)return;snapshot=fresh;
             // Не заменяем поля и не теряем несохранённые заметки при фоновом опросе.
-            if(!selected||!body.childElementCount)paint();
+            if(!selected||!body.childElementCount||tab==='files')paint();
             else if(fresh.session.status!=='active')lost('Соединение разорвано');
             status.textContent=selected?`Управление: ${fresh.session.name} · ${modeName(fresh.session.mode)}`:status.textContent;
         }catch(failure){if(!closed){error.textContent=failure.message;if(selected)lost(failure.message);}}
@@ -39,6 +44,15 @@ export function createPdaAccessView({characterId,selection,onSaved,canEdit,getDa
     }
     function lost(message){network?.close();network=null;selected=null;snapshot=null;body.replaceChildren();status.textContent=message;}
     function open(id){network?.close();network=null;selected=id;body.replaceChildren();void refresh();}
+    async function fileAction(operation,extra){
+        if(busy||!canEdit)return;busy=true;error.textContent='';controls();
+        try{
+            await Server.waitForCharacterSave(characterId);const state=await Server.getCrafting(characterId);
+            const result=await Server.craft(characterId,{operation,operation_id:crypto.randomUUID(),character_revision:state.revision,...extra});
+            await onSaved?.(result.data);body.replaceChildren();
+        }catch(failure){error.textContent=failure.message;}
+        finally{busy=false;controls();await refresh();}
+    }
     function paint(){
         network?.close();network=null;body.replaceChildren();
         if(!snapshot)return;
@@ -83,7 +97,7 @@ export function createPdaAccessView({characterId,selection,onSaved,canEdit,getDa
         if(target.device.has_jammer)body.append(button(target.device.jammer_on?'Выключить глушилку · 1 ОД':'Включить глушилку · 1 ОД',()=>act({operation:'jammer',enabled:!target.device.jammer_on})));
         const tabs=node('div');tabs.className='pda-access-tabs';
         for(const [id,label]of [['account','Аккаунт и заметки'],['chat','Общий чат'],['contacts','Контакты'],['files','Файлы'],['charges','Заряды']]){
-            const b=button(label,()=>{tab=id;paint();});if(tab===id)b.classList.add('active');tabs.append(b);
+            const b=button(label,()=>{tab=id;if(id==='files'){body.replaceChildren();void refresh();}else paint();});if(tab===id)b.classList.add('active');tabs.append(b);
         }
         body.append(tabs);
         if(tab==='account'){
@@ -112,7 +126,12 @@ export function createPdaAccessView({characterId,selection,onSaved,canEdit,getDa
             body.append(network.element);network.setActive(true,tab);
         }else if(tab==='files'){
             body.append(node('p','Файлы на подключённом физическом устройстве.'));
-            for(const file of target.files){const card=node('article');card.className='pda-file-card';card.append(node('strong',file.name));body.append(card);}
+            const job=reading?.state?.current;
+            if(job){body.append(node('strong',bookTitle(job.name)),node('p',`Текущая работа: осталось ${Math.ceil(job.remaining_seconds/60)} мин игрового времени.`));
+                if(job.kind==='book')body.append(button('Прервать чтение',()=>fileAction('cancel',{job_id:job.id})));}
+            for(const file of target.files)body.append(createBookCard({item:file},{skills:reading?.skills||[],assignments:reading?.state?.book_assignments,
+                selectedSkills,learned:reading?.state?.library,canEdit,busy:busy||Boolean(job),onSkillChange:paint,
+                onRead:skillPath=>fileAction('read_book',{book_id:file.id,skill_path:skillPath,remote_source:{session_id:selected,source_id:selection().item_id}})}));
             if(!target.files.length)body.append(node('p','В КПК пока нет книг.'));
         }else if(tab==='charges'){
             body.append(node('p','Команда: 1 ОД; свой включённый КПК должен быть в руке. Дальность от подключённого КПК до заряда — 250 м.'));

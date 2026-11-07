@@ -271,3 +271,46 @@ def test_gm_placement_selects_current_scene_without_reopening_closed_session(acc
     view=snapshot(pair['actor_character'].id,pair['actor_user']['id'],selection(pair))
     assert any(entry['token']==target_token(pair) for entry in view['targets'])
     assert view['sessions'][0]['status']=='closed'
+
+
+def reading(pair,identity='read-remote'):
+    from app.models.templates import ItemTemplate
+    from app.services.character_starting_purchase import item_from_template
+    from app.services.crafting import operate as craft
+    template=ItemTemplate(name='Физическая электронная книга. Раздел: Сила',category='misc',price=100,weight=0,volume=0,
+        attributes={'book_kind':'skill','book_subject':'Физические','book_skill_path':'physical.strength','reading_seconds':14400})
+    db.session.add(template);db.session.flush();book=item_from_template(template);book['id']='single-book'
+    target=pair['target_character'];data=deepcopy(target.data);data['inventory']['pockets'][0]['contents']=[book];target.data=data;db.session.commit()
+    connected(pair);actor=pair['actor_character']
+    return craft(actor.id,pair['actor_user']['id'],{'operation':'read_book','operation_id':identity,'character_revision':actor.revision,
+        'remote_source':{'session_id':'access-one','source_id':'actor-pda'},'book_id':'single-book','skill_path':'physical.strength'})
+
+
+def test_remote_book_uses_existing_four_hour_reading_without_copying_the_file(access_game):
+    from app.services.crafting import complete_ready_book,now
+    from app.services.portable_lights import walk
+    pair=access_game;_,job=reading(pair);actor=pair['actor_character'];target=pair['target_character']
+    assert job['ready_at']-job['started_at']==14400
+    assert sum(item.get('id')=='single-book' for person in (actor,target) for _,item in walk(person.data,True))==1
+    assert not complete_ready_book(actor)
+    pair['lobby'].game_time_minutes+=240;db.session.commit()
+    assert now(actor)>=job['ready_at'] and complete_ready_book(actor);db.session.commit()
+    assert actor.data['crafting']['library'][0]['skill_path']=='physical.strength'
+    assert target.data['inventory']['pockets'][0]['contents'][0]['id']=='single-book'
+    assert 'current' not in actor.data['crafting'] and not complete_ready_book(actor)
+
+
+@pytest.mark.parametrize('loss',['connection','file','source_phone'])
+def test_remote_reading_is_cancelled_on_connection_file_or_source_loss(access_game,loss):
+    from app.services.crafting import complete_ready_book
+    pair=access_game;reading(pair);actor=pair['actor_character'];target=pair['target_character']
+    if loss=='connection':pair['target_location'].pos_x=500
+    else:
+        holder=target if loss=='file' else actor;data=deepcopy(holder.data)
+        if loss=='file':data['inventory']['pockets'][0]['contents']=[]
+        else:data['inventory']['pockets']=[]
+        holder.data=data
+    db.session.commit()
+    assert 'current' not in actor.data['crafting'] and actor.data['crafting']['history'][-1]['cancelled']
+    pair['lobby'].game_time_minutes+=240;db.session.commit()
+    assert not complete_ready_book(actor) and not actor.data['crafting'].get('library')

@@ -48,9 +48,26 @@ def _record(records,identity):
     return values[0] if len(values)==1 and not values[0]['ambiguous'] else None
 
 
+def _readers(row):
+    readers=set(row.data.get('reading_character_ids') or [])
+    if row.source_character_id:readers.add(row.source_character_id)
+    return LobbyCharacter.query.filter(LobbyCharacter.lobby_id==row.lobby_id,LobbyCharacter.id.in_(readers)).all() if readers else []
+
+
+def _cancel_reading(character,row,reason):
+    data=character.data or {};crafting=data.get('crafting') or {};job=crafting.get('current') or {}
+    if job.get('kind')!='book' or (job.get('remote_source') or {}).get('session_id')!=row.id:return
+    result={'job_id':job['id'],'kind':'book','name':job['name'],'cancelled':True,'success':False,
+        'roll':None,'difficulty':0,'lost':[],'lost_items':[],'output_count':0,'reason':reason}
+    crafting.pop('current');crafting['history']=[*(crafting.get('history') or []),result][-30:]
+    from app.services.action_journal import append_work
+    append_work(data,'remote-book-lost:'+job['id'],'cancel',result);flag_modified(character,'data')
+
+
 def _close(row,reason):
     if row.status=='closed':return
     row.status='closed';row.data={**row.data,'closed_reason':reason};_queue(row.lobby_id)
+    for character in _readers(row):_cancel_reading(character,row,reason)
 
 
 def connection_problem(row,records):
@@ -77,6 +94,13 @@ def invalidate_connections(lobby_id,records=None):
         if row.status=='closed':continue
         reason=connection_problem(row,records)
         if reason:_close(row,reason);closed.append(row.id)
+        elif row.data.get('reading_character_ids'):
+            from app.services.exceptions import ServiceError
+            for character in _readers(row):
+                job=(character.data.get('crafting') or {}).get('current') or {}
+                if job.get('kind')!='book' or (job.get('remote_source') or {}).get('session_id')!=row.id:continue
+                try:readable_book(character,character.data,job['remote_source'],job['book_id'])
+                except ServiceError:_cancel_reading(character,row,'Файл или исходный КПК больше не доступен читателю')
     return closed
 
 
@@ -156,6 +180,21 @@ def _charge_reaches(target,host,records):
         source_position=target['position'],devices=_radio_sources(records)) if target['position'] else False
 
 
+def readable_book(character,data,remote,book_id,*,register=False):
+    """Возвращает единственный файл на целевом КПК, не переносит и не копирует его."""
+    if not isinstance(remote,dict):raise ValidationError('Выберите подключённый КПК')
+    source_id=remote.get('source_id')
+    matches=[(path,item) for path,item in walk(data) if definition(item)=='pda' and item.get('id')==source_id]
+    if len(matches)!=1:raise ConflictError('Исходный КПК больше не доступен читателю')
+    source,records=_selected(character,data,{'item_path':matches[0][0],'item_id':source_id})
+    row,target=_active_target(source,records,remote)
+    books=[item for _,item in walk({'inventory':{'device':target['item']}},True)
+        if item is not target['item'] and item.get('id')==book_id and isinstance(book_id,str)]
+    if len(books)!=1 or books[0].get('quantity',1)!=1:raise ConflictError('Файл книги перемещён или удалён')
+    if register:row.data={**row.data,'reading_character_ids':sorted({*(row.data.get('reading_character_ids') or []),character.id})}
+    return books[0]
+
+
 @atomic_operation
 def target_snapshot(character_id,user_id,payload):
     character=db.session.get(LobbyCharacter,character_id)
@@ -174,8 +213,14 @@ def target_snapshot(character_id,user_id,payload):
             if state.get('kind')=='remote_detonator' and state.get('paired_pda_id')==target['id']:
                 charges.append({'id':state['id'],'label':state.get('label','Заряд'),'armed':bool(state.get('armed')),
                     'reachable':_charge_reaches(target,host,records)})
-    files=[{'id':entry.get('id'),'name':entry.get('name'),'attributes':deepcopy(entry.get('attributes') or {})}
-        for path,entry in walk({'inventory':{'device':item}},True) if entry is not item and (entry.get('attributes') or {}).get('book_kind')]
+    from app.services.item_template_lookup import resolve_item_template
+    files=[]
+    for _,entry in walk({'inventory':{'device':item}},True):
+        if entry is item:continue
+        template=resolve_item_template(entry,character.lobby_id)
+        attrs=(template.attributes or {}) if template else entry.get('attributes') or {}
+        if attrs.get('book_kind') in {'skill','equipment'}:
+            files.append({'id':entry.get('id'),'name':template.name if template else entry.get('name'),'attributes':deepcopy(attrs)})
     return {'session':project(row),'device':{'name':item.get('name','КПК'),'power':pda_state(item),
         'modifications':[entry.get('name') or entry.get('ruleId') for entry in item.get('modifications') or []],
         'has_jammer':'pda-b16' in target['mods'],'jammer_on':bool((item.get('pdaNetwork') or {}).get('jammer_on'))},
