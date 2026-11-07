@@ -2222,9 +2222,23 @@ input[type="number"] {
 
 /* ===== Лист персонажа ===== */
 #character-sheet-modal .modal-content {
+  position: relative;
   width: 90vw !important;
   max-width: 90vw !important;
+  height: calc(100vh - 24px);
+  max-height: calc(100vh - 24px);
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
+#character-sheet-modal > .modal-content > .close { position: absolute; top: 12px; right: 16px; line-height: 1; z-index: 2; }
+#character-sheet-name { flex-shrink: 0; margin: 0 28px 8px 0; }
+#character-sheet-form { display: flex; flex-direction: column; min-height: 0; flex: 1; }
+#character-sheet-form > #sheet-tabs { flex-shrink: 0; margin-bottom: 8px !important; }
+#character-sheet-form > #sheet-content { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+#character-sheet-form > #sheet-content > .sheet-tab-content.active { flex: 1; min-height: 0; max-height: none; }
+#character-sheet-form > .form-actions { flex-shrink: 0; margin-top: 8px !important; }
 #character-sheet-modal {
   z-index: 1000;
 }
@@ -2422,7 +2436,7 @@ input[type="number"] {
 .equipment-workspace .loadout-figure-art { width: 140px; height: 264px; }
 .equipment-workspace .loadout-slot { min-height: 48px; padding: 5px; gap: 5px; }
 .equipment-workspace .loadout-slot-mark { flex-basis: 25px; height: 27px; font-size: 10px; }
-.equipment-workspace .loadout-slot-text strong { font-size: 12px; }
+.equipment-workspace .loadout-slot-text strong { font-size: 12px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .equipment-workspace .loadout-cosmetics { margin-top: 9px; padding-top: 7px; }
 .equipment-workspace .loadout-cosmetics-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 5px; margin-top: 5px; }
 .equipment-workspace .loadout-cosmetics-grid .loadout-slot { min-height: 48px; }
@@ -2434,7 +2448,26 @@ input[type="number"] {
   padding-top: 8px;
   border-top: 1px solid var(--loadout-line);
 }
+.equipment-workspace .portable-lights > h4 { margin: 0 0 4px; font-size: 13px; line-height: 1.2; }
+.equipment-workspace .portable-light-row { padding: 4px 0; gap: 5px; }
+.equipment-workspace .portable-light-row strong { flex: 1 1 160px; min-width: 0; font-size: 12px; line-height: 1.25; }
+.equipment-workspace .portable-light-row .btn { padding: 5px 8px; font-size: 11px; }
 #sheet-tab-equipment { max-height: calc(100vh - 190px); }
+@media (max-height: 850px) {
+  .equipment-workspace .equipment-loadout { padding: 8px; }
+  .equipment-workspace .loadout-column { gap: 4px; }
+  .equipment-workspace .loadout-main { gap: 5px; }
+  .equipment-workspace .loadout-figure { min-height: 224px; }
+  .equipment-workspace .loadout-figure-art { height: 224px; }
+  .equipment-workspace .loadout-slot { min-height: 40px; padding: 4px; }
+  .equipment-workspace .loadout-slot-text strong { font-size: 11px; line-height: 1.15; -webkit-line-clamp: 1; }
+  .equipment-workspace .loadout-slot-label { font-size: 10px; line-height: 1.15; }
+  .equipment-workspace .loadout-slot-text small { font-size: 10px; line-height: 1.1; }
+  .equipment-workspace .loadout-cosmetics-grid .loadout-slot { min-height: 40px; }
+  .equipment-workspace .loadout-cosmetics { margin-top: 6px; padding-top: 5px; }
+  .equipment-workspace .equipment-loadout > .portable-lights,
+  .equipment-workspace .equipment-loadout > .prostheses { margin-top: 6px; padding-top: 5px; }
+}
 @media (max-width: 1350px) {
   .equipment-workspace { grid-template-columns: minmax(480px, 520px) minmax(0, 1fr); gap: 8px; }
   .equipment-workspace .loadout-main { grid-template-columns: minmax(0, 1fr) 115px minmax(0, 1fr); }

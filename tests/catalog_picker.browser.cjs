@@ -41,4 +41,6 @@ module.exports=async({page,request,token,lobby,base,safeSession})=>{
     assert.ok(items.some(item=>item.id==='preserved-legacy-grenade'&&item.templateId===156&&item.name==='РГД-5'&&item.quantity===1),'Старая сохранённая граната не потеряна и не переписана');
     assert.ok(items.some(item=>item.templateId===grenades.find(t=>t.name==='Граната РГД-5').id&&item.quantity===1),'Новая выдача использует канонический шаблон');
     console.log('Каталог: старые и новые гранаты/подсумки/перчатки/детекторы/контейнеры вместе в тестовой БД; в интерфейсе один вариант, новая выдача каноническая, старый предмет сохранён. Окно 1920×1080 и 1366×768.');
+    await page.evaluate("document.querySelector('#inventory-template-picker-modal .close').click();true");
+    await require('./desktop_layout.browser.cjs')({page,request,token,actor,lobby,offered,safeSession});
 };
