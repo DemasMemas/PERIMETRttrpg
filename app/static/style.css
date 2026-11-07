@@ -1087,6 +1087,7 @@ body.light-theme .chat-roll .message-kind { color: #3d5796; }
   top: 70px;
   right: 15px;
   width: 300px;
+  max-width: calc(100vw - 30px);
   background: var(--panel-bg);
   backdrop-filter: blur(5px);
   border-radius: 16px;
@@ -1167,6 +1168,9 @@ body.light-theme .lobby-time-field input[type="time"] {
   margin-bottom: 15px;
   border-bottom: 1px solid var(--panel-border);
   padding-bottom: 10px;
+}
+.settings-panel .settings-tabs {
+  flex-wrap: wrap;
 }
 .tab-btn {
   background: transparent;
