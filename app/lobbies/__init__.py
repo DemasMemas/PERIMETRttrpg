@@ -5306,6 +5306,13 @@ def resolve_world_detonation(lobby_id,event_id,lobby):
     return jsonify({'event':result})
 
 
+@lobbies_bp.route('/characters/<int:character_id>/pda-proximity',methods=['GET'])
+@jwt_required()
+def character_pda_proximity(character_id):
+    from app.services.pda_network import proximity
+    return jsonify(proximity(character_id,int(get_jwt_identity()),request.args.get('location_id',type=int),request.args.get('lobby_id',type=int)))
+
+
 @lobbies_bp.route('/characters/<int:character_id>/pda-network',methods=['GET','POST'])
 @jwt_required()
 def character_pda_network(character_id):
@@ -5318,7 +5325,7 @@ def character_pda_network(character_id):
             'location_id':request.args.get('location_id',type=int)})),200
     character,result=operate(character_id,user_id,request.get_json(silent=True) or {})
     socketio.emit('pda_network_updated',{'lobby_id':character.lobby_id},room=f'lobby_{character.lobby_id}')
-    if result.get('operation')=='pda_jammer':
+    if result.get('operation') in {'pda_jammer','proximity_sound'}:
         emit_character_update({'character_id':character.id,'updates':{'data':character.data_snapshot()},'source':'pda_network'})
     return jsonify({'result':result,'data':character.data_snapshot()}),200
 

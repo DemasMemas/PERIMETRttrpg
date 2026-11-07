@@ -165,3 +165,47 @@ def test_message_order_follows_transmission_time_instead_of_random_uuid(network_
     for identity,text in [('z-message','Первое'),('a-message','Второе'),('b-message','Третье')]:
         write(pair,operation='send',operation_id=identity,text=text)
     assert [message['text'] for message in read(pair,'target')['messages']]==['Первое','Второе','Третье']
+
+
+def test_proximity_requires_mod_and_ignores_friends_masked_and_unreachable(network_game):
+    from app.services.pda_network import proximity
+    pair=network_game;actor=pair['actor_character'];user=pair['actor_user']['id']
+    assert proximity(actor.id,user)['devices']==[]
+    data=deepcopy(actor.data);data['inventory']['pockets'][0]['modifications'].extend([{'ruleId':'pda-b8'},{'ruleId':'pda-b2'}]);actor.data=data
+    pair['target_group'].tile_x=2;db.session.commit()
+    result=proximity(actor.id,user)['devices'][0]
+    assert result['sound'] and len(result['signals'])==1 and set(result['signals'][0])=={'id','login'}
+    write(pair,operation='contact',login='target',friendly=True)
+    assert proximity(actor.id,user)['devices'][0]['signals']==[]
+    write(pair,operation='contact',login='target',friendly=False)
+    assert len(proximity(actor.id,user)['devices'][0]['signals'])==1
+    data=deepcopy(pair['target_character'].data);data['inventory']['pockets'][0]['modifications']=[{'ruleId':'pda-b9'}];pair['target_character'].data=data;db.session.commit()
+    assert proximity(actor.id,user)['devices'][0]['signals']==[]
+    data=deepcopy(pair['target_character'].data);data['inventory']['pockets'][0]['modifications']=[];pair['target_character'].data=data;pair['target_group'].tile_x=4;db.session.commit()
+    assert proximity(actor.id,user)['devices'][0]['signals']==[]
+
+
+def test_proximity_sound_is_physical_setting_and_public_sheet_cannot_override(network_game):
+    from app.services.pda_network import proximity
+    from app.services.portable_lights import preserve
+    pair=network_game;actor=pair['actor_character'];data=deepcopy(actor.data)
+    data['inventory']['pockets'][0]['modifications'].append({'ruleId':'pda-b8'});actor.data=data;pair['target_group'].tile_x=2;db.session.commit()
+    write(pair,operation='proximity_sound',enabled=False,character_revision=actor.revision)
+    assert not proximity(actor.id,pair['actor_user']['id'])['devices'][0]['sound']
+    assert read(pair)['source']['has_proximity'] and not read(pair)['source']['proximity_sound']
+    incoming=deepcopy(actor.data);incoming['inventory']['pockets'][0]['pdaNetwork']['proximity_sound']=True
+    preserve(actor.data,incoming)
+    assert not incoming['inventory']['pockets'][0]['pdaNetwork']['proximity_sound']
+    assert proximity(actor.id,pair['actor_user']['id'])['devices'][0]['signals']
+
+
+def test_proximity_is_private_world_scoped_and_stops_when_power_is_off(network_game,client,auth_headers):
+    from app.services.pda_network import proximity
+    pair=network_game;actor=pair['actor_character'];data=deepcopy(actor.data)
+    data['inventory']['pockets'][0]['modifications'].append({'ruleId':'pda-b8'});actor.data=data;db.session.commit()
+    with pytest.raises(PermissionDenied):proximity(actor.id,pair['target_user']['id'])
+    with pytest.raises(NotFoundError):proximity(actor.id,pair['actor_user']['id'],lobby_id=actor.lobby_id+100)
+    data=deepcopy(actor.data);data['inventory']['pockets'][0]['pdaState']['on']=False;actor.data=data;db.session.commit()
+    assert proximity(actor.id,pair['actor_user']['id'])['devices']==[]
+    response=client.get(f'/lobbies/characters/{actor.id}/pda-proximity',headers=auth_headers(pair['actor_user']))
+    assert response.status_code==200 and response.json=={'devices':[]}

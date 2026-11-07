@@ -106,6 +106,63 @@ module.exports=async({page,request,token,lobby,base,connect,debugPort,safeSessio
         await page.until("document.querySelector('[data-radio-saved] input')?.checked",'Друг сохранён в аккаунте');
         const bounds=await peer.evaluate("(()=>{const panel=document.querySelector('.pda-shell').getBoundingClientRect(),button=document.querySelector('[data-radio-send] button').getBoundingClientRect();return button.width>0&&button.x>=panel.x&&button.right<=panel.right&&button.bottom<=panel.bottom})()");assert.ok(bounds,'На 1920×1080 кнопка отправки находится внутри КПК');
         console.log('Сеть КПК: обычный игрок и ГМ обмениваются сообщениями в двух клиентах, двойной submit не дублирует сообщение, друг сохраняется; интерфейс проверен на 1920×1080.');
+        let source=await request('/lobbies/characters/'+actor.id,null,token,'GET');
+        source.data.inventory.pockets.push({id:'b8-materials',name:'Электронные материалы',category:'crafting_material',quantity:2});
+        await request('/lobbies/characters/'+actor.id,{data:source.data},token,'PUT');
+        source=await request('/lobbies/characters/'+actor.id,null,token,'GET');
+        const solder=source.data.inventory.pockets.findIndex(item=>item.name.includes('Паяльные инструменты'));
+        const job=await request(craft,{operation:'install_pda_modification',operation_id:'b8-install',character_revision:source.data._revision,
+            target_path:['inventory','pockets',0],item_id:'dynamo-device',rule_id:'pda-b8',tool_path:['inventory','pockets',solder]},token);
+        const nextClock=await request(api,null,token,'GET'),future=nextClock.game_day*1440+nextClock.game_time_minutes+60;
+        await request(api+'/time',{game_day:Math.floor(future/1440),game_time_minutes:future%1440},token,'PATCH');
+        source=await request('/lobbies/characters/'+actor.id,null,token,'GET');
+        const finish=await request(craft,{operation:'finish',operation_id:'b8-finish',character_revision:source.data._revision,job_id:job.result.id,chosen_loss:[]},token);
+        assert.ok(finish.result.success);
+        const sourceSelection={item_path:['inventory','pockets',0],item_id:'dynamo-device',location_id:location.id};
+        await request('/lobbies/characters/'+actor.id+'/pda-network',{...sourceSelection,operation:'contact',login:'radio-player',friendly:true},token);
+        await peer.call('Page.bringToFront');
+        await peer.evaluate("[...document.querySelectorAll('#pda-shell-modal nav button')].find(b=>b.textContent==='Контакты').click();true");
+        await peer.until("!document.querySelector('[data-radio-proximity]')?.hidden",'Детектор приближения установлен по правилам');
+        await peer.evaluate("window.__b8Beeps=0;window.__b8Alerts=[];window.addEventListener('pda-proximity-alert',e=>__b8Alerts.push(e.detail));const original=AudioContext.prototype.createOscillator;AudioContext.prototype.createOscillator=function(...args){__b8Beeps++;window.__b8LastBeepAt=performance.now();return original.apply(this,args)};true");
+        const soundPoint=await peer.evaluate("(()=>{const r=document.querySelector('[data-radio-test-sound]').getBoundingClientRect();return{x:r.x+r.width/2,y:r.y+r.height/2}})()");
+        for(const type of ['mouseMoved','mousePressed','mouseReleased'])await peer.call('Input.dispatchMouseEvent',{type,...soundPoint,button:type==='mouseMoved'?'none':'left',buttons:type==='mousePressed'?1:0,clickCount:type==='mouseMoved'?0:1});
+        await peer.until('__b8Beeps>0','Реальный AudioContext создаёт звуковой сигнал');
+        await peer.until('performance.now()-__b8LastBeepAt>=500','Проверочный звук завершён до появления нового сигнала');
+        const baseline=await peer.evaluate('__b8Beeps');
+        await peer.evaluate("document.querySelector('[data-pda-close]').click();window.closeCharacterSheet();true");
+        const stranger=await request(api+'/characters',{name:'Незнакомый сигнал',data:{inventory:{pockets:[{id:'unknown-pda',name:'КПК',category:'misc',quantity:1}],backpack:[]}}},token);
+        await request(loc+'/spawn_character',{character_id:stranger.id,tile_x:44,tile_y:48},token);
+        const scanUrl='/lobbies/characters/'+actor.id+'/pda-proximity?lobby_id='+lobby.id+'&location_id='+location.id;
+        const detected=await request(scanUrl,null,token,'GET');assert.equal(detected.devices[0].signals.length,1,'Друг не вызывает тревогу');
+        try{
+            await peer.until('__b8Alerts.some(e=>e.sound)','Закрытый КПК сообщил о незнакомом сигнале');
+            await peer.until('__b8Beeps>'+baseline,'Детектор создал звуковой сигнал');
+        }catch(error){
+            console.log('Диагностика детектора:',JSON.stringify(await peer.evaluate("({alerts:__b8Alerts,beeps:__b8Beeps,hidden:document.hidden,location:window.currentLocationId,character:window.currentCharacterId,localCharacter:window.currentLocationCharacterId,caches:Object.keys(sessionStorage).filter(k=>k.startsWith('pda-proximity:')).map(k=>[k,sessionStorage.getItem(k)])})()")));
+            throw error;
+        }
+        await peer.evaluate(`window.openCharacterSheet(${actor.id},'inventory').then(()=>true)`);await usePdaAgain();
+        async function usePdaAgain(){
+            await peer.until("Boolean([...document.querySelectorAll('[data-widget-identity]')].find(e=>JSON.parse(e.dataset.widgetIdentity).id==='dynamo-device'))",'КПК для выключения звука');
+            await peer.evaluate("[...document.querySelectorAll('[data-widget-identity]')].find(e=>JSON.parse(e.dataset.widgetIdentity).id==='dynamo-device').querySelector('[data-widget-key=use]').click();true");
+            await peer.until("document.getElementById('pda-shell-modal')",'КПК открыт');
+            await peer.evaluate("[...document.querySelectorAll('#pda-shell-modal nav button')].find(b=>b.textContent==='Контакты').click();true");
+            await peer.until("!document.querySelector('[data-radio-proximity]')?.hidden",'Управление звуковым сигналом');
+        }
+        await peer.evaluate("document.querySelector('[data-radio-proximity-sound]').click();true");
+        await peer.until("(async()=>!(await (await import('/static/js/api.js')).Server.getPdaNetwork("+actor.id+","+JSON.stringify(sourceSelection)+")).source.proximity_sound)()",'Звук выключен на физическом КПК');
+        await peer.evaluate("document.querySelector('[data-pda-close]').click();window.closeCharacterSheet();true");
+        const toggleStranger=async()=>{
+            const item=await request('/lobbies/characters/'+stranger.id,null,token,'GET');
+            return request('/lobbies/characters/'+stranger.id+'/portable-lights',{operation:'pda_toggle',path:['inventory','pockets',0],source_id:'unknown-pda',character_revision:item.data._revision},token);
+        };
+        await toggleStranger();
+        const monitorUser=await peer.evaluate("localStorage.getItem('user_id')"),cache=`pda-proximity:${monitorUser}:${lobby.id}:${actor.id}`;
+        await peer.until(`JSON.parse(sessionStorage.getItem(${JSON.stringify(cache)})||'[]').length===0`,'Уход сигнала замечен');
+        const quietBaseline=await peer.evaluate('__b8Beeps'),count=await peer.evaluate('__b8Alerts.length');
+        await toggleStranger();await peer.until(`__b8Alerts.length>${count}&&__b8Alerts.at(-1).sound===false`,'Повторное появление показано без звука');
+        assert.equal(await peer.evaluate('__b8Beeps'),quietBaseline);
+        console.log('Детектор приближения: установлен штатным рецептом; друг не вызывает тревогу, незнакомый КПК вызывает настоящий звуковой сигнал при закрытом интерфейсе; отключение звука сохраняется на устройстве.');
     }finally{
         if(peer)peer.close();
         if(protocol){if(context)await protocol.call('Target.disposeBrowserContext',{browserContextId:context.browserContextId}).catch(()=>{});protocol.close();}

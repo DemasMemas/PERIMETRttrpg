@@ -6,6 +6,7 @@ import unicodedata
 
 from sqlalchemy import inspect,or_,select
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm.attributes import flag_modified
 from app.extensions import db
 from app.models import LobbyCharacter,LocationCharacter,WorldGroup,PdaAccount,PdaAccountLogin,PdaContact,PdaTransmission,PdaDelivery
 from app.services.character import CharacterService
@@ -124,8 +125,8 @@ def _account(source):
     return account
 
 
-def snapshot(character_id,user_id,payload):
-    character,item,source,devices=_source(character_id,user_id,payload)
+def _signals(source,devices):
+    character=source['character']
     account=source['account'];contacts=PdaContact.query.filter_by(account_id=account.id).all() if account else []
     friends={contact.target_account_id for contact in contacts if contact.friendly}
     signals=[]
@@ -139,6 +140,31 @@ def snapshot(character_id,user_id,payload):
             entry['position']=({key:position[key] for key in ('location_id','x','y','level')} if position['location_id']
                 else {'tile_x':position['tile_x'],'tile_y':position['tile_y']})
         signals.append(entry)
+    return signals
+
+
+def proximity(character_id,user_id,location_id=None,lobby_id=None):
+    character=db.session.get(LobbyCharacter,character_id)
+    if not character:raise NotFoundError('Персонаж не найден')
+    CharacterService.check_access(character,user_id,edit=True)
+    if lobby_id is not None and character.lobby_id!=lobby_id:raise NotFoundError('Персонаж находится в другом мире')
+    if location_id is not None and not LocationCharacter.query.filter_by(character_id=character_id,location_id=location_id).first():
+        raise ValidationError('Персонаж отсутствует на подлокации')
+    if not enabled() or not any(definition(item)=='pda' and 'pda-b8' in mods(item) and pda_state(item)['on'] and pda_state(item)['charge_percent']>0
+            for _,item in walk(character.data or {})):return {'devices':[]}
+    devices=registry(character.lobby_id,location_id);result=[]
+    for source in devices:
+        if source['character'].id!=character_id or 'pda-b8' not in source['mods']:continue
+        result.append({'id':source['signal_id'],'name':source['item'].get('name') or 'КПК',
+            'sound':(source['item'].get('pdaNetwork') or {}).get('proximity_sound',True),
+            'signals':[{'id':signal['signal_id'],'login':signal['login']} for signal in _signals(source,devices) if not signal['friendly']]})
+    return {'devices':result}
+
+
+def snapshot(character_id,user_id,payload):
+    character,item,source,devices=_source(character_id,user_id,payload)
+    account=source['account'];contacts=PdaContact.query.filter_by(account_id=account.id).all() if account else []
+    signals=_signals(source,devices)
     messages=[]
     if account:
         delivered=select(PdaDelivery.transmission_id).where(PdaDelivery.account_id==account.id)
@@ -158,14 +184,22 @@ def snapshot(character_id,user_id,payload):
             'can_send':any(peer['account'] and peer['account'].id==target.id and 'pda-b9' not in peer['mods'] and reaches(source,peer,devices) for peer in devices)})
     return {'account':{'id':account.id,'login':account.login} if account else None,'source':{'signal_id':source['signal_id'],
         'transmit_range':source['range'],'blocked':blocked(source,devices),'jammer_on':bool((item.get('pdaNetwork') or {}).get('jammer_on')),
-        'has_jammer':'pda-b16' in source['mods']},'signals':signals,'contacts':saved,'messages':messages[-100:]}
+        'has_jammer':'pda-b16' in source['mods'],'has_proximity':'pda-b8' in source['mods'],
+        'proximity_sound':(item.get('pdaNetwork') or {}).get('proximity_sound',True)},'signals':signals,'contacts':saved,'messages':messages[-100:]}
 
 
 @atomic_operation
 def operate(character_id,user_id,payload):
     character,item,source,devices=_source(character_id,user_id,payload,edit=True)
     operation=payload.get('operation')
-    if operation=='jammer':
+    if operation=='proximity_sound':
+        if 'pda-b8' not in source['mods']:raise ValidationError('На КПК нет детектора приближения')
+        if type(payload.get('enabled')) is not bool:raise ValidationError('Выберите состояние звукового сигнала')
+        if (item.get('pdaNetwork') or {}).get('proximity_sound',True)!=payload['enabled']:
+            if payload.get('character_revision')!=character.revision:raise ConflictError('Лист изменился')
+            item.setdefault('pdaNetwork',{})['proximity_sound']=payload['enabled'];flag_modified(character,'data')
+        return character,{'operation':operation}
+    elif operation=='jammer':
         if 'pda-b16' not in source['mods']:raise ValidationError('На КПК нет глушилки')
         if type(payload.get('enabled')) is not bool:raise ValidationError('Выберите состояние глушилки')
         from app.services.portable_lights import operate as use_device

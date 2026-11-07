@@ -1,4 +1,5 @@
 import { waterProfileControls } from './waterProfiles.js';
+import {initPdaProximity} from './pdaProximity.js';
 // static/js/main.js
 import { initWorldNumericInputs, getWorldNumericValue, bindNumericInput, readNumericInput, syncNumericInput } from './worldNumericInputs.js';
 
@@ -166,6 +167,7 @@ window.socket = socket;
 window.currentLocationId = null;
 initDraggablePanels();
 window.currentLocationCharacterId = window.currentLocationCharacterId || null;
+initPdaProximity(currentLobbyId,socket);
 
 // ========== Перенаправление UI-вызовов в зависимости от активного режима ==========
 

@@ -1,9 +1,11 @@
 import {Server} from './api.js';
 import {showNotification} from './utils.js';
+import {testPdaSignal} from './pdaProximity.js';
 
 export function createPdaNetworkView({characterId,findSource,getData,operateHardware,canEdit}){
     const element=document.createElement('section');element.className='pda-network';
-    element.innerHTML=`<p data-radio-status></p><button type="button" data-radio-jammer hidden></button><p role="alert" data-radio-error></p>
+    element.innerHTML=`<p data-radio-status></p><button type="button" data-radio-jammer hidden></button>
+        <div data-radio-proximity hidden><label><input type="checkbox" data-radio-proximity-sound> Звуковой сигнал о незнакомом КПК</label><button type="button" data-radio-test-sound>Проверить звук</button></div><p role="alert" data-radio-error></p>
         <div data-radio-chat><div class="pda-radio-messages" data-radio-messages aria-live="polite"></div>
         <form data-radio-send><label>Получатель<select aria-label="Получатель сообщения КПК"></select></label>
         <label>Сообщение<textarea aria-label="Сообщение КПК" rows="3" maxlength="2000"></textarea></label><button type="submit">Передать</button></form></div>
@@ -12,6 +14,7 @@ export function createPdaNetworkView({characterId,findSource,getData,operateHard
     const status=element.querySelector('[data-radio-status]'),error=element.querySelector('[data-radio-error]'),jammer=element.querySelector('[data-radio-jammer]');
     const send=element.querySelector('[data-radio-send]'),receiver=send.querySelector('select'),text=send.querySelector('textarea');
     const add=element.querySelector('[data-radio-add]'),login=add.querySelector('input');
+    const proximity=element.querySelector('[data-radio-proximity]'),sound=element.querySelector('[data-radio-proximity-sound]');
     let active=false,closed=false,busy=false,loading=false,timer=null,snapshot=null,pendingMessage=null,actionError='';
     const node=(tag,value)=>{const el=document.createElement(tag);el.textContent=value;return el;};
     const selection=()=>{
@@ -26,12 +29,14 @@ export function createPdaNetworkView({characterId,findSource,getData,operateHard
         for(const input of element.querySelectorAll('[data-radio-signals] button,[data-radio-saved] button,[data-radio-saved] input'))input.disabled=unavailable;
         const state=window.locationCombatState,offTurn=state?.status==='active'&&Number(state.current_character?.character_id)!==Number(characterId);
         jammer.disabled=busy||!canEdit||offTurn;jammer.title=offTurn?'Только в свой ход':'';
+        sound.disabled=busy||!canEdit;
     };
     function paint(){
         if(!snapshot)return;
         const source=snapshot.source;
         status.textContent=`Дальность передачи: ${source.transmit_range} м${source.blocked?' · '+source.blocked:''}${snapshot.account?'':' · войдите в аккаунт для переписки и контактов'}`;
         jammer.hidden=!source.has_jammer;jammer.textContent=source.jammer_on?'Выключить глушилку':'Включить глушилку · радиус 25 м';
+        proximity.hidden=!source.has_proximity;sound.checked=source.proximity_sound!==false;
         const feed=element.querySelector('[data-radio-messages]'),bottom=feed.scrollHeight-feed.scrollTop-feed.clientHeight<40;
         feed.replaceChildren();
         for(const message of snapshot.messages){const author=message.outgoing?(message.recipient?'Вы → '+message.recipient:'Вы · общий канал'):
@@ -94,6 +99,8 @@ export function createPdaNetworkView({characterId,findSource,getData,operateHard
     text.oninput=()=>{pendingMessage=null;};receiver.onchange=()=>{pendingMessage=null;};
     add.onsubmit=event=>{event.preventDefault();if(login.value.trim())void act({operation:'contact',login:login.value,friendly:true});};
     jammer.onclick=()=>act({operation:'jammer',enabled:!snapshot?.source.jammer_on});
+    sound.onchange=()=>act({operation:'proximity_sound',enabled:sound.checked});
+    element.querySelector('[data-radio-test-sound]').onclick=()=>{void testPdaSignal();};
     const onUpdate=()=>{void refresh();};window.addEventListener('pda-network-updated',onUpdate);
     window.addEventListener('pda-game-time-updated',onUpdate);
     controls();
