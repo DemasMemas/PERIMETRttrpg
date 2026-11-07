@@ -11445,7 +11445,7 @@
       "compatible_ids": []
     },
     {
-      "name": "Как не страдать от больной спины к концу жизни?",
+      "name": "Как не страдать от больной спины к концу жизни?. Раздел: Сила",
       "category": "misc",
       "subcategory": "Книги",
       "item_class": null,
@@ -11461,12 +11461,129 @@
         "training_extra_xp": 1,
         "skill_level_limit": 16,
         "source_order": 316,
-        "source_description": "Электронная книга. Чтение занимает 4 часа. При получении очка навыка за обучение даёт ещё одно; действует до уровня навыка 16."
+        "source_description": "Электронная книга. Чтение занимает 4 часа. При получении очка навыка за обучение даёт ещё одно; действует до уровня навыка 16.",
+        "book_skill_path": "physical.strength",
+        "book_skill_name": "Сила"
       },
       "compatible_ids": []
     },
     {
-      "name": "Как договориться, чтобы прожить эту жизнь легче?",
+      "name": "Как не страдать от больной спины к концу жизни?. Раздел: Ловкость",
+      "category": "misc",
+      "subcategory": "Книги",
+      "item_class": null,
+      "price": 5000,
+      "weight": 0,
+      "volume": 0,
+      "description": "Электронная книга по навыку из категории \"Физические\". Чтение занимает 4 часа. При обучении по этой книге дополнительное очко навыка +1; действует до уровня навыка 16.",
+      "attributes": {
+        "import_source": "equipment_workbook",
+        "book_kind": "skill",
+        "book_subject": "Электронная книга по навыку из категории \"Физические\"",
+        "reading_seconds": 14400,
+        "training_extra_xp": 1,
+        "skill_level_limit": 16,
+        "source_order": 317,
+        "source_description": "Электронная книга. Чтение занимает 4 часа. При получении очка навыка за обучение даёт ещё одно; действует до уровня навыка 16.",
+        "book_skill_path": "physical.agility",
+        "book_skill_name": "Ловкость"
+      },
+      "compatible_ids": []
+    },
+    {
+      "name": "Как не страдать от больной спины к концу жизни?. Раздел: Воля",
+      "category": "misc",
+      "subcategory": "Книги",
+      "item_class": null,
+      "price": 5000,
+      "weight": 0,
+      "volume": 0,
+      "description": "Электронная книга по навыку из категории \"Физические\". Чтение занимает 4 часа. При обучении по этой книге дополнительное очко навыка +1; действует до уровня навыка 16.",
+      "attributes": {
+        "import_source": "equipment_workbook",
+        "book_kind": "skill",
+        "book_subject": "Электронная книга по навыку из категории \"Физические\"",
+        "reading_seconds": 14400,
+        "training_extra_xp": 1,
+        "skill_level_limit": 16,
+        "source_order": 318,
+        "source_description": "Электронная книга. Чтение занимает 4 часа. При получении очка навыка за обучение даёт ещё одно; действует до уровня навыка 16.",
+        "book_skill_path": "physical.will",
+        "book_skill_name": "Воля"
+      },
+      "compatible_ids": []
+    },
+    {
+      "name": "Как не страдать от больной спины к концу жизни?. Раздел: Внимательность",
+      "category": "misc",
+      "subcategory": "Книги",
+      "item_class": null,
+      "price": 5000,
+      "weight": 0,
+      "volume": 0,
+      "description": "Электронная книга по навыку из категории \"Физические\". Чтение занимает 4 часа. При обучении по этой книге дополнительное очко навыка +1; действует до уровня навыка 16.",
+      "attributes": {
+        "import_source": "equipment_workbook",
+        "book_kind": "skill",
+        "book_subject": "Электронная книга по навыку из категории \"Физические\"",
+        "reading_seconds": 14400,
+        "training_extra_xp": 1,
+        "skill_level_limit": 16,
+        "source_order": 319,
+        "source_description": "Электронная книга. Чтение занимает 4 часа. При получении очка навыка за обучение даёт ещё одно; действует до уровня навыка 16.",
+        "book_skill_path": "physical.awareness",
+        "book_skill_name": "Внимательность"
+      },
+      "compatible_ids": []
+    },
+    {
+      "name": "Как не страдать от больной спины к концу жизни?. Раздел: Ближний бой",
+      "category": "misc",
+      "subcategory": "Книги",
+      "item_class": null,
+      "price": 5000,
+      "weight": 0,
+      "volume": 0,
+      "description": "Электронная книга по навыку из категории \"Физические\". Чтение занимает 4 часа. При обучении по этой книге дополнительное очко навыка +1; действует до уровня навыка 16.",
+      "attributes": {
+        "import_source": "equipment_workbook",
+        "book_kind": "skill",
+        "book_subject": "Электронная книга по навыку из категории \"Физические\"",
+        "reading_seconds": 14400,
+        "training_extra_xp": 1,
+        "skill_level_limit": 16,
+        "source_order": 320,
+        "source_description": "Электронная книга. Чтение занимает 4 часа. При получении очка навыка за обучение даёт ещё одно; действует до уровня навыка 16.",
+        "book_skill_path": "physical.melee",
+        "book_skill_name": "Ближний бой"
+      },
+      "compatible_ids": []
+    },
+    {
+      "name": "Как не страдать от больной спины к концу жизни?. Раздел: Стрельба",
+      "category": "misc",
+      "subcategory": "Книги",
+      "item_class": null,
+      "price": 5000,
+      "weight": 0,
+      "volume": 0,
+      "description": "Электронная книга по навыку из категории \"Физические\". Чтение занимает 4 часа. При обучении по этой книге дополнительное очко навыка +1; действует до уровня навыка 16.",
+      "attributes": {
+        "import_source": "equipment_workbook",
+        "book_kind": "skill",
+        "book_subject": "Электронная книга по навыку из категории \"Физические\"",
+        "reading_seconds": 14400,
+        "training_extra_xp": 1,
+        "skill_level_limit": 16,
+        "source_order": 321,
+        "source_description": "Электронная книга. Чтение занимает 4 часа. При получении очка навыка за обучение даёт ещё одно; действует до уровня навыка 16.",
+        "book_skill_path": "physical.shooting",
+        "book_skill_name": "Стрельба"
+      },
+      "compatible_ids": []
+    },
+    {
+      "name": "Как договориться, чтобы прожить эту жизнь легче?. Раздел: Харизма",
       "category": "misc",
       "subcategory": "Книги",
       "item_class": null,
@@ -11481,13 +11598,107 @@
         "reading_seconds": 14400,
         "training_extra_xp": 1,
         "skill_level_limit": 16,
-        "source_order": 317,
-        "source_description": "Электронная книга. Чтение занимает 4 часа. При получении очка навыка за обучение даёт ещё одно; действует до уровня навыка 16."
+        "source_order": 322,
+        "source_description": "Электронная книга. Чтение занимает 4 часа. При получении очка навыка за обучение даёт ещё одно; действует до уровня навыка 16.",
+        "book_skill_path": "social.charisma",
+        "book_skill_name": "Харизма"
       },
       "compatible_ids": []
     },
     {
-      "name": "Как жить эту жизнь?",
+      "name": "Как договориться, чтобы прожить эту жизнь легче?. Раздел: Бартер",
+      "category": "misc",
+      "subcategory": "Книги",
+      "item_class": null,
+      "price": 7500,
+      "weight": 0,
+      "volume": 0,
+      "description": "Электронная книга по навыку из категории \"Социальные\". Чтение занимает 4 часа. При обучении по этой книге дополнительное очко навыка +1; действует до уровня навыка 16.",
+      "attributes": {
+        "import_source": "equipment_workbook",
+        "book_kind": "skill",
+        "book_subject": "Электронная книга по навыку из категории \"Социальные\"",
+        "reading_seconds": 14400,
+        "training_extra_xp": 1,
+        "skill_level_limit": 16,
+        "source_order": 323,
+        "source_description": "Электронная книга. Чтение занимает 4 часа. При получении очка навыка за обучение даёт ещё одно; действует до уровня навыка 16.",
+        "book_skill_path": "social.barter",
+        "book_skill_name": "Бартер"
+      },
+      "compatible_ids": []
+    },
+    {
+      "name": "Как договориться, чтобы прожить эту жизнь легче?. Раздел: Убеждение",
+      "category": "misc",
+      "subcategory": "Книги",
+      "item_class": null,
+      "price": 7500,
+      "weight": 0,
+      "volume": 0,
+      "description": "Электронная книга по навыку из категории \"Социальные\". Чтение занимает 4 часа. При обучении по этой книге дополнительное очко навыка +1; действует до уровня навыка 16.",
+      "attributes": {
+        "import_source": "equipment_workbook",
+        "book_kind": "skill",
+        "book_subject": "Электронная книга по навыку из категории \"Социальные\"",
+        "reading_seconds": 14400,
+        "training_extra_xp": 1,
+        "skill_level_limit": 16,
+        "source_order": 324,
+        "source_description": "Электронная книга. Чтение занимает 4 часа. При получении очка навыка за обучение даёт ещё одно; действует до уровня навыка 16.",
+        "book_skill_path": "social.persuasion",
+        "book_skill_name": "Убеждение"
+      },
+      "compatible_ids": []
+    },
+    {
+      "name": "Как договориться, чтобы прожить эту жизнь легче?. Раздел: Обман",
+      "category": "misc",
+      "subcategory": "Книги",
+      "item_class": null,
+      "price": 7500,
+      "weight": 0,
+      "volume": 0,
+      "description": "Электронная книга по навыку из категории \"Социальные\". Чтение занимает 4 часа. При обучении по этой книге дополнительное очко навыка +1; действует до уровня навыка 16.",
+      "attributes": {
+        "import_source": "equipment_workbook",
+        "book_kind": "skill",
+        "book_subject": "Электронная книга по навыку из категории \"Социальные\"",
+        "reading_seconds": 14400,
+        "training_extra_xp": 1,
+        "skill_level_limit": 16,
+        "source_order": 325,
+        "source_description": "Электронная книга. Чтение занимает 4 часа. При получении очка навыка за обучение даёт ещё одно; действует до уровня навыка 16.",
+        "book_skill_path": "social.deception",
+        "book_skill_name": "Обман"
+      },
+      "compatible_ids": []
+    },
+    {
+      "name": "Как договориться, чтобы прожить эту жизнь легче?. Раздел: Устрашение",
+      "category": "misc",
+      "subcategory": "Книги",
+      "item_class": null,
+      "price": 7500,
+      "weight": 0,
+      "volume": 0,
+      "description": "Электронная книга по навыку из категории \"Социальные\". Чтение занимает 4 часа. При обучении по этой книге дополнительное очко навыка +1; действует до уровня навыка 16.",
+      "attributes": {
+        "import_source": "equipment_workbook",
+        "book_kind": "skill",
+        "book_subject": "Электронная книга по навыку из категории \"Социальные\"",
+        "reading_seconds": 14400,
+        "training_extra_xp": 1,
+        "skill_level_limit": 16,
+        "source_order": 326,
+        "source_description": "Электронная книга. Чтение занимает 4 часа. При получении очка навыка за обучение даёт ещё одно; действует до уровня навыка 16.",
+        "book_skill_path": "social.intimidation",
+        "book_skill_name": "Устрашение"
+      },
+      "compatible_ids": []
+    },
+    {
+      "name": "Как жить эту жизнь?. Раздел: Медицина",
       "category": "misc",
       "subcategory": "Книги",
       "item_class": null,
@@ -11502,8 +11713,102 @@
         "reading_seconds": 14400,
         "training_extra_xp": 1,
         "skill_level_limit": 16,
-        "source_order": 318,
-        "source_description": "Электронная книга. Чтение занимает 4 часа. При получении очка навыка за обучение даёт ещё одно; действует до уровня навыка 16."
+        "source_order": 327,
+        "source_description": "Электронная книга. Чтение занимает 4 часа. При получении очка навыка за обучение даёт ещё одно; действует до уровня навыка 16.",
+        "book_skill_path": "other.medicine",
+        "book_skill_name": "Медицина"
+      },
+      "compatible_ids": []
+    },
+    {
+      "name": "Как жить эту жизнь?. Раздел: Инженерия",
+      "category": "misc",
+      "subcategory": "Книги",
+      "item_class": null,
+      "price": 3000,
+      "weight": 0,
+      "volume": 0,
+      "description": "Электронная книга по навыку из категории \"Прочие\". Чтение занимает 4 часа. При обучении по этой книге дополнительное очко навыка +1; действует до уровня навыка 16.",
+      "attributes": {
+        "import_source": "equipment_workbook",
+        "book_kind": "skill",
+        "book_subject": "Электронная книга по навыку из категории \"Прочие\"",
+        "reading_seconds": 14400,
+        "training_extra_xp": 1,
+        "skill_level_limit": 16,
+        "source_order": 328,
+        "source_description": "Электронная книга. Чтение занимает 4 часа. При получении очка навыка за обучение даёт ещё одно; действует до уровня навыка 16.",
+        "book_skill_path": "other.engineering",
+        "book_skill_name": "Инженерия"
+      },
+      "compatible_ids": []
+    },
+    {
+      "name": "Как жить эту жизнь?. Раздел: Скрытность",
+      "category": "misc",
+      "subcategory": "Книги",
+      "item_class": null,
+      "price": 3000,
+      "weight": 0,
+      "volume": 0,
+      "description": "Электронная книга по навыку из категории \"Прочие\". Чтение занимает 4 часа. При обучении по этой книге дополнительное очко навыка +1; действует до уровня навыка 16.",
+      "attributes": {
+        "import_source": "equipment_workbook",
+        "book_kind": "skill",
+        "book_subject": "Электронная книга по навыку из категории \"Прочие\"",
+        "reading_seconds": 14400,
+        "training_extra_xp": 1,
+        "skill_level_limit": 16,
+        "source_order": 329,
+        "source_description": "Электронная книга. Чтение занимает 4 часа. При получении очка навыка за обучение даёт ещё одно; действует до уровня навыка 16.",
+        "book_skill_path": "other.stealth",
+        "book_skill_name": "Скрытность"
+      },
+      "compatible_ids": []
+    },
+    {
+      "name": "Как жить эту жизнь?. Раздел: Тактика",
+      "category": "misc",
+      "subcategory": "Книги",
+      "item_class": null,
+      "price": 3000,
+      "weight": 0,
+      "volume": 0,
+      "description": "Электронная книга по навыку из категории \"Прочие\". Чтение занимает 4 часа. При обучении по этой книге дополнительное очко навыка +1; действует до уровня навыка 16.",
+      "attributes": {
+        "import_source": "equipment_workbook",
+        "book_kind": "skill",
+        "book_subject": "Электронная книга по навыку из категории \"Прочие\"",
+        "reading_seconds": 14400,
+        "training_extra_xp": 1,
+        "skill_level_limit": 16,
+        "source_order": 330,
+        "source_description": "Электронная книга. Чтение занимает 4 часа. При получении очка навыка за обучение даёт ещё одно; действует до уровня навыка 16.",
+        "book_skill_path": "other.tactics",
+        "book_skill_name": "Тактика"
+      },
+      "compatible_ids": []
+    },
+    {
+      "name": "Как жить эту жизнь?. Раздел: Выживание",
+      "category": "misc",
+      "subcategory": "Книги",
+      "item_class": null,
+      "price": 3000,
+      "weight": 0,
+      "volume": 0,
+      "description": "Электронная книга по навыку из категории \"Прочие\". Чтение занимает 4 часа. При обучении по этой книге дополнительное очко навыка +1; действует до уровня навыка 16.",
+      "attributes": {
+        "import_source": "equipment_workbook",
+        "book_kind": "skill",
+        "book_subject": "Электронная книга по навыку из категории \"Прочие\"",
+        "reading_seconds": 14400,
+        "training_extra_xp": 1,
+        "skill_level_limit": 16,
+        "source_order": 331,
+        "source_description": "Электронная книга. Чтение занимает 4 часа. При получении очка навыка за обучение даёт ещё одно; действует до уровня навыка 16.",
+        "book_skill_path": "other.survival",
+        "book_skill_name": "Выживание"
       },
       "compatible_ids": []
     },
@@ -11523,7 +11828,7 @@
         "reading_seconds": 14400,
         "salvage_bonus": 25,
         "unlocks_modifications": true,
-        "source_order": 319,
+        "source_order": 332,
         "source_description": "Электронная книга. Чтение занимает 4 часа. Позволяет модифицировать снаряжение указанного вида и даёт +25 к его разбору."
       },
       "compatible_ids": []
@@ -11544,7 +11849,7 @@
         "reading_seconds": 14400,
         "salvage_bonus": 25,
         "unlocks_modifications": true,
-        "source_order": 320,
+        "source_order": 333,
         "source_description": "Электронная книга. Чтение занимает 4 часа. Позволяет модифицировать снаряжение указанного вида и даёт +25 к его разбору."
       },
       "compatible_ids": []
@@ -11565,7 +11870,7 @@
         "reading_seconds": 14400,
         "salvage_bonus": 25,
         "unlocks_modifications": true,
-        "source_order": 321,
+        "source_order": 334,
         "source_description": "Электронная книга. Чтение занимает 4 часа. Позволяет модифицировать снаряжение указанного вида и даёт +25 к его разбору."
       },
       "compatible_ids": []
@@ -11586,7 +11891,7 @@
         "reading_seconds": 14400,
         "salvage_bonus": 25,
         "unlocks_modifications": true,
-        "source_order": 322,
+        "source_order": 335,
         "source_description": "Электронная книга. Чтение занимает 4 часа. Позволяет модифицировать снаряжение указанного вида и даёт +25 к его разбору."
       },
       "compatible_ids": []
@@ -11607,7 +11912,7 @@
         "reading_seconds": 14400,
         "salvage_bonus": 25,
         "unlocks_modifications": true,
-        "source_order": 323,
+        "source_order": 336,
         "source_description": "Электронная книга. Чтение занимает 4 часа. Позволяет модифицировать снаряжение указанного вида и даёт +25 к его разбору."
       },
       "compatible_ids": []
@@ -11628,7 +11933,7 @@
         "reading_seconds": 14400,
         "salvage_bonus": 25,
         "unlocks_modifications": true,
-        "source_order": 324,
+        "source_order": 337,
         "source_description": "Электронная книга. Чтение занимает 4 часа. Позволяет модифицировать снаряжение указанного вида и даёт +25 к его разбору."
       },
       "compatible_ids": []
@@ -11649,7 +11954,7 @@
         "reading_seconds": 14400,
         "salvage_bonus": 25,
         "unlocks_modifications": true,
-        "source_order": 325,
+        "source_order": 338,
         "source_description": "Электронная книга. Чтение занимает 4 часа. Позволяет модифицировать снаряжение указанного вида и даёт +25 к его разбору."
       },
       "compatible_ids": []
@@ -11670,7 +11975,7 @@
         "reading_seconds": 14400,
         "salvage_bonus": 25,
         "unlocks_modifications": true,
-        "source_order": 326,
+        "source_order": 339,
         "source_description": "Электронная книга. Чтение занимает 4 часа. Позволяет модифицировать снаряжение указанного вида и даёт +25 к его разбору."
       },
       "compatible_ids": []
@@ -11691,7 +11996,7 @@
         "reading_seconds": 14400,
         "salvage_bonus": 25,
         "unlocks_modifications": true,
-        "source_order": 327,
+        "source_order": 340,
         "source_description": "Электронная книга. Чтение занимает 4 часа. Позволяет модифицировать снаряжение указанного вида и даёт +25 к его разбору."
       },
       "compatible_ids": []
@@ -11712,7 +12017,7 @@
         "reading_seconds": 14400,
         "salvage_bonus": 25,
         "unlocks_modifications": true,
-        "source_order": 328,
+        "source_order": 341,
         "source_description": "Электронная книга. Чтение занимает 4 часа. Позволяет модифицировать снаряжение указанного вида и даёт +25 к его разбору."
       },
       "compatible_ids": []
@@ -11733,7 +12038,7 @@
         "reading_seconds": 14400,
         "salvage_bonus": 25,
         "unlocks_modifications": true,
-        "source_order": 329,
+        "source_order": 342,
         "source_description": "Электронная книга. Чтение занимает 4 часа. Позволяет модифицировать снаряжение указанного вида и даёт +25 к его разбору."
       },
       "compatible_ids": []
@@ -11754,7 +12059,7 @@
         "reading_seconds": 14400,
         "salvage_bonus": 25,
         "unlocks_modifications": true,
-        "source_order": 330,
+        "source_order": 343,
         "source_description": "Электронная книга. Чтение занимает 4 часа. Позволяет модифицировать снаряжение указанного вида и даёт +25 к его разбору."
       },
       "compatible_ids": []
@@ -11775,7 +12080,7 @@
         "reading_seconds": 14400,
         "salvage_bonus": 25,
         "unlocks_modifications": true,
-        "source_order": 331,
+        "source_order": 344,
         "source_description": "Электронная книга. Чтение занимает 4 часа. Позволяет модифицировать снаряжение указанного вида и даёт +25 к его разбору."
       },
       "compatible_ids": []
@@ -11796,7 +12101,7 @@
         "reading_seconds": 14400,
         "salvage_bonus": 25,
         "unlocks_modifications": true,
-        "source_order": 332,
+        "source_order": 345,
         "source_description": "Электронная книга. Чтение занимает 4 часа. Позволяет модифицировать снаряжение указанного вида и даёт +25 к его разбору."
       },
       "compatible_ids": []
@@ -11817,7 +12122,7 @@
         "reading_seconds": 14400,
         "salvage_bonus": 25,
         "unlocks_modifications": true,
-        "source_order": 333,
+        "source_order": 346,
         "source_description": "Электронная книга. Чтение занимает 4 часа. Позволяет модифицировать снаряжение указанного вида и даёт +25 к его разбору."
       },
       "compatible_ids": []
@@ -11838,7 +12143,7 @@
         "reading_seconds": 14400,
         "salvage_bonus": 25,
         "unlocks_modifications": true,
-        "source_order": 334,
+        "source_order": 347,
         "source_description": "Электронная книга. Чтение занимает 4 часа. Позволяет модифицировать снаряжение указанного вида и даёт +25 к его разбору."
       },
       "compatible_ids": []
@@ -11856,7 +12161,7 @@
         "import_source": "equipment_workbook",
         "limit": 10,
         "weight_reduction": 0,
-        "source_order": 335,
+        "source_order": 348,
         "source_description": ""
       },
       "compatible_ids": []
@@ -11874,7 +12179,7 @@
         "import_source": "equipment_workbook",
         "limit": 15,
         "weight_reduction": 0,
-        "source_order": 336,
+        "source_order": 349,
         "source_description": ""
       },
       "compatible_ids": []
@@ -11892,7 +12197,7 @@
         "import_source": "equipment_workbook",
         "limit": 20,
         "weight_reduction": 0,
-        "source_order": 337,
+        "source_order": 350,
         "source_description": ""
       },
       "compatible_ids": []
@@ -11910,7 +12215,7 @@
         "import_source": "equipment_workbook",
         "limit": 40,
         "weight_reduction": 0,
-        "source_order": 338,
+        "source_order": 351,
         "source_description": ""
       },
       "compatible_ids": []
@@ -11928,7 +12233,7 @@
         "import_source": "equipment_workbook",
         "limit": 40,
         "weight_reduction": 1,
-        "source_order": 339,
+        "source_order": 352,
         "source_description": "Снижает штраф к весу на 1"
       },
       "compatible_ids": []
@@ -11946,7 +12251,7 @@
         "import_source": "equipment_workbook",
         "limit": 100,
         "weight_reduction": 1,
-        "source_order": 340,
+        "source_order": 353,
         "source_description": "Снижает штраф к весу на 1"
       },
       "compatible_ids": []
@@ -11964,7 +12269,7 @@
         "import_source": "equipment_workbook",
         "limit": 100,
         "weight_reduction": 3,
-        "source_order": 341,
+        "source_order": 354,
         "source_description": "Снижает штраф к весу на 3"
       },
       "compatible_ids": []
@@ -11985,7 +12290,7 @@
           "med"
         ],
         "access_action_points": 3,
-        "source_order": 342,
+        "source_order": 355,
         "source_description": "Доступ к содержимому: 3 ОД."
       },
       "compatible_ids": []
@@ -12006,7 +12311,7 @@
           "med"
         ],
         "access_action_points": 3,
-        "source_order": 343,
+        "source_order": 356,
         "source_description": "Доступ к содержимому: 3 ОД."
       },
       "compatible_ids": []
@@ -12027,7 +12332,7 @@
           "med"
         ],
         "access_action_points": 3,
-        "source_order": 344,
+        "source_order": 357,
         "source_description": "Доступ к содержимому: 3 ОД."
       },
       "compatible_ids": []
@@ -12048,7 +12353,7 @@
           "med"
         ],
         "access_action_points": 4,
-        "source_order": 345,
+        "source_order": 358,
         "source_description": "Доступ к содержимому: 4 ОД."
       },
       "compatible_ids": []
@@ -12070,7 +12375,7 @@
           "grenade"
         ],
         "access_action_points": 3,
-        "source_order": 346,
+        "source_order": 359,
         "source_description": "Доступ к содержимому: 3 ОД."
       },
       "compatible_ids": []
@@ -12092,7 +12397,7 @@
           "grenade"
         ],
         "access_action_points": 3,
-        "source_order": 347,
+        "source_order": 360,
         "source_description": "Доступ к содержимому: 3 ОД."
       },
       "compatible_ids": []
@@ -12114,7 +12419,7 @@
           "grenade"
         ],
         "access_action_points": 3,
-        "source_order": 348,
+        "source_order": 361,
         "source_description": "Доступ к содержимому: 3 ОД."
       },
       "compatible_ids": []
@@ -12136,7 +12441,7 @@
           "grenade"
         ],
         "access_action_points": 2,
-        "source_order": 349,
+        "source_order": 362,
         "source_description": "Доступ к содержимому: 2 ОД."
       },
       "compatible_ids": []
@@ -12158,7 +12463,7 @@
           "grenade"
         ],
         "access_action_points": 4,
-        "source_order": 350,
+        "source_order": 363,
         "source_description": "Доступ к содержимому: 4 ОД."
       },
       "compatible_ids": []
@@ -12179,7 +12484,7 @@
           "magazine"
         ],
         "access_action_points": 3,
-        "source_order": 351,
+        "source_order": 364,
         "source_description": "Доступ к содержимому: 3 ОД."
       },
       "compatible_ids": []
@@ -12200,7 +12505,7 @@
           "magazine"
         ],
         "access_action_points": 4,
-        "source_order": 352,
+        "source_order": 365,
         "source_description": "Доступ к содержимому: 4 ОД."
       },
       "compatible_ids": []
@@ -12221,7 +12526,7 @@
           "magazine"
         ],
         "access_action_points": 3,
-        "source_order": 353,
+        "source_order": 366,
         "source_description": "Доступ к содержимому: 3 ОД."
       },
       "compatible_ids": []
@@ -12242,7 +12547,7 @@
           "magazine"
         ],
         "access_action_points": 2,
-        "source_order": 354,
+        "source_order": 367,
         "source_description": "Доступ к содержимому: 2 ОД."
       },
       "compatible_ids": []
@@ -12267,7 +12572,7 @@
           "magazine"
         ],
         "access_action_points": 3,
-        "source_order": 355,
+        "source_order": 368,
         "source_description": "Доступ к содержимому: 3 ОД."
       },
       "compatible_ids": []
@@ -12292,7 +12597,7 @@
           "magazine"
         ],
         "access_action_points": 4,
-        "source_order": 356,
+        "source_order": 369,
         "source_description": "Доступ к содержимому: 4 ОД."
       },
       "compatible_ids": []
@@ -12317,7 +12622,7 @@
           "magazine"
         ],
         "access_action_points": 4,
-        "source_order": 357,
+        "source_order": 370,
         "source_description": "Доступ к содержимому: 4 ОД."
       },
       "compatible_ids": []
@@ -12342,7 +12647,7 @@
           "magazine"
         ],
         "access_action_points": 5,
-        "source_order": 358,
+        "source_order": 371,
         "source_description": "Доступ к содержимому: 5 ОД."
       },
       "compatible_ids": []
@@ -12361,7 +12666,7 @@
         "capacity": 15,
         "allowed_categories": [],
         "access_action_points": 3,
-        "source_order": 359,
+        "source_order": 372,
         "source_description": "Доступ к содержимому: 3 ОД."
       },
       "compatible_ids": []
@@ -12380,7 +12685,7 @@
         "capacity": 30,
         "allowed_categories": [],
         "access_action_points": 3,
-        "source_order": 360,
+        "source_order": 373,
         "source_description": "Доступ к содержимому: 3 ОД."
       },
       "compatible_ids": []
@@ -12399,7 +12704,7 @@
         "capacity": 45,
         "allowed_categories": [],
         "access_action_points": 4,
-        "source_order": 361,
+        "source_order": 374,
         "source_description": "Доступ к содержимому: 4 ОД."
       },
       "compatible_ids": []
@@ -12418,7 +12723,7 @@
         "capacity": 75,
         "allowed_categories": [],
         "access_action_points": 5,
-        "source_order": 362,
+        "source_order": 375,
         "source_description": "Доступ к содержимому: 5 ОД."
       },
       "compatible_ids": []
@@ -12439,7 +12744,7 @@
         "access_action_points": 8,
         "anomaly_protected": true,
         "radiation_shielded": true,
-        "source_order": 363,
+        "source_order": 376,
         "source_description": "Доступ к содержимому: 8 ОД."
       },
       "compatible_ids": []
@@ -12460,7 +12765,7 @@
         "access_action_points": 8,
         "anomaly_protected": true,
         "radiation_shielded": true,
-        "source_order": 364,
+        "source_order": 377,
         "source_description": "Доступ к содержимому: 8 ОД."
       },
       "compatible_ids": []
@@ -12481,7 +12786,7 @@
         "unspecified_fields": [
           "weight"
         ],
-        "source_order": 365,
+        "source_order": 378,
         "source_description": "Позволяет носить один противогаз или шлем и до двух подсумков."
       },
       "compatible_ids": []
@@ -12499,7 +12804,7 @@
         "import_source": "equipment_workbook",
         "artifact_count": 2,
         "field_rank_offset": -1,
-        "source_order": 366,
+        "source_order": 379,
         "source_description": "Стационарный генератор артефактов. Устанавливается возле аномального поля и срабатывает во время Выброса."
       },
       "compatible_ids": []
@@ -12517,7 +12822,7 @@
         "import_source": "equipment_workbook",
         "artifact_count": 1,
         "field_rank_offset": 0,
-        "source_order": 367,
+        "source_order": 380,
         "source_description": "Стационарный генератор артефактов. Устанавливается возле аномального поля и срабатывает во время Выброса."
       },
       "compatible_ids": []
@@ -12534,7 +12839,7 @@
       "attributes": {
         "import_source": "equipment_workbook",
         "avoidance_chance": 4,
-        "source_order": 368,
+        "source_order": 381,
         "source_description": "Шанс избежать аномалии: 4."
       },
       "compatible_ids": []
@@ -12552,7 +12857,7 @@
         "import_source": "equipment_workbook",
         "artifact_generation_bonus": -5,
         "consumed_on_use": true,
-        "source_order": 369,
+        "source_order": 382,
         "source_description": "Одноразовый генератор артефактов. Бросается в центр аномалии. Бонус генератора: -5."
       },
       "compatible_ids": []
@@ -12569,7 +12874,7 @@
       "attributes": {
         "import_source": "equipment_workbook",
         "avoidance_chance": 6,
-        "source_order": 370,
+        "source_order": 383,
         "source_description": "Шанс избежать аномалии: 6."
       },
       "compatible_ids": []
@@ -12587,7 +12892,7 @@
         "import_source": "equipment_workbook",
         "artifact_generation_bonus": -3,
         "consumed_on_use": true,
-        "source_order": 371,
+        "source_order": 384,
         "source_description": "Одноразовый генератор артефактов. Бросается в центр аномалии. Бонус генератора: -3."
       },
       "compatible_ids": []
@@ -12608,7 +12913,7 @@
           "electrical",
           "chemical"
         ],
-        "source_order": 372,
+        "source_order": 385,
         "source_description": "Шанс избежать аномалии: 12."
       },
       "compatible_ids": []
@@ -12626,7 +12931,7 @@
         "import_source": "equipment_workbook",
         "artifact_generation_bonus": -1,
         "consumed_on_use": true,
-        "source_order": 373,
+        "source_order": 386,
         "source_description": "Одноразовый генератор артефактов. Бросается в центр аномалии. Бонус генератора: -1."
       },
       "compatible_ids": []
@@ -12649,7 +12954,7 @@
           "thermal",
           "gravity"
         ],
-        "source_order": 374,
+        "source_order": 387,
         "source_description": "Шанс избежать аномалии: 16."
       },
       "compatible_ids": []
@@ -12667,7 +12972,7 @@
         "import_source": "equipment_workbook",
         "artifact_generation_bonus": 1,
         "consumed_on_use": true,
-        "source_order": 375,
+        "source_order": 388,
         "source_description": "Одноразовый генератор артефактов. Бросается в центр аномалии. Бонус генератора: +1."
       },
       "compatible_ids": []
@@ -12685,7 +12990,7 @@
         "import_source": "equipment_workbook",
         "artifact_generation_bonus": 3,
         "consumed_on_use": true,
-        "source_order": 376,
+        "source_order": 389,
         "source_description": "Одноразовый генератор артефактов. Бросается в центр аномалии. Бонус генератора: +3."
       },
       "compatible_ids": []
@@ -12703,7 +13008,7 @@
         "import_source": "equipment_workbook",
         "artifact_generation_bonus": 5,
         "consumed_on_use": true,
-        "source_order": 377,
+        "source_order": 390,
         "source_description": "Одноразовый генератор артефактов. Бросается в центр аномалии. Бонус генератора: +5."
       },
       "compatible_ids": []
@@ -12721,7 +13026,7 @@
         "import_source": "equipment_workbook",
         "radiation_limit": 1,
         "artifact_container_kind": "equipped",
-        "source_order": 378,
+        "source_order": 391,
         "source_description": "Радиация артефакта до 1. Положить артефакт: 4 ОД; вынуть: 8 ОД."
       },
       "compatible_ids": []
@@ -12739,7 +13044,7 @@
         "import_source": "equipment_workbook",
         "radiation_limit": 3,
         "artifact_container_kind": "equipped",
-        "source_order": 379,
+        "source_order": 392,
         "source_description": "Радиация артефакта до 3. Положить артефакт: 4 ОД; вынуть: 8 ОД."
       },
       "compatible_ids": []
@@ -12757,7 +13062,7 @@
         "import_source": "equipment_workbook",
         "radiation_limit": 5,
         "artifact_container_kind": "equipped",
-        "source_order": 380,
+        "source_order": 393,
         "source_description": "Радиация артефакта до 5. Положить артефакт: 4 ОД; вынуть: 8 ОД."
       },
       "compatible_ids": []
@@ -12775,7 +13080,7 @@
         "import_source": "equipment_workbook",
         "radiation_limit": 8,
         "artifact_container_kind": "equipped",
-        "source_order": 381,
+        "source_order": 394,
         "source_description": "Радиация артефакта до 8. Положить артефакт: 4 ОД; вынуть: 8 ОД."
       },
       "compatible_ids": []
@@ -12793,7 +13098,7 @@
         "import_source": "equipment_workbook",
         "radiation_limit": 2,
         "artifact_container_kind": "storage",
-        "source_order": 382,
+        "source_order": 395,
         "source_description": "Радиация артефакта до 2. Положить артефакт: 4 ОД; вынуть: 8 ОД."
       },
       "compatible_ids": []
@@ -12811,7 +13116,7 @@
         "import_source": "equipment_workbook",
         "radiation_limit": 3,
         "artifact_container_kind": "storage",
-        "source_order": 383,
+        "source_order": 396,
         "source_description": "Радиация артефакта до 3. Положить артефакт: 4 ОД; вынуть: 8 ОД."
       },
       "compatible_ids": []
@@ -12829,7 +13134,7 @@
         "import_source": "equipment_workbook",
         "radiation_limit": 5,
         "artifact_container_kind": "storage",
-        "source_order": 384,
+        "source_order": 397,
         "source_description": "Радиация артефакта до 5. Положить артефакт: 4 ОД; вынуть: 8 ОД."
       },
       "compatible_ids": []
@@ -12847,7 +13152,7 @@
         "import_source": "equipment_workbook",
         "radiation_limit": 0,
         "artifact_container_kind": "storage",
-        "source_order": 385,
+        "source_order": 398,
         "source_description": "Радиация артефакта до 0. Положить артефакт: 4 ОД; вынуть: 8 ОД."
       },
       "compatible_ids": []
@@ -12869,7 +13174,7 @@
         "awareness_penalty": -2,
         "electrical_anomaly_immune": false,
         "source_name": "Очки ПНВ-1п",
-        "source_order": 386,
+        "source_order": 399,
         "source_description": "Штрафы точности и визуальной Внимательности в темноте: -2."
       },
       "compatible_ids": []
@@ -12891,7 +13196,7 @@
         "awareness_penalty": -1,
         "electrical_anomaly_immune": false,
         "source_name": "Монокуляр Сидр-1г",
-        "source_order": 387,
+        "source_order": 400,
         "source_description": "Штрафы точности и визуальной Внимательности в темноте: -1."
       },
       "compatible_ids": []
@@ -12913,7 +13218,7 @@
         "awareness_penalty": 0,
         "electrical_anomaly_immune": true,
         "source_name": "ПНВ Supernova",
-        "source_order": 388,
+        "source_order": 401,
         "source_description": "Штрафы точности и визуальной Внимательности в темноте: 0."
       },
       "compatible_ids": []
@@ -12932,7 +13237,7 @@
         "deafening_coef": 2.0,
         "noise_absorption": 0.0,
         "awareness_bonus": 3.0,
-        "source_order": 389,
+        "source_order": 402,
         "source_description": "При расчёте оглушения сначала вычитается поглощение шума, затем применяется коэффициент. Бонус Внимательности действует только на слух."
       },
       "compatible_ids": []
@@ -12951,7 +13256,7 @@
         "deafening_coef": 0.75,
         "noise_absorption": 3.0,
         "awareness_bonus": 1.0,
-        "source_order": 390,
+        "source_order": 403,
         "source_description": "При расчёте оглушения сначала вычитается поглощение шума, затем применяется коэффициент. Бонус Внимательности действует только на слух."
       },
       "compatible_ids": []
@@ -12970,7 +13275,7 @@
         "deafening_coef": 0.5,
         "noise_absorption": 5.0,
         "awareness_bonus": 1.0,
-        "source_order": 391,
+        "source_order": 404,
         "source_description": "При расчёте оглушения сначала вычитается поглощение шума, затем применяется коэффициент. Бонус Внимательности действует только на слух."
       },
       "compatible_ids": []
@@ -12989,7 +13294,7 @@
         "deafening_coef": 0.3,
         "noise_absorption": 7.0,
         "awareness_bonus": 2.0,
-        "source_order": 392,
+        "source_order": 405,
         "source_description": "При расчёте оглушения сначала вычитается поглощение шума, затем применяется коэффициент. Бонус Внимательности действует только на слух."
       },
       "compatible_ids": []
@@ -13008,7 +13313,7 @@
         "deafening_coef": 0.1,
         "noise_absorption": 10.0,
         "awareness_bonus": 2.0,
-        "source_order": 393,
+        "source_order": 406,
         "source_description": "При расчёте оглушения сначала вычитается поглощение шума, затем применяется коэффициент. Бонус Внимательности действует только на слух."
       },
       "compatible_ids": []
@@ -13027,7 +13332,7 @@
         "deafening_coef": 0.5,
         "noise_absorption": 4.0,
         "awareness_bonus": -4.0,
-        "source_order": 394,
+        "source_order": 407,
         "source_description": "При расчёте оглушения сначала вычитается поглощение шума, затем применяется коэффициент. Бонус Внимательности действует только на слух."
       },
       "compatible_ids": []
@@ -13046,7 +13351,7 @@
         "deafening_coef": 0.2,
         "noise_absorption": 10.0,
         "awareness_bonus": -8.0,
-        "source_order": 395,
+        "source_order": 408,
         "source_description": "При расчёте оглушения сначала вычитается поглощение шума, затем применяется коэффициент. Бонус Внимательности действует только на слух."
       },
       "compatible_ids": []
@@ -13065,7 +13370,7 @@
         "charisma_bonus": 0.0,
         "patient_infection_multiplier": 0.5,
         "sterile_duration_seconds": 3600,
-        "source_order": 396,
+        "source_order": 409,
         "source_description": "Шанс заражения крови пациента падает вдвое при использовании этих перчаток. После часа ношения требуют очистки спиртом"
       },
       "compatible_ids": []
@@ -13083,7 +13388,7 @@
         "import_source": "equipment_workbook",
         "charisma_bonus": 0.0,
         "craft_difficulty_modifier": -5,
-        "source_order": 397,
+        "source_order": 410,
         "source_description": "Сложность любого создания на 5 ниже"
       },
       "compatible_ids": []
@@ -13100,7 +13405,7 @@
       "attributes": {
         "import_source": "equipment_workbook",
         "charisma_bonus": 1.0,
-        "source_order": 398,
+        "source_order": 411,
         "source_description": "Красивые"
       },
       "compatible_ids": []
@@ -13117,7 +13422,7 @@
       "attributes": {
         "import_source": "equipment_workbook",
         "charisma_bonus": 0.5,
-        "source_order": 400,
+        "source_order": 413,
         "source_description": "Красивые, но не слишком"
       },
       "compatible_ids": []
@@ -13136,7 +13441,7 @@
         "charisma_bonus": 0.0,
         "unarmed_damage_factor": 15,
         "unarmed_damage_minimum": 25,
-        "source_order": 401,
+        "source_order": 414,
         "source_description": "Увеличивает урон от ударов руками. Урон 15 * Бонус силы, но не меньше 25"
       },
       "compatible_ids": []
@@ -13154,7 +13459,7 @@
         "import_source": "equipment_workbook",
         "charisma_bonus": 0.5,
         "anomaly_protection_bonus": 3,
-        "source_order": 402,
+        "source_order": 415,
         "source_description": "+3% Аномальных защит"
       },
       "compatible_ids": []
@@ -13172,7 +13477,7 @@
         "import_source": "equipment_workbook",
         "charisma_bonus": 1.0,
         "anomaly_protection_bonus": 5,
-        "source_order": 403,
+        "source_order": 416,
         "source_description": "+5% Аномальных защит"
       },
       "compatible_ids": []
@@ -13191,7 +13496,7 @@
         "charisma_bonus": 0.5,
         "flash_protection": 0.8,
         "eye_physical_protection": 0.0,
-        "source_order": 404,
+        "source_order": 417,
         "source_description": "Нельзя использовать с противогазами"
       },
       "compatible_ids": []
@@ -13210,7 +13515,7 @@
         "charisma_bonus": 0.5,
         "flash_protection": 0.75,
         "eye_physical_protection": 0.0,
-        "source_order": 405,
+        "source_order": 418,
         "source_description": "Нельзя использовать с противогазами"
       },
       "compatible_ids": []
@@ -13229,7 +13534,7 @@
         "charisma_bonus": 1.0,
         "flash_protection": 0.65,
         "eye_physical_protection": 0.0,
-        "source_order": 406,
+        "source_order": 419,
         "source_description": "Нельзя использовать с противогазами"
       },
       "compatible_ids": []
@@ -13249,7 +13554,7 @@
         "flash_protection": 0.25,
         "eye_physical_protection": 0.0,
         "welding_glasses": true,
-        "source_order": 407,
+        "source_order": 420,
         "source_description": "Нельзя использовать с противогазами"
       },
       "compatible_ids": []
@@ -13270,7 +13575,7 @@
         "eye_physical_protection": 5.0,
         "incompatible_with_gasmask": true,
         "incompatible_with_visor": true,
-        "source_order": 408,
+        "source_order": 421,
         "source_description": "Нельзя носить вместе с противогазом или шлемом с забралом."
       },
       "compatible_ids": []
@@ -13291,7 +13596,7 @@
         "eye_physical_protection": 10.0,
         "incompatible_with_gasmask": true,
         "incompatible_with_visor": true,
-        "source_order": 409,
+        "source_order": 422,
         "source_description": "Нельзя носить вместе с противогазом или шлемом с забралом."
       },
       "compatible_ids": []
@@ -13312,7 +13617,7 @@
         "eye_physical_protection": 15.0,
         "incompatible_with_gasmask": true,
         "incompatible_with_visor": true,
-        "source_order": 410,
+        "source_order": 423,
         "source_description": "Нельзя носить вместе с противогазом или шлемом с забралом."
       },
       "compatible_ids": []
@@ -13333,7 +13638,7 @@
         "eye_physical_protection": 20.0,
         "incompatible_with_gasmask": true,
         "incompatible_with_visor": true,
-        "source_order": 411,
+        "source_order": 424,
         "source_description": "Нельзя носить вместе с противогазом или шлемом с забралом."
       },
       "compatible_ids": []
@@ -13351,7 +13656,7 @@
         "import_source": "equipment_workbook",
         "charisma_bonus": 0.25,
         "jewelry_kind": "ring",
-        "source_order": 412,
+        "source_order": 425,
         "source_description": "Украшение."
       },
       "compatible_ids": []
@@ -13369,7 +13674,7 @@
         "import_source": "equipment_workbook",
         "charisma_bonus": 0.5,
         "jewelry_kind": "ring",
-        "source_order": 413,
+        "source_order": 426,
         "source_description": "Украшение."
       },
       "compatible_ids": []
@@ -13387,7 +13692,7 @@
         "import_source": "equipment_workbook",
         "charisma_bonus": 0.25,
         "jewelry_kind": "necklace",
-        "source_order": 414,
+        "source_order": 427,
         "source_description": "Украшение."
       },
       "compatible_ids": []
@@ -13405,7 +13710,7 @@
         "import_source": "equipment_workbook",
         "charisma_bonus": 0.5,
         "jewelry_kind": "necklace",
-        "source_order": 415,
+        "source_order": 428,
         "source_description": "Украшение."
       },
       "compatible_ids": []
@@ -13423,7 +13728,7 @@
         "import_source": "equipment_workbook",
         "charisma_bonus": 1.0,
         "jewelry_kind": "necklace",
-        "source_order": 416,
+        "source_order": 429,
         "source_description": "Украшение."
       },
       "compatible_ids": []
@@ -13441,7 +13746,7 @@
         "import_source": "equipment_workbook",
         "charisma_bonus": 0.5,
         "jewelry_kind": "necklace",
-        "source_order": 417,
+        "source_order": 430,
         "source_description": "Украшение."
       },
       "compatible_ids": []
@@ -13459,7 +13764,7 @@
         "import_source": "equipment_workbook",
         "charisma_bonus": 1.0,
         "jewelry_kind": "necklace",
-        "source_order": 418,
+        "source_order": 431,
         "source_description": "Украшение."
       },
       "compatible_ids": []
@@ -13477,7 +13782,7 @@
         "import_source": "equipment_workbook",
         "charisma_bonus": 0.25,
         "jewelry_kind": "bracelet",
-        "source_order": 419,
+        "source_order": 432,
         "source_description": "Украшение."
       },
       "compatible_ids": []
@@ -13495,7 +13800,7 @@
         "import_source": "equipment_workbook",
         "charisma_bonus": 0.5,
         "jewelry_kind": "bracelet",
-        "source_order": 420,
+        "source_order": 433,
         "source_description": "Украшение."
       },
       "compatible_ids": []
@@ -13513,7 +13818,7 @@
         "import_source": "equipment_workbook",
         "charisma_bonus": 0.25,
         "jewelry_kind": "earrings",
-        "source_order": 421,
+        "source_order": 434,
         "source_description": "Украшение."
       },
       "compatible_ids": []
@@ -13531,7 +13836,7 @@
         "import_source": "equipment_workbook",
         "charisma_bonus": 0.5,
         "jewelry_kind": "earrings",
-        "source_order": 422,
+        "source_order": 435,
         "source_description": "Украшение."
       },
       "compatible_ids": []
@@ -13553,7 +13858,7 @@
         "unspecified_fields": [
           "weight"
         ],
-        "source_order": 423,
+        "source_order": 436,
         "source_description": "Позволяет хранить любые вещи внутри"
       },
       "compatible_ids": []
@@ -13575,7 +13880,7 @@
         "unspecified_fields": [
           "weight"
         ],
-        "source_order": 424,
+        "source_order": 437,
         "source_description": "Позволяет хранить любые вещи внутри"
       },
       "compatible_ids": []
@@ -13597,7 +13902,7 @@
         "unspecified_fields": [
           "weight"
         ],
-        "source_order": 425,
+        "source_order": 438,
         "source_description": "Позволяет хранить любые вещи внутри"
       },
       "compatible_ids": []
@@ -13619,7 +13924,7 @@
         "unspecified_fields": [
           "weight"
         ],
-        "source_order": 426,
+        "source_order": 439,
         "source_description": "Позволяет хранить любые вещи внутри"
       },
       "compatible_ids": []
@@ -13641,7 +13946,7 @@
         "unspecified_fields": [
           "weight"
         ],
-        "source_order": 427,
+        "source_order": 440,
         "source_description": "Позволяет хранить любые вещи внутри"
       },
       "compatible_ids": []
@@ -13665,7 +13970,7 @@
         "unspecified_fields": [
           "weight"
         ],
-        "source_order": 428,
+        "source_order": 441,
         "source_description": "Позволяет хранить любые медикаменты"
       },
       "compatible_ids": []
@@ -13689,7 +13994,7 @@
         "unspecified_fields": [
           "weight"
         ],
-        "source_order": 429,
+        "source_order": 442,
         "source_description": "Позволяет хранить любые медикаменты"
       },
       "compatible_ids": []
@@ -13713,7 +14018,7 @@
         "unspecified_fields": [
           "weight"
         ],
-        "source_order": 430,
+        "source_order": 443,
         "source_description": "Позволяет хранить любые медикаменты"
       },
       "compatible_ids": []
@@ -13737,7 +14042,7 @@
         "unspecified_fields": [
           "weight"
         ],
-        "source_order": 431,
+        "source_order": 444,
         "source_description": "Позволяет хранить любые магазины"
       },
       "compatible_ids": []
@@ -13761,7 +14066,7 @@
         "unspecified_fields": [
           "weight"
         ],
-        "source_order": 432,
+        "source_order": 445,
         "source_description": "Позволяет хранить любые магазины"
       },
       "compatible_ids": []
@@ -13785,7 +14090,7 @@
         "unspecified_fields": [
           "weight"
         ],
-        "source_order": 433,
+        "source_order": 446,
         "source_description": "Позволяет хранить любые магазины"
       },
       "compatible_ids": []
@@ -13809,7 +14114,7 @@
         "unspecified_fields": [
           "weight"
         ],
-        "source_order": 434,
+        "source_order": 447,
         "source_description": "Позволяет хранить любые магазины"
       },
       "compatible_ids": []
@@ -13833,7 +14138,7 @@
         "unspecified_fields": [
           "weight"
         ],
-        "source_order": 435,
+        "source_order": 448,
         "source_description": "Позволяет хранить любые магазины"
       },
       "compatible_ids": []
@@ -13857,7 +14162,7 @@
         "unspecified_fields": [
           "weight"
         ],
-        "source_order": 436,
+        "source_order": 449,
         "source_description": "Позволяет хранить любые магазины"
       },
       "compatible_ids": []
@@ -13881,7 +14186,7 @@
         "unspecified_fields": [
           "weight"
         ],
-        "source_order": 437,
+        "source_order": 450,
         "source_description": "Позволяет хранить любые магазины"
       },
       "compatible_ids": []
@@ -13905,7 +14210,7 @@
         "unspecified_fields": [
           "weight"
         ],
-        "source_order": 438,
+        "source_order": 451,
         "source_description": "Позволяет хранить любые магазины"
       },
       "compatible_ids": []
@@ -13929,7 +14234,7 @@
         "unspecified_fields": [
           "weight"
         ],
-        "source_order": 439,
+        "source_order": 452,
         "source_description": "Позволяет хранить патронны россыпью/лентами"
       },
       "compatible_ids": []
@@ -13953,7 +14258,7 @@
         "unspecified_fields": [
           "weight"
         ],
-        "source_order": 440,
+        "source_order": 453,
         "source_description": "Позволяет хранить патронны россыпью/лентами"
       },
       "compatible_ids": []
@@ -13977,7 +14282,7 @@
         "unspecified_fields": [
           "weight"
         ],
-        "source_order": 441,
+        "source_order": 454,
         "source_description": "Позволяет хранить патронны россыпью/лентами"
       },
       "compatible_ids": []
@@ -14001,7 +14306,7 @@
         "unspecified_fields": [
           "weight"
         ],
-        "source_order": 442,
+        "source_order": 455,
         "source_description": "Позволяет хранить гранаты"
       },
       "compatible_ids": []
@@ -14025,7 +14330,7 @@
         "unspecified_fields": [
           "weight"
         ],
-        "source_order": 443,
+        "source_order": 456,
         "source_description": "Позволяет хранить гранаты"
       },
       "compatible_ids": []
@@ -14056,7 +14361,7 @@
             "maxItems": 1
           }
         ],
-        "source_order": 444,
+        "source_order": 457,
         "source_description": "Позволяет носить бронеплиты"
       },
       "compatible_ids": []
@@ -14077,7 +14382,7 @@
         "modular": true,
         "pouch_volume_multiplier": 0.75,
         "discount_pouch_type": "Магазинный",
-        "source_order": 445,
+        "source_order": 458,
         "source_description": "Магазинные подсумки занимают 0.75 объема на разгрузке"
       },
       "compatible_ids": []
@@ -14098,7 +14403,7 @@
         "modular": true,
         "pouch_volume_multiplier": 0.75,
         "discount_pouch_type": "Магазинный",
-        "source_order": 446,
+        "source_order": 459,
         "source_description": "Магазинные подсумки занимают 0.75 объема на разгрузке"
       },
       "compatible_ids": []
@@ -14119,7 +14424,7 @@
         "modular": true,
         "pouch_volume_multiplier": 0.5,
         "discount_pouch_type": "Магазинный",
-        "source_order": 447,
+        "source_order": 460,
         "source_description": "Магазинные подсумки занимают 0.5 объема на разгрузке"
       },
       "compatible_ids": []
@@ -14140,7 +14445,7 @@
         "modular": true,
         "pouch_volume_multiplier": 0.5,
         "discount_pouch_type": "Магазинный",
-        "source_order": 448,
+        "source_order": 461,
         "source_description": "Магазинные подсумки занимают 0.5 объема на разгрузке"
       },
       "compatible_ids": []
@@ -14161,7 +14466,7 @@
         "modular": true,
         "pouch_volume_multiplier": 0.5,
         "discount_pouch_type": "Гранатный",
-        "source_order": 449,
+        "source_order": 462,
         "source_description": "Гранатные подсумки занимают 0.5 объёма на разгрузке"
       },
       "compatible_ids": []
@@ -14182,7 +14487,7 @@
         "modular": true,
         "pouch_volume_multiplier": 0.75,
         "discount_pouch_type": "Вещевой",
-        "source_order": 450,
+        "source_order": 463,
         "source_description": "Вещевые подсумки занимают 0.75 объема на разгрузке"
       },
       "compatible_ids": []
@@ -14203,7 +14508,7 @@
         "modular": true,
         "pouch_volume_multiplier": 0.5,
         "discount_pouch_type": "Вещевой",
-        "source_order": 451,
+        "source_order": 464,
         "source_description": "Вещевые подсумки занимают 0.5 объема на разгрузке"
       },
       "compatible_ids": []
@@ -14224,7 +14529,7 @@
         "modular": true,
         "pouch_volume_multiplier": 0.25,
         "discount_pouch_type": "Вещевой",
-        "source_order": 452,
+        "source_order": 465,
         "source_description": "Вещевые подсумки занимают 0.25 объема на разгрузке"
       },
       "compatible_ids": []
@@ -14245,7 +14550,7 @@
         "modular": true,
         "pouch_volume_multiplier": 0.75,
         "discount_pouch_type": "Медицинский",
-        "source_order": 453,
+        "source_order": 466,
         "source_description": "Медицинские подсумки занимают 0.75 объема на разгрузке"
       },
       "compatible_ids": []
@@ -14266,7 +14571,7 @@
         "modular": true,
         "pouch_volume_multiplier": 0.5,
         "discount_pouch_type": "Медицинский",
-        "source_order": 454,
+        "source_order": 467,
         "source_description": "Медицинские подсумки занимают 0.5 объема на разгрузке"
       },
       "compatible_ids": []
@@ -14287,7 +14592,7 @@
         "modular": true,
         "pouch_volume_multiplier": 0.5,
         "discount_pouch_type": "Медицинский",
-        "source_order": 455,
+        "source_order": 468,
         "source_description": "Медицинские подсумки занимают 0.5 объема на разгрузке"
       },
       "compatible_ids": []
@@ -14308,7 +14613,7 @@
         "modular": true,
         "pouch_volume_multiplier": 0.5,
         "discount_pouch_type": "Медицинский",
-        "source_order": 456,
+        "source_order": 469,
         "source_description": "Медицинские подсумки занимают 0.5 объема на разгрузке"
       },
       "compatible_ids": []
@@ -14329,7 +14634,7 @@
         "modular": true,
         "pouch_volume_multiplier": 0.1,
         "discount_pouch_type": "Подсумок для бронеплит",
-        "source_order": 457,
+        "source_order": 470,
         "source_description": "Подсумки для бронеплит занимают 0.1 объема на разгрузке"
       },
       "compatible_ids": []
@@ -14350,7 +14655,7 @@
         "modular": true,
         "pouch_volume_multiplier": 0.1,
         "discount_pouch_type": "Подсумок для бронеплит",
-        "source_order": 458,
+        "source_order": 471,
         "source_description": "Подсумки для бронеплит занимают 0.1 объема на разгрузке"
       },
       "compatible_ids": []
@@ -14378,7 +14683,7 @@
           }
         ],
         "modular": false,
-        "source_order": 459,
+        "source_order": 472,
         "source_description": ""
       },
       "compatible_ids": []
@@ -14406,7 +14711,7 @@
           }
         ],
         "modular": false,
-        "source_order": 460,
+        "source_order": 473,
         "source_description": ""
       },
       "compatible_ids": []
@@ -14434,7 +14739,7 @@
           }
         ],
         "modular": false,
-        "source_order": 461,
+        "source_order": 474,
         "source_description": ""
       },
       "compatible_ids": []
@@ -14471,7 +14776,7 @@
           }
         ],
         "modular": false,
-        "source_order": 462,
+        "source_order": 475,
         "source_description": ""
       },
       "compatible_ids": []
@@ -14508,7 +14813,7 @@
           }
         ],
         "modular": false,
-        "source_order": 463,
+        "source_order": 476,
         "source_description": ""
       },
       "compatible_ids": []
@@ -14536,7 +14841,7 @@
           }
         ],
         "modular": false,
-        "source_order": 464,
+        "source_order": 477,
         "source_description": ""
       },
       "compatible_ids": []
@@ -14582,7 +14887,7 @@
           }
         ],
         "modular": false,
-        "source_order": 465,
+        "source_order": 478,
         "source_description": ""
       },
       "compatible_ids": []
@@ -14601,7 +14906,7 @@
         "pouches": [],
         "modular": false,
         "loader_attachment": true,
-        "source_order": 466,
+        "source_order": 479,
         "source_description": ""
       },
       "compatible_ids": []
@@ -14656,7 +14961,7 @@
           }
         ],
         "modular": false,
-        "source_order": 467,
+        "source_order": 480,
         "source_description": ""
       },
       "compatible_ids": []
@@ -14693,7 +14998,7 @@
           }
         ],
         "modular": false,
-        "source_order": 468,
+        "source_order": 481,
         "source_description": ""
       },
       "compatible_ids": []
@@ -14726,7 +15031,7 @@
           }
         ],
         "modular": false,
-        "source_order": 469,
+        "source_order": 482,
         "source_description": ""
       },
       "compatible_ids": []
@@ -14749,7 +15054,7 @@
         "durability": 10.0,
         "max_durability": 10.0,
         "material": "Плита",
-        "source_order": 470,
+        "source_order": 483,
         "source_description": "Устанавливается в подсумок для бронеплит. Защита не складывается с бронёй: используется наибольшая."
       },
       "compatible_ids": []
@@ -14772,7 +15077,7 @@
         "durability": 12.0,
         "max_durability": 12.0,
         "material": "Плита",
-        "source_order": 471,
+        "source_order": 484,
         "source_description": "Устанавливается в подсумок для бронеплит. Защита не складывается с бронёй: используется наибольшая."
       },
       "compatible_ids": []
@@ -14795,7 +15100,7 @@
         "durability": 15.0,
         "max_durability": 15.0,
         "material": "Плита",
-        "source_order": 472,
+        "source_order": 485,
         "source_description": "Устанавливается в подсумок для бронеплит. Защита не складывается с бронёй: используется наибольшая."
       },
       "compatible_ids": []
@@ -14818,7 +15123,7 @@
         "durability": 18.0,
         "max_durability": 18.0,
         "material": "Плита",
-        "source_order": 473,
+        "source_order": 486,
         "source_description": "Устанавливается в подсумок для бронеплит. Защита не складывается с бронёй: используется наибольшая."
       },
       "compatible_ids": []
@@ -14841,7 +15146,7 @@
         "durability": 20.0,
         "max_durability": 20.0,
         "material": "Плита",
-        "source_order": 474,
+        "source_order": 487,
         "source_description": "Устанавливается в подсумок для бронеплит. Защита не складывается с бронёй: используется наибольшая."
       },
       "compatible_ids": []
@@ -14864,7 +15169,7 @@
         "durability": 10.0,
         "max_durability": 10.0,
         "material": "Текстиль",
-        "source_order": 475,
+        "source_order": 488,
         "source_description": "Устанавливается в подсумок для бронеплит. Защита не складывается с бронёй: используется наибольшая."
       },
       "compatible_ids": []
@@ -14887,7 +15192,7 @@
         "durability": 14.0,
         "max_durability": 14.0,
         "material": "Текстиль",
-        "source_order": 476,
+        "source_order": 489,
         "source_description": "Устанавливается в подсумок для бронеплит. Защита не складывается с бронёй: используется наибольшая."
       },
       "compatible_ids": []
@@ -14910,7 +15215,7 @@
         "durability": 16.0,
         "max_durability": 16.0,
         "material": "Текстиль",
-        "source_order": 477,
+        "source_order": 490,
         "source_description": "Устанавливается в подсумок для бронеплит. Защита не складывается с бронёй: используется наибольшая."
       },
       "compatible_ids": []

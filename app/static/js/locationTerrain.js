@@ -322,14 +322,20 @@ export function buildFloorGridData(floors) {
     return { positions, tileByVertex };
 }
 
-export function buildFogSurfaceData(tiles) {
+export function buildFogSurfaceData(tiles, waterSurfaceByTile = []) {
     const positions = [];
     const tileIndices = [];
     for (let z = 0; z < tiles.length; z++) {
         for (let x = 0; x < tiles[z].length; x++) {
-            const triangles = tileSurfaceTriangles(tiles, x, z);
             const indices = [];
-            for (const triangle of triangles) {
+            const waterSurface = waterSurfaceByTile?.[z * tiles[z].length + x];
+            if (waterSurface) {
+                for (let index = 0; index < waterSurface.length; index += 3) {
+                    indices.push(positions.length / 3);
+                    positions.push(waterSurface[index], waterSurface[index + 1] + 0.045,
+                        waterSurface[index + 2]);
+                }
+            } else for (const triangle of tileSurfaceTriangles(tiles, x, z)) {
                 for (const [px, py, pz] of triangle) {
                     indices.push(positions.length / 3);
                     positions.push(px, py + 0.045, pz);

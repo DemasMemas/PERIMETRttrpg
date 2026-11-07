@@ -214,7 +214,8 @@ export function openPdaShell({ item, findItem, getData, operate, canEdit, charac
                         const subject = String(attrs.book_subject || '').toLowerCase();
                         const group = subject.includes('физическ') ? 'physical'
                             : subject.includes('социальн') ? 'social' : 'other';
-                        for (const row of filesSnapshot.skills.filter(row => row.path.startsWith(group + '.'))) {
+                        for (const row of filesSnapshot.skills.filter(row =>
+                            attrs.book_skill_path ? row.path === attrs.book_skill_path : row.path.startsWith(group + '.'))) {
                             const option = document.createElement('option');
                             option.value = row.path;
                             option.textContent = row.label;
@@ -222,7 +223,7 @@ export function openPdaShell({ item, findItem, getData, operate, canEdit, charac
                         }
                         const assigned = filesSnapshot.state.book_assignments?.[entry.item.id];
                         if (assigned) skill.value = assigned;
-                        skill.disabled = busy || !canEdit || Boolean(assigned);
+                        skill.disabled = busy || !canEdit || Boolean(assigned) || Boolean(attrs.book_skill_path);
                     };
                     book.onchange = updateSkill;
                     updateSkill();

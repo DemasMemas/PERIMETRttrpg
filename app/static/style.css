@@ -2586,7 +2586,7 @@ body.light-theme #sheet-tab-equipment .equipment-detail[open] > summary,
 body.light-theme #sheet-tab-equipment .loadout-weapon-details[open] > summary { color: #67502b; }
 @media (max-width: 820px) {
   .loadout-main { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .loadout-figure { display: none; }
+  .loadout-figure { grid-column: 1 / -1; grid-row: 1; justify-self: center; width: min(100%, 230px); }
   .loadout-cosmetics-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 @media (max-width: 520px) {
@@ -3379,14 +3379,16 @@ input[type=range]::-webkit-slider-thumb {
     gap: 5px;
 }
 
-#pockets-container {
+#pockets-container,
+#backpack-container.drop-target {
     min-height: 64px;
     padding: 8px;
     border: 1px dashed var(--border-color, #444);
     border-radius: 4px;
 }
 
-#pockets-container:empty::before {
+#pockets-container:empty::before,
+#backpack-container.drop-target:empty::before {
     content: 'Перетащите предмет сюда';
     display: block;
     padding: 12px 4px;

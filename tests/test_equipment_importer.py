@@ -248,6 +248,43 @@ def test_published_equipment_matches_current_book_and_accepted_builtin_rules():
     assert parse_catalog(source) == load_catalog()
 
 
+def test_skill_books_have_one_fixed_section_per_skill():
+    from app.services.character_creation import _catalog
+    from app.services.equipment_catalog import load_catalog
+
+    books = [item for item in load_catalog() if item['attributes'].get('book_skill_path')]
+    expected = {f'{group}.{key}' for group, skills in _catalog()['skills'].items()
+                for key in skills}
+    assert {item['attributes']['book_skill_path'] for item in books} == expected
+    assert len(books) == len(expected) == 16
+    for item in books:
+        assert item['name'].endswith(f". Раздел: {item['attributes']['book_skill_name']}")
+        assert item['volume'] == 0
+
+
+def test_skill_book_migration_preserves_old_books_and_is_repeatable(app, monkeypatch):
+    import importlib.util
+    from pathlib import Path
+    from app.extensions import db
+    from app.models.templates import ItemTemplate
+
+    path = Path(__file__).resolve().parents[1] / 'migrations/versions/f4c81a6e2d90_split_skill_books.py'
+    spec = importlib.util.spec_from_file_location('skill_book_migration', path)
+    migration = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(migration)
+    old = ItemTemplate(name='Как жить эту жизнь?', category='misc', price=99,
+                       attributes={'book_kind': 'skill', 'saved': True})
+    db.session.add(old)
+    db.session.flush()
+    monkeypatch.setattr(migration.op, 'get_bind', lambda: db.session.connection())
+    migration.upgrade()
+    migration.upgrade()
+    db.session.expire_all()
+    assert ItemTemplate.query.filter_by(category='misc').filter(
+        ItemTemplate.name.like('%. Раздел: %')).count() == 16
+    assert old.price == 99 and old.attributes['saved'] is True
+
+
 def test_craft_mold_migration_preserves_existing_template_and_is_repeatable(app, monkeypatch):
     import importlib.util
     from pathlib import Path

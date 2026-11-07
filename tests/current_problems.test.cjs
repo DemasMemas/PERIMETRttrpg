@@ -204,6 +204,7 @@ test('fog overlay distinguishes explored from unknown tiles and hides for GM', (
         currentLocationData: { grid_width: 2, grid_height: 2, tiles_data: [] },
         scene: { add() {}, remove() {} },
         fogSurfaceData: null,
+        waterFogSurfaces: null,
         buildFogSurfaceData: () => ({
             positions: Array(4 * 9 * 3).fill(0),
             tileIndices: Array.from({ length: 4 }, (_, tile) => [tile * 9, tile * 9 + 1, tile * 9 + 2]),
@@ -261,6 +262,7 @@ test('deleting ground container closes the open exchange and removes its model',
         isFireObject: () => false,
         isObjectLightSource: () => false,
         applyLocationLighting: () => {},
+        syncPortableLights: () => {},
     });
     vm.runInContext(source.slice(start, end).replaceAll('export function ', 'function '), context);
     context.removeLocationObject('17');

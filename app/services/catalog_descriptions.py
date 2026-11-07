@@ -57,7 +57,8 @@ def describe_template(item):
     if attrs.get('book_kind'):
         subject = clean_description(attrs.get('book_subject')).rstrip('.')
         if attrs['book_kind'] == 'skill':
-            return f'{subject}. Чтение занимает 4 часа. При обучении по этой книге дополнительное очко навыка +1; действует до уровня навыка 16.'
+            section = f" Раздел: {attrs['book_skill_name']}." if attrs.get('book_skill_name') else ''
+            return f'{subject}.{section} Чтение занимает 4 часа. При обучении по этой книге дополнительное очко навыка +1; действует до уровня навыка 16.'
         return f'Электронная книга: {subject}. Чтение занимает 4 часа. Разрешает модификации этого вида снаряжения и даёт +25 к его разбору.'
     if category == 'weapon':
         clauses.append('Встроенный магазин.' if attrs.get('fixedMagazine') else 'Сменный магазин.')

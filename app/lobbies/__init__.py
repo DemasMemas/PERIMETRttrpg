@@ -529,8 +529,6 @@ def _advance_world_time(lobby, minutes):
     )
     updated_characters = []
     for character in character_query.all():
-        if not follows_world_time(character):
-            continue
         character_data = dict(character.data or {})
         health = character_data.get('health')
         if not isinstance(health, dict):
@@ -1316,8 +1314,6 @@ def update_lobby_time(lobby_id, lobby):
             lobby_id=lobby_id,
             time_active=True,
         ).all():
-            if not follows_world_time(character):
-                continue
             character_data = dict(character.data or {})
             health = character_data.get('health')
             if not isinstance(health, dict):
@@ -1465,13 +1461,11 @@ def update_time_active_characters(lobby_id, lobby):
     except (TypeError, ValueError):
         return jsonify({'error': 'character_ids must contain integers'}), 400
     characters = LobbyCharacter.query.filter_by(lobby_id=lobby_id).all()
-    existing_ids = {
-        character.id for character in characters if follows_world_time(character)
-    }
+    existing_ids = {character.id for character in characters}
     if not active_ids.issubset(existing_ids):
-        return jsonify({'error': 'Only player characters can be active in world time'}), 400
+        return jsonify({'error': 'Выберите листы из этой комнаты'}), 400
     for character in characters:
-        character.time_active = follows_world_time(character) and character.id in active_ids
+        character.time_active = character.id in active_ids
     db.session.commit()
     socketio.emit(
         'character_time_activity_updated',
@@ -1498,10 +1492,7 @@ def start_lobby_rest(lobby_id, lobby):
         return jsonify({'error': 'Select at least one character'}), 400
 
     all_characters = LobbyCharacter.query.filter_by(lobby_id=lobby_id).all()
-    characters = [
-        character for character in all_characters
-        if character.time_active and follows_world_time(character)
-    ]
+    characters = [character for character in all_characters if character.time_active]
     existing_ids = {character.id for character in characters}
     if not selected_ids.issubset(existing_ids):
         return jsonify({'error': 'Rest participants must be active characters'}), 400

@@ -5073,7 +5073,7 @@ function renderEquipmentLoadout(container, data, weaponTemplates, helmetTemplate
         const details = document.createElement('details');
         details.className = 'equipment-detail';
         details.dataset.equipmentPanel = key;
-        details.open = equipmentOpenPanels.has(key) || (key === 'weapons' && weapons.some(weapon => !weapon?.templateId && !weapon?.model));
+        details.open = true;
         const summary = document.createElement('summary');
         summary.textContent = panelLabels[key];
         group.before(details);
@@ -5086,7 +5086,7 @@ function renderEquipmentLoadout(container, data, weaponTemplates, helmetTemplate
         details.dataset.equipmentPanel = key;
         const index = Number(card.dataset.weaponIndex);
         const weapon = index >= 0 ? weapons[index] : null;
-        details.open = equipmentOpenPanels.has(key) || (index >= 0 && !weapon?.templateId && !weapon?.model);
+        details.open = true;
         const summary = document.createElement('summary');
         summary.textContent = weapon
             ? `${weapon.name || 'Оружие'}${melee.some(entry => entry.index === index) ? '' : ` · ${getWeaponAmmoCount(weapon)} патр.`}`
@@ -17765,6 +17765,9 @@ function setupDropTarget(containerDiv, containerPath, containerItem) {
         const limit = isLiquidCanister(targetContainer) ? 15
             : containerPath.length===2&&containerPath[0]==='inventory'&&containerPath[1]==='pockets'
             ? pocketCapacity(currentCharacterData)
+            : containerPath.length===2&&containerPath[0]==='inventory'&&containerPath[1]==='backpack'
+            ? Number(currentCharacterData.equipment?.backpack?.attributes?.limit
+                ?? currentCharacterData.equipment?.backpack?.attributes?.capacity ?? 0)
             : containerPath[0]==='equipment'&&containerPath[2]==='pouches'
                 ? pouchCapacity(targetContainer, containerPath[1]==='belt' ? currentCharacterData.equipment?.belt : null)
                 : Number(targetContainer.internalVolume ?? targetContainer.capacity ?? targetContainer.attributes?.capacity ?? targetContainer.volume ?? 0);

@@ -117,8 +117,10 @@ export function waterSideCornerDrops(tiles, x, z, regions, renderedHeight) {
 
 export function buildRoundedWaterData(tiles, radius = 0.24,
     includeTile = () => true, bankSamples = null, levelForWater = waterLevelForTile,
-    { shorelineRing = false, landSurfaceHeightAt = null, worldOrigin = null, flatShore = false } = {}) {
-    if (shorelineRing) return buildShoreSurface(tiles, includeTile, levelForWater, landSurfaceHeightAt, worldOrigin);
+    { shorelineRing = false, landSurfaceHeightAt = null, worldOrigin = null, flatShore = false,
+        captureFog = false } = {}) {
+    if (shorelineRing) return buildShoreSurface(tiles, includeTile, levelForWater,
+        landSurfaceHeightAt, worldOrigin, captureFog);
     const water = [];
     const waterColors = [];
     const bank = [];
@@ -297,12 +299,22 @@ export function buildRoundedWaterData(tiles, radius = 0.24,
 // distance-to-land field replace the independently projected radial rings.
 // Clip each triangle once: its water and bank polygons partition the footprint,
 // including concave corners and diagonally disconnected bodies of water.
-function buildShoreSurface(tiles, includeTile, levelForWater, sampleLand, origin) {
+function buildShoreSurface(tiles, includeTile, levelForWater, sampleLand, origin, captureFog) {
     const data={water:[],waterColors:[],bank:[],bankColors:[],bankUvs:[],bankBaseColors:[],
-        sandBank:[],sandBankColors:[],sandBankUvs:[],regions:origin?new Map():classifyWaterRegions(tiles)};
+        sandBank:[],sandBankColors:[],sandBankUvs:[],fogByTile:[],
+        regions:origin?new Map():classifyWaterRegions(tiles)};
     const smooth=t=>t*t*(3-2*t);
     for(let z=0;z<tiles.length;z++)for(let x=0;x<(tiles[z]?.length||0);x++){
         if(tiles[z][x]?.terrain!=='water'||!includeTile(x,z))continue;
+        const surfaceStarts=captureFog?[data.water.length,data.bank.length,data.sandBank.length]:null;
+        const saveFogSurface=()=>{
+            if(!captureFog)return;
+            data.fogByTile[z*tiles[z].length+x]=[
+                ...data.water.slice(surfaceStarts[0]),
+                ...data.bank.slice(surfaceStarts[1]),
+                ...data.sandBank.slice(surfaceStarts[2]),
+            ];
+        };
         const kind=data.regions.get(`${x},${z}`)||'grass',level=levelForWater(tiles[z][x],kind),land=[];
         for(let dz=-1;dz<=1;dz++)for(let dx=-1;dx<=1;dx++){
             const tile=tiles[z+dz]?.[x+dx];
@@ -388,6 +400,7 @@ function buildShoreSurface(tiles, includeTile, levelForWater, sampleLand, origin
             for(let i=0;i<edges;i++)outline.push(point(1-i/edges,1));
             for(let i=0;i<edges;i++)outline.push(point(0,1-i/edges));
             for(let i=0;i<outline.length;i++)emit([center,outline[i],outline[(i+1)%outline.length]],false);
+            saveFogSurface();
             continue;
         }
         const grid=Array.from({length:steps+1},(_,v)=>Array.from({length:steps+1},(_,u)=>point(u/steps,v/steps)));
@@ -395,6 +408,7 @@ function buildShoreSurface(tiles, includeTile, levelForWater, sampleLand, origin
             const a=grid[row][col],b=grid[row][col+1],c=grid[row+1][col+1],d=grid[row+1][col];
             for(const triangle of [[a,b,c],[a,c,d]]){emit(clip(triangle,false),false);emit(clip(triangle,true),true);}
         }
+        saveFogSurface();
     }
     return data;
 }

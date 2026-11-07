@@ -45,6 +45,10 @@ def retired_catalog_template(template):
     attributes = template.attributes if hasattr(template, 'attributes') else template.get('attributes')
     return (((attributes or {}).get('craft_workbench') is True)
             or (category == 'gloves' and name == 'Спортивные')
+            or ((attributes or {}).get('import_source') == 'equipment_workbook'
+                and (attributes or {}).get('book_kind') == 'skill'
+                and name in {'Как не страдать от больной спины к концу жизни?',
+                             'Как договориться, чтобы прожить эту жизнь легче?', 'Как жить эту жизнь?'})
             or (category == 'weapon_module' and (
                 name == 'Укорочение ствола' or (attributes or {}).get('moduleRuleId') == 'short_barrel'))
             or (category == 'container' and name in {'Блок-А', 'Барьер', 'Щит', 'Стена'}

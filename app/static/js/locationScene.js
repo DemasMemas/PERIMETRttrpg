@@ -448,6 +448,7 @@ let fogMemoryGhosts = new Map();
 let fogMemoryDecorationTemplates = new Map();
 const fogOverlayMeshes = new Map();
 let fogSurfaceData = null;
+let waterFogSurfaces = null;
 let visionBlockerHeightCache = null;
 let visionObjectIndex = null;
 let gmVisionCharacterId = null;
@@ -6591,7 +6592,7 @@ function updateFogOverlay(active, sources) {
     const width = Number(currentLocationData?.grid_width) || 0;
     const height = Number(currentLocationData?.grid_height) || 0;
     if (!width || !height) return;
-    fogSurfaceData ??= buildFogSurfaceData(currentLocationData.tiles_data);
+    fogSurfaceData ??= buildFogSurfaceData(currentLocationData.tiles_data, waterFogSurfaces);
     const indexCapacity = fogSurfaceData.positions.length / 3;
     const tiles = { explored: [], unexplored: [] };
     for (let y = 0; y < height; y += 1) {
@@ -16975,6 +16976,8 @@ function rebuildLocationTerrainSurface(preserveTexture = false, reuseMaterial = 
 }
 
 function rebuildWaterSurfaceMesh() {
+    waterFogSurfaces = null;
+    clearFogOverlay();
     if (waterSurfaceMesh) {
         scene.remove(waterSurfaceMesh);
         waterSurfaceMesh.material.map?.dispose();
@@ -17002,7 +17005,9 @@ function rebuildWaterSurfaceMesh() {
     const data = buildRoundedWaterData(waterTiles, 0.24, undefined, null, waterLevelForTile, {
         shorelineRing: true,
         landSurfaceHeightAt: createTerrainSurfaceHeightSampler(waterTiles),
+        captureFog: true,
     });
+    waterFogSurfaces = data.fogByTile;
     const previousRegions = waterRegions;
     waterRegions = data.regions;
     if (waterTileMesh) {

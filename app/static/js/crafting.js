@@ -14,7 +14,8 @@ const fixedAmmoVariant=id=>['recipe-v22','recipe-v23','recipe-v24'].includes(id)
     ['recipe-v28','recipe-v29','recipe-v30'].includes(id)?'improved':null;
 const recipeLabel=recipe=>{
     const fixed=fixedAmmoVariant(recipe.id),category=ammoRecipeCategory(recipe.id);
-    return fixed?`${fixed==='handmade'?'Кустарные':'Улучшенные'} патроны категории ${category}`:recipe.name;
+    return fixed?`${fixed==='handmade'?'Кустарные':'Улучшенные'} патроны категории ${category}`
+        :recipe.output_count>1?recipe.output_name:recipe.name;
 };
 
 export async function showCrafting({characterId,lobbyId,onSaved}){
@@ -108,7 +109,7 @@ export async function showCrafting({characterId,lobbyId,onSaved}){
         const show=async()=>{
             ++generation;selectedRecipe=recipes.value;detail.replaceChildren();
             const recipe=snapshot.catalog.recipes.find(r=>r.id===recipes.value);if(!recipe)return;
-            detail.append(el('small',recipe.group),el('h4',recipeLabel(recipe)),el('p',`Время: ${recipe.duration_text}. Нужно: ${recipe.tools_text}.`));
+            detail.append(el('small',recipe.group),el('h4',recipeLabel(recipe)),el('p',`Время: ${recipe.duration_text}.`));
             const ammoCategory=ammoRecipeCategory(recipe.id),fixedVariant=fixedAmmoVariant(recipe.id);
             const ammoChoices=ammoCategory?snapshot.ammo_options.filter(option=>option.category===ammoCategory):[];
             const ammo=ammoCategory?select('Калибр патронов',ammoChoices.map(option=>[option.id,`${option.name} · ${option.price} ₽/шт.`])):null;
@@ -135,7 +136,7 @@ export async function showCrafting({characterId,lobbyId,onSaved}){
                     const ammoPayload=ammo?{ammo_template_id:Number(ammo.value),ammo_variant:ammoVariant.value}:{};
                     const response=await Server.craft(characterId,{operation:'quote',recipe_id:recipe.id,tool_option:Number(tool.value),approval_id:approval?.id,...ammoPayload});
                     if(quoteGeneration!==generation||!modal.isConnected)return;
-                    const plan=response.result;preview.replaceChildren(el('p',`Результат: ${plan.recipe.name} × ${plan.recipe.output_count}`),
+                    const plan=response.result;preview.replaceChildren(el('p',`Результат: ${plan.recipe.output_name} × ${plan.recipe.output_count}`),
                         el('p',`Итоговая СЛ ${plan.difficulty}${plan.automatic_success?' · автоуспех':''}`));
                     if(approval)preview.append(el('p',`ГМ одобрил: ${approval.tool_name||'условия'} · СЛ ${approval.modifier}`));
                     let statusIndex=0;

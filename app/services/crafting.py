@@ -584,6 +584,9 @@ def operate(character_id,user_id,payload):
         if not pda_ready(data):raise ValidationError('Для электронной книги нужен включённый заряженный КПК')
         item.setdefault('id',str(uuid4()));path=payload.get('skill_path')
         if attrs['book_kind']=='skill':
+            fixed_path=attrs.get('book_skill_path')
+            if fixed_path and path != fixed_path:
+                raise ValidationError('Эта книга посвящена другому навыку')
             subject=str(attrs.get('book_subject','')).casefold()
             group='physical' if 'физическ' in subject else 'social' if 'социальн' in subject else 'other'
             if not isinstance(path,str) or path not in {group+'.'+key for key in _catalog()['skills'][group]}:raise ValidationError('Выберите навык из категории книги')

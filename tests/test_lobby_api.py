@@ -1644,7 +1644,7 @@ def test_gm_configures_persisted_world_group_members(
     ]
 
 
-def test_mutants_and_npcs_do_not_join_rest_or_world_time_without_npc_opt_in(
+def test_mutants_and_npcs_can_be_activated_for_world_time(
     client, create_user, auth_headers
 ):
     gm = create_user("world-roles-gm")
@@ -1692,7 +1692,7 @@ def test_mutants_and_npcs_do_not_join_rest_or_world_time_without_npc_opt_in(
         json={"character_ids": [human["id"], joining_npc["id"]]},
     ).status_code == 200
 
-    # Older saves may already contain prohibited members and active flags.
+    # Участие в группе и ход часов настраиваются отдельно.
     stored_group = db.session.get(WorldGroup, group["id"])
     stored_group.member_character_ids = [
         human["id"], mutant["id"], npc["id"], joining_npc["id"],
@@ -1711,16 +1711,10 @@ def test_mutants_and_npcs_do_not_join_rest_or_world_time_without_npc_opt_in(
     rest_url = f"/lobbies/{lobby['id']}/rest"
     assert client.patch(
         activity_url, headers=auth_headers(gm),
-        json={"character_ids": [human["id"], npc["id"]]},
-    ).status_code == 400
-    assert client.post(
-        rest_url, headers=auth_headers(gm),
-        json={"type": "rest", "character_ids": [mutant["id"]]},
-    ).status_code == 400
-    assert client.post(
-        rest_url, headers=auth_headers(gm),
-        json={"type": "rest", "character_ids": [joining_npc["id"]]},
-    ).status_code == 400
+        json={"character_ids": [human["id"], mutant["id"], npc["id"], joining_npc["id"]]},
+    ).status_code == 200
+    for character in (mutant, npc, joining_npc):
+        assert db.session.get(LobbyCharacter, character["id"]).time_active is True
     assert client.patch(
         f"/lobbies/{lobby['id']}/time", headers=auth_headers(gm),
         json={"game_day": 1, "game_time_minutes": 490},
@@ -1732,16 +1726,16 @@ def test_mutants_and_npcs_do_not_join_rest_or_world_time_without_npc_opt_in(
     assert moved.status_code == 200
     for character in (mutant, npc, joining_npc):
         health = db.session.get(LobbyCharacter, character["id"]).data["health"]
-        assert health["stress"] == 5
-        assert health["effects"][0]["remaining_seconds"] == 600
+        assert health["stress"] == 3
+        assert health["effects"] == []
     assert client.post(
         rest_url, headers=auth_headers(gm),
-        json={"type": "rest", "character_ids": [human["id"]]},
+        json={"type": "rest", "character_ids": [human["id"], joining_npc["id"]]},
     ).status_code == 200
     for character in (mutant, npc, joining_npc):
         health = db.session.get(LobbyCharacter, character["id"]).data["health"]
-        assert health["stress"] == 5
-        assert health["effects"][0]["remaining_seconds"] == 600
+        assert health["stress"] == 3
+        assert health["effects"] == []
     assert client.patch(
         activity_url, headers=auth_headers(gm),
         json={"character_ids": [human["id"]]},

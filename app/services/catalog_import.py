@@ -74,7 +74,20 @@ def misc_templates(rows):
         else:
             attrs.update(salvage_bonus=25,unlocks_modifications=True)
             description='Электронная книга. Чтение занимает 4 часа. Позволяет модифицировать снаряжение указанного вида и даёт +25 к его разбору.'
-        result.append(template(row['C'],'misc',price,0,0,description,'Книги',attrs))
+        if mode == 'skill':
+            from app.services.character_creation import _catalog
+            subject = name.casefold()
+            group = ('physical' if 'физическ' in subject else
+                     'social' if 'социальн' in subject else
+                     'other' if 'проч' in subject else None)
+            if group is None:
+                raise ValueError(f'Неизвестная категория книги навыков: {name}')
+            for key, label in _catalog()['skills'][group].items():
+                result.append(template(f"{row['C']}. Раздел: {label}", 'misc', price, 0, 0,
+                    description, 'Книги', {**attrs, 'book_skill_path': f'{group}.{key}',
+                                           'book_skill_name': label}))
+        else:
+            result.append(template(row['C'],'misc',price,0,0,description,'Книги',attrs))
     return result
 
 

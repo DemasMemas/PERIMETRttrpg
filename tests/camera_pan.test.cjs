@@ -52,6 +52,8 @@ test('range sliders do not seize movement keys while text fields still do', asyn
     assert.equal(isTypingTarget(select('tile-type-select')), false);
     assert.equal(isTypingTarget(select('loc-edit-terrain')), false);
     assert.equal(isTypingTarget(select('loc-grass-subtype')), false);
+    assert.equal(isTypingTarget(select('world-water-level-mode')), false);
+    assert.equal(isTypingTarget(select('loc-water-level-mode')), false);
     assert.equal(isTypingTarget(select('other-select')), true);
     assert.match(read('lobby3d.js'), /isTypingTarget\(e\.target\)/);
     assert.match(read('ui_interactions.js'), /const isInput = isTypingTarget\(target\)/);

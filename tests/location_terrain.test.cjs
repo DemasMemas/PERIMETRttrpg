@@ -344,7 +344,7 @@ test('fog surface follows smoothed tile heights without gaps on shared edges', a
     assert.ok(shared.length > 0);
     assert.ok(shared.every(y => Math.abs(y - 1.545) < 1e-8));
     const scene = read('locationScene.js');
-    assert.match(scene, /fogSurfaceData \?\?= buildFogSurfaceData\(currentLocationData\.tiles_data\)/);
+    assert.match(scene, /fogSurfaceData \?\?= buildFogSurfaceData\(currentLocationData\.tiles_data, waterFogSurfaces\)/);
     assert.match(scene, /if \(work\.fogGeometry && !localSculpt\) clearFogOverlay\(\)/);
 });
 

@@ -1318,6 +1318,25 @@ def test_reading_takes_four_hours_and_only_skill_books_give_training(client,work
     assert reward['trainingPoints']==1
 
 
+def test_skill_book_cannot_be_read_as_another_skill(client,workshop,auth_headers):
+    from app.services.character_starting_purchase import item_from_template
+
+    book=ItemTemplate(name='Книга. Раздел: Сила',category='misc',price=100,weight=0,volume=0,
+        attributes={'book_kind':'skill','book_subject':'Физические',
+                    'book_skill_path':'physical.strength','reading_seconds':60})
+    db.session.add(book);db.session.flush()
+    data=deepcopy(workshop['actor_character'].data)
+    data['inventory']['pockets'].append(item_from_template(book))
+    workshop['actor_character'].data=data;db.session.commit()
+    rejected=call(client,workshop,auth_headers,'read_book',path=['inventory','pockets',4],
+        skill_path='physical.agility')
+    assert rejected.status_code==400
+    assert 'другому навыку' in rejected.json['error']['message']
+    accepted=call(client,workshop,auth_headers,'read_book',path=['inventory','pockets',4],
+        skill_path='physical.strength')
+    assert accepted.status_code==200,accepted.json
+
+
 def test_electronic_book_requires_powered_pda_at_start_and_finish(client,workshop,auth_headers):
     from app.services.character_starting_purchase import item_from_template
     book=ItemTemplate(name='Проверочная электронная книга',category='misc',price=100,weight=0,volume=1,

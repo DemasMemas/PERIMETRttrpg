@@ -28,6 +28,7 @@ test('туман на глубокой воде вмещает все треуг
     const context=vm.createContext({
         currentLocationData:{tiles_data:tiles,grid_width:10,grid_height:10},
         fogSurfaceData:null,fogOverlayMeshes:new Map(),fogMemory:new Map(),
+        waterFogSurfaces:null,
         buildFogSurfaceData,isTileVisibleToPlayer:()=>false,
         scene:{add:mesh=>added.push(mesh)},updateRoofVisibility:{lastState:null},
         THREE:{BufferGeometry:Geometry,Float32BufferAttribute:BufferAttribute,BufferAttribute,
@@ -40,4 +41,30 @@ test('туман на глубокой воде вмещает все треуг
     assert.equal(added.length,2);
     assert.equal(mesh.geometry.index.array.length,fog.positions.length/3);
     assert.equal(mesh.geometry.drawRange.count,fog.positions.length/3);
+});
+
+test('туман повторяет поверхность воды и берега при пониженном уровне',async()=>{
+    const load=async file=>import('data:text/javascript;base64,'+Buffer.from(
+        fs.readFileSync(path.join(__dirname,'../app/static/js',file),'utf8')).toString('base64'));
+    const terrain=await load('locationTerrain.js');
+    const water=await load('locationWaterEdge.js');
+    const tiles=Array.from({length:3},(_,z)=>Array.from({length:3},(_,x)=>({
+        terrain:x===1&&z===1?'water':'grass',height:2,
+        ...(x===1&&z===1?{water_level_offset:-.2}:{})
+    })));
+    const surface=water.buildRoundedWaterData(tiles,.24,undefined,null,water.waterLevelForTile,{
+        shorelineRing:true,landSurfaceHeightAt:terrain.createTerrainSurfaceHeightSampler(tiles),captureFog:true,
+    });
+    const waterTile=surface.fogByTile[4];
+    assert.ok(waterTile.length>surface.water.length);
+    const fog=terrain.buildFogSurfaceData(tiles,surface.fogByTile);
+    const fogVertices=fog.tileIndices[4].map(index=>fog.positions.slice(index*3,index*3+3));
+    assert.equal(fogVertices.length,waterTile.length/3);
+    for(let index=0;index<fogVertices.length;index++){
+        assert.ok(Math.abs(fogVertices[index][0]-waterTile[index*3])<1e-8);
+        assert.ok(Math.abs(fogVertices[index][1]-waterTile[index*3+1]-.045)<1e-8);
+        assert.ok(Math.abs(fogVertices[index][2]-waterTile[index*3+2])<1e-8);
+    }
+    assert.ok(fogVertices.some(point=>point[1]<1.9));
+    assert.ok(fogVertices.some(point=>point[1]>2));
 });
