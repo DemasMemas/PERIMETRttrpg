@@ -60,6 +60,7 @@ SPECIAL_ARMOR={
  'a49':({}, {'spare_plates':True}),
  'a39':({}, {'liquid_crystal_layer':20}),
  'g25':({}, {'nvg_mount':True}),
+ 'g18':({}, {'nvg_mount':True,'visor_light_mount':True}),
  'd32':({}, {'exoskeleton_run':True})}
 
 
@@ -72,6 +73,10 @@ def supported(rule):
 def install(item,record,replacing=None):
     previous=next((r for r in installed(item) if r['ruleId']==replacing),None)
     proposed=[m for m in item.get('modifications') or [] if not isinstance(m,dict) or m.get('ruleId')!=replacing]+[record]
+    if previous and (previous.get('rules') or {}).get('visor_light_mount') and not any(
+            (mod.get('rules') or {}).get('visor_light_mount') for mod in proposed if isinstance(mod,dict)):
+        if any(module.get('slotType')=='light' for module in item.get('installedModules') or [] if isinstance(module,dict)):
+            raise ValidationError('Сначала снимите фонарь с крепления забрала')
     if previous and (previous.get('rules') or {}).get('extra_belt_pouches') and not any(
             (mod.get('rules') or {}).get('extra_belt_pouches') for mod in proposed if isinstance(mod,dict)):
         if item.get('extraStoredItem'):
@@ -117,6 +122,21 @@ def worn_items(data):
 
 
 def worn_rule(data,key):return sum(rule(item,key) for item in worn_items(data))
+
+
+def visor_light_mount(data,path):
+    """Фонарь действительно установлен на модифицированном забрале надетого шлема."""
+    if not isinstance(path,list) or len(path)!=6 or path[:3]!=['equipment','helmet','installedModules'] or path[4]!='installedModules':return False
+    helmet=((data or {}).get('equipment') or {}).get('helmet') or {}
+    if not isinstance(helmet,dict) or helmet.get('protectionDisabled'):return False
+    modules=helmet.get('installedModules') or []
+    if not isinstance(modules,list) or type(path[3]) is not int or not 0<=path[3]<len(modules):return False
+    visor=modules[path[3]]
+    if not isinstance(visor,dict):return False
+    lights=visor.get('installedModules') or []
+    return bool(visor.get('slotType')=='visor' and not visor.get('protectionDisabled') and rule(visor,'visor_light_mount')
+        and isinstance(lights,list) and type(path[5]) is int and 0<=path[5]<len(lights)
+        and isinstance(lights[path[5]],dict) and lights[path[5]].get('slotType')=='light')
 
 
 def gear_stat(item,key,base):

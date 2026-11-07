@@ -19,3 +19,23 @@ test('крепление ПНВ добавляет слот шлему и не �
     helmet.attributes.slots.push({type:'nvg',label:'ПНВ'});
     assert.deepEqual(Array.from(context.getItemSlots(helmet),slot=>slot.type),['visor','nvg']);
 });
+
+test('крепление забрала даёт отдельные места для ПНВ и фонаря без новой категории предметов',()=>{
+    const visor={slotType:'visor',modifications:[{ruleId:'armor-g18'}],attributes:{slots:[]}};
+    assert.deepEqual(Array.from(context.getItemSlots(visor),slot=>slot.type),['nvg','light']);
+    visor.attributes.slots=[{type:'nvg'},{type:'light'}];
+    assert.deepEqual(Array.from(context.getItemSlots(visor),slot=>slot.type),['nvg','light']);
+});
+
+test('вложенный ПНВ учитывается листом только на надетом исправном забрале',()=>{
+    const power=fs.readFileSync(path.join(__dirname,'../app/static/js/portableLights.js'),'utf8');
+    const start=power.indexOf('export function usesNightVision('),end=power.indexOf('export async function renderPortableLights(',start);
+    const runtime=vm.createContext({});vm.runInContext(power.slice(start,end).replace('export ',''),runtime);
+    const nvg={slotType:'nvg',lightPower:{uses_left:4}},visor={slotType:'visor',installedModules:[nvg]};
+    const data={equipment:{helmet:{installedModules:[visor]}}};
+    assert.ok(runtime.usesNightVision(data));
+    visor.protectionDisabled=true;assert.ok(!runtime.usesNightVision(data));
+    visor.protectionDisabled=false;nvg.lightPower.uses_left=0;assert.ok(!runtime.usesNightVision(data));
+    nvg.lightPower.uses_left=4;data.equipment.helmet.installedModules=[];
+    data.inventory={backpack:[visor]};assert.ok(!runtime.usesNightVision(data));
+});

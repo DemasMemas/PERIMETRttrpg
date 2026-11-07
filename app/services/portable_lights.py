@@ -319,7 +319,7 @@ def advance_lobby(lobby,seconds):
 
 def ready_sources(actor,*,objects=None):
     from app.services.combat import CombatService
-    data=(actor.character.data if actor.character else {}) or {};items={item.get('id'):item for _,item in walk(data)}
+    data=(actor.character.data if actor.character else {}) or {};paths={item.get('id'):path for path,item in walk(data)};items={item.get('id'):item for _,item in walk(data)}
     result=[];weapons=data.get('weapons') or [];primary=actor.drawn_weapon_index
     for binding in bindings(data):
         item=items.get(binding.get('id'))
@@ -328,6 +328,9 @@ def ready_sources(actor,*,objects=None):
             if (item.get('glowState') or {}).get('remaining_seconds',0)<=0:continue
         elif (item.get('lightPower') or {}).get('uses_left',10)<=0:continue
         mount=binding.get('mount')
+        if mount=='head' and item.get('slotType')=='light':
+            from app.services.equipment_modifications import visor_light_mount
+            if not visor_light_mount(data,paths[binding['id']]):continue
         if mount in {'weapon','taped'} and not (type(primary) is int and 0<=primary<len(weapons)
                 and weapons[primary].get('id')==binding.get('weapon_id')):continue
         facing=math.hypot(actor.facing_x or 0,actor.facing_y or 0) or 1
@@ -658,7 +661,8 @@ def operate(character_id,user_id,payload):
         if actor and mount in {'head','taped'}:
             if not CombatService._has_usable_free_hand(actor):raise ValidationError('Для крепления нужна свободная действующая рука')
             cost=1+int(calculate_inventory_access(data,path,selected)['retrieval_action_points'])
-        if mount=='head' and definition(selected)!='head':raise ValidationError('Для головы нужен налобный фонарь')
+        from app.services.equipment_modifications import visor_light_mount
+        if mount=='head' and definition(selected)!='head' and not visor_light_mount(data,path):raise ValidationError('Для головы нужен налобный фонарь или крепление на забрале')
         if definition(selected)=='module' and mount!='weapon':raise ValidationError('Оружейный модуль крепится к оружию')
         if glow(selected) and (mount!='hand' or (selected.get('glowState') or {}).get('remaining_seconds',0)<=0):
             raise ValidationError('Этот источник света нельзя снова активировать')

@@ -42,6 +42,33 @@ def test_prepare_toggle_and_battle_end_consume_one_use(client,grenade_game,auth_
     assert actor.character.data['inventory']['pockets'][0]['lightPower']['uses_left']==9
 
 
+def test_visor_mount_light_and_nvg_keep_real_power_and_stop_when_visor_is_removed(client,grenade_game,auth_headers):
+    from app.services.equipment_modifications import make_record,install as install_modification
+    from app.services.weapon_modules import uses_nvg
+    from app.services.exceptions import ValidationError
+    import pytest
+    actor=grenade_game['actor_location'];data=deepcopy(actor.character.data)
+    visor={'id':'mounted-visor','name':'Забрало','slotType':'visor','modifications':[make_record('armor-g18')],
+        'installedModules':[{'id':'visor-nvg','name':'ПНВ','slotType':'nvg','active':True,'lightPower':{'uses_left':8}},
+            {'id':'visor-light','name':'Фонарик','category':'misc','slotType':'light','quantity':1,'lightPower':{'uses_left':7}}]}
+    data.setdefault('equipment',{})['helmet']={'id':'helmet','category':'helmet','installedModules':[visor]}
+    actor.character.data=data;db.session.commit();path=['equipment','helmet','installedModules',0,'installedModules',1]
+    status=client.get(f'/lobbies/characters/{actor.character_id}/portable-lights',headers=auth_headers(grenade_game['actor_user']))
+    assert next(item for item in status.json['lights'] if item['id']=='visor-light')['visor_mount']
+    before=actor.action_points_current
+    assert operate(client,grenade_game,auth_headers,'prepare',path=path,source_id='visor-light',mount='head').status_code==200
+    assert operate(client,grenade_game,auth_headers,'toggle',path=path,source_id='visor-light').status_code==200
+    assert actor.action_points_current==before-2
+    assert uses_nvg(actor.character.data) and ready_sources(actor)[0]['mount']=='head'
+    owned=deepcopy(actor.character.data);advance(owned,600)
+    assert owned['equipment']['helmet']['installedModules'][0]['installedModules'][1]['lightPower']['uses_left']==6
+    visor=owned['equipment']['helmet']['installedModules'][0]
+    with pytest.raises(ValidationError,match='фонарь'):install_modification(visor,make_record('armor-g19'),replacing='armor-g18')
+    owned['equipment']['helmet']['installedModules']=[];owned['inventory']['backpack']=[visor]
+    actor.character.data=owned
+    assert not uses_nvg(owned) and ready_sources(actor)==[]
+
+
 def test_exact_ten_minutes_do_not_charge_again_at_same_battle_end(grenade_game):
     actor=install(grenade_game['actor_location'],on=True);data=actor.character.data
     start_battle(data)

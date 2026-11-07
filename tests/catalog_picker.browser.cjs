@@ -44,4 +44,5 @@ module.exports=async({page,request,token,lobby,base,safeSession})=>{
     await page.evaluate("document.querySelector('#inventory-template-picker-modal .close').click();true");
     await require('./desktop_layout.browser.cjs')({page,request,token,actor,lobby,offered,safeSession});
     await require('./desktop_forms.browser.cjs')({page,request,token,actor,lobby,safeSession});
+    await require('./visor_mount.browser.cjs')({page,request,token,lobby,offered,loc,safeSession});
 };

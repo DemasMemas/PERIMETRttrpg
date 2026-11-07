@@ -5178,11 +5178,12 @@ def portable_lights(character_id):
     CharacterService.check_access(character,user_id,edit=request.method=='POST')
     if request.method=='GET':
         items=[]
+        from app.services.equipment_modifications import visor_light_mount
         for path,item in walk(character.data or {}):
             if definition(item)=='dosimeter':continue
             binding=next((binding for binding in bindings(character.data) if binding.get('id')==item.get('id')),None)
             items.append({'path':path,'id':item.get('id'),'name':item.get('name'),'kind':definition(item),'binding':binding,
-                'uses_left':(item.get('lightPower') or {}).get('uses_left',10),
+                'uses_left':(item.get('lightPower') or {}).get('uses_left',10),'visor_mount':visor_light_mount(character.data,path),
                 'remaining_seconds':(item.get('glowState') or {}).get('remaining_seconds') if glow(item) else None,
                 'activated':bool((item.get('glowState') or {}).get('activated')) if glow(item) else None,
                 'pda_state':pda_state(item) if definition(item)=='pda' else None})

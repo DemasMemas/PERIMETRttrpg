@@ -86,6 +86,10 @@ def active_nvg_module(data):
     helmet=equipment.get('helmet') if isinstance(equipment,dict) else None
     modules=helmet.get('installedModules') if isinstance(helmet,dict) else None
     if not isinstance(modules,list):return None
+    if helmet.get('protectionDisabled'):return None
+    modules=[m for m in modules if isinstance(m,dict) and not m.get('protectionDisabled')]
+    modules=[*modules,*(child for visor in modules if visor.get('slotType')=='visor'
+        for child in visor.get('installedModules') or [] if isinstance(child,dict) and not child.get('protectionDisabled'))]
     return next((m for m in modules if isinstance(m,dict)
         and (m.get('slotType')=='nvg' or module_attributes(m).get('night_vision'))
         and m.get('active',True) and m.get('enabled',True) and not m.get('raised',False)

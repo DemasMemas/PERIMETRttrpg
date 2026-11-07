@@ -2,7 +2,11 @@ import { Server } from './api.js';
 import { rememberEquipmentChoice } from './equipmentChoices.js';
 
 export function usesNightVision(data) {
-    return (data?.equipment?.helmet?.installedModules || []).some(module=>(module.slotType==='nvg' || module.attributes?.night_vision)
+    const helmet=data?.equipment?.helmet;
+    if(helmet?.protectionDisabled)return false;
+    const modules=(helmet?.installedModules||[]).filter(module=>!module.protectionDisabled);
+    const all=[...modules,...modules.filter(module=>module.slotType==='visor').flatMap(visor=>visor.installedModules||[])];
+    return all.some(module=>!module.protectionDisabled&&(module.slotType==='nvg' || module.attributes?.night_vision)
         && module.active!==false && module.enabled!==false && !module.raised && (module.lightPower?.uses_left??10)>0);
 }
 
@@ -58,10 +62,10 @@ export async function renderPortableLights(container,characterId,data,operate,is
                 else if(light.remaining_seconds>0)button('Взять горящий источник','prepare',{mount:'hand'});
                 root.append(row);continue;
             }
-            const mount=light.kind==='head'?'head':light.kind==='module'?'weapon':'hand';
+            const mount=light.kind==='head'||light.visor_mount?'head':light.kind==='module'?'weapon':'hand';
             button(mount==='head'?'Надеть':mount==='weapon'?'Подготовить модуль':'Взять в руку','prepare',
                 {mount,...(mount==='weapon'?{weapon_index:light.path[1]}:{})});
-            if (!['head','module'].includes(light.kind) && (data.weapons || []).length) {
+            if (!light.visor_mount && !['head','module'].includes(light.kind) && (data.weapons || []).length) {
                 const weapons=document.createElement('select');weapons.className='form-control';weapons.setAttribute('aria-label','Оружие для фонаря');
                 (data.weapons || []).forEach((weapon,index)=>{
                     const option=document.createElement('option');option.value=index;option.textContent=weapon.name || weapon.model || `Оружие ${index+1}`;weapons.append(option);

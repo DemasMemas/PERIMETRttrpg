@@ -1444,10 +1444,12 @@ function getItemSlots(item) {
         }
     }
     slots = [...(slots || [])];
-    if ((item.modifications || []).some(record => record?.ruleId === 'armor-g25')
+    if ((item.modifications || []).some(record => ['armor-g25','armor-g18'].includes(record?.ruleId))
         && !slots.some(slot => slot?.type === 'nvg')) {
         slots.push({ type: 'nvg', label: 'ПНВ', maxItems: 1 });
     }
+    if ((item.modifications || []).some(record => record?.ruleId === 'armor-g18')
+        && !slots.some(slot => slot?.type === 'light')) slots.push({type:'light',label:'Фонарь',maxItems:1});
     return slots;
 }
 
@@ -17368,6 +17370,9 @@ window.rollSkill = async function(skillPath, skillLabel) {
 // ========== УНИВЕРСАЛЬНЫЕ ОБЁРТКИ ДЛЯ СЛОТОВ ==========
 
 window.universalInstallModulePrompt = async function(targetPath, slotType) {
+    const characterId=currentCharacterId;
+    await forceSyncCharacter();
+    if(currentCharacterId!==characterId||!currentCharacterCanEdit)return;
     const targetItem = getItemByPath(targetPath);
     if (!targetItem) {
         showNotification('Целевой предмет не найден');
@@ -17398,6 +17403,9 @@ window.universalInstallModulePrompt = async function(targetPath, slotType) {
                 );
             } else if (slotType === 'artifact') {
                 matches = (it.category === 'artifact');
+            } else if (slotType === 'light') {
+                matches = it.category !== 'weapon_module' && (['hand','improved','head'].includes(it.attributes?.portable_light)
+                    || ['фонарик','улучшенный фонарик','налобный фонарик','налобный фонарь'].includes((it.name||'').trim().toLowerCase()));
             } else {
                 matches = (it.slot_type === slotType) || (it.attributes?.slot_type === slotType);
             }
@@ -17457,6 +17465,7 @@ window.universalInstallModulePrompt = async function(targetPath, slotType) {
     });
 
     modal.querySelector('#confirm-universal-module').onclick = async function() {
+        if(currentCharacterId!==characterId||!currentCharacterCanEdit){modal.remove();return;}
         const idx = select.value;
         if (idx === '') return;
         const selected = candidateModules[idx];
@@ -17472,14 +17481,18 @@ window.universalInstallModulePrompt = async function(targetPath, slotType) {
         }
 
         updateDataFromFields();
-        const success = universalInstallModule(targetItem, targetPath, selected.item, selected.path, slotType);
+        const currentTarget=getItemByPath(targetPath),currentModule=getItemByPath(selected.path);
+        if(!currentTarget||!currentModule||currentTarget.id!==targetItem.id||currentModule.id!==selected.item.id){
+            showNotification('Предмет перемещён. Выберите модуль заново');return;
+        }
+        const success = universalInstallModule(currentTarget, targetPath, currentModule, selected.path, slotType);
         if (success) {
             // Обновить слоты – удалить старый блок, вставить новый
             const targetDiv = document.querySelector(`[data-path="${targetPath.join(',')}"]`);
             if (targetDiv) {
                 const oldSlots = targetDiv.querySelector('.item-slots-container');
                 if (oldSlots) oldSlots.remove();
-                const newSlotsHtml = renderSlotsUniversal(targetItem, targetPath, 1);
+                const newSlotsHtml = renderSlotsUniversal(currentTarget, targetPath, 1);
                 if (newSlotsHtml) targetDiv.insertAdjacentHTML('beforeend', newSlotsHtml);
             }
             // Перерисовать контейнер-источник
@@ -17492,7 +17505,7 @@ window.universalInstallModulePrompt = async function(targetPath, slotType) {
             recalculateInventoryTotals();
             updatePlateProtectionDisplay();
             scheduleAutoSave();
-            forceSyncCharacter();
+            await forceSyncCharacter();
             showNotification('Модуль установлен', 'success');
         } else {
             showNotification('Не удалось установить модуль');
