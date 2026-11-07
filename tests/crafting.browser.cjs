@@ -4,7 +4,7 @@ module.exports=async({peer,page,request,recipient,token,api,read})=>{
     const templates=await request(api+'/templates',null,token,'GET');
     const all=Array.isArray(templates)?templates:[...(templates.global||[]),...(templates.local||[])];
     const data=(await read()).data;
-    data.skills.other={...(data.skills.other||{}),engineering:{base:20,bonus:0}};
+    data.skills.other={...(data.skills.other||{}),engineering:{base:20,bonus:0},survival:{base:20,bonus:0}};
     for(const name of ['Металлические детали','Электронные материалы','КПК']){
         const template=all.find(t=>t.name===name);assert.ok(template,'Шаблон '+name);
         data.inventory.pockets.push({id:'craft-'+template.id,name,templateId:template.id,category:template.category,attributes:template.attributes,quantity:1,weight:template.weight,volume:template.volume});
@@ -25,6 +25,17 @@ module.exports=async({peer,page,request,recipient,token,api,read})=>{
     await peer.until("[...document.querySelectorAll('#crafting-modal button')].some(b=>b.textContent==='Завершить · к100'&&!b.disabled)",'Прошли двадцать игровых минут');
     await peer.evaluate("[...document.querySelectorAll('#crafting-modal button')].find(b=>b.textContent==='Завершить · к100').click();true");
     await peer.until(`(async()=>{const {Server}=await import('/static/js/api.js');const c=await Server.getCharacter(${recipient.id});return !c.data.crafting.current&&c.data.inventory.pockets.some(i=>i.name==='Фонарик')})()`,'Фонарик действительно получен один раз');
+    await peer.until("[...document.querySelectorAll('#crafting-modal .crafting-recipe-detail p')].some(p=>p.textContent==='Металлические детали 0/1')",'Материалы показаны как имеется/нужно');
+    const materials=await peer.evaluate("[...document.querySelectorAll('#crafting-modal .crafting-recipe-detail p')].map(p=>p.textContent)");
+    assert.ok(['Металлические детали 0/1','Электронные материалы 0/1','КПК 0/1'].every(line=>materials.includes(line)));
+    assert.ok(!materials.some(line=>line.includes('не хватает')),'Дефицит не дублирует строки материалов');
+    const restocked=(await read()).data;
+    restocked.inventory.pockets.push({id:'craft-restocked-metal',name:'Металлические детали',category:'crafting_material',quantity:1});
+    await request('/lobbies/characters/'+recipient.id,{data:restocked},token,'PUT');
+    await peer.until("[...document.querySelectorAll('#crafting-modal .crafting-recipe-detail p')].some(p=>p.textContent==='Металлические детали 1/1')",'Открытый рецепт обновился после изменения инвентаря');
+    await peer.evaluate("(()=>{const recipe=document.querySelector('#crafting-modal select[aria-label=Рецепт]');recipe.value='recipe-m8';recipe.dispatchEvent(new Event('change'));return true})()");
+    await peer.until("[...document.querySelectorAll('#crafting-modal .crafting-recipe-detail p')].some(p=>p.textContent==='Электронные материалы 0/1 или Тканные материалы 0/1')",'Альтернативы показаны одной строкой');
+    await peer.evaluate("(()=>{const recipe=document.querySelector('#crafting-modal select[aria-label=Рецепт]');recipe.value='recipe-f4';recipe.dispatchEvent(new Event('change'));return true})()");
     await peer.until("document.querySelector('#crafting-modal select[aria-label=\"Дополнительный инструмент\"]')",'Вернулся выбор дополнительного инструмента');
     await peer.evaluate("(()=>{const s=document.querySelector('#crafting-modal select[aria-label=\"Дополнительный инструмент\"]');s.value=[...s.options].find(o=>o.textContent==='Молоток').value;s.dispatchEvent(new Event('change'));[...document.querySelectorAll('#crafting-modal button')].find(b=>b.textContent==='Запросить одобрение ГМа').click();return true})()");
     await peer.until("document.querySelector('#crafting-modal')?.innerText.includes('ожидает ГМа')",'Игрок отправил заявку ГМу');

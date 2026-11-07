@@ -23,7 +23,8 @@ export async function showCrafting({characterId,lobbyId,onSaved}){
     const panel=el('div',null,'modal-content');panel.style.cssText='max-width:900px;max-height:90vh;overflow:auto';
     modal.append(panel);document.body.append(modal);
     const header=el('div',null,'block-header');header.append(el('h3','Создание и модификации'));
-    const close=()=>{document.removeEventListener('keydown',onKey);modal.remove();};
+    const socket=window.socket;let socketUpdateHandler;
+    const close=()=>{document.removeEventListener('keydown',onKey);if(socketUpdateHandler)socket?.off?.('character_data_updated',socketUpdateHandler);modal.remove();};
     const onKey=event=>{if(event.key==='Escape')close();};document.addEventListener('keydown',onKey);
     header.append(button('×',close));panel.append(header);
     const body=el('div');panel.append(body);
@@ -315,5 +316,9 @@ export async function showCrafting({characterId,lobbyId,onSaved}){
             body.append(row);
         }
     };
+    socketUpdateHandler=event=>{
+        if(Number(event?.character_id)===Number(characterId)&&!busy&&modal.isConnected)void refresh();
+    };
+    socket?.on?.('character_data_updated',socketUpdateHandler);
     try{await refresh();}catch(error){body.replaceChildren(el('p',error.message));}
 }
