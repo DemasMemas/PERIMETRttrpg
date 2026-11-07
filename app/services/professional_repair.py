@@ -1,7 +1,7 @@
 """Денежный ремонт у НПС-механика по листу «Поломка снаряжения»."""
 from copy import deepcopy
 from datetime import datetime,timezone
-from decimal import Decimal,ROUND_CEILING
+from decimal import Decimal,ROUND_CEILING,ROUND_FLOOR
 from math import isfinite
 
 from sqlalchemy.orm.attributes import flag_modified
@@ -66,7 +66,7 @@ def _prepare(location_id,user_id,payload):
             raise ValidationError('Перезарядку выполняет механик учёных')
         require(settings,'Станок Электрика')
         repaired=deepcopy(item);repaired['reanimationCharge']=True
-        price=money(int((Decimal(str(template.price))*Decimal('0.05')).to_integral_value(rounding=ROUND_CEILING)),
+        price=money(int((Decimal(str(template.price))*Decimal('0.05')).to_integral_value(rounding=ROUND_FLOOR)),
             label='Цена перезарядки')
         return actor,mechanic,{'item_path':path,'item_name':item.get('name') or template.name,'mode':mode,
             'price':price,'base_price':template.price,'markup':1,'discount':0,

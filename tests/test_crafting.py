@@ -166,7 +166,7 @@ def test_scientist_mechanic_recharges_reanimation_for_five_percent(workshop):
     from app.services.equipment_modifications import make_record
     from app.services.professional_repair import quote,perform
     pair=workshop;actor=pair['actor_character'];specialist=pair['target_character']
-    template=ItemTemplate(name='Проверочный экзоскелет',category='armor',price=10000,
+    template=ItemTemplate(name='Проверочный экзоскелет',category='armor',price=10001,
         weight=20,volume=10,attributes={'import_source':'equipment_workbook'})
     db.session.add(template);db.session.flush()
     owned=deepcopy(actor.data);owned['inventory']['money']=1000
