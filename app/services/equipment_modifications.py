@@ -28,7 +28,7 @@ WEAPON_EFFECTS={
  'b50':({'accuracy':1},{}),'c50':({'fire_rate':4},{})}
 
 DIRECT_ARMOR={'armor-'+key for key in ('a5','a6','a7','a9','a10','a18','a19','a22','a23','a27','a28','a32','a38','a45','a47',
-    'd5','d6','d9','d15','d18','d19','d20','g5','g7','g29','g30','g31','g41','g42','g50','g51','g52')}
+    'd5','d6','d9','d11','d15','d18','d19','d20','d31','g5','g7','g29','g30','g31','g41','g42','g50','g51','g52')}
 
 SPECIAL_ARMOR={
  'a24':({'physical':5,'durability':5},{'incoming_trauma_disadvantage':True}),
