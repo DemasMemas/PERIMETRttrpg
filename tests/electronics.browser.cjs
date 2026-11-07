@@ -163,6 +163,34 @@ module.exports=async({page,request,token,lobby,base,connect,debugPort,safeSessio
         await toggleStranger();await peer.until(`__b8Alerts.length>${count}&&__b8Alerts.at(-1).sound===false`,'Повторное появление показано без звука');
         assert.equal(await peer.evaluate('__b8Beeps'),quietBaseline);
         console.log('Детектор приближения: установлен штатным рецептом; друг не вызывает тревогу, незнакомый КПК вызывает настоящий звуковой сигнал при закрытом интерфейсе; отключение звука сохраняется на устройстве.');
+        source=await request('/lobbies/characters/'+actor.id,null,token,'GET');
+        source.data.inventory.pockets.push({id:'second-radio-device',name:'КПК',category:'misc',quantity:1});
+        await request('/lobbies/characters/'+actor.id,{data:source.data},token,'PUT');
+        await open(peer,actor.id,'second-radio-device');
+        await peer.evaluate("document.querySelector('[data-pda-account]').click();true");
+        await peer.until("document.querySelector('.pda-account-mode-link')",'Новый физический КПК не наследует чужой вход');
+        await peer.evaluate("document.querySelector('.pda-account-mode-link').click();true");
+        await peer.until("document.querySelector('.pda-account-submit')?.textContent==='Создать аккаунт'",'Регистрация на втором КПК');
+        await peer.evaluate("(()=>{const login=document.querySelector('[aria-label=\"Логин КПК\"]'),password=document.querySelector('[aria-label=\"Пароль КПК\"]');login.focus();login.value='second-radio-account';login.dispatchEvent(new Event('input'));password.focus();password.value='synthetic-device-password';password.dispatchEvent(new Event('input'));document.querySelector('.pda-account-form').requestSubmit()})()");
+        await peer.until("document.querySelector('[data-pda-account]')?.textContent.includes('second-radio-account')",'Вход выполнен на втором устройстве');
+        await peer.evaluate("[...document.querySelectorAll('#pda-shell-modal nav button')].find(b=>b.textContent==='Заметки').click();true");
+        await peer.until("document.querySelector('[aria-label=\"Заметки аккаунта КПК\"]')",'Заметки нового аккаунта');
+        await peer.evaluate("document.querySelector('[aria-label=\"Заметки аккаунта КПК\"]').value='Заметка второго аккаунта';[...document.querySelectorAll('#pda-shell-modal button')].find(b=>b.textContent==='Сохранить заметки').click();true");
+        await peer.until("[...document.querySelectorAll('.notification')].some(e=>e.textContent.includes('Заметки сохранены'))",'Заметки сохранены в выбранном аккаунте');
+        await peer.evaluate("document.querySelector('[data-pda-close]').click();window.closeCharacterSheet();true");
+        await open(peer,actor.id,'dynamo-device');
+        await peer.until("document.querySelector('[data-pda-account]')?.textContent.includes('radio-actor')",'Первый КПК сохранил прежний аккаунт');
+        await peer.evaluate("[...document.querySelectorAll('#pda-shell-modal nav button')].find(b=>b.textContent==='Заметки').click();true");
+        await peer.until("document.querySelector('[aria-label=\"Заметки аккаунта КПК\"]')",'Заметки первого аккаунта');
+        assert.equal(await peer.evaluate("document.querySelector('[aria-label=\"Заметки аккаунта КПК\"]').value"),'');
+        await peer.evaluate("document.querySelector('[data-pda-close]').click();window.closeCharacterSheet();true");
+        await open(peer,actor.id,'second-radio-device');await peer.evaluate("document.querySelector('[data-pda-account]').click();true");
+        await peer.until("[...document.querySelectorAll('#pda-shell-modal button')].some(b=>b.textContent==='Выйти из аккаунта')",'Выход со второго КПК');
+        await peer.evaluate("[...document.querySelectorAll('#pda-shell-modal button')].find(b=>b.textContent==='Выйти из аккаунта').click();true");
+        await peer.until("document.querySelector('.pda-account-form')",'Второй КПК вышел из аккаунта');
+        const firstAccount=await request('/lobbies/characters/'+actor.id+'/pda-account?item_path='+encodeURIComponent(JSON.stringify(['inventory','pockets',0]))+'&item_id=dynamo-device',null,token,'GET');
+        assert.equal(firstAccount.account.login,'radio-actor');
+        console.log('Физические аккаунты: два КПК одного персонажа имеют разные входы и заметки; регистрация и выход на втором не меняют первый.');
     }finally{
         if(peer)peer.close();
         if(protocol){if(context)await protocol.call('Target.disposeBrowserContext',{browserContextId:context.browserContextId}).catch(()=>{});protocol.close();}

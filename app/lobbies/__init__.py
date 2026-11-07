@@ -5265,8 +5265,11 @@ def character_crafting(character_id):
 @jwt_required()
 def character_pda_account(character_id):
     from app.services.pda_accounts import account_status
-
-    return jsonify(account_status(character_id, int(get_jwt_identity()))), 200
+    selection=None
+    if 'item_path' in request.args:
+        try:selection={'item_path':json.loads(request.args['item_path']),'item_id':request.args.get('item_id') or None}
+        except (ValueError,TypeError):raise ValidationError('Выберите КПК')
+    return jsonify(account_status(character_id, int(get_jwt_identity()),selection)), 200
 
 
 @lobbies_bp.route('/characters/<int:character_id>/controllers',methods=['GET','POST'])
@@ -5338,6 +5341,8 @@ def change_character_pda_account(character_id, operation):
     result=account_action(character_id, int(get_jwt_identity()), operation,request.get_json(silent=True) or {})
     if operation in {'login','register','logout'}:
         character=db.session.get(LobbyCharacter,character_id)
+        result['data']=character.data_snapshot()
+        emit_character_update({'character_id':character.id,'updates':{'data':character.data_snapshot()},'source':'pda_account'})
         socketio.emit('pda_network_updated',{'lobby_id':character.lobby_id},room=f'lobby_{character.lobby_id}')
     return jsonify(result),200
 

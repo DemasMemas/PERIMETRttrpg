@@ -110,8 +110,9 @@ def preserve(current,incoming):
             if previous is None:item.pop('pdaState',None)
             else:item['pdaState']=deepcopy(previous)
         if definition(item)=='pda':
-            network=old_network.get(pda_identity(path,item))
-            if network is None:item.pop('pdaNetwork',None)
+            identity_key=pda_identity(path,item);network=old_network.get(identity_key)
+            if identity_key not in old_network:item['pdaNetwork']={'account_id':None}
+            elif network is None:item.pop('pdaNetwork',None)
             else:item['pdaNetwork']=deepcopy(network)
     def identity(path,item):return item.get('id') or (*path,item.get('templateId'),item.get('name'))
     previous={identity(path,item):item for path,item in nvg_items(current or {})}

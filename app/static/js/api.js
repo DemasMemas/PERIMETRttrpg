@@ -57,7 +57,8 @@ export const Server = {
     rollTimePlan: (lobbyId,planId,payload) => apiFetch(`/lobbies/${lobbyId}/time-plans/${planId}/roll`,{
         method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}),
     getCrafting: characterId => apiFetch(`/lobbies/characters/${characterId}/crafting`),
-    getPdaAccount: characterId => apiFetch(`/lobbies/characters/${characterId}/pda-account`),
+    getPdaAccount: (characterId,selection={}) => apiFetch(`/lobbies/characters/${characterId}/pda-account?${new URLSearchParams({
+        ...(selection.item_path?{item_path:JSON.stringify(selection.item_path)}:{}),...(selection.item_id?{item_id:selection.item_id}:{})})}`),
     getPdaProximity: (characterId,lobbyId,locationId) => apiFetch(`/lobbies/characters/${characterId}/pda-proximity?${new URLSearchParams({
         lobby_id:lobbyId,...(locationId?{location_id:locationId}:{})})}`),
     getControllers: (characterId,selection={}) => apiFetch(`/lobbies/characters/${characterId}/controllers?${new URLSearchParams({

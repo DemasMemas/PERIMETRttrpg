@@ -66,9 +66,13 @@ export function openPdaShell({ item, findItem, getData, operate, canEdit, charac
     let accountMode = 'login';
     const accountDraft = { login: '', password: '' };
     const selectedBookSkills = new Map();
+    const accountSelection=()=>{
+        const source=findItem(item.id);if(!source)throw Error('КПК перемещён. Откройте его заново.');
+        return {item_path:source.path,item_id:source.item.id};
+    };
 
     async function loadAccount() {
-        try { accountSnapshot = await Server.getPdaAccount(characterId); }
+        try { accountSnapshot = await Server.getPdaAccount(characterId,accountSelection()); }
         catch (error) { showNotification(error.message, 'system'); }
         finally { accountLoading = false; if (modal.isConnected) render(); }
     }
@@ -80,7 +84,9 @@ export function openPdaShell({ item, findItem, getData, operate, canEdit, charac
         accountMessage = '';
         render();
         try {
-            accountSnapshot = await Server.changePdaAccount(characterId, operation, payload);
+            await Server.waitForCharacterSave(characterId);
+            accountSnapshot = await Server.changePdaAccount(characterId, operation, {...accountSelection(),...payload});
+            if(accountSnapshot.data)await onSaved?.(accountSnapshot.data);
             if(['login','register','logout'].includes(operation)){networkView?.close();networkView=null;}
             if (operation === 'login' || operation === 'register') {
                 accountDraft.password = '';
@@ -127,6 +133,7 @@ export function openPdaShell({ item, findItem, getData, operate, canEdit, charac
 
     function render() {
         const current = findItem(item.id)?.item || item;
+        if(!item.id&&current.id)item.id=current.id;
         const state = powerState(current);
         networkView?.setActive(state.on&&['chat','contacts'].includes(selected),selected);
         const power = modal.querySelector('[data-pda-power]');

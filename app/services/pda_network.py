@@ -57,8 +57,10 @@ def distance(first,last):
 
 
 def registry(lobby_id,location_id=None):
-    sessions={row.character_id:account for row,account in db.session.query(PdaAccountLogin,PdaAccount).join(
+    sessions={row.character_id:account.id for row,account in db.session.query(PdaAccountLogin,PdaAccount).join(
         PdaAccount,PdaAccount.id==PdaAccountLogin.account_id).join(LobbyCharacter,LobbyCharacter.id==PdaAccountLogin.character_id).filter(LobbyCharacter.lobby_id==lobby_id).all()}
+    accounts={account.id:account for account in PdaAccount.query.filter_by(lobby_id=lobby_id).all()}
+    from app.services.pda_accounts import account_for_device
     groups=WorldGroup.query.filter_by(lobby_id=lobby_id).order_by(WorldGroup.id).all()
     all_models=LocationCharacter.query.join(LobbyCharacter,LobbyCharacter.id==LocationCharacter.character_id).filter(
         LobbyCharacter.lobby_id==lobby_id).order_by(LocationCharacter.last_action.desc(),LocationCharacter.id.desc()).all()
@@ -69,9 +71,8 @@ def registry(lobby_id,location_id=None):
         if not devices:continue
         position=_position(character,location_id,groups,all_models)
         if not position:continue
-        account=sessions.get(character.id)
-        if account and account.lobby_id!=lobby_id:account=None
         for path,item in devices:
+            account=account_for_device(character,item,accounts=accounts,legacy=sessions)
             rules=mods(item)
             result.append({'character':character,'item':item,'path':path,'position':position,'account':account,
                 'signal_id':signal_id(character,path,item),'mods':rules,
