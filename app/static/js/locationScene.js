@@ -745,7 +745,9 @@ function clearStationPlacement() {
 export function beginStationPlacement(selection) {
     const actor=getLocationCharacterById(selection.characterId);
     if(!currentLocationData||!actor||!canControlCharacter(selection.characterId))throw new Error('Персонаж должен находиться на текущей подлокации');
-    if(combatState?.status==='active')throw new Error('Размещение устройств доступно вне боя');
+    const coverKey=selection.coverKey||selection.object?.properties?.crafted_cover;
+    if(combatState?.status==='active'&&!coverKey)throw new Error('Размещение устройств доступно вне боя');
+    if(combatState?.status==='active'&&!isCurrentCombatTurnForCharacter(selection.characterId))throw new Error('Сейчас не ход этого персонажа');
     const asset=findLocationAsset(selection.object?.properties?.visual_asset||selection.assetId);
     if(!asset)throw new Error('Не найден вид устройства');
     clearStationPlacement();clearPendingCombatAction();hideStructureInteraction();
@@ -755,15 +757,43 @@ export function beginStationPlacement(selection) {
     ghost.traverse(child=>{if(child.isMesh){child.castShadow=false;const clone=mat=>{const copy=mat.clone();copy.transparent=true;copy.opacity=.45;copy.depthWrite=false;return copy;};
         if(child.material)child.material=Array.isArray(child.material)?child.material.map(clone):clone(child.material);}});
     ghost.visible=false;scene.add(ghost);
-    pendingStationPlacement={...selection,locationId:currentLocationId,actorLevel:actor.floorLevel||0,rotation:selection.object?.properties?.rotation||0,ghost,busy:false};
-    showNotification('Выберите место рядом с персонажем. Q/E — поворот, Esc или ПКМ — отмена.','system');
+    pendingStationPlacement={...selection,coverKey,locationId:currentLocationId,actorLevel:actor.floorLevel||0,rotation:selection.object?.properties?.rotation||0,ghost,busy:false};
+    showNotification(coverKey==='recipe-m18'?'Выберите окно или оконный проём рядом. Esc или ПКМ — отмена.':'Выберите место рядом с персонажем. Q/E — поворот, Esc или ПКМ — отмена.','system');
     return true;
+}
+
+function curtainAnchorAtScreen(clientX,clientY,level) {
+    const rect=renderer.domElement.getBoundingClientRect(),ray=new THREE.Raycaster();
+    ray.setFromCamera(new THREE.Vector2((clientX-rect.left)/rect.width*2-1,-(clientY-rect.top)/rect.height*2+1),camera);
+    let selected=null,nearest=Infinity;
+    for(const object of currentLocationData?.objects||[]){
+        if(object.type!=='window'||structureLevel(object)!==level||object.properties?.gm_hidden)continue;
+        const p=object.properties||{},d=p.dimensions||{},angle=p.rotation||0,w=d.width||1.2,h=d.height||1;
+        const x=object.tile_x+.5+(p.offset_x||0),z=object.tile_y+.5+(p.offset_z||0),bottom=getTileHeight(object.tile_x,object.tile_y)+level*2.4+(p.elevation??1);
+        const plane=new THREE.Plane().setFromNormalAndCoplanarPoint(new THREE.Vector3(Math.sin(angle),0,Math.cos(angle)),new THREE.Vector3(x,bottom,z));
+        const hit=ray.ray.intersectPlane(plane,new THREE.Vector3());if(!hit)continue;
+        const along=(hit.x-x)*Math.cos(angle)-(hit.z-z)*Math.sin(angle),distance=hit.distanceTo(ray.ray.origin);
+        if(Math.abs(along)<=w/2&&hit.y>=bottom&&hit.y<=bottom+h&&distance<nearest){selected=object;nearest=distance;}
+    }
+    return selected;
 }
 
 function updateStationPreview(clientX,clientY) {
     const state=pendingStationPlacement;if(!state||state.busy||state.request)return;
     const point=localMapToolPoint(clientX,clientY);
     state.point=point&&point.floor_level===state.actorLevel?point:null;
+    if(state.coverKey==='recipe-m18'){
+        const anchor=curtainAnchorAtScreen(clientX,clientY,state.actorLevel);
+        state.anchor=anchor?.type==='window'&&structureLevel(anchor)===state.actorLevel?anchor:null;
+        if(!state.anchor)state.point=null;
+        else{
+            const p=anchor.properties||{},d=p.dimensions||{},angle=p.rotation||0;
+            const x=anchor.tile_x+.5+(p.offset_x||0),z=anchor.tile_y+.5+(p.offset_z||0),actor=getLocationCharacterById(state.characterId);
+            const nx=Math.sin(angle),nz=Math.cos(angle),side=(actor.posX+.5-x)*nx+(actor.posY+.5-z)*nz>=0?1:-1;
+            state.point=new THREE.Vector3(x+nx*side*((d.depth||.14)/2+.04),getTileHeight(anchor.tile_x,anchor.tile_y)+state.actorLevel*2.4+(p.elevation??1),z+nz*side*((d.depth||.14)/2+.04));
+            state.rotation=angle;state.ghost.scale.set(d.width||1, d.height||1, 1);
+        }
+    }
     state.ghost.visible=Boolean(state.point);
     if(state.point){state.ghost.position.copy(point);state.ghost.rotation.y=state.rotation;}
 }
@@ -776,11 +806,17 @@ async function commitStationPlacement(clientX,clientY) {
     state.request ||= {operation:state.object?'move':'place',operation_id:crypto.randomUUID(),character_id:state.characterId,
         character_revision:state.revision,item_path:state.itemPath,item_id:state.itemId,
         object_id:state.object?.id,object_revision:state.object?.revision,
-        x:state.point.x-.5,y:state.point.z-.5,rotation:state.rotation,floor_level:state.actorLevel};
+        x:state.point.x-.5,y:state.point.z-.5,rotation:state.rotation,floor_level:state.actorLevel,anchor_id:state.anchor?.id};
     try {
-        const result=await Server.operateStation(window.currentLobbyId,currentLocationId,state.request);
-        if(currentLocationId===state.locationId){if(result.created)addLocationObject(result.object);else updateLocationObject(result.object);}
-        showNotification(state.object?'Устройство перемещено':'Устройство размещено','success');
+        let result;
+        if(state.coverKey&&combatState?.status==='active'){
+            const actor=findCombatCharacterByCharacterId(state.characterId);
+            result=await Server.performLocationCombatAction(window.currentLobbyId,state.locationId,{
+                location_character_id:actor?.location_character_id,action_key:'place_cover',attribute_choice:state.request,
+                item_path:state.itemPath,item_id:state.itemId,target_object_id:state.object?.id,pending_action_id:state.request.operation_id});
+        }else result=await (state.coverKey?Server.operateCraftedCover:Server.operateStation)(window.currentLobbyId,state.locationId,state.request);
+        if(currentLocationId===state.locationId&&result.object){if(result.created)addLocationObject(result.object);else updateLocationObject(result.object);}
+        showNotification(result.pending_action?'Начата оплата установки укрытия':state.coverKey?'Укрытие размещено':state.object?'Устройство перемещено':'Устройство размещено','success');
         if(pendingStationPlacement===state)clearStationPlacement();
     }catch(error){
         if(error.status)state.request=null;
@@ -8970,6 +9006,8 @@ function getActionRequirement(object, actionKey) {
 }
 
 function getStructureActionLabel(object, actionKey) {
+    if(actionKey==='move_crafted_cover')return 'Переместить укрытие · 3 ОД';
+    if(actionKey==='recover_crafted_cover')return 'Снять укрытие · 5 ОД';
     if (actionKey === 'drop_down') return 'Спрыгнуть вниз';
     if (actionKey === 'level_up') return 'Вверх';
     if (actionKey === 'level_down') return 'Вниз';
@@ -8986,6 +9024,8 @@ function getStructureActionLabel(object, actionKey) {
 }
 
 function getStructureActionIcon(actionKey) {
+    if(actionKey==='move_crafted_cover')return '↔';
+    if(actionKey==='recover_crafted_cover')return '↑';
     if (actionKey === 'drop_down') return '↧';
     if (actionKey === 'level_up') return '↑';
     if (actionKey === 'level_down') return '↓';
@@ -10369,6 +10409,25 @@ async function executeStructureAction(object, actionKey, actorCharacterId = pend
         showNotification('Слишком далеко до объекта', 'system');
         return false;
     }
+    if(['move_crafted_cover','recover_crafted_cover'].includes(actionKey)){
+        try{
+            const character=await Server.getCharacter(actorCharacterId);
+            if(actionKey==='move_crafted_cover'){
+                beginStationPlacement({characterId:actorCharacterId,revision:character.data._revision,object});
+                return true;
+            }
+            const payload={operation:'recover',operation_id:crypto.randomUUID(),character_id:actorCharacterId,
+                character_revision:character.data._revision,object_id:object.id,object_revision:object.revision};
+            let result;
+            if(combatState?.status==='active')result=await Server.performLocationCombatAction(window.currentLobbyId,currentLocationId,{
+                location_character_id:findCombatCharacterByCharacterId(actorCharacterId)?.location_character_id,
+                action_key:'place_cover',attribute_choice:payload,target_object_id:object.id,pending_action_id:payload.operation_id});
+            else result=await Server.operateCraftedCover(window.currentLobbyId,currentLocationId,payload);
+            if(result.removed)removeLocationObject(object.id);
+            hideStructureInteraction();showNotification(result.pending_action?'Начато снятие укрытия':'Укрытие снято в инвентарь','success');
+            return true;
+        }catch(error){showNotification(error.message,'system');return false;}
+    }
 
     if (actionKey === 'drop_down') return useLocationVerticalAccess(object.id,'drop',actorCharacterId);
     if (actionKey === 'level_up' || actionKey === 'level_down') {
@@ -11079,6 +11138,12 @@ function showObjectContextMenu(clientX, clientY, object) {
         }
     }
     getObjectActions(object).forEach(action => {
+        if(['move_crafted_cover','recover_crafted_cover'].includes(action)){
+            const characterId=getCurrentInteractionActor()?.model?.userData?.characterId;
+            if(characterId&&canControlCharacter(characterId))actions.push({label:combatState?.status==='active'?getStructureActionLabel(object,action):action==='move_crafted_cover'?'Переместить':'Снять в инвентарь',
+                action:()=>executeStructureAction(object,action,characterId)});
+            return;
+        }
         if(object.properties?.portable_station&&['move','rotate'].includes(action))return;
         if (action === 'level_up' || action === 'level_down' || action === 'drop_down') {
             const actorId = getCurrentInteractionActor()?.model?.userData.characterId;
@@ -18275,7 +18340,7 @@ function setupCharacterDragging() {
             e.preventDefault();e.stopImmediatePropagation();
             if(!pendingStationPlacement.busy){
                 if(e.code==='Escape')clearStationPlacement();
-                else if(!pendingStationPlacement.request){pendingStationPlacement.rotation+=(e.code==='KeyQ'?1:-1)*Math.PI/12;
+                else if(!pendingStationPlacement.request&&pendingStationPlacement.coverKey!=='recipe-m18'){pendingStationPlacement.rotation+=(e.code==='KeyQ'?1:-1)*Math.PI/12;
                     pendingStationPlacement.ghost.rotation.y=pendingStationPlacement.rotation;}
             }
             return;

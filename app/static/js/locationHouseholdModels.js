@@ -280,7 +280,23 @@ function buildAdditionalHouseholdModel(T,id,{B,C,add,legs,markTrunk}) {
     const screen=(x,y,z,w,h)=>{B(x,y,z,w,h,.035,dark,2);B(x,y,z+.022,w*.9,h*.85,.008,'#4b6460',2);};
     const slats=(y,w=1,d=.8,n=5)=>{for(let i=0;i<n;i++)B(0,y,-d/2+(i+.5)*d/n,w,.055,d/n*.85,wood);};
     const stone=(x,y,z,sx,sy,sz,c=grey,angle=0)=>add(new T.DodecahedronGeometry(1,0),x,y,z,sx,sy,sz,c,2,.2,angle,angle*.7,0);
-    if(id==='aeration_column') {
+    if(id==='curtain_panel'){
+        for(let i=0;i<24;i++)B(-.5+(i+.5)/24,.5,Math.sin(i*Math.PI/3)*.32,1/24+.002,1,.18,cloth,1);
+        C(0,.99,0,.01,.02,iron);
+    }else if(id==='barricade_wood'){
+        for(const x of [-.37,.37])B(x,.48,-.32,.1,.96,.24,edge);
+        for(let i=0;i<5;i++)B(0,.1+i*.195,.08+(i%2)*.04,1,.18,.3,i%2?wood:'#695641');
+    }else if(id==='barricade_metal'||id==='barricade_reinforced'){
+        B(0,.5,0,1,1,.16,rust,2);
+        for(const x of [-.4,.4])B(x,.5,-.22,.075,1,.24,iron,2);
+        if(id==='barricade_reinforced')for(const y of [.08,.5,.92])B(0,y,.2,1,.07,.3,iron,2);
+        for(const x of [-.4,.4])for(const y of [.1,.9])ball(x,y,.12,.025,.025,.08,grey);
+    }else if(id==='barricade_brick'){
+        for(let row=0;row<9;row++)for(let column=-1;column<4;column++){
+            const start=-.5+column*.25+(row%2?.125:0),left=Math.max(-.5,start),right=Math.min(.5,start+.24);
+            if(right>left)B((left+right)/2,(row+.5)/9,0,right-left,.103,1,row%3?'#845e48':'#735342',2);
+        }
+    }else if(id==='aeration_column') {
         const tank='#1d7297',tankShade='#155779',steel='#a9aca8',brass='#a78e55',panel='#222a2c';
         C(0,.045,0,.35,.09,'#191d1d');
         C(0,.43,0,.30,.69,tank);C(0,.775,0,.29,.045,tankShade);
@@ -300,6 +316,7 @@ function buildAdditionalHouseholdModel(T,id,{B,C,add,legs,markTrunk}) {
         rod([.26,.73,0],[.35,.78,0],.014,panel);
         return true;
     }
+    if(['curtain_panel','barricade_wood','barricade_metal','barricade_reinforced','barricade_brick'].includes(id))return true;
     if(/^(oak|birch|pine|bush|tall_grass)_(green|dry|dead)$/.test(id)) {
         const [species,...rest]=id.split('_'),state=rest.at(-1),grass=id.startsWith('tall_grass');
         const dead=state==='dead',dry=state==='dry',bark=species==='birch'?'#b2b1a1':'#685c48';

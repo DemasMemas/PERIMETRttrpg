@@ -185,6 +185,9 @@ def validate_deferred_conditions(actor, row):
     payload = row.payload or {}
     kind = payload.get('action_key')
     CombatService.ensure_character_can_act(actor, kind)
+    if kind=='place_cover':
+        from app.services.crafted_covers import plan
+        plan(actor,actor.character.data,payload.get('attribute_choice'))
     if kind=='prosthesis':
         from app.services.prostheses import plan
         plan(actor.character.data,payload.get('equipment_operation'),payload.get('equipment_slot'),payload.get('item_path'))

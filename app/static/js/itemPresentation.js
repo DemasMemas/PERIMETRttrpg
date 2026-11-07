@@ -110,6 +110,10 @@ export function itemTooltipModel(template = {}, item = {}) {
         add(metrics, `${caption}: ${['penetration','armor_piercing'].includes(field) ? percent(value) : value}`);
     }
     if (item.durability != null) add(metrics, `Прочность: ${item.durability}${item.maxDurability != null ? ` / ${item.maxDurability}` : attrs.max_durability != null ? ` / ${attrs.max_durability}` : ''}`);
+    if(item.coverState){
+        add(metrics,`ОЗ укрытия: ${item.coverState.hp} / ${item.coverState.max_hp}`);
+        add(metrics,`Физическая защита: ${item.coverState.physical_protection}%`);
+    }
     if (item.uses != null) add(metrics, `Использований: ${item.uses}${item.maxUses != null ? ` / ${item.maxUses}` : ''}`);
     if (item.lightPower?.uses_left!=null) add(metrics,`Батарейка: ${item.lightPower.uses_left} / 10`);
     if (water) {

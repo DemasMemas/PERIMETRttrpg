@@ -13887,6 +13887,8 @@ class CombatService:
             raise ValidationError("The pending action has not been paid yet")
 
         action = next((item for item in ACTION_CATALOG if item['key'] == action_key), None)
+        if action_key=='place_cover':
+            action={'key':'place_cover','label':'Установка укрытия','action_points':5,'free_actions':0,'movement_points':0}
         if not action:
             raise ValidationError("Unknown action")
 
@@ -13924,6 +13926,12 @@ class CombatService:
         current_round = max(1, state.round_number or 1)
         order_plan=None
         reduction_plan=None
+        cover_placement=None
+        if action_key=='place_cover':
+            from app.services.crafted_covers import plan as cover_plan
+            cover_placement=cover_plan(character,data,attribute_choice)
+            special_action_cost=cover_placement['action_points']
+            action['label']={'place':'Установка укрытия','move':'Перенос укрытия','recover':'Снятие укрытия'}[cover_placement['operation']]
         if action_key=='evade':special_action_cost=2 if trait_count(data,'Уклонист') else 4
         if action_key=='throw_item':
             from app.services.thrown_items import prepare as prepare_throw
@@ -17075,6 +17083,12 @@ class CombatService:
         if action_key in {'flamethrower_fire','flamethrower_service'}:
             from app.services.flamethrower import fire,service
             narrative_action_details=fire(character,state,flame_details) if action_key=='flamethrower_fire' else service(character,flame_details)
+        if action_key=='place_cover':
+            from app.services.crafted_covers import apply as apply_cover
+            obj,created,removed=apply_cover(character,data,cover_placement,attribute_choice)
+            character.character.data=data;flag_modified(character.character,'data')
+            narrative_action_details={'name':action['label'],'action_points':special_action_cost,'roll_required':False,
+                'ground_object_id':obj.id,'ground_object_event':'deleted' if removed else 'created' if created else 'updated'}
         if action_key=='prepare_water':
             from app.services.burning import water_item
             water,litres=water_item(data,item_path)

@@ -3063,7 +3063,7 @@ def update_location_object(lobby_id, object_id, lobby, participant):
         return jsonify({'error': 'Access denied'}), 403
 
     data = request.get_json() or {}
-    if (obj.properties or {}).get('portable_station') and participant.user_id != lobby.gm_id:
+    if ((obj.properties or {}).get('portable_station') or (obj.properties or {}).get('crafted_cover')) and participant.user_id != lobby.gm_id:
         raise PermissionDenied('Используйте действие устройства для перемещения или заправки')
     if not isinstance(data, dict):
         raise ValidationError('Object update must be an object')
@@ -3674,6 +3674,19 @@ def operate_portable_station(lobby_id,location_id,lobby,participant):
     socketio.emit('location_object_created' if created else 'location_object_updated',
         {'location_id':location_id,'object':serialized},room=f'location_{location_id}')
     return jsonify({'data':character.data_snapshot(),'object':serialized,'created':created})
+
+
+@lobbies_bp.route('/<int:lobby_id>/locations/<int:location_id>/crafted-covers', methods=['POST'])
+@jwt_required()
+@requires_participant
+def operate_crafted_cover(lobby_id,location_id,lobby,participant):
+    from app.services.crafted_covers import operate
+    character,obj,created,removed=operate(lobby_id,location_id,participant.user_id,request.get_json() or {})
+    serialized=LocationObjectSchema().dump(obj)
+    emit_character_update({'character_id':character.id,'updates':{'data':character.data_snapshot()},'source':'crafted_cover'})
+    socketio.emit('location_object_deleted' if removed else 'location_object_created' if created else 'location_object_updated',
+        {'location_id':location_id,'object_id':obj.id,'object':serialized},room=f'location_{location_id}')
+    return jsonify({'data':character.data_snapshot(),'object':serialized,'created':created,'removed':removed})
 
 
 @lobbies_bp.route('/characters/<int:character_id>/treatment', methods=['POST'])
@@ -5368,6 +5381,9 @@ def perform_location_combat_action(lobby_id, location_id, lobby, participant):
             pending_nodes.extend(node)
     for object_id, object_event in ground_object_events.items():
         ground_object = db.session.get(LocationObject, object_id)
+        if object_event=='deleted':
+            socketio.emit('location_object_deleted',{'location_id':location_id,'object_id':object_id},room=f'location_{location_id}')
+            continue
         if not ground_object:
             continue
         socketio.emit(

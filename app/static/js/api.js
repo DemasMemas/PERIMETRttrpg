@@ -147,6 +147,10 @@ export const Server = {
             method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload),
         });
     },
+    async operateCraftedCover(lobbyId,locationId,payload) {
+        return apiFetch(`/lobbies/${lobbyId}/locations/${locationId}/crafted-covers`,{
+            method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+    },
 
     async finishSheetTreatment(targetId, payload) {
         return apiFetch(`/lobbies/characters/${targetId}/treatment`, {

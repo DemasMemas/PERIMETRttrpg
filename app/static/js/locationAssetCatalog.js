@@ -177,6 +177,16 @@ export const LOCATION_ASSETS = Object.freeze([
         icon:'⚙',color:'#527386',dimensions:[.9,.8,2],properties:{aeration_unit:true},
         visual:{renderMode:'procedural',family:'household',modelId:'aeration_column',pivot:'bottom-center',orientation:0}},
     ...[
+        ['m18','Занавеска','curtain_panel',[1,.03,1],200,0],
+        ['m19','Деревянная баррикада','barricade_wood',[1,.25,1],1000,5],
+        ['m20','Металлический лист','barricade_metal',[1,.25,1],5000,40],
+        ['m21','Прочная металлическая баррикада','barricade_reinforced',[1.5,.5,1.5],8500,60],
+        ['m22','Мешок с песком','sandbag',[1,.25,1],2500,40],
+        ['m23','Кирпичная баррикада','barricade_brick',[1,.25,1.5],500,40],
+    ].map(([id,label,modelId,dimensions,hp,protection])=>({id:'crafted_cover_'+id,baseType:'cover',label,group:'Укрепления',kind:'structure',
+        icon:'▥',color:'#86735b',dimensions,properties:{cover_max_hp:hp,cover_hp:hp,cover_base_physical_protection:protection,cover_physical_protection:protection},
+        visual:{renderMode:'procedural',family:'household',modelId,pivot:'bottom-center',orientation:0}})),
+    ...[
         ['oak','Дуб',[5.5,5,8]],['birch','Берёза',[3.8,3.5,9]],['pine','Сосна',[4.5,4,10]],
         ['bush','Куст',[1.6,1.4,1.3]],['tall_grass','Высокая трава',[1.2,1,.95]],
     ].flatMap(([species,label,dimensions])=>[
