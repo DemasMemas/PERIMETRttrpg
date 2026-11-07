@@ -129,6 +129,10 @@ def parse_recipes(rows):
         'recipe-aa39': 'Медицинские материалы (2)',
     }
     for item in result:
+        if item['id']=='recipe-aa12':
+            item['components'][0].update(name='Загрязнённая вода',mixed_water=True,
+                source_text='Болотная, дождевая или радиоактивная вода: всего 10 порций')
+            item['components_text']='Болотная, дождевая или радиоактивная вода (10 порций в сумме), Фильтр для противогаза (10 зарядов)'
         if item['id'] in approved_components:
             item['components_text'] = approved_components[item['id']]
             item['components'] = components(item['components_text'])

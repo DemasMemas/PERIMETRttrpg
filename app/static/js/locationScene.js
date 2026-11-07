@@ -734,6 +734,60 @@ let houseFloorRestorePending = false;
 let houseSceneEpoch = 0;
 const structureDeletionInFlight = new Set();
 let pendingObjectMoveId = null;
+let pendingStationPlacement = null;
+
+function clearStationPlacement() {
+    const ghost=pendingStationPlacement?.ghost;
+    if(ghost){ghost.parent?.remove(ghost);disposeObject(ghost);}
+    pendingStationPlacement=null;
+}
+
+export function beginStationPlacement(selection) {
+    const actor=getLocationCharacterById(selection.characterId);
+    if(!currentLocationData||!actor||!canControlCharacter(selection.characterId))throw new Error('Персонаж должен находиться на текущей подлокации');
+    if(combatState?.status==='active')throw new Error('Размещение устройств доступно вне боя');
+    const asset=findLocationAsset(selection.object?.properties?.visual_asset||selection.assetId);
+    if(!asset)throw new Error('Не найден вид устройства');
+    clearStationPlacement();clearPendingCombatAction();hideStructureInteraction();
+    const placement=placementForLocationAsset(asset);
+    const ghost=createLocationObjectMesh({type:placement.type,tile_x:0,tile_y:0,
+        properties:{visual_asset:placement.visualAsset,dimensions:{width:asset.dimensions[0],depth:asset.dimensions[1],height:asset.dimensions[2]}}},true);
+    ghost.traverse(child=>{if(child.isMesh){child.castShadow=false;const clone=mat=>{const copy=mat.clone();copy.transparent=true;copy.opacity=.45;copy.depthWrite=false;return copy;};
+        if(child.material)child.material=Array.isArray(child.material)?child.material.map(clone):clone(child.material);}});
+    ghost.visible=false;scene.add(ghost);
+    pendingStationPlacement={...selection,locationId:currentLocationId,actorLevel:actor.floorLevel||0,rotation:selection.object?.properties?.rotation||0,ghost,busy:false};
+    showNotification('Выберите место рядом с персонажем. Q/E — поворот, Esc или ПКМ — отмена.','system');
+    return true;
+}
+
+function updateStationPreview(clientX,clientY) {
+    const state=pendingStationPlacement;if(!state||state.busy||state.request)return;
+    const point=localMapToolPoint(clientX,clientY);
+    state.point=point&&point.floor_level===state.actorLevel?point:null;
+    state.ghost.visible=Boolean(state.point);
+    if(state.point){state.ghost.position.copy(point);state.ghost.rotation.y=state.rotation;}
+}
+
+async function commitStationPlacement(clientX,clientY) {
+    const state=pendingStationPlacement;if(!state||state.busy)return;
+    updateStationPreview(clientX,clientY);
+    if(!state.point){showNotification('Выберите поверхность на этаже персонажа','system');return;}
+    state.busy=true;
+    state.request ||= {operation:state.object?'move':'place',operation_id:crypto.randomUUID(),character_id:state.characterId,
+        character_revision:state.revision,item_path:state.itemPath,item_id:state.itemId,
+        object_id:state.object?.id,object_revision:state.object?.revision,
+        x:state.point.x-.5,y:state.point.z-.5,rotation:state.rotation,floor_level:state.actorLevel};
+    try {
+        const result=await Server.operateStation(window.currentLobbyId,currentLocationId,state.request);
+        if(currentLocationId===state.locationId){if(result.created)addLocationObject(result.object);else updateLocationObject(result.object);}
+        showNotification(state.object?'Устройство перемещено':'Устройство размещено','success');
+        if(pendingStationPlacement===state)clearStationPlacement();
+    }catch(error){
+        if(error.status)state.request=null;
+        if(error.status===409&&pendingStationPlacement===state)clearStationPlacement();
+        showNotification(error.message||'Не удалось разместить устройство','system');
+    }finally{state.busy=false;}
+}
 let hoveredStructureObjectId = null;
 
 const objectInteractions = {
@@ -11006,7 +11060,26 @@ function showObjectContextMenu(clientX, clientY, object) {
             'system'
         )
     }];
+    if(object.properties?.portable_station && combatState?.status!=='active') {
+        const actor=getCurrentInteractionActor();const characterId=actor?.model?.userData?.characterId;
+        if(characterId&&canControlCharacter(characterId)) {
+            actions.push({label:'Переместить',action:async()=>{
+                try{const character=await Server.getCharacter(characterId);
+                    beginStationPlacement({characterId,revision:character.data._revision,object});
+                }catch(error){showNotification(error.message,'system');}
+            }});
+            if(!['recipe-m34','recipe-m41'].includes(object.properties.portable_station))actions.push({label:'Инструменты станка',action:async()=>{
+                const {showStationTools}=await import('./stationTools.js');
+                await showStationTools({lobbyId:window.currentLobbyId,locationId:currentLocationId,characterId,object,onObject:updateLocationObject});
+            }});
+            actions.push({label:object.properties.aeration_unit?'Очистка воды':'Создание предметов',action:async()=>{
+                const {showCrafting}=await import('./crafting.js');await showCrafting({characterId,lobbyId:window.currentLobbyId,
+                    recipeId:object.properties.aeration_unit?'recipe-aa12':''});
+            }});
+        }
+    }
     getObjectActions(object).forEach(action => {
+        if(object.properties?.portable_station&&['move','rotate'].includes(action))return;
         if (action === 'level_up' || action === 'level_down' || action === 'drop_down') {
             const actorId = getCurrentInteractionActor()?.model?.userData.characterId;
             if (isStructureActionAllowed(object,action,actorId)) actions.push({label:getStructureActionLabel(object,action),action:()=>executeStructureAction(object,action,actorId)});
@@ -17808,6 +17881,7 @@ function setupCharacterDragging() {
 
     // mousemove для подсветки
     const onMouseMove = (e) => {
+        if(pendingStationPlacement){updateStationPreview(e.clientX,e.clientY);return;}
         if (pendingFacingSelection) {
             updateFacingPreview(e.clientX, e.clientY);
             return;
@@ -17910,6 +17984,7 @@ function setupCharacterDragging() {
     // pointerdown - начало перетаскивания
     const onPointerDown = (e) => {
         if(window.locationScoutView)return;
+        if(pendingStationPlacement)return;
         if(e.button===2){
             cancelledPlacementByRightClick=Boolean(pendingCharacterPlacement);
             if(cancelledPlacementByRightClick){
@@ -18154,6 +18229,7 @@ function setupCharacterDragging() {
         e.preventDefault();
         e.stopImmediatePropagation();
         if(window.locationScoutView)return;
+        if(pendingStationPlacement){if(!pendingStationPlacement.busy)clearStationPlacement();return;}
         if(cancelledPlacementByRightClick){cancelledPlacementByRightClick=false;return;}
         if (pendingCharacterPlacement) {
             cancelCharacterPlacement();
@@ -18195,6 +18271,15 @@ function setupCharacterDragging() {
     const onKeyDown = (e) => {
         if (e.target?.isContentEditable || isKeyboardInputTarget(e.target)
             || Array.from(document.querySelectorAll('.modal')).some(modal => modal.getClientRects().length)) return;
+        if(pendingStationPlacement&&['KeyQ','KeyE','Escape'].includes(e.code)) {
+            e.preventDefault();e.stopImmediatePropagation();
+            if(!pendingStationPlacement.busy){
+                if(e.code==='Escape')clearStationPlacement();
+                else if(!pendingStationPlacement.request){pendingStationPlacement.rotation+=(e.code==='KeyQ'?1:-1)*Math.PI/12;
+                    pendingStationPlacement.ghost.rotation.y=pendingStationPlacement.rotation;}
+            }
+            return;
+        }
         if (window.isGM && window.locationEditMode && e.ctrlKey && !e.altKey && !e.metaKey
             && ['KeyC','KeyV'].includes(e.code)) {
             e.preventDefault(); e.stopImmediatePropagation();
@@ -18533,6 +18618,7 @@ export function setupLocationEditing() {
         if (document.activeElement?.closest?.('#location-floor-menu')) document.activeElement.blur();
         if (e.button !== 0) return;
         if (e.target !== canvas) return;
+        if(pendingStationPlacement){e.preventDefault();e.stopImmediatePropagation();void commitStationPlacement(e.clientX,e.clientY);return;}
         if (pendingCharacterPlacement?.gmRelocation) {
             e.preventDefault();e.stopImmediatePropagation();
             void commitGmCharacterRelocation(e.clientX,e.clientY);
@@ -19577,6 +19663,7 @@ export function addLocationFloorMenu() {
 }
 
 export function destroyLocationScene() {
+    clearStationPlacement();document.getElementById('station-tools-modal')?.remove();
     locationWeather?.dispose(); locationWeather = null;
     portableLightRenderer?.dispose();portableLightRenderer=null;
     visionObjectIndex = null;

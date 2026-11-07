@@ -16,7 +16,7 @@ module.exports = function sceneContext(values) {
         ...objectNames,
         currentLocationData: null, editorHeldRotation: null, objectEdit: null, editorPaste: null, eraserMode: false,
         editorHoverLevelOffset: () => 0, locationViewLevel: 0,
-        pendingFacingSelection: null, facingPreviewPointer: null, pendingCharacterPlacement: null,
+        pendingFacingSelection: null, facingPreviewPointer: null, pendingCharacterPlacement: null, pendingStationPlacement: null,
         window: {dispatchEvent() {}}, Event: class {},
         locationSceneLoading: false, locationBuildingViewsDirty: false,
         locationObjectPickCache: { key: null, result: null },

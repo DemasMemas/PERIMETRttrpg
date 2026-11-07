@@ -16358,6 +16358,26 @@ function renderBackpackItem(item, index, parentPath, parentContainer, allTemplat
     actionsDiv.style.alignItems = 'center';
     actionsDiv.style.justifyContent = 'flex-end';
 
+    if(item.attributes?.portable_station) {
+        const placeBtn=document.createElement('button');placeBtn.type='button';placeBtn.className='btn btn-sm btn-primary';
+        placeBtn.textContent='Разместить';placeBtn.dataset.widgetKey='place-station';
+        placeBtn.onclick=async e=>{
+            e.stopPropagation();const characterId=currentCharacterId;
+            if(!window.isLocationActive){showNotification('Откройте подлокацию с этим персонажем','system');return;}
+            try {
+                await forceSyncCharacter();await Server.waitForCharacterSave(characterId);
+                if(currentCharacterId!==characterId)return;
+                const current=getBackpackItemAtPath(itemPath);
+                if(!current||current.id!==item.id)throw new Error('Предмет перемещён. Откройте инвентарь заново.');
+                const selection={characterId,revision:currentCharacterData._revision,itemPath:[...itemPath],
+                    itemId:current.id,assetId:current.attributes.station_asset};
+                const location=await import('./locationScene.js');
+                location.beginStationPlacement(selection);closeCharacterSheet();
+            }catch(error){showNotification(error.message,'system');}
+        };
+        actionsDiv.append(placeBtn);
+    }
+
     // Удаление
     const delBtn = document.createElement('button');
     delBtn.dataset.widgetKey = 'delete';

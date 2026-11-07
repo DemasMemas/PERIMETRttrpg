@@ -18,7 +18,7 @@ const recipeLabel=recipe=>{
         :recipe.output_count>1?recipe.output_name:recipe.name;
 };
 
-export async function showCrafting({characterId,lobbyId,onSaved}){
+export async function showCrafting({characterId,lobbyId,onSaved,recipeId=''}){
     document.getElementById('crafting-modal')?.remove();
     const modal=el('div',null,'modal');modal.id='crafting-modal';modal.style.display='flex';
     const panel=el('div',null,'modal-content');panel.style.cssText='max-width:900px;max-height:90vh;overflow:auto';
@@ -29,7 +29,7 @@ export async function showCrafting({characterId,lobbyId,onSaved}){
     const onKey=event=>{if(event.key==='Escape')close();};document.addEventListener('keydown',onKey);
     header.append(button('×',close));panel.append(header);
     const body=el('div');panel.append(body);
-    let snapshot,busy=false,selectedRecipe='',searchValue='',generation=0,activeTab='creation',selectedGroup='Все';
+    let snapshot,busy=false,selectedRecipe=recipeId,searchValue='',generation=0,activeTab='creation',selectedGroup='Все';
     const modSelection={};
     const act=async(operation,payload={},targetId=characterId,revision=snapshot.revision)=>{
         if(busy)return;busy=true;
@@ -138,10 +138,11 @@ export async function showCrafting({characterId,lobbyId,onSaved}){
                     if(quoteGeneration!==generation||!modal.isConnected)return;
                     const plan=response.result;preview.replaceChildren(el('p',`Результат: ${plan.recipe.output_name} × ${plan.recipe.output_count}`),
                         el('p',`Итоговая СЛ ${plan.difficulty}${plan.automatic_success?' · автоуспех':''}`));
+                    if(plan.station_name)preview.append(el('p',`Устройство: ${plan.station_name}${plan.spoil_chance?` · риск порчи результата ${plan.spoil_chance}%`:''}`));
                     if(approval)preview.append(el('p','ГМ подтвердил условие сцены. СЛ не меняется.'));
                     let statusIndex=0;
                     for(const component of plan.recipe.components){
-                        if(/^доступ к |^в округе должна быть мебель из дерева или готовые доски$/i.test(component.name)){
+                        if(/^доступ к |^в округе должна быть мебель из дерева или готовые доски$|^трава$/i.test(component.name)){
                             preview.append(el('p',component.name));continue;
                         }
                         const status=plan.component_status?.[statusIndex++];
@@ -176,7 +177,7 @@ export async function showCrafting({characterId,lobbyId,onSaved}){
         else panes.modifications.append(el('p','Нет снаряжения для модификации.'));
         renderSalvage(panes.salvage);
         renderFlamethrowers(panes.other);
-        if(snapshot.state.history?.length){panes.other.append(el('h4','Последние работы'));for(const result of snapshot.state.history.slice(-5).reverse())panes.other.append(el('p',`${result.name}: ${result.cancelled?'отменено':result.success?'готово':'неудача'}${result.roll!=null?(result.kind==='salvage'?` · к100 ${result.roll} + ${result.bonus} = ${result.total} · ${result.materials.map(m=>`${m.name} ×${m.quantity}`).join(', ')||'без добычи'}`:` · к100 ${result.roll}, СЛ ${result.difficulty}`):''}`));}
+        if(snapshot.state.history?.length){panes.other.append(el('h4','Последние работы'));for(const result of snapshot.state.history.slice(-5).reverse())panes.other.append(el('p',`${result.name}: ${result.cancelled?'отменено':result.spoiled_by_station?'результат испорчен кустарным станком':result.success?'готово':'неудача'}${result.roll!=null?(result.kind==='salvage'?` · к100 ${result.roll} + ${result.bonus} = ${result.total} · ${result.materials.map(m=>`${m.name} ×${m.quantity}`).join(', ')||'без добычи'}`:` · к100 ${result.roll}, СЛ ${result.difficulty}`):''}`));}
     };
     const renderFlamethrowers=container=>{
         if(!snapshot.flamethrowers?.length)return;
@@ -254,8 +255,9 @@ export async function showCrafting({characterId,lobbyId,onSaved}){
             if(choices.some(r=>r.id===modSelection.rule))rules.value=modSelection.rule;
             const ruleInfo=el('div',null,'crafting-modification-info');
             form.append(el('label','Улучшение'),rules,ruleInfo,el('p',`Занято слотов: ${target.slots.used}. Доступно: ${target.slots.available} из ${target.slots.maximum}.`));
-            const tool=select('Инструменты для модификации',snapshot.inventory.map((entry,i)=>[i,`${entry.item.name} · ${entry.item.uses??entry.item.maxUses??entry.item.attributes?.uses??'—'} зарядов`]));
-            if(snapshot.inventory[modSelection.tool])tool.value=modSelection.tool;
+            const tools=[...snapshot.inventory,...(snapshot.stations||[]).map(station=>({item:{name:station.name},stationId:station.id}))];
+            const tool=select('Инструменты для модификации',tools.map((entry,i)=>[i,entry.stationId?`${entry.item.name} · рядом · 1 заряд за работу`:`${entry.item.name} · ${entry.uses} зарядов`]));
+            if(tools[modSelection.tool])tool.value=modSelection.tool;
             form.append(el('label','Набор инструментов или станок'),tool);
             const double=el('input');double.type='checkbox';double.checked=!!modSelection.double;
             const doubleLabel=el('label','20 зарядов вместо 10: СЛ −25 ');doubleLabel.prepend(double);form.append(doubleLabel);
@@ -271,6 +273,9 @@ export async function showCrafting({characterId,lobbyId,onSaved}){
             const preview=el('div');form.append(preview);
             const update=async()=>{
                 const version=++quoteVersion;modSelection.rule=rules.value;modSelection.tool=Number(tool.value);modSelection.double=double.checked;
+                const selectedTool=tools[Number(tool.value)];
+                double.disabled=Boolean(selectedTool?.stationId);
+                if(double.disabled)double.checked=false;
                 const rule=choices.find(r=>r.id===rules.value);if(!rule)return;
                 ruleInfo.replaceChildren(el('strong',rule.branch||rule.family||'Оружие'),el('span',`Уровень ${rule.level||1}`),el('p',rule.name||rule.description));
                 materialSection.hidden=rule.kind==='weapon';
@@ -280,15 +285,16 @@ export async function showCrafting({characterId,lobbyId,onSaved}){
                 if([...replacement.options].some(o=>o.value===selectedReplacement))replacement.value=selectedReplacement;
                 preview.replaceChildren(el('p',rule.description));
                 if(!rule.automatic_installation){preview.append(el('p','Автоматическая установка этого улучшения пока недоступна.'));return;}
-                const payload={rule_id:rule.id,target_path:target.path,tool_path:snapshot.inventory[Number(tool.value)]?.path,
+                const payload={rule_id:rule.id,target_path:target.path,tool_path:selectedTool?.path,station_id:selectedTool?.stationId,
                     double_charges:double.checked,replace_rule_id:replacement.value||null,
                     material_contributions:rule.kind==='weapon'?[]:materialInputs.filter(r=>Number(r.input.value)>0).map(r=>({path:r.entry.path,quantity:Number(r.input.value)}))};
                 try{
                     const response=await Server.craft(characterId,{operation:'quote_modification',...payload});
                     if(version!==quoteVersion||!modal.isConnected)return;
                     const plan=response.result;
+                    if(plan.station_name)preview.append(el('p',`${plan.station_name} · риск порчи результата ${plan.spoil_chance}%`));
                     if(plan.material_value)preview.append(el('p',`Материалы на ${plan.material_value} ₽ будут потрачены при начале установки.`));
-                    preview.append(el('p',`Итоговая СЛ ${plan.difficulty} · ${plan.tool_uses} зарядов · ${plan.duration_seconds/60} мин`),el('p',`Установка у специалиста: ${plan.professional_price} ₽`),
+                    preview.append(el('p',`Итоговая СЛ ${plan.difficulty} · ${plan.tool_uses===1?'1 заряд':`${plan.tool_uses} зарядов`} · ${plan.duration_seconds/60} мин`),el('p',`Установка у специалиста: ${plan.professional_price} ₽`),
                         button('Установить самостоятельно',()=>act('modify',payload)));
                 }catch(error){if(version===quoteVersion)preview.append(el('p',error.message));}
             };

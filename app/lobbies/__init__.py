@@ -3063,6 +3063,8 @@ def update_location_object(lobby_id, object_id, lobby, participant):
         return jsonify({'error': 'Access denied'}), 403
 
     data = request.get_json() or {}
+    if (obj.properties or {}).get('portable_station') and participant.user_id != lobby.gm_id:
+        raise PermissionDenied('Используйте действие устройства для перемещения или заправки')
     if not isinstance(data, dict):
         raise ValidationError('Object update must be an object')
     properties = data.get('properties') if isinstance(data.get('properties'), dict) else {}
@@ -3659,6 +3661,19 @@ def drop_location_item(lobby_id, location_id, lobby, participant):
     socketio.emit('location_object_created' if created else 'location_object_updated',
                   {'location_id': location_id, 'object': payload}, room=f'location_{location_id}')
     return jsonify({'data': character.data_snapshot(), 'object': payload, 'created': created}), 200
+
+
+@lobbies_bp.route('/<int:lobby_id>/locations/<int:location_id>/stations', methods=['POST'])
+@jwt_required()
+@requires_participant
+def operate_portable_station(lobby_id,location_id,lobby,participant):
+    from app.services.portable_stations import operate
+    character,obj,created=operate(lobby_id,location_id,participant.user_id,request.get_json() or {})
+    emit_character_update({'character_id':character.id,'updates':{'data':character.data},'source':'portable_station'})
+    serialized=LocationObjectSchema().dump(obj)
+    socketio.emit('location_object_created' if created else 'location_object_updated',
+        {'location_id':location_id,'object':serialized},room=f'location_{location_id}')
+    return jsonify({'data':character.data_snapshot(),'object':serialized,'created':created})
 
 
 @lobbies_bp.route('/characters/<int:character_id>/treatment', methods=['POST'])
@@ -5189,6 +5204,12 @@ def character_crafting(character_id):
                 'updates':{'data':character.data_snapshot()},'source':'crafting'})
         return jsonify(snapshot(character,user_id)),200
     character,result=operate(character_id,user_id,request.get_json() or {})
+    station_usage=result.get('station_usage')
+    if station_usage and not result.get('replayed'):
+        station=db.session.get(LocationObject,station_usage['object_id'])
+        if station:
+            socketio.emit('location_object_updated',{'location_id':station.location_id,
+                'object':LocationObjectSchema().dump(station)},room=f'location_{station.location_id}')
     if (request.get_json() or {}).get('operation') not in {'quote','quote_modification','quote_salvage'}:
         emit_character_update({'character_id':character.id,'updates':{'data':character.data_snapshot()},'source':'crafting'})
     return jsonify({'result':result,'data':character.data_snapshot()}),200

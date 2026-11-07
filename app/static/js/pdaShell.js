@@ -341,6 +341,11 @@ export function openPdaShell({ item, findItem, getData, operate, canEdit, charac
                 const status = document.createElement('p');
                 status.textContent = 'Сначала завершите текущую работу.';
                 content.append(status);
+                if(pdaQuote.station_name){
+                    const station=document.createElement('p');
+                    station.textContent=`${pdaQuote.station_name}: один заряд инструмента; риск порчи результата ${pdaQuote.spoil_chance}%.`;
+                    content.append(station);
+                }
             } else {
                 const pdaPath = findItem(item.id)?.path || [];
                 const books = filesSnapshot.inventory.filter(entry => entry.item.attributes?.book_kind

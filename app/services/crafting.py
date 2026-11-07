@@ -178,6 +178,8 @@ def _allocate(data,recipe,*,with_status=False):
         remaining=None;picked=None;options=[];prior_spent=spent.copy()
         for variant in variants:
             names={normalized(name) for name in variant['name'].split('/')}
+            if component.get('mixed_water'):
+                names={normalized(name) for name in ('Болотная вода','Дождевая вода','Радиоактивная вода')}
             if 'ргд 5' in names:names.add('граната ргд 5')
             if 'ф 1' in names:names.add('граната ф 1')
             if 'анальгин' in names:names.add('анальгин таблетка')
@@ -253,10 +255,15 @@ def _tools(character,data,recipe,option):
     # Станки/костёр на сцене доступны только рядом и на текущем этаже.
     placement=LocationCharacter.query.filter_by(character_id=character.id).order_by(LocationCharacter.last_action.desc().nullslast(),LocationCharacter.id.desc()).first()
     if placement:
-        for obj in LocationObject.query.filter_by(location_id=placement.location_id).all():
+        from app.services.portable_stations import nearby,ready,PROFILES
+        for obj in nearby(character):
             props=obj.properties or {}
-            if (props.get('level',0) or 0)!=(placement.floor_level or 0):continue
-            if ((obj.tile_x-placement.pos_x)**2+(obj.tile_y-placement.pos_y)**2)**.5>1.5:continue
+            portable=props.get('portable_station')
+            if portable in PROFILES:
+                if ready(obj):
+                    if portable=='recipe-m34':names.add(normalized('Установка для Аэрации воды'))
+                    else:stations.add(normalized(PROFILES[portable][2]))
+                continue
             if obj.type in {'campfire','fire_barrel'}:
                 if props.get('is_lit',True):names.add('костер')
             else:
@@ -307,12 +314,18 @@ def quote(character,data,payload):
         missing.append('Каталожный максимум зарядов инструмента не совпадает с рецептом')
     if missing_tools:missing.append('Нужны: '+', '.join(missing_tools))
     if recipe.get('duration_seconds') is None:missing.append('В рецепте не задан срок работы')
+    from app.services.portable_stations import selected
+    station=selected(character,recipe,option)
+    station_key=(station.properties or {}).get('portable_station') if station else None
     return {**result,'recipe':recipe,'allocations':allocations,'missing':missing,
         'component_status':component_status,'other_missing':missing[component_missing_count:],
         'output_id':output.id if output else None,'output_variant':ammo_variant,
         'ammo_template_id':ammo_template.id if ammo_template else None,
         'output_uses':tool_output[1] if tool_output else None,
-        'approval_id':approval['id'] if approval else None,'duration_seconds':recipe.get('duration_seconds')}
+        'approval_id':approval['id'] if approval else None,'duration_seconds':recipe.get('duration_seconds'),
+        'station_id':station.id if station_key else None,
+        'station_name':station.name if station_key else None,
+        'spoil_chance':15 if station_key and station_key!='recipe-m34' else 0}
 
 
 def _escrow(data,allocations):
@@ -422,6 +435,7 @@ def snapshot(character,user_id):
     from app.services.equipment_modifications import supported
     from app.services.flamethrower import resources
     from app.services.salvage import kind_of,tool_bonus
+    from app.services.portable_stations import nearby,ready
     CharacterService.check_access(character,user_id)
     data=character.data or {};state=deepcopy(data.get('crafting') or {})
     current=state.get('current')
@@ -431,6 +445,8 @@ def snapshot(character,user_id):
     for entry in rules['modifications']:entry['automatic_installation']=supported(entry)
     return {'catalog':rules,'ammo_options':available_ammo(),'state':state,'inventory':[{'path':path,'item':item,'uses':_available_uses(item),'salvage_kind':kind_of(item),'salvage_tool_bonus':tool_bonus(item)} for path,item in entries(data)],
         'targets':modification_targets(data),'is_gm':character.lobby.gm_id==user_id,'revision':character.revision,
+        'stations':[{'id':obj.id,'name':obj.name,'kind':obj.properties['portable_station']} for obj in nearby(character)
+            if (obj.properties or {}).get('portable_station') in {'recipe-m42','recipe-m43'} and ready(obj)],
         'placement':{'lobby_id':character.lobby_id,'location_id':placement.location_id,'actor_id':placement.id} if placement else None,
         'flamethrowers':[{'index':index,'weapon':weapon,'resources':[deepcopy(i) for i in resources(data,weapon)]}
             for index,weapon in enumerate(data.get('weapons') or []) if (weapon.get('attributes') or {}).get('flamethrower')],
@@ -478,9 +494,17 @@ def modification_plan(character,data,payload):
     if rule.get('scientist_only'):raise ValidationError('Модификации экзоскелета устанавливаются только у учёных')
     if rule['family'] not in {'Ушанка','Забрала','Пояс'} and not any(book.get('book_kind')=='equipment' and normalized(book.get('book_subject')).replace(' броня','')==normalized(rule['family']) for book in (data.get('crafting') or {}).get('library',[])):
         raise ValidationError('Сначала прочитайте книгу об этом виде снаряжения')
-    tool=next((item for path,item in entries(data) if path==payload.get('tool_path')),None)
-    if not tool:raise ValidationError('Выберите набор инструментов или станок')
     kind='weapon' if rule['kind']=='weapon' else 'armor';word='оружейник' if kind=='weapon' else 'бронник'
+    station=None
+    if payload.get('station_id') is not None:
+        from app.services.portable_stations import nearby,ready
+        station=next((obj for obj in nearby(character) if obj.id==payload['station_id']
+            and (obj.properties or {}).get('portable_station')==('recipe-m42' if kind=='weapon' else 'recipe-m43')
+            and ready(obj)),None)
+        if not station:raise ValidationError('Подойдите к подходящему станку с установленным инструментом')
+    tool={'name':station.name,'uses':1,'attributes':{'craft_workbench':True}} if station else next(
+        (item for path,item in entries(data) if path==payload.get('tool_path')),None)
+    if not tool:raise ValidationError('Выберите набор инструментов или станок')
     if word not in normalized(tool['name']):raise ValidationError('Нужны инструменты соответствующего мастера')
     workbench=bool((tool.get('attributes') or {}).get('craft_workbench'))
     level=CombatService._skill_value(data,'skills.other.engineering')
@@ -504,7 +528,9 @@ def modification_plan(character,data,payload):
         maximum=max(1,int((template.attributes or {}).get('uses') or 1))
         material_value+=amount*max(0,template.price or 0)/maximum
         allocations.append({'component':len(allocations),'path':path,'amount':amount,'item':deepcopy(source)})
-    plan=modification_quote(kind,rule['level'],'Н' if slot['factor']==4 else slot['factor'],level,double_charges=payload.get('double_charges') is True,workbench=workbench,material_value=material_value)
+    plan=modification_quote(kind,rule['level'],'Н' if slot['factor']==4 else slot['factor'],level,
+        double_charges=not station and payload.get('double_charges') is True,workbench=workbench,material_value=material_value)
+    if station:plan['tool_uses']=1
     from app.services.equipment_passives import craft_difficulty_modifier
     plan['difficulty']+=craft_difficulty_modifier(data)
     if rule['kind']=='belt':plan['professional_price']=1000
@@ -515,6 +541,8 @@ def modification_plan(character,data,payload):
     uses=tool.get('uses',tool.get('maxUses',(tool.get('attributes') or {}).get('uses',0)))
     if type(uses) not in {int,float} or uses<plan['tool_uses']:raise ValidationError('Не хватает зарядов инструментов')
     return {**plan,'rule':rule,'target':target,'tool':tool,'target_id':target.get('id'),'slots':slot,'approval_id':None,
+        'station_id':station.id if station else None,'station_name':station.name if station else None,
+        'spoil_chance':15 if station else 0,
         'material_value':material_value,'material_allocations':allocations}
 
 
@@ -577,7 +605,13 @@ def operate(character_id,user_id,payload):
         if prepared['missing']:raise ValidationError('; '.join(prepared['missing']))
         target=next(item for _,item in walk(data,True) if item.get('id')==prepared['target_id'])
         previous=[m['ruleId'] for m in installed(target)]
-        if prepared['tool_path']:
+        station_usage=None
+        if prepared.get('station_id'):
+            from app.services.portable_stations import consume_for_job
+            station=LocationObject.query.filter_by(id=prepared['station_id']).with_for_update().first()
+            if not station:raise ConflictError('Станок недоступен')
+            station_usage=consume_for_job(station)
+        elif prepared['tool_path']:
             tool=next(item for path,item in entries(data) if path==prepared['tool_path'])
             tool['uses']=_available_uses(tool)-1
             tool.setdefault('attributes',{})['uses_remaining']=tool['uses']
@@ -585,6 +619,7 @@ def operate(character_id,user_id,payload):
         result={'id':str(uuid4()),'kind':'pda_modification','name':prepared['rule']['name'],
             'record':record(prepared['rule'],character.id),'target_id':prepared['target_id'],
             'previous':previous,
+            'station_usage':station_usage,
             'quote':{k:deepcopy(prepared[k]) for k in ('difficulty','automatic_success','failure_loss')},
             'escrow':reserve,'output_count':0,'started_at':now(character),'ready_at':now(character)+3600}
         state['current']=result
@@ -593,12 +628,20 @@ def operate(character_id,user_id,payload):
         from app.services.equipment_modifications import make_record,installed
         if state.get('current'):raise ConflictError('Сначала завершите или отмените текущую работу')
         plan=modification_plan(character,data,payload);target=plan['target'];target.setdefault('id',str(uuid4()))
-        tool=plan['tool'];available=tool.get('uses',tool.get('maxUses',(tool.get('attributes') or {}).get('uses',0)))
-        tool['uses']=available-plan['tool_uses'];tool.setdefault('attributes',{})['uses_remaining']=tool['uses']
+        station_usage=None
+        if plan.get('station_id'):
+            from app.services.portable_stations import consume_for_job
+            station=LocationObject.query.filter_by(id=plan['station_id']).with_for_update().first()
+            if not station:raise ConflictError('Станок недоступен')
+            station_usage=consume_for_job(station)
+        else:
+            tool=plan['tool'];available=tool.get('uses',tool.get('maxUses',(tool.get('attributes') or {}).get('uses',0)))
+            tool['uses']=available-plan['tool_uses'];tool.setdefault('attributes',{})['uses_remaining']=tool['uses']
         paid_materials=_escrow(data,plan['material_allocations'])
         record=make_record(plan['rule']['id'],gunsmith=background_is(data,'Оружейник'),installer_id=character.id)
         result={'id':str(uuid4()),'kind':'modification','name':record['name'],'record':record,'target_id':target['id'],
             'replace_rule_id':payload.get('replace_rule_id'),'previous':[m['ruleId'] for m in installed(target)],
+            'station_usage':station_usage,
             'quote':{'difficulty':plan['difficulty'],'automatic_success':plan['automatic_success'],'failure_loss':{'random':0,'chosen':0,'all':False}},
             'escrow':[],'spent_materials':paid_materials,'material_value':plan['material_value'],'output_count':0,'started_at':now(character),'ready_at':now(character)+plan['duration_seconds']}
         state['current']=result
@@ -645,12 +688,19 @@ def operate(character_id,user_id,payload):
         for _,item in entries(data):item.setdefault('id',str(uuid4()))
         plan=quote(character,data,payload)
         if plan['missing']:raise ValidationError('; '.join(plan['missing']))
+        station_usage=None
+        if plan.get('station_id'):
+            from app.services.portable_stations import consume_for_job
+            station=LocationObject.query.filter_by(id=plan['station_id']).with_for_update().first()
+            if not station:raise ConflictError('Станок недоступен')
+            station_usage=consume_for_job(station)
         reserve=_escrow(data,plan['allocations'])
         result={'id':str(uuid4()),'kind':'recipe','recipe_id':plan['recipe']['id'],'name':plan['recipe']['name'],
             'quote':{k:deepcopy(plan[k]) for k in ('difficulty','automatic_success','failure_loss')},
             'escrow':reserve,'output_id':plan['output_id'],'output_count':plan['recipe']['output_count'],
             'output_uses':plan['output_uses'],'output_variant':plan['output_variant'],
             'ammo_template_id':plan['ammo_template_id'],
+            'station_usage':station_usage,
             'started_at':now(character),'ready_at':now(character)+plan['duration_seconds']}
         state['current']=result
         if plan['approval_id']:
@@ -712,6 +762,12 @@ def operate(character_id,user_id,payload):
                     for index in random.SystemRandom().sample(pool,min(loss['random'],len(pool))):
                         lost[index]=lost.get(index,0)+(job['escrow'][index]['amount'] if job['escrow'][index].get('liquid_liters') else 1)
             else:lost={index:entry['amount'] for index,entry in enumerate(job['escrow'])}
+        station_spoil=None
+        if success and action=='finish' and job.get('station_usage',{}):
+            chance=job['station_usage'].get('spoil_chance',0)
+            if chance:
+                station_spoil=random.SystemRandom().randint(1,100)
+                if station_spoil<=chance:success=False
         _return_materials(data,job['escrow'],lost)
         if success and job['kind']=='modification':
             from app.services.equipment_modifications import installed,install
@@ -760,6 +816,9 @@ def operate(character_id,user_id,payload):
             'lost_items':[{'name':entry['item']['name'],'amount':lost.get(index,0)} for index,entry in enumerate(job['escrow']) if lost.get(index,0) and not success],
             'output_count':job['output_count'] if success else 0}
         if salvage_result:result.update(salvage_result)
+        if station_spoil is not None:
+            result['station_spoil_roll']=station_spoil
+            result['spoiled_by_station']=station_spoil<=job['station_usage']['spoil_chance']
         state.pop('current');state.setdefault('history',[]).append(result);state['history']=state['history'][-30:]
     else:raise ValidationError('Неизвестное действие создания')
     state.setdefault('receipts',[]).append({'id':operation_id,'result':deepcopy(result)});state['receipts']=state['receipts'][-50:]

@@ -290,6 +290,10 @@ if(typeof renderFacingPreview==='function'){const original=renderFacingPreview;r
             await require('./morning_answers.browser.cjs')({page,request,token,lobby,base,connect,debugPort,safeSession});
             return;
         }
+        if (safeSession && process.env.VTT_SAFE_SCENARIO === 'stations') {
+            await require('./portable_stations.browser.cjs')({page,request,token,lobby,base,safeSession});
+            return;
+        }
         if (safeSession && process.env.VTT_SAFE_SCENARIO === 'fire-rate') {
             await require('./fire_rate.browser.cjs')({page,request,token,lobby,base,connect,debugPort,safeSession});
             return;

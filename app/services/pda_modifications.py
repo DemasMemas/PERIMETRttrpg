@@ -57,6 +57,9 @@ def plan(character, data, payload):
     tool = next((item for path, item in entries(data) if path == tool_path), None) if tool_path else None
     solder = bool(tool and 'паяльные инструменты' in str(tool.get('name') or '').casefold()
                   and _available_uses(tool) >= 1)
+    from app.services.portable_stations import selected
+    station = selected(character, station_recipe) if has_station and (difficulty > 55 or not solder) else None
+    station_key = (station.properties or {}).get('portable_station') if station else None
     missing = []
     if not solder and not has_station:missing.append('Нужны паяльные инструменты с зарядом или Станок Электрика')
     if difficulty > 55 and not has_station:missing.append('Для этой сложности нужен Станок Электрика')
@@ -67,5 +70,8 @@ def plan(character, data, payload):
     quote = creation_quote(level, difficulty, difficulty_modifier=craft_difficulty_modifier(data))
     return {**quote, 'rule': rule, 'target_id': device['id'], 'target_path': payload['target_path'],
             'tool_path': tool_path if solder else None, 'has_station': has_station,
+            'station_id': station.id if station_key else None,
+            'station_name': station.name if station_key else None,
+            'spoil_chance': 15 if station_key else 0,
             'allocations': allocations, 'component_status': status, 'missing': missing,
             'duration_seconds': 3600, 'equivalent': equivalent}
