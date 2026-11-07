@@ -1801,10 +1801,10 @@
     },
     {
       "id": "recipe-m22",
-      "name": "Пешок с меском",
+      "name": "Мешок с песком",
       "skill": "other.survival",
       "group": "Укрепления",
-      "output_name": "Пешок с меском",
+      "output_name": "Мешок с песком",
       "output_count": 1,
       "components": [
         {

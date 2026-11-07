@@ -69,7 +69,10 @@ export function openPdaShell({ item, findItem, getData, operate, canEdit, charac
         if (busy || !canEdit) return;
         busy = true;
         render();
-        try { accountSnapshot = await Server.changePdaAccount(characterId, operation, payload); }
+        try {
+            accountSnapshot = await Server.changePdaAccount(characterId, operation, payload);
+            if (operation === 'save_notes') showNotification('Заметки сохранены в аккаунте КПК', 'system');
+        }
         catch (error) { showNotification(error.message, 'system'); }
         finally { busy = false; if (modal.isConnected) render(); }
     }
@@ -147,7 +150,7 @@ export function openPdaShell({ item, findItem, getData, operate, canEdit, charac
                 content.append(loading);
             } else if (accountSnapshot?.account) {
                 const name = document.createElement('p');
-                name.textContent = `Вы вошли как ${accountSnapshot.account.login}. Аккаунт доступен с другого КПК в этом мире.`;
+                name.textContent = `Вы вошли как ${accountSnapshot.account.login}. Заметки аккаунта доступны с другого КПК в этом мире; книги остаются на устройстве.`;
                 content.append(name);
                 if (canEdit) {
                     const logout = document.createElement('button');
@@ -161,18 +164,19 @@ export function openPdaShell({ item, findItem, getData, operate, canEdit, charac
             } else if (canEdit) {
                 const form = document.createElement('form');
                 form.className = 'pda-account-form';
+                form.autocomplete = 'off';
                 const login = document.createElement('input');
                 login.className = 'form-control';
-                login.name = 'login';
-                login.autocomplete = 'username';
+                login.name = 'pda-account-alias';
+                login.autocomplete = 'off';
                 login.maxLength = 32;
                 login.placeholder = 'Логин';
                 login.setAttribute('aria-label', 'Логин КПК');
                 const password = document.createElement('input');
                 password.className = 'form-control';
                 password.type = 'password';
-                password.name = 'password';
-                password.autocomplete = 'current-password';
+                password.name = 'pda-account-secret';
+                password.autocomplete = 'off';
                 password.placeholder = 'Пароль';
                 password.setAttribute('aria-label', 'Пароль КПК');
                 const submit = operation => {
@@ -200,7 +204,39 @@ export function openPdaShell({ item, findItem, getData, operate, canEdit, charac
         lead.className = 'pda-shell-lead';
         lead.textContent = section[2];
         content.append(lead);
-        if (selected === 'files') {
+        if (selected === 'notes') {
+            if (accountLoading) {
+                content.append(document.createTextNode('Загрузка аккаунта…'));
+            } else if (!accountSnapshot?.account) {
+                const hint = document.createElement('p');
+                hint.textContent = 'Войдите в аккаунт, чтобы сохранять заметки и читать их с другого КПК в этом мире.';
+                const login = document.createElement('button');
+                login.type = 'button';
+                login.className = 'btn btn-secondary';
+                login.textContent = 'Войти в аккаунт';
+                login.onclick = () => { selected = 'home'; render(); };
+                content.append(hint, login);
+            } else {
+                const account = document.createElement('p');
+                account.textContent = `Аккаунт: ${accountSnapshot.account.login}`;
+                const notes = document.createElement('textarea');
+                notes.className = 'form-control pda-account-notes';
+                notes.setAttribute('aria-label', 'Заметки аккаунта КПК');
+                notes.maxLength = 10000;
+                notes.value = accountSnapshot.account.notes || '';
+                notes.readOnly = !canEdit;
+                content.append(account, notes);
+                if (canEdit) {
+                    const save = document.createElement('button');
+                    save.type = 'button';
+                    save.className = 'btn btn-secondary';
+                    save.textContent = 'Сохранить заметки';
+                    save.disabled = busy;
+                    save.onclick = () => accountAction('save_notes', { notes: notes.value });
+                    content.append(save);
+                }
+            }
+        } else if (selected === 'files') {
             if (!filesSnapshot || filesLoading) {
                 const message = document.createElement('p');
                 message.textContent = 'Загрузка файлов…';

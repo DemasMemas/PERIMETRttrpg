@@ -4688,7 +4688,7 @@ async function renderEquipmentTab(data) {
         <div class="equipment-group" data-equipment-group="cosmetic">
             <h4>Косметическая экипировка</h4>
             <!-- Первая строка: наушники, очки, перчатки (3 колонки) -->
-            <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; margin-bottom: 20px;">
+            <div class="equipment-cosmetic-grid">
                 <!-- Наушники -->
                 <div>
                     <div class="block-header" style="display: flex; justify-content: space-between; align-items: center;">
@@ -4736,10 +4736,10 @@ async function renderEquipmentTab(data) {
                 </div>
             </div>
 
-            <!-- Вторая строка: бижутерия (5 слотов в строку с переносом) -->
+            <!-- Бижутерия: три одинаковые колонки; браслеты стоят рядом во второй строке -->
             <div style="margin-top: 10px;">
                 <h5>Бижутерия</h5>
-                <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 15px;">
+                <div class="equipment-cosmetic-grid">
                     <!-- Кольцо -->
                     <div>
                         <div class="block-header" style="display: flex; justify-content: space-between; align-items: center;"><strong>Кольцо</strong> ${eq.ring?.templateId ? `<button type="button" class="btn btn-sm btn-danger" onclick="unequipRing()">Снять</button>` : ''}</div>

@@ -38,7 +38,7 @@ def account_status(character_id, user_id):
     account = db.session.get(PdaAccount, session.account_id) if session else None
     if not account or account.lobby_id != character.lobby_id:
         return {'account': None}
-    return {'account': {'id': account.id, 'login': account.login}}
+    return {'account': {'id': account.id, 'login': account.login, 'notes': account.notes or ''}}
 
 
 def account_action(character_id, user_id, operation, payload):
@@ -49,6 +49,17 @@ def account_action(character_id, user_id, operation, payload):
             db.session.delete(session)
             db.session.commit()
         return {'account': None}
+    if operation == 'save_notes':
+        session = db.session.get(PdaAccountLogin, character.id)
+        account = db.session.get(PdaAccount, session.account_id) if session else None
+        if not account or account.lobby_id != character.lobby_id:
+            raise ValidationError('Сначала войдите в аккаунт КПК')
+        notes = payload.get('notes') if isinstance(payload, dict) else None
+        if not isinstance(notes, str) or len(notes) > 10000:
+            raise ValidationError('Заметки должны содержать не более 10 000 символов')
+        account.notes = notes
+        db.session.commit()
+        return {'account': {'id': account.id, 'login': account.login, 'notes': account.notes}}
     if operation not in {'register', 'login'} or not isinstance(payload, dict):
         raise ValidationError('Неизвестное действие с аккаунтом КПК')
     login, login_key = _login(payload)
@@ -73,4 +84,4 @@ def account_action(character_id, user_id, operation, payload):
     else:
         db.session.add(PdaAccountLogin(character_id=character.id, account_id=account.id))
     db.session.commit()
-    return {'account': {'id': account.id, 'login': account.login}}
+    return {'account': {'id': account.id, 'login': account.login, 'notes': account.notes or ''}}

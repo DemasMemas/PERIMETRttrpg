@@ -15,6 +15,7 @@ class PdaAccount(db.Model):
     login = db.Column(db.String(32), nullable=False)
     login_key = db.Column(db.String(32), nullable=False)
     password_hash = db.Column(db.String(255), nullable=False)
+    notes = db.Column(db.Text, nullable=False, default='')
     created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
 
     def set_password(self, password):

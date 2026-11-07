@@ -2257,6 +2257,7 @@ input[type="number"] {
 .pda-shell-account:hover, .pda-shell-account:focus-visible { color: #cce7c0; text-decoration: underline; }
 .pda-account-form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; max-width: 520px; margin-top: 18px; }
 .pda-account-form .form-control { min-width: 0; }
+.pda-account-notes { display: block; width: 100%; min-height: 220px; margin: 12px 0; resize: vertical; }
 .pda-shell-close { display: block; margin: 14px auto 0; }
 @media (max-width: 620px) { .pda-shell-bezel { padding: 11px; } .pda-shell-screen { min-height: 0; } .pda-shell-content { grid-template-columns: 1fr; } .pda-shell-nav { flex-direction: row; border-right: 0; border-bottom: 1px solid #8eb87844; max-height: none; overflow-x: auto; } .pda-shell-nav button { white-space: nowrap; } .pda-shell-main { min-height: 180px; padding: 18px; } .pda-shell-model { display: none; } }
 .sheet-tab-content {
@@ -3607,6 +3608,12 @@ input[type=range]::-webkit-slider-thumb {
 }
 
 /* Косметическая экипировка – компактная сетка */
+.equipment-cosmetic-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 15px;
+    margin-bottom: 20px;
+}
 .cosmetic-grid {
     display: grid;
     grid-template-columns: repeat(2, 1fr);

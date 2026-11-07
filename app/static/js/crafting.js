@@ -160,6 +160,7 @@ export async function showCrafting({characterId,lobbyId,onSaved}){
             if(!modal.isConnected||selectedRecipe!==recipe.id)return;
             const extra=select('Дополнительный инструмент',[['','Без дополнительного инструмента'],...snapshot.inventory.map((e,i)=>[i,e.item.name])]);
             detail.append(el('h4','Дополнительный инструмент'),extra);
+            detail.append(el('p','Необязательно: ГМ может одобрить дополнительный инструмент и снизить СЛ на 5–15 либо подтвердить условия сцены. Одобрение действует для одной работы; предмет не передаётся и не расходуется.'));
             detail.append(button('Запросить одобрение ГМа',()=>act('request_tool',{recipe_id:recipe.id,tool_path:extra.value===''?null:snapshot.inventory[Number(extra.value)].path})));
             for(const request of snapshot.state.tool_requests||[])if(request.recipe_id===recipe.id)detail.append(el('p',`${request.tool_name||'Условия создания'}: ${{pending:'ожидает ГМа',approved:'одобрено',rejected:'отклонено'}[request.status]}${request.used?' · использовано':''}`));
         };
@@ -290,12 +291,14 @@ export async function showCrafting({characterId,lobbyId,onSaved}){
             rules.onchange=update;tool.onchange=update;double.onchange=update;replacement.onchange=update;void update();
             for(const row of materialInputs)row.input.onchange=update;
             const extra=select('Дополнительный инструмент для улучшения',[['','Выберите инструмент'],...snapshot.inventory.map((e,i)=>[i,e.item.name])]);form.append(extra);
+            form.append(el('p','Необязательное одобрение ГМа снижает СЛ этой установки на 5–15. Дополнительный инструмент остаётся у персонажа.'));
             form.append(button('Запросить инструмент у ГМа',()=>act('request_tool',{recipe_id:rules.value,tool_path:extra.value===''?null:snapshot.inventory[Number(extra.value)].path})));
         };
         targets.onchange=redraw;redraw();
     };
     const showRequests=async()=>{
         const response=await Server.getCraftingRequests(lobbyId);body.replaceChildren(button('Назад',refresh),el('h4','Заявки на инструменты'));
+        body.append(el('p','Одобрение дополнительного инструмента снижает СЛ на 5–15 для одной работы. Подтверждение условий сцены даёт допуск к рецепту без бонуса СЛ. Предмет остаётся у персонажа.'));
         if(!response.requests.length)body.append(el('p','Ожидающих заявок нет.'));
         for(const request of response.requests){
             const row=el('div',null,'loadout-group');row.append(el('strong',request.character_name),el('p',`${request.recipe_name}: ${request.tool_name||'Подтвердить условия рецепта'}`));

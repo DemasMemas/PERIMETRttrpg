@@ -85,13 +85,21 @@ def test_pda_accounts_are_world_scoped_and_available_to_other_characters(client,
                        json={'login': 'stalker', 'password': 'secret-two'}).status_code == 401
     assert client.post(account_url(second, '/login'), headers=auth,
                        json={'login': 'stalker', 'password': 'secret-one'}).json == created.json
+    saved = client.post(account_url(second, '/save_notes'), headers=auth,
+                        json={'notes': 'Тайник у северного моста'})
+    assert saved.status_code == 200
+    assert saved.json['account']['notes'] == 'Тайник у северного моста'
+    assert client.get(account_url(first), headers=auth).json == saved.json
     assert client.post(account_url(first, '/logout'), headers=auth).json['account'] is None
-    assert client.get(account_url(second), headers=auth).json == created.json
+    assert client.post(account_url(first, '/save_notes'), headers=auth,
+                       json={'notes': 'Без входа'}).status_code == 400
+    assert client.get(account_url(second), headers=auth).json == saved.json
     assert client.get(account_url(first), headers=headers(case, case['viewer'])).status_code == 403
     separate = client.post(account_url(third, '/register'), headers=auth,
                            json={'login': 'Stalker', 'password': 'secret-two'})
     assert separate.status_code == 200
     assert separate.json['account']['id'] != created.json['account']['id']
+    assert separate.json['account']['notes'] == ''
     assert client.post(account_url(third, '/login'), headers=auth,
                        json={'login': 'Stalker', 'password': 'secret-one'}).status_code == 401
 
