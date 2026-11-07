@@ -2262,6 +2262,7 @@ input[type="number"] {
 .pda-shell-nav button.active, .pda-shell-nav button:not(:disabled):hover { background: #456739; border-color: #acd48e; }
 .pda-shell-main { min-width: 0; overflow: auto; padding: 24px; line-height: 1.55; }
 .pda-access-tabs { display: flex; flex-wrap: wrap; gap: 6px; margin: 12px 0; }
+.pda-access-tabs button[aria-current="true"] { background:#456739; border:1px solid #acd48e; color:#e0f1d7; opacity:1; }
 .pda-access > div > .btn { margin: 4px 6px 4px 0; }
 .pda-access .pda-file-card { grid-template-columns: minmax(0, 1fr); margin: 8px 0; }
 .pda-access .pda-file-card button { justify-self: start; }

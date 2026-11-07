@@ -4,7 +4,7 @@ module.exports=async({page,peer,request,token,playerToken,actor,player,lobby,loc
     assert.equal(process.env.VTT_SAFE_SCENARIO,'electronics');assert.ok(safeSession.verified);
     await request(loc+'/objects',{name:'Станок Электрика',type:'household_workbench',tile_x:42,tile_y:48,
         properties:{craft_workbench:'Станок Электрика'}},token);
-    for(const [character,auth,device,rules]of [[actor,token,'dynamo-device',['pda-b26','pda-b18','pda-b25','pda-b5']],[player,playerToken,'radio-player',['pda-b24','pda-b5']]]){
+    for(const [character,auth,device,rules]of [[actor,token,'dynamo-device',['pda-b26','pda-b18','pda-b25','pda-b5']],[player,playerToken,'radio-player',['pda-b24','pda-b5','pda-b14','pda-b15']]]){
         let fresh=await request('/lobbies/characters/'+character.id,null,auth,'GET');
         fresh.data.features={...fresh.data.features,specialTraits:[{name:'Программист'}]};fresh.data.skills={other:{engineering:{base:100}}};
         fresh.data.inventory.pockets.push({name:'Электронные материалы',category:'crafting_material',quantity:30},{name:'Плата',category:'crafting_material',quantity:20});
@@ -83,8 +83,10 @@ module.exports=async({page,peer,request,token,playerToken,actor,player,lobby,loc
     carrier=await request('/lobbies/characters/'+player.id,null,playerToken,'GET');
     assert.equal(carrier.data.inventory.pockets[1].contents.length,1,'Книга остаётся на исходном физическом КПК');
     assert.ok(!JSON.stringify(learned.inventory).includes(bookTemplate.name),'На КПК читателя копия не создаётся');
+    const wipe=await require('./pda_profiles.browser.cjs')({page,peer,request,token,playerToken,actor,player,lobby,safeSession,bookName:bookTemplate.name});
     await page.until("[...document.querySelectorAll('.pda-access button')].some(b=>b.textContent==='Контратака · 3 ОД')",'Контратака доступна владельцу нового подключения');
     await page.evaluate("[...document.querySelectorAll('.pda-access button')].find(b=>b.textContent==='Контратака · 3 ОД').click();true");
     await peer.until("document.querySelector('[data-pda-status]')?.textContent==='НЕИСПРАВЕН'",'Контратака физически сожгла атакующий КПК и обновила его экран');
+    await wipe();
     console.log('Взлом КПК: два клиента Припяти, действительная установка утилит, 30 минут игрового времени, чужие заметки и радиопередача, оповещение защиты и необратимый отзыв после потери связи; 1920×1080.');
 };

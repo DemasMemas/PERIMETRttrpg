@@ -18,7 +18,8 @@ from app.services.transaction import atomic_operation
 
 DURATIONS={1:7200,2:3600,3:1800}
 LABELS={'start':'Начать взлом КПК','disconnect':'Отключить соединение КПК','counter':'Контратака КПК',
-    'power':'Питание подключённого КПК','jammer':'Глушилка подключённого КПК','detonate':'Дистанционный подрыв через КПК'}
+    'power':'Питание подключённого КПК','jammer':'Глушилка подключённого КПК','detonate':'Дистанционный подрыв через КПК',
+    'wipe':'Очистка подключённого КПК','switch_profile':'Переключить профиль подключённого КПК'}
 
 
 def enabled():return inspect(db.session.connection()).has_table('pda_access_sessions')
@@ -221,9 +222,12 @@ def target_snapshot(character_id,user_id,payload):
         attrs=(template.attributes or {}) if template else entry.get('attributes') or {}
         if attrs.get('book_kind') in {'skill','equipment'}:
             files.append({'id':entry.get('id'),'name':template.name if template else entry.get('name'),'attributes':deepcopy(attrs)})
-    return {'session':project(row),'device':{'name':item.get('name','КПК'),'power':pda_state(item),
+    from app.services.pda_profiles import public,file_profile
+    for file in files:file['profile']=file_profile(item,file['id'])
+    return {'session':project(row),**public(item),'device':{'name':item.get('name','КПК'),'power':pda_state(item),
         'modifications':[entry.get('name') or entry.get('ruleId') for entry in item.get('modifications') or []],
-        'has_jammer':'pda-b16' in target['mods'],'jammer_on':bool((item.get('pdaNetwork') or {}).get('jammer_on'))},
+        'has_jammer':'pda-b16' in target['mods'],'has_wipe':'pda-b14' in target['mods'],
+        'jammer_on':bool((item.get('pdaNetwork') or {}).get('jammer_on'))},
         'account':{'id':account.id,'login':account.login,'notes':account.notes or ''} if account else None,
         'network':snapshot_source(radio,radios) if radio else None,'files':files,'charges':charges}
 
@@ -253,7 +257,8 @@ def target_action(character_id,user_id,payload):
             from app.services.pda_accounts import _assign
             _assign(target['character'],target['item'],account)
         else:
-            target['item'].setdefault('pdaNetwork',{})['account_id']=account.id if account else None;devices.save(target)
+            from app.services.pda_profiles import assign
+            assign(target['item'],account.id if account else None);devices.save(target)
     elif operation=='save_notes':
         if not account:raise ValidationError('Сначала войдите в аккаунт подключённого КПК')
         notes=payload.get('notes')
@@ -274,6 +279,8 @@ def target_action(character_id,user_id,payload):
 
 
 def publish(lobby_id,result):
+    from app.services.pda_wipe import publish as publish_wipe
+    publish_wipe(lobby_id)
     from app.services.item_controllers import publish as publish_controller
     from app.services.character_events import emit_character_update
     publish_controller(lobby_id,result)
@@ -321,9 +328,15 @@ def prepare(actor,data,payload,user_id):
     if not devices.powered(source):raise ValidationError('Включите исправный заряженный КПК')
     operation=payload.get('operation')
     if operation not in LABELS:raise ValidationError('Неизвестное действие взлома КПК')
-    if operation in {'power','jammer','detonate'}:
+    if operation in {'power','jammer','detonate','wipe','switch_profile'}:
         row,target=_active_target(source,records,payload)
-        if operation in {'power','jammer'}:
+        if operation=='wipe':
+            from app.services.pda_wipe import validate
+            validate(target['item'])
+        elif operation=='switch_profile':
+            from app.services.pda_profiles import enabled as has_profiles,PROFILES
+            if not has_profiles(target['item']) or payload.get('profile') not in PROFILES:raise ValidationError('Выберите доступный профиль КПК')
+        elif operation in {'power','jammer'}:
             if type(payload.get('enabled')) is not bool:raise ValidationError('Выберите состояние устройства')
             if operation=='jammer' and 'pda-b16' not in target['mods']:raise ValidationError('На КПК нет глушилки')
         else:
@@ -334,7 +347,10 @@ def prepare(actor,data,payload,user_id):
             if state.get('kind')!='remote_detonator' or state.get('paired_pda_id')!=target['id']:raise ValidationError('Заряд не привязан к подключённому КПК')
             if not state.get('armed'):raise ValidationError('Провод взрывателя отсоединён')
             if not _charge_reaches(target,host,records):raise ValidationError('Нет связи от подключённого КПК до заряда: дальность 250 м')
-        cost=1
+        cost=3 if operation in {'wipe','switch_profile'} else 1
+        if operation=='switch_profile':
+            from app.services.pda_profiles import active
+            if active(target['item'])==payload['profile']:cost=0
         if operation in {'power','jammer'}:
             current=pda_state(target['item'])['on'] if operation=='power' else bool((target['item'].get('pdaNetwork') or {}).get('jammer_on'))
             cost=int(current!=payload['enabled'])
@@ -394,6 +410,15 @@ def execute(actor,data,payload,user_id,state=None):
         if operation=='power':
             from app.services.electronics import switch
             switch(target['item'],target['character'].data if target['character'] else {},payload['enabled']);devices.save(target)
+        elif operation=='switch_profile':
+            from app.services.pda_profiles import switch
+            if target['character']:
+                from app.services.pda_accounts import _assign
+                _assign(target['character'],target['item'],devices.account(target))
+            switch(target['item'],payload['profile']);devices.save(target)
+        elif operation=='wipe':
+            from app.services.pda_wipe import erase
+            result.update(erase(actor.character.lobby_id,target['item']))
         elif operation=='jammer':
             target['item'].setdefault('pdaNetwork',{})['jammer_on']=payload['enabled'];devices.save(target)
         else:

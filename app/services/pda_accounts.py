@@ -52,7 +52,9 @@ def _device(character,payload):
 def account_for_device(character,item,*,accounts=None,legacy=None):
     network=item.get('pdaNetwork') or {}
     if not isinstance(network,dict):network={}
-    if 'account_id' in network:identity=network['account_id']
+    if 'account_id' in network:
+        from app.services.pda_profiles import account_id
+        identity=account_id(item)
     elif legacy is not None:identity=legacy.get(character.id)
     else:
         old=db.session.get(PdaAccountLogin,character.id);identity=old.account_id if old else None
@@ -79,7 +81,9 @@ def _assign(character,device,account):
             for _,other in _devices(character):network(other).setdefault('account_id',old.account_id)
             db.session.delete(old)
         if not device.get('id'):device['id']=str(uuid4())
-        network(device)['account_id']=account.id if account else None
+        from app.services.pda_profiles import assign
+        network(device)
+        assign(device,account.id if account else None)
     else:
         # Совместимость прежнего API без выбора устройства.
         if account:
@@ -92,10 +96,16 @@ def _assign(character,device,account):
 
 def account_status(character_id, user_id,payload=None):
     character = _character(character_id, user_id, edit=True)
-    account = _account(character,_device(character,payload))
+    return device_status(character,_device(character,payload))
+
+
+def device_status(character,device):
+    account = _account(character,device)
+    from app.services.pda_profiles import public
+    profiles=public(device) if device else {}
     if not account or account.lobby_id != character.lobby_id:
-        return {'account': None}
-    return {'account': {'id': account.id, 'login': account.login, 'notes': account.notes or ''}}
+        return {'account': None,**profiles}
+    return {'account': {'id': account.id, 'login': account.login, 'notes': account.notes or ''},**profiles}
 
 
 @atomic_operation
@@ -103,13 +113,36 @@ def account_action(character_id, user_id, operation, payload):
     character = _character(character_id, user_id, edit=True)
     if not isinstance(payload,dict):raise ValidationError('Выберите действие с аккаунтом КПК')
     device=_device(character,payload)
-    if device is not None and operation in {'login','register','save_notes'}:
+    if device is not None and operation in {'login','register','save_notes','switch_profile','move_file'}:
         from app.services.portable_lights import pda_state
         power=pda_state(device)
         if not power['on'] or power['charge_percent']<=0:raise ValidationError('Включите исправный заряженный КПК')
+    if operation in {'switch_profile','move_file'}:
+        if device is None:raise ValidationError('Выберите физический КПК')
+        if operation=='switch_profile':
+            from app.models import LocationCharacter,LocationCombatState
+            if LocationCharacter.query.join(LocationCombatState,LocationCombatState.location_id==LocationCharacter.location_id).filter(
+                    LocationCharacter.character_id==character.id,LocationCombatState.status=='active').first():
+                raise ValidationError('В бою переключайте профиль действием КПК за 3 ОД')
+        from app.services.pda_profiles import switch,assign_file,enabled
+        if not enabled(device):raise ValidationError('На КПК нет «Второго профиля»')
+        if operation=='switch_profile':
+            # Материализуем старый общий вход перед первым переключением.
+            current=_account(character,device)
+            _assign(character,device,current)
+            switch(device,payload.get('profile'))
+        else:
+            from app.services.portable_lights import walk
+            file=next((item for _,item in walk({'inventory':{'device':device}},True)
+                if item is not device and item.get('id')==payload.get('file_id')),None)
+            if not file or (file.get('attributes') or {}).get('book_kind') not in {'skill','equipment'}:
+                raise ValidationError('Выберите файл книги на этом КПК')
+            assign_file(device,file['id'],payload.get('profile'))
+        flag_modified(character,'data')
+        return device_status(character,device)
     if operation == 'logout':
         _assign(character,device,None)
-        return {'account': None}
+        return device_status(character,device)
     if operation == 'save_notes':
         account = _account(character,device)
         if not account or account.lobby_id != character.lobby_id:
@@ -118,12 +151,12 @@ def account_action(character_id, user_id, operation, payload):
         if not isinstance(notes, str) or len(notes) > 10000:
             raise ValidationError('Заметки должны содержать не более 10 000 символов')
         account.notes = notes
-        return {'account': {'id': account.id, 'login': account.login, 'notes': account.notes}}
+        return device_status(character,device)
     if operation not in {'register', 'login'} or not isinstance(payload, dict):
         raise ValidationError('Неизвестное действие с аккаунтом КПК')
     account = authenticate(character.lobby_id, operation, payload)
     _assign(character,device,account)
-    return {'account': {'id': account.id, 'login': account.login, 'notes': account.notes or ''}}
+    return device_status(character,device)
 
 
 def authenticate(lobby_id, operation, payload):

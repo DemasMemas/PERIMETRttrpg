@@ -3,6 +3,7 @@ import {showNotification} from './utils.js';
 import {runController} from './itemControllers.js';
 import {createPdaNetworkView} from './pdaNetworkView.js';
 import {createBookCard,bookTitle} from './pdaBookFile.js';
+import {createPdaWipeControl} from './pdaWipeControl.js';
 
 const node=(tag,text)=>{const el=document.createElement(tag);if(text!=null)el.textContent=text;return el;};
 const modeName=mode=>mode==='physical'?'кабель':'радиосвязь';
@@ -95,6 +96,14 @@ export function createPdaAccessView({characterId,selection,onSaved,canEdit,getDa
             node('p',`Заряд ${target.device.power.charge_percent.toFixed(1)}%`),
             button('Выключить подключённый КПК · 1 ОД',()=>act({operation:'power',enabled:false})));
         if(target.device.has_jammer)body.append(button(target.device.jammer_on?'Выключить глушилку · 1 ОД':'Включить глушилку · 1 ОД',()=>act({operation:'jammer',enabled:!target.device.jammer_on})));
+        if(target.device.has_wipe)body.append(createPdaWipeControl({disabled:busy||!canEdit,hasProfiles:Boolean(target.profiles),onWipe:()=>act({operation:'wipe'})}));
+        if(target.profiles){
+            const profiles=node('nav');profiles.className='pda-access-tabs';profiles.setAttribute('aria-label','Профили подключённого КПК');
+            for(const profile of target.profiles){const choose=button(profile.label,()=>act({operation:'switch_profile',profile:profile.id}));
+                choose.setAttribute('aria-current',profile.id===target.profile?'true':'false');
+                choose.disabled||=profile.id===target.profile;profiles.append(choose);}
+            body.append(profiles);
+        }
         const tabs=node('div');tabs.className='pda-access-tabs';
         for(const [id,label]of [['account','Аккаунт и заметки'],['chat','Общий чат'],['contacts','Контакты'],['files','Файлы'],['charges','Заряды']]){
             const b=button(label,()=>{tab=id;if(id==='files'){body.replaceChildren();void refresh();}else paint();});if(tab===id)b.classList.add('active');tabs.append(b);
@@ -129,9 +138,12 @@ export function createPdaAccessView({characterId,selection,onSaved,canEdit,getDa
             const job=reading?.state?.current;
             if(job){body.append(node('strong',bookTitle(job.name)),node('p',`Текущая работа: осталось ${Math.ceil(job.remaining_seconds/60)} мин игрового времени.`));
                 if(job.kind==='book')body.append(button('Прервать чтение',()=>fileAction('cancel',{job_id:job.id})));}
-            for(const file of target.files)body.append(createBookCard({item:file},{skills:reading?.skills||[],assignments:reading?.state?.book_assignments,
+            for(const file of target.files){
+                if(target.profiles)body.append(node('small',target.profiles.find(profile=>profile.id===file.profile)?.label||'Основной профиль'));
+                body.append(createBookCard({item:file},{skills:reading?.skills||[],assignments:reading?.state?.book_assignments,
                 selectedSkills,learned:reading?.state?.library,canEdit,busy:busy||Boolean(job),onSkillChange:paint,
                 onRead:skillPath=>fileAction('read_book',{book_id:file.id,skill_path:skillPath,remote_source:{session_id:selected,source_id:selection().item_id}})}));
+            }
             if(!target.files.length)body.append(node('p','В КПК пока нет книг.'));
         }else if(tab==='charges'){
             body.append(node('p','Команда: 1 ОД; свой включённый КПК должен быть в руке. Дальность от подключённого КПК до заряда — 250 м.'));

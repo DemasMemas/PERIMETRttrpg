@@ -4,6 +4,7 @@ import { createPdaNetworkView } from './pdaNetworkView.js';
 import { renderRemoteCharges } from './itemControllers.js';
 import {createPdaAccessView} from './pdaAccessView.js';
 import {bookTitle,createBookCard} from './pdaBookFile.js';
+import {createPdaWipeControl} from './pdaWipeControl.js';
 
 const sections = [
     ['chat', 'Общий чат', 'Сообщения участников Зоны'],
@@ -87,9 +88,14 @@ export function openPdaShell({ item, findItem, getData, operate, canEdit, charac
         render();
         try {
             await Server.waitForCharacterSave(characterId);
-            accountSnapshot = await Server.changePdaAccount(characterId, operation, {...accountSelection(),...payload});
+            if(operation==='switch_profile'){
+                const source=findItem(item.id);
+                await operate({operation:'pda_profile',path:source.path,source_id:source.item.id,profile:payload.profile});
+                accountSnapshot=await Server.getPdaAccount(characterId,accountSelection());
+            }else accountSnapshot = await Server.changePdaAccount(characterId, operation, {...accountSelection(),...payload});
             if(accountSnapshot.data)await onSaved?.(accountSnapshot.data);
-            if(['login','register','logout'].includes(operation)){networkView?.close();networkView=null;}
+            if(['login','register','logout','switch_profile'].includes(operation)){networkView?.close();networkView=null;accountDraft.password='';}
+            if(operation==='switch_profile')accountDraft.login='';
             if (operation === 'login' || operation === 'register') {
                 accountDraft.password = '';
                 accountMessage = operation === 'register'
@@ -162,6 +168,17 @@ export function openPdaShell({ item, findItem, getData, operate, canEdit, charac
             nav.append(button);
         }
         content.replaceChildren();
+        if(state.on&&accountSnapshot?.profiles){
+            const profiles=document.createElement('nav');profiles.className='pda-access-tabs';profiles.setAttribute('aria-label','Профили КПК');
+            for(const profile of accountSnapshot.profiles){
+                const button=document.createElement('button');button.type='button';button.className='btn btn-secondary';
+                button.textContent=profile.label;button.dataset.pdaProfile=profile.id;
+                button.setAttribute('aria-current',accountSnapshot.profile===profile.id?'true':'false');
+                button.disabled=busy||!canEdit||accountSnapshot.profile===profile.id;
+                button.onclick=()=>accountAction('switch_profile',{profile:profile.id});profiles.append(button);
+            }
+            content.append(profiles);
+        }
         modal.querySelector('[data-pda-hold]')?.remove();
         const holding=getData()?.health?.combatMeta?.heldPda?.id===current.id&&Boolean(current.id);
         const hold=document.createElement('button');hold.type='button';hold.dataset.pdaHold='';hold.className='btn btn-secondary';
@@ -364,8 +381,14 @@ export function openPdaShell({ item, findItem, getData, operate, canEdit, charac
                 content.append(message);
                 return;
             }
+            const pdaPath = findItem(item.id)?.path || [];
+            const storedBooks = filesSnapshot.inventory.filter(entry => entry.item.attributes?.book_kind
+                && entry.path.length > pdaPath.length
+                && pdaPath.every((part, index) => entry.path[index] === part));
+            const books=storedBooks.filter(entry=>!accountSnapshot?.profiles
+                || (accountSnapshot.file_profiles?.[entry.item.id]||'main')===accountSnapshot.profile);
             const job = filesSnapshot.state?.current;
-            if (job?.kind === 'book') {
+            if (job?.kind === 'book'&&(!accountSnapshot?.profiles||books.some(entry=>entry.item.id===job.book_id))) {
                 const title = document.createElement('strong');
                 title.textContent = bookTitle(job.name);
                 const status = document.createElement('p');
@@ -389,12 +412,8 @@ export function openPdaShell({ item, findItem, getData, operate, canEdit, charac
                     content.append(station);
                 }
             } else {
-                const pdaPath = findItem(item.id)?.path || [];
-                const books = filesSnapshot.inventory.filter(entry => entry.item.attributes?.book_kind
-                    && entry.path.length > pdaPath.length
-                    && pdaPath.every((part, index) => entry.path[index] === part));
                 const available = filesSnapshot.inventory.filter(entry => entry.item.attributes?.book_kind
-                    && !books.some(stored => stored.item.id === entry.item.id));
+                    && !storedBooks.some(stored => stored.item.id === entry.item.id));
                 const cardList = document.createElement('div');
                 cardList.className = 'pda-file-list';
                 if (available.length && canEdit) {
@@ -439,14 +458,22 @@ export function openPdaShell({ item, findItem, getData, operate, canEdit, charac
                     const storedList = document.createElement('div');
                     storedList.className = 'pda-file-list';
                     for (const entry of books) {
-                        storedList.append(createBookCard(entry,{skills:filesSnapshot.skills,assignments:filesSnapshot.state.book_assignments,
+                        const card=createBookCard(entry,{skills:filesSnapshot.skills,assignments:filesSnapshot.state.book_assignments,
                             selectedSkills:selectedBookSkills,learned:filesSnapshot.state.library,canEdit,busy,onSkillChange:render,
-                            onRead:skillPath=>fileAction('read_book',{path:entry.path,skill_path:skillPath})}));
+                            onRead:skillPath=>fileAction('read_book',{path:entry.path,skill_path:skillPath})});
+                        if(accountSnapshot?.profiles&&canEdit){
+                            const move=document.createElement('button');move.type='button';move.className='btn btn-secondary';
+                            const profile=accountSnapshot.profile==='main'?'decoy':'main';
+                            move.textContent=profile==='main'?'Перенести в основной профиль':'Перенести в ложный профиль';move.disabled=busy;
+                            move.onclick=()=>accountAction('move_file',{file_id:entry.item.id,profile});card.append(move);
+                        }
+                        storedList.append(card);
                     }
                     content.append(storedList);
                 }
             }
-            const learned = filesSnapshot.state.library || [];
+            const learned = (filesSnapshot.state.library || []).filter(entry=>!accountSnapshot?.profiles
+                || books.some(book=>book.item.name===entry.name));
             if (learned.length) {
                 const label = document.createElement('h4');
                 label.textContent = 'Прочитано';
@@ -469,6 +496,17 @@ export function openPdaShell({ item, findItem, getData, operate, canEdit, charac
                 item_path:source?.path,item_id:source?.item.id,...(window.isLocationActive?{location_id:window.currentLocationId}:{})};},onSaved});
         } else if (selected === 'mods') {
             const recorded = (current.modifications || []).filter(mod => mod?.ruleId);
+            if(canEdit&&recorded.some(mod=>mod.ruleId==='pda-b14'))content.append(createPdaWipeControl({disabled:busy,hasProfiles:Boolean(accountSnapshot?.profiles),onWipe:async()=>{
+                const source=findItem(item.id);if(busy||!source)return;busy=true;render();
+                try{
+                    await operate({operation:'pda_wipe',path:source.path,source_id:source.item.id});
+                    networkView?.close();networkView=null;accessView?.close();accessView=null;
+                    accountSnapshot=await Server.getPdaAccount(characterId,accountSelection());
+                    filesSnapshot=await Server.getCrafting(characterId);accountMessage='Данные КПК удалены.';
+                    showNotification('Данные КПК удалены','system');
+                }catch(error){showNotification(error.message,'system');}
+                finally{busy=false;if(modal.isConnected)render();}
+            }}));
             const label = document.createElement('p');
             label.textContent = recorded.length ? 'Установленные модификации:' : 'Модификаций пока нет.';
             content.append(label);

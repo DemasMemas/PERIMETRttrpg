@@ -5192,6 +5192,9 @@ def portable_lights(character_id):
             if 'батаре' in str(item.get('name') or '').casefold() and 'installedModules' not in path]
         return jsonify({'lights':items,'batteries':batteries}),200
     character,actor,result=operate(character_id,user_id,request.get_json() or {})
+    if result.get('operation')=='pda_wipe':
+        from app.services.pda_wipe import publish as publish_wipe
+        publish_wipe(character.lobby_id)
     emit_character_update({'character_id':character.id,'updates':{'data':character.data_snapshot()},'source':'portable_light'})
     if result.get('operation')=='pda_jammer':
         socketio.emit('pda_network_updated',{'lobby_id':character.lobby_id},room=f'lobby_{character.lobby_id}')
@@ -5356,7 +5359,7 @@ def change_character_pda_account(character_id, operation):
     from app.services.pda_accounts import account_action
 
     result=account_action(character_id, int(get_jwt_identity()), operation,request.get_json(silent=True) or {})
-    if operation in {'login','register','logout'}:
+    if operation in {'login','register','logout','switch_profile','move_file'}:
         character=db.session.get(LobbyCharacter,character_id)
         result['data']=character.data_snapshot()
         emit_character_update({'character_id':character.id,'updates':{'data':character.data_snapshot()},'source':'pda_account'})

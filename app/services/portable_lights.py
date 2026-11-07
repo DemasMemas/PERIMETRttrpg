@@ -464,7 +464,7 @@ def operate(character_id,user_id,payload):
     from app.services.character import CharacterService
     from app.services.combat import CombatService
     from app.services.inventory_access import calculate_inventory_access
-    if not isinstance(payload,dict) or set(payload)-{'operation','path','mount','weapon_index','character_revision','battery_path','source_id','book_path','enabled'}:
+    if not isinstance(payload,dict) or set(payload)-{'operation','path','mount','weapon_index','character_revision','battery_path','source_id','book_path','enabled','profile'}:
         raise ValidationError('Некорректные параметры фонаря')
     character=db.session.get(LobbyCharacter,character_id)
     if not character:raise NotFoundError('Персонаж не найден')
@@ -509,11 +509,27 @@ def operate(character_id,user_id,payload):
         character.data=data;flag_modified(character,'data')
         return character,actor,{'operation':operation,'action_points':cost,'source_id':selected['id']}
     if definition(selected)=='pda':
-        if operation not in {'pda_toggle','pda_battery','pda_import_book','pda_dynamo_start','pda_dynamo_stop','pda_jammer','pda_hold','pda_stow'}:
+        if operation not in {'pda_toggle','pda_battery','pda_import_book','pda_dynamo_start','pda_dynamo_stop','pda_jammer','pda_hold','pda_stow','pda_wipe','pda_profile'}:
             raise ValidationError('Выберите действие с КПК')
         status=pda_state(selected)
         if status.get('broken') and operation not in {'pda_hold','pda_stow'}:raise ValidationError('КПК вышел из строя')
-        if operation in {'pda_hold','pda_stow'}:
+        if operation=='pda_profile':
+            from app.services.pda_profiles import switch,active
+            from app.services.pda_accounts import _assign,account_for_device
+            if not status['on'] or status['charge_percent']<=0:raise ValidationError('Включите заряженный КПК')
+            cost=3 if actor and active(selected)!=payload.get('profile') else 0
+            if actor and actor.action_points_current<cost:raise ValidationError('Недостаточно ОД для переключения профиля')
+            character.data=data
+            _assign(character,selected,account_for_device(character,selected))
+            switch(selected,payload.get('profile'))
+        elif operation=='pda_wipe':
+            from app.services.pda_wipe import erase
+            if not status['on'] or status['charge_percent']<=0:raise ValidationError('Включите заряженный КПК')
+            cost=3 if actor else 0
+            if actor and actor.action_points_current<cost:raise ValidationError('Недостаточно ОД для очистки КПК')
+            character.data=data
+            details=erase(character.lobby_id,selected)
+        elif operation in {'pda_hold','pda_stow'}:
             meta=data.setdefault('health',{}).setdefault('combatMeta',{})
             if operation=='pda_stow':
                 if (meta.get('heldPda') or {}).get('id')!=selected['id']:raise ValidationError('Этот КПК не находится в руке')
@@ -585,6 +601,8 @@ def operate(character_id,user_id,payload):
                 moved['id']=str(uuid4())
             moved['volume']=0
             selected.setdefault('contents',[]).append(moved)
+            from app.services.pda_profiles import enabled as has_profiles,assign_file,active
+            if has_profiles(selected):assign_file(selected,moved['id'],active(selected))
         else:
             battery=CombatService._inventory_item_at_path(data,payload.get('battery_path'))
             if str(battery.get('name') or '').strip().casefold()!='батарейки':
@@ -600,7 +618,8 @@ def operate(character_id,user_id,payload):
         selected['pdaState']=status
         if actor:actor.action_points_current-=cost
         character.data=data;flag_modified(character,'data')
-        return character,actor,{'operation':operation,'action_points':cost,'source_id':selected['id']}
+        return character,actor,{'operation':operation,'action_points':cost,'source_id':selected['id'],
+            **(details if operation=='pda_wipe' else {})}
     nvg=any(item is selected for _,item in nvg_items(data))
     if nvg:
         if path[:3]!=['equipment','helmet','installedModules'] or operation not in {'toggle','battery'}:
