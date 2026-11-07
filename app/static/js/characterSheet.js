@@ -4521,6 +4521,13 @@ async function renderEquipmentTab(data) {
                             <input type="number" class="number-input form-control" value="${calculateStageDurability(armor.durability || 0, armor.material || 'Текстиль')}" readonly disabled>
                         </div>
                         ${armor.modifications?.some(mod => mod?.ruleId === 'armor-a49') ? `<button type="button" class="btn btn-sm btn-secondary" onclick="window.useSparePlates()">Запасные пластины · восстановить 2 стадии · 10 ОД в бою</button>` : ''}
+                        ${armor.modifications?.some(mod => mod?.ruleId === 'armor-a39') ? `<div class="equipment-care-status">Жидкокристаллический слой: ${armor.liquidCrystalState?.charged === false
+                            ? armor.liquidCrystalState?.remaining_seconds > 0
+                                ? `перезарядка через ${Math.ceil(armor.liquidCrystalState.remaining_seconds / 60)} мин игрового времени`
+                                : 'ожидает проверку Инженерии СЛ 12'
+                            : 'заряжен'}
+                            ${armor.liquidCrystalState?.charged === false && !(armor.liquidCrystalState?.remaining_seconds > 0)
+                                ? `<button type="button" class="btn btn-sm btn-secondary" data-sheet-control onclick="window.rechargeLiquidCrystal()">Проверить перезарядку</button>` : ''}</div>` : ''}
                         <div class="field-group field-select field-material">
                             <label>Материал</label>
                             <select name="equipment.armor.material" class="form-control">
@@ -5466,6 +5473,39 @@ window.useSparePlates = async function() {
     }catch(error){showNotification(error.message||'Не удалось использовать запасные пластины','system');}
     finally{if(locked){
         if(medicalRemoteUpdate?.character_id===Number(characterId)&&Number(medicalRemoteUpdate.data?._revision)>Number(currentCharacterData?._revision))currentCharacterData=medicalRemoteUpdate.data;
+        medicalRemoteUpdate=null;medicalOperationInProgress=false;await refreshSavedSheet(characterId);
+    }}
+};
+
+window.rechargeLiquidCrystal = async function() {
+    if (medicalOperationInProgress) return;
+    const characterId=currentCharacterId;
+    let locked=false;
+    try {
+        if (autoSaveTimer) await forceSyncCharacter();
+        await Server.waitForCharacterSave(characterId);
+        if (currentCharacterId!==characterId || medicalOperationInProgress) return;
+        if (sheetSaveBlocked) throw new Error('Переоткройте лист перед перезарядкой');
+        const armor=currentCharacterData?.equipment?.armor;
+        if (!armor?.id) throw new Error('У брони нет ID. Снимите и наденьте её заново.');
+        const characters=await Server.getLobbyCharacters(currentLobbyId);
+        const choices=characters.map(character=>({label:character.name,engineer_id:character.id}));
+        const choice=await chooseConsumableApplication('Кто проверяет Инженерию',choices,{alwaysShow:true});
+        if (!choice) return;
+        const engineerId=Number(choice.engineer_id);
+        const engineerRevision=engineerId===characterId ? currentCharacterData._revision
+            : (await Server.getCharacter(engineerId)).data._revision;
+        medicalOperationInProgress=locked=true;medicalRemoteUpdate=null;
+        const response=await Server.rechargeLiquidCrystal(characterId,{
+            character_revision:currentCharacterData._revision,engineer_revision:engineerRevision,
+            engineer_id:engineerId,item_id:armor.id,operation_id:crypto.randomUUID()});
+        currentCharacterData=response.data;
+        showNotification(response.operation.success?'Слой заряжен':'Проверка не удалась: ожидание 10 минут началось заново',
+            response.operation.success?'success':'system');
+    } catch(error) { showNotification(error.message||'Не удалось проверить перезарядку','system'); }
+    finally { if(locked) {
+        if(medicalRemoteUpdate?.character_id===Number(characterId)
+            && Number(medicalRemoteUpdate.data?._revision)>Number(currentCharacterData?._revision)) currentCharacterData=medicalRemoteUpdate.data;
         medicalRemoteUpdate=null;medicalOperationInProgress=false;await refreshSavedSheet(characterId);
     }}
 };

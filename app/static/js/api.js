@@ -64,6 +64,8 @@ export const Server = {
         method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}),
     useSparePlates: (characterId,payload) => apiFetch(`/lobbies/characters/${characterId}/spare-plates`,{
         method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}),
+    rechargeLiquidCrystal: (characterId,payload) => apiFetch(`/lobbies/characters/${characterId}/liquid-crystal-recharge`,{
+        method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}),
     getActionJournal: lobbyId => apiFetch(`/lobbies/${lobbyId}/action-journal`),
     changeWeaponPair: (characterId,payload) => apiFetch(`/lobbies/characters/${characterId}/weapon-pair`,{
         method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}),

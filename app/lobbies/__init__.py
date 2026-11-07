@@ -5134,6 +5134,18 @@ def activate_spare_plates(character_id):
     return jsonify({'operation':result,'data':character.data_snapshot()}),200
 
 
+@lobbies_bp.route('/characters/<int:character_id>/liquid-crystal-recharge',methods=['POST'])
+@jwt_required()
+def recharge_liquid_crystal_armor(character_id):
+    from app.services.equipment_care import recharge_liquid_crystal
+    user_id=int(get_jwt_identity())
+    character,engineer,result=recharge_liquid_crystal(character_id,user_id,request.get_json(silent=True) or {})
+    if not result['duplicate']:
+        for changed in {character.id:character,engineer.id:engineer}.values():
+            emit_character_update({'character_id':changed.id,'updates':{'data':changed.data_snapshot()},'source':'equipment_care'})
+    return jsonify({'operation':result,'data':character.data_snapshot()}),200
+
+
 @lobbies_bp.route('/characters/<int:character_id>/crafting',methods=['GET','POST'])
 @jwt_required()
 def character_crafting(character_id):

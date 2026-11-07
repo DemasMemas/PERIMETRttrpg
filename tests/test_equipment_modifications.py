@@ -223,6 +223,92 @@ def test_reinforced_frame_adds_armor_and_durability_only_while_worn():
     assert not worn_rule({'equipment':{'armor':armor}},'incoming_trauma_disadvantage')
 
 
+def test_liquid_crystal_layer_first_hit_and_timed_recharge(client,workshop,auth_headers,monkeypatch):
+    from app.services.equipment_care import advance,consume_liquid_crystal,liquid_crystal_ready
+    from app.services.equipment_modifications import install
+    character=workshop['actor_character'];data=deepcopy(character.data)
+    armor={'id':'crystal-armor','name':'Тяжёлая броня','category':'armor','quantity':1,
+           'protection':{'physical':15},'modifications':[]}
+    install(armor,make_record('armor-a39'))
+    data.setdefault('equipment',{})['armor']=armor
+    assert CombatService._target_armor(data,'chest')[0]==35
+    assert liquid_crystal_ready(armor)
+    assert consume_liquid_crystal(armor)
+    assert not liquid_crystal_ready(armor)
+    assert CombatService._target_armor(data,'chest')[0]==15
+    assert advance(data,599)
+    assert armor['liquidCrystalState']['remaining_seconds']==1
+    assert advance(data,1)
+    character.data=data;db.session.commit()
+    monkeypatch.setattr('app.services.combat.random.randint',lambda low,high:1)
+    def recharge(operation_id):
+        return client.post(f'/lobbies/characters/{character.id}/liquid-crystal-recharge',
+            headers=auth_headers(workshop['actor_user']),json={'character_revision':character.revision,
+                'engineer_revision':character.revision,'engineer_id':character.id,
+                'item_id':'crystal-armor','operation_id':operation_id})
+    failed=recharge('crystal-fail')
+    assert failed.status_code==200,failed.json
+    assert failed.json['operation']['success'] is False
+    assert failed.json['operation']['remaining_seconds']==600
+    repeated=recharge('crystal-fail')
+    assert repeated.status_code==200 and repeated.json['operation']['duplicate']
+    assert character.data['equipment']['armor']['liquidCrystalState']['remaining_seconds']==600
+    data=deepcopy(character.data)
+    assert advance(data,600)
+    character.data=data;db.session.commit()
+    monkeypatch.setattr('app.services.combat.random.randint',lambda low,high:20)
+    success=recharge('crystal-success')
+    assert success.status_code==200,success.json
+    assert success.json['operation']['success'] is True
+    assert liquid_crystal_ready(character.data['equipment']['armor'])
+    assert CombatService._target_armor(character.data,'chest')[0]==35
+    assert make_record('armor-a39',gunsmith=True)['rules']['liquid_crystal_layer']==30
+
+
+def test_nearby_engineer_can_recharge_another_characters_armor(client,workshop,auth_headers,monkeypatch):
+    owner=workshop['actor_character'];engineer=workshop['target_character']
+    data=deepcopy(owner.data)
+    data.setdefault('equipment',{})['armor']={'id':'shared-crystal','name':'Броня','category':'armor',
+        'modifications':[make_record('armor-a39')],
+        'liquidCrystalState':{'charged':False,'remaining_seconds':0}}
+    owner.data=data
+    engineer_data=deepcopy(engineer.data)
+    engineer_data.setdefault('skills',{}).setdefault('other',{})['engineering']={'base':20}
+    engineer.data=engineer_data
+    db.session.commit()
+    monkeypatch.setattr('app.services.combat.random.randint',lambda low,high:20)
+    def recharge(operation_id):
+        return client.post(f'/lobbies/characters/{owner.id}/liquid-crystal-recharge',
+            headers=auth_headers(workshop['target_user']),json={'character_revision':owner.revision,
+                'engineer_revision':engineer.revision,'engineer_id':engineer.id,
+                'item_id':'shared-crystal','operation_id':operation_id})
+    response=recharge('shared-crystal-near')
+    assert response.status_code==200,response.json
+    assert response.json['operation']['success']
+    assert owner.data['equipment']['armor']['liquidCrystalState']['charged']
+    data=deepcopy(owner.data)
+    data['equipment']['armor']['liquidCrystalState']={'charged':False,'remaining_seconds':0}
+    owner.data=data
+    workshop['target_location'].pos_x=20
+    db.session.commit()
+    far=recharge('shared-crystal-far')
+    assert far.status_code==400,far.json
+    assert owner.data['equipment']['armor']['liquidCrystalState']['charged'] is False
+
+
+def test_sheet_save_cannot_restore_spent_liquid_crystal_charge():
+    from app.services.equipment_care import preserve
+    old={'equipment':{'armor':{'id':'crystal-saved','category':'armor',
+        'liquidCrystalState':{'charged':False,'remaining_seconds':317}}}}
+    incoming=deepcopy(old)
+    incoming['equipment']['armor']['liquidCrystalState']={'charged':True,'remaining_seconds':0}
+    preserve(old,incoming)
+    assert incoming['equipment']['armor']['liquidCrystalState']==old['equipment']['armor']['liquidCrystalState']
+    old['equipment']['armor'].pop('liquidCrystalState')
+    preserve(old,incoming)
+    assert 'liquidCrystalState' not in incoming['equipment']['armor']
+
+
 @pytest.fixture
 def gunsmith(workshop):
     data=deepcopy(workshop['actor_character'].data)

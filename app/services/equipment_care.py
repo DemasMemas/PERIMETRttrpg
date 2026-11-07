@@ -53,6 +53,21 @@ def consume_reanimation(data):
     return True
 
 
+def liquid_crystal_ready(item):
+    from app.services.equipment_modifications import rule
+    state=(item or {}).get('liquidCrystalState') or {}
+    return bool(isinstance(item,dict) and rule(item,'liquid_crystal_layer')
+                and state.get('charged') is not False)
+
+
+def consume_liquid_crystal(item):
+    if not liquid_crystal_ready(item):return False
+    receipts=((item.get('liquidCrystalState') or {}).get('receipts') or [])
+    item['liquidCrystalState']={'charged':False,'remaining_seconds':600,
+                                **({'receipts':receipts} if receipts else {})}
+    return True
+
+
 def preserve(current,incoming):
     from app.services.portable_lights import walk
     previous={item.get('id'):item for _,item in walk(current or {},True) if item.get('id')}
@@ -65,6 +80,8 @@ def preserve(current,incoming):
             else:item.pop('stage3DamageType',None)
             if old and 'reanimationCharge' in old:item['reanimationCharge']=old['reanimationCharge']
             else:item.pop('reanimationCharge',None)
+            if old and 'liquidCrystalState' in old:item['liquidCrystalState']=deepcopy(old['liquidCrystalState'])
+            else:item.pop('liquidCrystalState',None)
         if not medical_gloves(item):continue
         old=previous.get(item.get('id'))
         if not old and not item.get('id') and path==['equipment','gloves'] and medical_gloves(old_worn):old=old_worn
@@ -79,6 +96,11 @@ def advance(data,seconds):
     from app.services.portable_lights import walk
     changed=False
     for _,item in walk(data,True):
+        crystal=item.get('liquidCrystalState') if isinstance(item,dict) else None
+        if seconds>0 and isinstance(crystal,dict) and crystal.get('charged') is False:
+            before=crystal.get('remaining_seconds',0)
+            crystal['remaining_seconds']=max(0,float(before)-seconds)
+            changed=changed or before!=crystal['remaining_seconds']
         if seconds>0 and regenerating_armor(item):
             before=item['currentStageDurability']
             item['currentStageDurability']=min(item['stageDurability'],before+seconds/6)
@@ -94,6 +116,7 @@ def advance(data,seconds):
 def has_timers(data):
     from app.services.portable_lights import walk
     return any((medical_gloves(item) and item.get('sterility')) or regenerating_armor(item)
+               or isinstance(item.get('liquidCrystalState'),dict) and item['liquidCrystalState'].get('remaining_seconds',0)>0
         for _,item in walk(data,True))
 
 
@@ -165,6 +188,63 @@ def use_spare_plates(character_id,user_id,payload):
     character.data=data;flag_modified(character,'data')
     return character,actor,{'duplicate':False,'stage_before':stage,'stage_after':new_stage,
         'action_points':10 if actor else 0}
+
+
+@atomic_operation
+def recharge_liquid_crystal(character_id,user_id,payload):
+    """После ожидания персонаж рядом проверяет Инженерию СЛ 12."""
+    from app.services.character import CharacterService
+    from app.services.combat import CombatService
+    if not isinstance(payload,dict) or set(payload)!={'character_revision','engineer_revision','engineer_id','item_id','operation_id'}:
+        raise ValidationError('Некорректная проверка жидкокристаллического слоя')
+    operation_id=payload['operation_id']
+    if not isinstance(operation_id,str) or not 1<=len(operation_id)<=100:
+        raise ValidationError('Укажите идентификатор действия')
+    target=db.session.get(LobbyCharacter,character_id)
+    engineer=db.session.get(LobbyCharacter,payload['engineer_id']) if type(payload['engineer_id']) is int else None
+    if not target or not engineer or target.lobby_id!=engineer.lobby_id:
+        raise NotFoundError('Персонаж не найден')
+    CharacterService.check_access(engineer,user_id,edit=True)
+    target_data=deepcopy(target.data or {})
+    armor=(target_data.get('equipment') or {}).get('armor')
+    if not isinstance(armor,dict) or armor.get('id')!=payload['item_id']:
+        raise ConflictError('Броня перемещена. Откройте лист заново')
+    state=armor.get('liquidCrystalState') or {}
+    receipt=next((entry for entry in state.get('receipts') or [] if entry.get('id')==operation_id),None)
+    if receipt:return target,engineer,{**receipt['result'],'duplicate':True}
+    if (type(payload['character_revision']) is not int or payload['character_revision']!=target.revision
+            or type(payload['engineer_revision']) is not int or payload['engineer_revision']!=engineer.revision):
+        raise ConflictError('Лист персонажа изменился. Откройте его заново')
+    if liquid_crystal_ready(armor):raise ValidationError('Жидкокристаллический слой уже заряжен')
+    if not any(mod.get('ruleId')=='armor-a39' for mod in (armor.get('modifications') or []) if isinstance(mod,dict)):
+        raise ValidationError('Жидкокристаллический слой не установлен')
+    if float(state.get('remaining_seconds',0))>0:
+        raise ValidationError('До перезарядки ещё не прошло 10 игровых минут')
+    engineer_data=target_data if engineer.id==target.id else deepcopy(engineer.data or {})
+    if CombatService._character_condition(engineer_data)['state']!='active':
+        raise ValidationError('Персонаж не может перезарядить броню')
+    engineer_model=LocationCharacter.query.filter_by(character_id=engineer.id).first()
+    target_model=LocationCharacter.query.filter_by(character_id=target.id).first()
+    if engineer.id!=target.id:
+        if (not engineer_model or not target_model or engineer_model.location_id!=target_model.location_id
+                or (engineer_model.floor_level or 0)!=(target_model.floor_level or 0)
+                or max(abs(engineer_model.pos_x-target_model.pos_x),abs(engineer_model.pos_y-target_model.pos_y))>1):
+            raise ValidationError('Инженер должен находиться рядом с владельцем брони')
+    for model in (engineer_model,target_model):
+        if model and LocationCombatState.query.filter_by(location_id=model.location_id,status='active').first():
+            raise ValidationError('Перезарядка доступна вне боя')
+    check=CombatService._narrative_skill_check(engineer_data,'skills.other.engineering')
+    success=not check.get('automatic_failure') and check['total']>=12
+    state['charged']=bool(success)
+    state['remaining_seconds']=0 if success else 600
+    result={'success':bool(success),'check':check,'remaining_seconds':state['remaining_seconds'],'duplicate':False}
+    state.setdefault('receipts',[]).append({'id':operation_id,'result':deepcopy(result)})
+    state['receipts']=state['receipts'][-20:]
+    armor['liquidCrystalState']=state
+    target.data=target_data;flag_modified(target,'data')
+    if engineer.id!=target.id:
+        engineer.data=engineer_data;flag_modified(engineer,'data')
+    return target,engineer,result
 
 
 @journaled(kind='equipment_care')

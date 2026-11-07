@@ -17,6 +17,26 @@ def test_ranged_hit_zone_boundaries_follow_rules():
     assert CombatService._random_hit_zone(20) == "head"
 
 
+def test_liquid_crystal_protects_simultaneous_fragments_once(monkeypatch):
+    from app.services.equipment_modifications import make_record
+    armor={'id':'crystal-blast','name':'Броня','category':'armor','quantity':1,
+           'durability':100,'stageDurability':1000,'currentStageDurability':1000,
+           'protection':{'physical':10},'modifications':[make_record('armor-a39')]}
+    data={'equipment':{'armor':armor},'health':{'zones':{}}}
+    target=SimpleNamespace(character=SimpleNamespace(data=data))
+    context={'item':armor,'active':True}
+    monkeypatch.setattr(CombatService,'_apply_attack_damage',staticmethod(
+        lambda *args,**kwargs:{'_attackOutcome':{'applied_damage':20}}))
+    cover={'zones':{},'protection':0}
+    first=CombatService._explosion_fragment_hit(target,40,0,'chest',cover,1,liquid_crystal_context=context)
+    assert first['armor']==30 and first['damage']==0
+    assert armor['liquidCrystalState']=={'charged':False,'remaining_seconds':600}
+    second=CombatService._explosion_fragment_hit(target,40,0,'chest',cover,1,liquid_crystal_context=context)
+    assert second['armor']==30 and second['damage']==0
+    later=CombatService._explosion_fragment_hit(target,40,0,'chest',cover,2)
+    assert later['armor']==10 and later['damage']==20
+
+
 @pytest.mark.parametrize('height,difficulty',[(.99,4),(1,8),(3.99,8),(4,10),(6.99,10),(7,12),
     (9.99,12),(10,14),(12.99,14),(13,16),(15.99,16),(16,18),(20,18),(20.99,18),(21,20),(21.99,20)])
 def test_fall_fractional_height_uses_floor_and_correct_twenty_meter_boundary(monkeypatch,height,difficulty):

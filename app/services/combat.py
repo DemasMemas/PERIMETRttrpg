@@ -4116,6 +4116,7 @@ class CombatService:
         result['armor_piercing'] = penetration
         result['armor_penetrated'] = penetration >= armor
         armor_damage = []
+        crystal_layers=[layer['item'] for layer in armor_layers if layer.get('liquid_crystal_first')]
         for layer in armor_layers:
             if layer.get('is_gas_mask'):
                 damage_result = CombatService._damage_gas_mask(
@@ -4127,6 +4128,9 @@ class CombatService:
                 )
             if damage_result:
                 armor_damage.append(damage_result)
+        if crystal_layers:
+            from app.services.equipment_care import consume_liquid_crystal
+            for item in crystal_layers:consume_liquid_crystal(item)
         result['armor_damage'] = armor_damage
         if result['armor_penetrated']:
             apply_effect_to_health(data.setdefault('health', {}), {
@@ -4147,6 +4151,7 @@ class CombatService:
             0,
             round(CombatService._coerce_float(profile.get('damage'), 0) * multiplier),
         )
+        if crystal_layers:behind_armor_damage=0
         result['behind_armor_damage'] = behind_armor_damage
         if behind_armor_damage and loc_char is not None:
             CombatService._apply_attack_damage(
@@ -5177,7 +5182,8 @@ class CombatService:
         return bool(state and state.status=='active' and target.id in (state.turn_order or []))
 
     @staticmethod
-    def _target_armor(target_data, zone, head_protection_zone=None,*,target=None,limb_hit=None,explosive=False,plate_side=None):
+    def _target_armor(target_data, zone, head_protection_zone=None,*,target=None,limb_hit=None,explosive=False,plate_side=None,
+                      liquid_crystal_context=None):
         if head_protection_zone is None and isinstance(target_data, dict):
             head_protection_zone = target_data.get('_headProtectionZone')
         equipment = target_data.get('equipment') if isinstance(target_data, dict) else {}
@@ -5229,6 +5235,11 @@ class CombatService:
             parsed = max(0.0, min(100.0, CombatService._protection_percent(value, 0)))
             from app.services.equipment_modifications import stat as modification_stat,rule as modification_rule
             parsed=max(0,min(100,modification_stat(item,'physical',parsed)))
+            from app.services.equipment_care import liquid_crystal_ready
+            crystal_active=(slot in {'armor','integratedHelmet'} and bool(modification_rule(item,'liquid_crystal_layer'))
+                and (liquid_crystal_context.get('active') and liquid_crystal_context.get('item') is item
+                     if liquid_crystal_context is not None else liquid_crystal_ready(item)))
+            if crystal_active:parsed=min(100,parsed+modification_rule(item,'liquid_crystal_layer'))
             if explosive:parsed=min(100,modification_stat(item,'explosive_physical',parsed))
             if zone=='head' and head_protection_zone=='ears':parsed=min(100,parsed+modification_rule(item,'ear_protection'))
             if not is_gas_mask:
@@ -5248,6 +5259,7 @@ class CombatService:
                     'attributes': attrs,
                     'protection': parsed,
                     'is_gas_mask': is_gas_mask,
+                    'liquid_crystal_first':bool(crystal_active),
                     **({'wear_multiplier':max(0,1-modification_rule(item,'explosion_wear_reduction'))} if explosive else {}),
                 })
         if zone in {'chest','abdomen'} and plate_side in {'front','back'}:
@@ -6890,7 +6902,8 @@ class CombatService:
         return max(0,1-math.ceil(max(0,round(armor-penetration,9))/5)*.25)
 
     @staticmethod
-    def _explosion_fragment_hit(target,damage,penetration,zone,cover,round_number,additional=False,plate_side=None):
+    def _explosion_fragment_hit(target,damage,penetration,zone,cover,round_number,additional=False,plate_side=None,
+                                liquid_crystal_context=None):
         protection=(cover.get('zones') or {}).get(zone)
         cover_multiplier=1
         if cover.get('live_shield') or protection and protection.get('terrain'):
@@ -6908,10 +6921,13 @@ class CombatService:
         from app.services.prostheses import hit_part
         limb_hit=hit_part(data,zone)
         armor,layers=CombatService._target_armor(data,zone,explosive=True,**({'limb_hit':limb_hit} if limb_hit else {}),
-            **({'target':target} if background_is(data,'Стойкий') else {}),**({'plate_side':plate_side} if plate_side else {}))
+            **({'target':target} if background_is(data,'Стойкий') else {}),**({'plate_side':plate_side} if plate_side else {}),
+            liquid_crystal_context=liquid_crystal_context)
+        crystal_first=bool(incoming>0 and any(layer.get('liquid_crystal_first') for layer in layers))
         penetrated=penetration>=armor
         applied=(0 if additional and not penetrated else
                  round(incoming*CombatService._penetration_damage_multiplier(penetration,armor)))
+        if crystal_first and not penetrated:applied=0
         if applied>0 and background_is(data,'Гора'):applied=round(applied*1.2)
         wear=[]
         if incoming>0:
@@ -6919,6 +6935,10 @@ class CombatService:
                 result=(CombatService._damage_gas_mask(layer['item'],'bullet') if layer.get('is_gas_mask') else
                         CombatService._damage_armor_item(layer['item'],layer['attributes'],incoming*layer.get('wear_multiplier',1)))
                 if result:wear.append(result)
+        if crystal_first:
+            from app.services.equipment_care import consume_liquid_crystal
+            for layer in layers:
+                if layer.get('liquid_crystal_first'):consume_liquid_crystal(layer['item'])
         health=None
         if applied>0:
             health=CombatService._apply_attack_damage(target,applied,zone,
@@ -7182,6 +7202,9 @@ class CombatService:
             distance = spatial_distance(location,objects,epicenter_x,epicenter_y,floor_level,target)
             if distance > radius:
                 continue
+            from app.services.equipment_care import liquid_crystal_ready
+            crystal_item=((target.character.data or {}).get('equipment') or {}).get('armor')
+            crystal_context={'item':crystal_item,'active':liquid_crystal_ready(crystal_item)}
             cover = CombatService._explosion_cover(
                 location_id, epicenter_x, epicenter_y, target, **({'floor_level':floor_level} if floor_level else {}),
             )
@@ -7217,7 +7240,8 @@ class CombatService:
                 penetration = max(0, penetration - 5 * distance)
             fragment_zone = CombatService._grenade_fragment_zone()
             fragment=CombatService._explosion_fragment_hit(target,fragment_damage,penetration,fragment_zone,cover,round_number,
-                **({'plate_side':plate_side} if fragment_zone in {'chest','abdomen'} else {}))
+                **({'plate_side':plate_side} if fragment_zone in {'chest','abdomen'} else {}),
+                liquid_crystal_context=crystal_context)
             armor,penetrated=fragment['armor'],fragment['penetrated']
             applied_fragment_damage,fragment_armor_damage=fragment['damage'],fragment['armor_damage']
             extra_traumas = max(
@@ -7230,7 +7254,8 @@ class CombatService:
                 extra_damage = sum(random.randint(1, 6) for _ in range(4))
                 extra_zone = CombatService._grenade_fragment_zone()
                 extra=CombatService._explosion_fragment_hit(target,extra_damage,penetration,extra_zone,cover,round_number,
-                    additional=True,**({'plate_side':plate_side} if extra_zone in {'chest','abdomen'} else {}))
+                    additional=True,**({'plate_side':plate_side} if extra_zone in {'chest','abdomen'} else {}),
+                    liquid_crystal_context=crystal_context)
                 if extra['damage']<=0:
                     continue
                 extra_results.append({
@@ -7242,15 +7267,15 @@ class CombatService:
             target_data = target.character.data if isinstance(target.character.data, dict) else {}
             blast_armor, blast_armor_layers = CombatService._target_armor(
                 target_data, 'chest',explosive=True,**({'target':target} if background_is(target_data,'Стойкий') else {}),
-                plate_side=plate_side,
+                plate_side=plate_side,liquid_crystal_context=crystal_context,
             )
             armor_multiplier = max(0, 1 - blast_armor / 100)
-            blast = max(
+            wave_incoming = max(
                 0,
                 profile['blast_base']*(1.5 if indoors else 1) - profile['blast_falloff'] * distance,
             )
             # Дробная защита не должна превращать ровные 42,5 в 42,50000000001.
-            blast = 0 if wave_blocked else round(round(blast * armor_multiplier, 9))
+            blast = 0 if wave_blocked else round(round(wave_incoming * armor_multiplier, 9))
             blast_armor_damage = []
             for layer in blast_armor_layers:
                 if layer.get('is_gas_mask'):
@@ -7260,6 +7285,11 @@ class CombatService:
                 )
                 if damage_result:
                     blast_armor_damage.append(damage_result)
+            if wave_incoming>0 and not wave_blocked and any(layer.get('liquid_crystal_first') for layer in blast_armor_layers):
+                from app.services.equipment_care import consume_liquid_crystal
+                for layer in blast_armor_layers:
+                    if layer.get('liquid_crystal_first'):consume_liquid_crystal(layer['item'])
+                blast=0
             if background_is(target_data,'Гора'):blast=round(blast*.8)
             blast_result = CombatService._apply_general_damage(
                 target, blast, round_number=round_number, source='blast_wave',
@@ -8468,6 +8498,8 @@ class CombatService:
         armor, armor_layers = CombatService._target_armor(armor_target_data, zone,
             **({'limb_hit':limb_hit} if limb_hit else {}),**({'target':target} if background_is(armor_target_data,'Стойкий') else {}),
             **plate_kwargs)
+        crystal_layers=[layer['item'] for layer in armor_layers if layer.get('liquid_crystal_first')]
+        crystal_first=bool(crystal_layers and profile['damage']>0)
         back_protection = (
             CombatService._mutant_back_torso_protection(armor_target_data)
             if zone in {'chest', 'abdomen'}
@@ -8499,6 +8531,9 @@ class CombatService:
                 )
             if damage_result:
                 armor_damage.append(damage_result)
+        if crystal_first:
+            from app.services.equipment_care import consume_liquid_crystal
+            for item in crystal_layers:consume_liquid_crystal(item)
         effective_armor = max(0.0, armor - profile['armor_piercing'])
         penetration_deficit = max(0.0, effective_armor)
         damage_multiplier = CombatService._penetration_damage_multiplier(profile['armor_piercing'],armor)
@@ -8542,16 +8577,22 @@ class CombatService:
         armor_penetrated = bool(
             armor <= 0 or profile['armor_piercing'] >= armor
         )
+        if crystal_first and not armor_penetrated:
+            final_damage=0
+            behind_armor_multiplier=0
         allow_bleeding = bool(
             melee
             or armor <= 0
             or profile['armor_piercing'] - armor >= 10
         )
+        if crystal_first and not armor_penetrated:
+            allow_bleeding=False
         bleeding_result = (
             None
             if melee or limb_hit and limb_hit['mechanical']
             else CombatService._roll_firearm_bleeding(profile, armor)
         )
+        if crystal_first and not armor_penetrated:bleeding_result=None
         trauma_checks = 1
         trauma_difficulty_modifier = CombatService._mutant_trauma_difficulty_modifier(
             target_data,

@@ -426,6 +426,26 @@ def profile(**kwargs):
     return {'key':'test','name':'Тест','blast_base':0,'blast_falloff':0,'fragment':0,'radius':5,'penetration':30,**kwargs}
 
 
+def test_liquid_crystal_shields_wave_and_fragments_from_same_explosion(grenade_game,monkeypatch):
+    from app.services.equipment_modifications import make_record
+    quiet_explosion(monkeypatch)
+    actor=grenade_game['actor_location'];data=deepcopy(actor.character.data)
+    data['equipment']={'armor':{'id':'explosion-crystal','name':'Тяжёлая броня','category':'armor',
+        'durability':100,'stageDurability':1000,'currentStageDurability':1000,
+        'protection':{'physical':10},'modifications':[make_record('armor-a39')]}}
+    actor.character.data=data;db.session.commit()
+    result=CombatService.resolve_explosion(actor.location_id,actor.pos_x-1,actor.pos_y,
+        profile(blast_base=100,fragment=40,penetration=0))
+    entry=next(row for row in result['targets'] if row['character_id']==actor.character_id)
+    assert entry['armor']==30 and entry['blast_armor']==30
+    assert entry['fragment_damage']==0 and entry['blast_damage']==0
+    assert actor.character.data['equipment']['armor']['liquidCrystalState']['charged'] is False
+    later=CombatService.resolve_explosion(actor.location_id,actor.pos_x-1,actor.pos_y,
+        profile(blast_base=100,fragment=40,penetration=0))
+    after=next(row for row in later['targets'] if row['character_id']==actor.character_id)
+    assert after['blast_armor']==10 and after['blast_damage']>0
+
+
 @pytest.mark.parametrize('damage,shock',[(0,False),(1,True)])
 def test_close_explosion_requires_actual_positive_damage_for_shock(grenade_game,monkeypatch,damage,shock):
     quiet_explosion(monkeypatch)

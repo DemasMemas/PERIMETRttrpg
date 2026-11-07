@@ -58,6 +58,7 @@ SPECIAL_ARMOR={
  'd27':({}, {'unpowered_weight_penalty_suppression':True}),
  'd28':({'movement_penalty':'=3'},{}),
  'a49':({}, {'spare_plates':True}),
+ 'a39':({}, {'liquid_crystal_layer':20}),
  'g25':({}, {'nvg_mount':True}),
  'd32':({}, {'exoskeleton_run':True})}
 
@@ -98,6 +99,8 @@ def install(item,record,replacing=None):
             if key in item:item[key]=max(0,item[key]+delta)
     item['modifications']=proposed
     if record['ruleId']=='armor-d31':item['reanimationCharge']=True
+    if record['ruleId']=='armor-a39':item['liquidCrystalState']={'charged':True,'remaining_seconds':0}
+    elif previous and previous['ruleId']=='armor-a39':item.pop('liquidCrystalState',None)
     if container_delta:item['containers']=containers
 
 
@@ -180,7 +183,7 @@ def make_record(rule_id,*,gunsmith=False,installer_id=None):
                 'ear_protection','filter_wear_reduction','flash_reduction','aimed_head_difficulty','concussion_reduction','belt_weight_reduction',
                 'explosion_wear_reduction','anomaly_wear_reduction','supported_accuracy','anomaly_escape_reduction',
                 'stealth_hiding_bonus','large_weapon_ergonomics','worn_burst_accuracy_reduction','snatch_difficulty_bonus',
-                'medical_pouch_capacity_multiplier'):
+                'medical_pouch_capacity_multiplier','liquid_crystal_layer'):
         if key in flags:flags[key]*=factor
     if flags.get('pistol_burst'):flags['pistol_burst_factor']=factor
     return {'ruleId':rule_id,'name':rule.get('name') or rule['description'],'description':rule['description'],
