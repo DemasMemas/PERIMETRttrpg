@@ -679,12 +679,58 @@ def test_rest_applies_traits_and_patient_surgeon_reset(client,grenade_game,auth_
     actor=grenade_game['actor_location'];data=deepcopy(actor.character.data)
     data['basic']={'background':{'name':background}}
     data['health'].update(current=100,max=700,intoxication=80,painLevel=0,combatMeta={'surgeonReductions':{'leftArm':True}},needs={'mealsToday':3,'drinksToday':3})
+    if rest_type=='sleep':data['health']['combatMeta']['sleepMode']='bed'
     actor.character.data=data;actor.character.time_active=True;db.session.commit()
     response=client.post(f"/lobbies/{grenade_game['lobby'].id}/rest",headers=auth_headers(grenade_game['actor_user']),json={'type':rest_type,'character_ids':[actor.character_id]})
     assert response.status_code==200,response.json
     health=actor.character.data['health']
     assert health['current']==100+healing and health['intoxication']==alcohol and health['painLevel']==pain
     assert bool(health['combatMeta'].get('surgeonReductions'))==cooldown
+
+
+@pytest.mark.parametrize('mode,item_name,healed',[
+    (None,None,0),('bed',None,350),('tent','Палатка',350),
+    ('sleeping_bag','Спальный мешок',262),
+])
+def test_sleep_healing_depends_on_selected_place(client,grenade_game,auth_headers,mode,item_name,healed):
+    from app.models.templates import ItemTemplate
+    actor=grenade_game['actor_location'];data=deepcopy(actor.character.data)
+    data['health'].update(current=100,max=700,needs={'mealsToday':3,'drinksToday':3})
+    if mode:data['health'].setdefault('combatMeta',{})['sleepMode']=mode
+    if item_name:
+        template=ItemTemplate(name=item_name,category='misc',price=1,
+            attributes={'import_source':'equipment_workbook'})
+        db.session.add(template);db.session.flush()
+        data.setdefault('inventory',{}).setdefault('pockets',[]).append(
+            {'id':'sleep-gear','templateId':template.id,'name':item_name,'category':'misc','quantity':1})
+    actor.character.data=data;actor.character.time_active=True;db.session.commit()
+    response=client.post(f"/lobbies/{grenade_game['lobby'].id}/rest",
+        headers=auth_headers(grenade_game['actor_user']),
+        json={'type':'sleep','character_ids':[actor.character_id]})
+    assert response.status_code==200,response.json
+    assert actor.character.data['health']['current']==100+healed
+    assert actor.character.data['health']['needs']['lastDay']['slept'] is True
+
+
+def test_sleep_with_missing_bag_does_not_advance_world_time(client,grenade_game,auth_headers):
+    actor=grenade_game['actor_location'];data=deepcopy(actor.character.data)
+    data['health'].setdefault('combatMeta',{})['sleepMode']='sleeping_bag'
+    actor.character.data=data;actor.character.time_active=True;db.session.commit()
+    lobby=grenade_game['lobby'];before=(lobby.game_day,lobby.game_time_minutes)
+    response=client.post(f'/lobbies/{lobby.id}/rest',headers=auth_headers(grenade_game['actor_user']),
+        json={'type':'sleep','character_ids':[actor.character_id]})
+    assert response.status_code==400,response.json
+    assert (lobby.game_day,lobby.game_time_minutes)==before
+
+
+def test_character_can_save_sleep_place_for_next_common_sleep(client,grenade_game,auth_headers):
+    actor=grenade_game['actor_location'];headers=auth_headers(grenade_game['actor_user'])
+    url=f'/lobbies/characters/{actor.character_id}'
+    data=client.get(url,headers=headers).json['data']
+    data['health'].setdefault('combatMeta',{})['sleepMode']='bed'
+    saved=client.put(url,headers=headers,json={'data':data})
+    assert saved.status_code==200,saved.json
+    assert saved.json['data']['health']['combatMeta']['sleepMode']=='bed'
 
 
 def test_cook_double_exhaustion_only_for_food_and_water():

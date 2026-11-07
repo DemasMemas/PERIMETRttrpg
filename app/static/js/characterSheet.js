@@ -3445,6 +3445,10 @@ function renderHealthTab(data, container = null) {
     let html = `
         <div class="health-tab">
             ${window.isGM ? '<div style="display:flex;justify-content:flex-end;margin-bottom:10px;"><button type="button" class="btn btn-sm btn-warning" onclick="healCharacterFully()">Вылечить персонажа</button></div>' : ''}
+            <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap;">
+                <button type="button" class="btn btn-sm btn-secondary" onclick="openCharacterSleepSetup()" ${currentCharacterCanEdit ? '' : 'disabled'}>Сон · выбрать место</button>
+                <span style="font-size:12px;opacity:.8;">${escapeHtml(({none:'Без удобств · 0% ОЗ',bed:'Кровать · 50% ОЗ',tent:'Палатка · 50% ОЗ',sleeping_bag:'Спальный мешок · 37,5% ОЗ'})[health.combatMeta?.sleepMode] || 'Без удобств · 0% ОЗ')}</span>
+            </div>
             <div class="health-vitals-grid">
                 <div class="health-field health-field-pool">
                     <label>Общий пул ОЗ</label>
@@ -3840,6 +3844,52 @@ window.healCharacterFully = async function() {
     } catch (error) {
         showNotification(error.message || 'Не удалось вылечить персонажа', 'system');
     }
+};
+
+window.openCharacterSleepSetup = function() {
+    if (!currentCharacterCanEdit || sheetSaveBlocked || !currentCharacterData) return;
+    const hasItem = (name, items) => (items || []).some(item =>
+        (item?.name === name && Number(item.quantity ?? 1) > 0) || hasItem(name, item?.contents));
+    const inventory = currentCharacterData.inventory || {};
+    const tent = hasItem('Палатка', inventory.pockets) || hasItem('Палатка', inventory.backpack);
+    const bag = hasItem('Спальный мешок', inventory.pockets) || hasItem('Спальный мешок', inventory.backpack);
+    const previous = currentCharacterData.health?.combatMeta?.sleepMode || 'none';
+    document.getElementById('character-sleep-setup-modal')?.remove();
+    const dialog = document.createElement('div');
+    dialog.id = 'character-sleep-setup-modal';
+    dialog.className = 'modal';
+    dialog.style.display = 'flex';
+    dialog.innerHTML = `<div class="modal-content" style="max-width:440px;">
+        <h3>Место для сна</h3>
+        <p>Выбор применится, когда ГМ запустит общий сон на 8 часов.</p>
+        <label>Условия сна <select class="form-control" data-sleep-mode>
+            <option value="none">Без удобств · без восстановления ОЗ</option>
+            <option value="bed">Есть доступ к кровати · 50% ОЗ</option>
+            <option value="tent" ${tent ? '' : 'disabled'}>Палатка в инвентаре · 50% ОЗ</option>
+            <option value="sleeping_bag" ${bag ? '' : 'disabled'}>Спальный мешок в инвентаре · 37,5% ОЗ</option>
+        </select></label>
+        <div class="form-actions" style="margin-top:16px;">
+            <button type="button" class="btn btn-primary" data-sleep-save>Сохранить выбор</button>
+            <button type="button" class="btn btn-secondary" data-sleep-cancel>Отмена</button>
+        </div></div>`;
+    document.body.append(dialog);
+    const select = dialog.querySelector('[data-sleep-mode]');
+    select.value = previous;
+    if (select.selectedIndex < 0 || select.selectedOptions[0]?.disabled) select.value = 'none';
+    const close = () => dialog.remove();
+    dialog.querySelector('[data-sleep-cancel]').onclick = close;
+    dialog.onclick = event => { if (event.target === dialog) close(); };
+    dialog.querySelector('[data-sleep-save]').onclick = async () => {
+        updateDataFromFields();
+        currentCharacterData.health ||= {};
+        currentCharacterData.health.combatMeta ||= {};
+        currentCharacterData.health.combatMeta.sleepMode = select.value;
+        await forceSyncCharacter();
+        if (sheetSaveBlocked) return;
+        close();
+        refreshHealthPanel();
+        showNotification('Место сна сохранено', 'success');
+    };
 };
 
 window.checkAddictionWithdrawal = async function(addictionKey) {

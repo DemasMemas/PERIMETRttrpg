@@ -1506,6 +1506,12 @@ def start_lobby_rest(lobby_id, lobby):
     if not selected_ids.issubset(existing_ids):
         return jsonify({'error': 'Rest participants must be active characters'}), 400
 
+    sleep_fractions = {}
+    if rest_type == 'sleep':
+        from app.services.sleep_rules import sleep_fraction
+        sleep_fractions = {character.id: sleep_fraction(character) for character in characters
+            if character.id in selected_ids}
+
     elapsed_seconds = hours * 3600
     previous_day = lobby.game_day or 1
     absolute_minutes = (
@@ -1553,12 +1559,14 @@ def start_lobby_rest(lobby_id, lobby):
                 float((rest_bonus or {}).get('value') or (rest_modifier or {}).get('value') or 1),
             )
             maximum = float(health.get('max') or 700)
-            healed = maximum * (0.5 if rest_type == 'sleep' else 0.05) * multiplier
+            healed = maximum * (sleep_fractions[character.id] if rest_type == 'sleep' else 0.05) * multiplier
             from app.services.character_traits import background_is
             if background_is(character_data,'Атлет'):healed*=1.5
-            apply_effect_to_health(health, {'type': 'heal', 'value': healed})
-            effects = [effect for effect in effects if effect.get('type') != 'next_rest_healing']
-            if isinstance(health.get('combatMeta'), dict):
+            healed = math.floor(healed)
+            if healed > 0:
+                apply_effect_to_health(health, {'type': 'heal', 'value': healed})
+                effects = [effect for effect in effects if effect.get('type') != 'next_rest_healing']
+            if healed > 0 and isinstance(health.get('combatMeta'), dict):
                 health['combatMeta']['consumableModifiers'] = [
                     modifier for modifier in modifiers
                     if not isinstance(modifier, dict) or modifier.get('stat') != 'rest_heal_multiplier'

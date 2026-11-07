@@ -58,7 +58,10 @@ export async function openLobbyRestModal() {
             participant.disabled = character.time_active === false;
             const name = document.createElement('span');
             name.textContent = character.name || `Персонаж #${character.id}`;
-            participantLabel.append(participant, name);
+            const sleepMode = character.data?.health?.combatMeta?.sleepMode || 'none';
+            const sleepPlace = document.createElement('small');
+            sleepPlace.textContent = ` · ${({none:'без удобств',bed:'кровать',tent:'палатка',sleeping_bag:'спальный мешок'})[sleepMode] || 'без удобств'}`;
+            participantLabel.append(participant, name, sleepPlace);
 
             const activeLabel = document.createElement('label');
             activeLabel.className = 'lobby-time-active-toggle';

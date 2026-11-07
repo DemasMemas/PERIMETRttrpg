@@ -2229,6 +2229,7 @@ def test_gm_rest_event_advances_lobby_time_for_selected_characters(
                 "effects": [],
                 "exhaustion": 1,
                 "intoxication": 90,
+                "combatMeta": {"sleepMode": "bed"},
                 "needs": {
                     "day": 1,
                     "mealsToday": 1,

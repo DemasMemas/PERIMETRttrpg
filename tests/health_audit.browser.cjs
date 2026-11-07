@@ -180,6 +180,13 @@ module.exports=async({page,request,token,lobby,base,connect,debugPort,safeSessio
         let snapshot=await request('/lobbies/characters/'+drunk.id,null,token,'GET');assert.equal(snapshot.data.health.effects.find(e=>e.source==='deadly_intoxication').remaining_seconds,86400);
         await request('/lobbies/characters/'+drunk.id+'/visibility',{visible_to:[player.user_id],editable_to:[]},token,'PUT');
         for(const client of [page,peer]){await client.evaluate(`window.openCharacterSheet(${drunk.id})`);await client.until('document.querySelector("#effects-container")?.textContent.includes("Отключка от опьянения")','Отключка видна обоим клиентам');}
+        await page.evaluate('window.openCharacterSleepSetup()');
+        await page.until('document.querySelector("#character-sleep-setup-modal [data-sleep-mode]")','Выбор места сна открыт');
+        assert.equal(await page.evaluate('Array.from(document.querySelector("#character-sleep-setup-modal [data-sleep-mode]").options).find(option=>option.value==="tent").disabled'),true);
+        assert.equal(await page.evaluate('Array.from(document.querySelector("#character-sleep-setup-modal [data-sleep-mode]").options).find(option=>option.value==="sleeping_bag").disabled'),true);
+        await page.evaluate('document.querySelector("#character-sleep-setup-modal [data-sleep-mode]").value="bed";document.querySelector("#character-sleep-setup-modal [data-sleep-save]").click()');
+        await page.until('!document.querySelector("#character-sleep-setup-modal")','Место сна сохранено');
+        snapshot=await request('/lobbies/characters/'+drunk.id,null,token,'GET');assert.equal(snapshot.data.health.combatMeta.sleepMode,'bed');
         for(let n=0;n<3;n++)await request(api+'/rest',{type:'sleep',character_ids:[drunk.id]},token);
         for(const client of [page,peer])await client.until(`document.querySelector('[data-widget-block="health-summary"]')?.parentElement.textContent.includes('Опьянение: 100')&&document.querySelector('#effects-container')?.textContent.includes('24 ч')`,'Повторные сутки синхронизированы');
 
