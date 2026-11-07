@@ -419,11 +419,18 @@ class CombatService:
             return {'state': 'critical', 'label': 'Stress stupor', 'can_act': False, 'can_recover': False}
         if 'shock' in active_types:
             pain_level = max(0, CombatService._coerce_int(health.get('painLevel'), 0))
+            pepper_lock = any(
+                effect.get('type') == 'shock'
+                and effect.get('source') == 'pepper_three_head_hits'
+                and effect.get('active', True)
+                and CombatService._coerce_float(effect.get('remaining'), 0) > 0
+                for effect in effects
+            )
             return {
                 'state': 'pain_shock',
                 'label': 'Болевой шок',
                 'can_act': False,
-                'can_recover': pain_level < 10,
+                'can_recover': pain_level < 10 and not pepper_lock,
             }
         return {'state': 'active', 'label': 'В сознании', 'can_act': True, 'can_recover': False}
 
@@ -476,11 +483,16 @@ class CombatService:
     @staticmethod
     def _can_take_combat_turn(loc_char):
         condition = CombatService._location_character_condition(loc_char)
+        data = loc_char.character.data if getattr(loc_char, 'character', None) and isinstance(loc_char.character.data, dict) else {}
+        meta = (data.get('health') or {}).get('combatMeta') or {}
         return bool(
-            condition.get('can_act')
-            or (
-                condition.get('state') == 'pain_shock'
-                and condition.get('can_recover')
+            not meta.get('pepperSkipTurnActive')
+            and (
+                condition.get('can_act')
+                or (
+                    condition.get('state') == 'pain_shock'
+                    and condition.get('can_recover')
+                )
             )
         )
 
@@ -488,6 +500,9 @@ class CombatService:
     def ensure_character_can_act(loc_char, action_key=None):
         from app.services.prosthesis_surgery import busy
         if loc_char.character and busy(loc_char.character.data):raise ValidationError('Персонаж участвует в операции установки протеза')
+        data = loc_char.character.data if getattr(loc_char, 'character', None) and isinstance(loc_char.character.data, dict) else {}
+        if ((data.get('health') or {}).get('combatMeta') or {}).get('pepperSkipTurnActive'):
+            raise ValidationError('Персонаж пропускает ход после попадания перцового боеприпаса')
         condition = CombatService._location_character_condition(loc_char)
         if condition['state'] == 'active':
             return condition
@@ -3158,10 +3173,58 @@ class CombatService:
             profile['pain_on_penetration'] = 3
         elif re.fullmatch(r'18x45\s*и', caliber):
             profile['pain_on_penetration'] = 2
+            profile['pepper_round'] = True
         elif caliber.startswith('12x70') and 'газ' in caliber:
             profile.update(damage_type='gas', pain_on_penetration=3,
-                           pain_per_round=1, pain_rounds=5)
+                           pain_per_round=1, pain_rounds=5, pepper_round=True)
         return profile, stack
+
+    @staticmethod
+    def _apply_pepper_head_hit(health, character_data):
+        meta = health.setdefault('combatMeta', {})
+        hits = max(0, CombatService._coerce_int(meta.get('pepperHeadHits'), 0)) + 1
+        meta['pepperHeadHits'] = hits
+        meta['pepperSkipTurns'] = max(1, CombatService._coerce_int(meta.get('pepperSkipTurns'), 0))
+        apply_effect_to_health(health, {
+            'type': 'custom', 'name': 'Перцовка: штраф к броскам',
+            'source': 'pepper_head_rolls', 'scope': 'combat', 'tick': 'manual',
+            'rollPenalty': 5,
+        }, character_data=character_data)
+        apply_effect_to_health(health, {
+            'type': 'periodic_adjustment', 'name': 'Перцовка: боль каждый ход',
+            'source': 'pepper_head_pain', 'scope': 'combat', 'tick': 'turn_end',
+            'value': 1, 'adjustments': [{'field': 'painLevel', 'delta': 1, 'min': 0, 'max': 10}],
+        }, character_data=character_data)
+        shock_roll = None
+        if hits >= 3:
+            health['effects'] = [
+                effect for effect in normalize_effect_list(health.get('effects') or [])
+                if effect.get('type') != 'shock'
+            ]
+            apply_effect_to_health(health, {
+                'type': 'shock', 'name': 'Перцовка: болевой шок на 6 часов',
+                'source': 'pepper_three_head_hits', 'tick': 'manual',
+                'time_unit': 'hour', 'remaining': 6,
+            }, character_data=character_data)
+            apply_effect_to_health(health, {
+                'type': 'custom', 'name': 'Перцовка: штраф к атаке и внимательности на сутки',
+                'source': 'pepper_day_penalty', 'tick': 'manual',
+                'time_unit': 'hour', 'remaining': 24,
+                'modifiers': {
+                    'skills.physical.shooting': 5,
+                    'skills.physical.melee': 5,
+                    'skills.physical.accuracy': 5,
+                    'skills.physical.awareness': 5,
+                },
+            }, character_data=character_data)
+        else:
+            shock_roll = random.randint(1, 100)
+            if shock_roll <= 50:
+                apply_effect_to_health(health, {
+                    'type': 'shock', 'name': 'Болевой шок от перцового боеприпаса',
+                    'source': 'pepper_head', 'tick': 'manual',
+                }, character_data=character_data)
+        return {'hits': hits, 'shock_roll': shock_roll, 'shock': hits >= 3 or shock_roll <= 50}
 
     @staticmethod
     def _virtual_melee_profile(attack_type, weapon=None, character_data=None):
@@ -8672,6 +8735,9 @@ class CombatService:
                     'value':profile['pain_per_round'],'remaining':profile['pain_rounds'],
                     'tick':'round_end','adjustments':[{'field':'painLevel','delta':profile['pain_per_round'],
                         'min':0,'max':10}]},character_data=target.character.data)
+            if zone == 'head' and profile.get('pepper_round'):
+                pepper = CombatService._apply_pepper_head_hit(health, target.character.data)
+                result['pepper_head_hit'] = pepper
         final_damage=attack_outcome.get('applied_damage',final_damage)
         result.update({
             'zone': zone,
@@ -11195,6 +11261,13 @@ class CombatService:
             cancel_unavailable_actions(loc_char)
         if getattr(loc_char, 'character', None) and isinstance(loc_char.character.data, dict):
             turn_data = loc_char.character.data
+            turn_meta = turn_data.setdefault('health', {}).setdefault('combatMeta', {})
+            skipped = max(0, CombatService._coerce_int(turn_meta.get('pepperSkipTurns'), 0))
+            turn_meta['pepperSkipTurnActive'] = skipped > 0
+            if skipped:
+                turn_meta['pepperSkipTurns'] = skipped - 1
+            loc_char.character.data = turn_data
+            flag_modified(loc_char.character, 'data')
             if CombatService._mutant_has_trait(turn_data, 'Возможность разгона'):
                 turn_meta = turn_data.setdefault('health', {}).setdefault('combatMeta', {})
                 previous = turn_meta.get('mutantTurnActivity')
@@ -11227,6 +11300,9 @@ class CombatService:
         loc_char.action_points_current = profile['action_points'] if condition['can_act'] else 0
         loc_char.free_actions_max = profile['free_actions']
         loc_char.free_actions_current = profile['free_actions'] if condition['can_act'] else 0
+        if ((turn_data.get('health') or {}).get('combatMeta') or {}).get('pepperSkipTurnActive'):
+            loc_char.action_points_current = 0
+            loc_char.free_actions_current = 0
         loc_char.movement_points_max = 0
         loc_char.movement_points_current = 0
         loc_char.movement_mode_this_turn = None
@@ -12528,6 +12604,10 @@ class CombatService:
                 if loc_char.character and isinstance(loc_char.character.data, dict)
                 else {}
             )
+            pepper_meta = (character_data.get('health') or {}).get('combatMeta')
+            if isinstance(pepper_meta, dict):
+                for key in ('pepperHeadHits', 'pepperSkipTurns', 'pepperSkipTurnActive'):
+                    pepper_meta.pop(key, None)
             from app.services.character_traits import carried_weapons
             from app.services.portable_lights import start_battle
             if start_battle(character_data):flag_modified(loc_char.character,'data')
@@ -12783,6 +12863,11 @@ class CombatService:
         )
         CombatService._tick_character_effects(current_character, phase='turn_end')
         CombatService._apply_periodic_health_effects(current_character, phase='turn_end')
+        current_data = current_character.character.data if current_character.character else {}
+        current_meta = (current_data.get('health') or {}).get('combatMeta')
+        if isinstance(current_meta, dict) and current_meta.pop('pepperSkipTurnActive', None):
+            current_character.character.data = current_data
+            flag_modified(current_character.character, 'data')
         psy_end_turn = CombatService._resolve_mutant_psy_end_turn(
             location, state, current_character,
         )
@@ -18256,8 +18341,11 @@ class CombatService:
                 meta['untreatedWoundsAfterCombat'] = len(untreated)
                 health['effects'] = [
                     effect for effect in effects
-                    if effect.get('scope') != 'combat' and effect.get('type') != 'shock'
+                    if effect.get('scope') != 'combat'
+                    and (effect.get('type') != 'shock' or effect.get('source') == 'pepper_three_head_hits')
                 ]
+                for key in ('pepperHeadHits', 'pepperSkipTurns', 'pepperSkipTurnActive'):
+                    meta.pop(key, None)
                 meta.pop('shockRecoveryRound', None)
                 meta.pop('movementEvasion', None)
                 meta.pop('slipperyMovement', None)

@@ -10997,7 +10997,10 @@ function showObjectContextMenu(clientX, clientY, object) {
     const tree = object.type === 'tree' || /^nature_(?:oak|birch|pine|spruce|poplar|willow)/.test(object.type || '');
     const coverProtection = object.properties?.cover_physical_protection
         ?? object.properties?.cover_base_physical_protection ?? (tree ? 20 : coverDefaults.protection);
-    const coverNames = [object.name, visualAssetForLocationObject(object.type, object.properties)?.label,
+    const visualAsset = visualAssetForLocationObject(object.type, object.properties);
+    const objectName = ['art_chainlink_fence', 'art_dirty_earth'].includes(visualAsset?.id)
+        ? visualAsset.label : object.name;
+    const coverNames = [objectName, visualAsset?.label,
         findLocationAsset(object.type)?.label].filter(Boolean);
     const rawCoverName = coverNames.find(name => /[А-Яа-яЁё]/.test(name)) || coverNames[0] || '';
     const cleanCoverName = rawCoverName.replace(/\s*(?:\(|\[)?PBR(?:\)|\])?/gi, ' ').trim();
@@ -11008,7 +11011,7 @@ function showObjectContextMenu(clientX, clientY, object) {
     const actions = [{
         label: 'Осмотреть',
         action: () => showNotification(
-            isCover ? `${coverName}: ОЗ ${coverHp}/${object.properties?.cover_max_hp ?? coverDefaults.maxHp}, защита ${coverProtection}%` : [object.name || object.properties?.anomalyName || object.type,object.properties?.description || object.description || (object.type==='anomaly'?'Аномалия':'')].filter(Boolean).join(' · '),
+            isCover ? `${coverName}: ОЗ ${coverHp}/${object.properties?.cover_max_hp ?? coverDefaults.maxHp}, защита ${coverProtection}%` : [objectName || object.properties?.anomalyName || object.type,object.properties?.description || object.description || (object.type==='anomaly'?'Аномалия':'')].filter(Boolean).join(' · '),
             'system'
         )
     }];

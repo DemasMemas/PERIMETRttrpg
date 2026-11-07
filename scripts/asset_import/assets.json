@@ -23,7 +23,7 @@
     },
     {
       "id": "art_chainlink_fence",
-      "label": "Ржавый сетчатый забор (Poly Haven)",
+      "label": "Сетчатый забор",
       "baseType": "fence",
       "source": { "provider": "polyhaven", "id": "modular_chainlink_fence", "resolution": "1k" },
       "keepNodes": ["modular_chainlink_fence_double"],
@@ -44,6 +44,6 @@
     { "id": "rusty_metal", "label": "Окрашенный ржавый металл (PBR)", "baseType": "wall", "dimensions": [2, 0.2, 2.4], "source": { "provider": "polyhaven", "id": "rusty_metal_sheet", "resolution": "1k" } },
     { "id": "aged_wood", "label": "Состаренное дерево (PBR)", "baseType": "floor", "dimensions": [2, 2, 0.12], "source": { "provider": "polyhaven", "id": "wood_planks_dirt", "resolution": "1k" } },
     { "id": "worn_plaster", "label": "Выцветшая штукатурка (PBR)", "baseType": "wall", "dimensions": [2, 0.2, 2.4], "source": { "provider": "polyhaven", "id": "concrete_wall_003", "resolution": "1k" } },
-    { "id": "dirty_earth", "label": "Грязная земля (PBR)", "baseType": "floor", "dimensions": [2, 2, 0.12], "source": { "provider": "polyhaven", "id": "dirt", "resolution": "1k" } }
+    { "id": "dirty_earth", "label": "Грязная земля", "baseType": "floor", "dimensions": [2, 2, 0.12], "source": { "provider": "polyhaven", "id": "dirt", "resolution": "1k" } }
   ]
 }

@@ -198,13 +198,13 @@ def _structures(location, *, stress=False):
         visual_asset='art_rusty_barrel', weight_kg=40)
     add('Старый ящик PBR', 'box', 25, 25, 0.8, 0.8, 0.7, '#8b6b4f',
         visual_asset='art_wooden_crate', weight_kg=25, contents=[])
-    add('Сетчатый забор PBR', 'fence', 28, 25, 2, 0.15, 1.2, '#8b7458',
+    add('Сетчатый забор', 'fence', 28, 25, 2, 0.15, 1.2, '#8b7458',
         visual_asset='art_chainlink_fence')
     if stress:
         for index, x in enumerate(range(41, 62, 3)):
-            add(f'Секция забора {index}', 'fence', x, 8, 2, 0.15, 1.2, '#8b7458',
+            add('Сетчатый забор', 'fence', x, 8, 2, 0.15, 1.2, '#8b7458',
                 visual_asset='art_chainlink_fence')
-            add(f'Секция ограды {index}', 'fence', x, 30, 2, 0.15, 1.2, '#8b7458',
+            add('Сетчатый забор', 'fence', x, 30, 2, 0.15, 1.2, '#8b7458',
                 visual_asset='art_chainlink_fence')
         for index in range(18):
             x = 41 + (index % 6) * 3
@@ -215,7 +215,7 @@ def _structures(location, *, stress=False):
             add(f'Бочка полигона {index}', 'barrel', 42 + index * 2, 26,
                 0.65, 0.65, 0.9, '#8a6444', visual_asset='art_rusty_barrel', weight_kg=40)
         for index, x in enumerate((43, 49, 55, 61)):
-            add(f'Грунтовая площадка {index}', 'floor', x, 34, 3, 3, 0.12, '#776d5d',
+            add('Грязная земля', 'floor', x, 34, 3, 3, 0.12, '#776d5d',
                 visual_asset='art_dirty_earth')
     return structures
 

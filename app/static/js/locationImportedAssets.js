@@ -49,7 +49,7 @@ export const IMPORTED_LOCATION_ASSETS = Object.freeze([
     },
     {
         "id": "art_chainlink_fence",
-        "label": "Ржавый сетчатый забор (Poly Haven)",
+        "label": "Сетчатый забор",
         "baseType": "fence",
         "kind": "structure",
         "group": "Художественные ассеты",
@@ -147,7 +147,7 @@ export const IMPORTED_LOCATION_ASSETS = Object.freeze([
     },
     {
         "id": "art_dirty_earth",
-        "label": "Грязная земля (PBR)",
+        "label": "Грязная земля",
         "baseType": "floor",
         "kind": "structure",
         "group": "PBR-материалы",

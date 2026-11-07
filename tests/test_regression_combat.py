@@ -183,6 +183,86 @@ def test_special_round_adds_declared_pain_only_after_penetration(flash_round,mon
     assert not any(e.get('source')=='ammunition_gas' for e in target.character.data['health']['effects'])
 
 
+@pytest.mark.parametrize('caliber',['18x45 И','12x70 Газовый'])
+def test_pepper_head_hit_requires_penetration_and_adds_combat_effects(flash_round,monkeypatch,caliber):
+    _,stack,actor,target,details=flash_round
+    target=LocationCharacter(character=target.character,hp_zones={},effects=[],posture='standing')
+    stack['attributes'].update(caliber=caliber,ammo_variant=None,damage=5,armor_piercing=0)
+    stack['name']=caliber
+    monkeypatch.setattr(combat_module.random,'randint',lambda low,high: 99 if high==100 else 10)
+    chest=CombatService._resolve_attack(target,actor,details,aimed_zone='chest',forced_roll=15)
+    assert not chest.get('pepper_head_hit')
+    head=CombatService._resolve_attack(target,actor,details,aimed_zone='head',forced_roll=15)
+    assert head['pepper_head_hit']=={'hits':1,'shock_roll':99,'shock':False}
+    health=target.character.data['health']
+    assert health['combatMeta']['pepperSkipTurns']==1
+    assert CombatService._health_roll_modifier(target.character.data,'skills.physical.will') <= -5
+    assert any(e.get('source')=='pepper_head_pain' for e in health['effects'])
+    target.character.data['equipment']={'helmet':{'attributes':{'protection':{'physical':.5}}}}
+    blocked=CombatService._resolve_attack(target,actor,details,aimed_zone='head',forced_roll=15)
+    assert not blocked.get('pepper_head_hit')
+    assert health['combatMeta']['pepperHeadHits']==1
+
+
+def test_third_pepper_head_hit_locks_shock_six_hours_and_penalizes_one_day(grenade_game,monkeypatch):
+    target=grenade_game['target_location']
+    data=target.character.data
+    health=data.setdefault('health',{})
+    health['painLevel']=0
+    health['effects']=[]
+    monkeypatch.setattr(combat_module.random,'randint',lambda low,high: 99)
+    for count in (1,2,3):
+        result=CombatService._apply_pepper_head_hit(health,data)
+        assert result['hits']==count
+    assert result['shock'] and result['shock_roll'] is None
+    assert CombatService._character_condition(data)['can_recover'] is False
+    assert CombatService._health_roll_modifier(data,'skills.physical.awareness') == -10
+    assert CombatService._health_roll_modifier(data,'skills.physical.strength') == -5
+    CombatService._apply_periodic_health_effects(target,phase='turn_end')
+    assert health['painLevel']==1
+    CombatService.end_combat(target.location_id,grenade_game['lobby'].gm_id)
+    assert CombatService._character_condition(data)['can_recover'] is False
+    assert CombatService._health_roll_modifier(data,'skills.physical.awareness') == -6
+    assert CombatService._health_roll_modifier(data,'skills.physical.strength') == -1
+    CombatService._advance_character_time(target,6*3600)
+    current=target.character.data
+    assert CombatService._character_condition(current)['state']=='active'
+    assert CombatService._health_roll_modifier(current,'skills.physical.awareness') == -6
+    CombatService._advance_character_time(target,18*3600)
+    assert CombatService._health_roll_modifier(target.character.data,'skills.physical.awareness') == -1
+
+
+def test_pepper_hit_skips_the_next_turn_without_stacking(grenade_game,monkeypatch):
+    actor=grenade_game['actor_location']
+    data=actor.character.data
+    meta=data['health'].setdefault('combatMeta',{})
+    monkeypatch.setattr(combat_module.random,'randint',lambda low,high: 99)
+    CombatService._apply_pepper_head_hit(data['health'],data)
+    CombatService._apply_pepper_head_hit(data['health'],data)
+    assert meta['pepperSkipTurns']==1
+    CombatService._prepare_character_for_turn(actor)
+    assert actor.action_points_current==0
+    assert actor.free_actions_current==0
+    assert not CombatService._can_take_combat_turn(actor)
+    assert meta['pepperSkipTurns']==0
+    meta.pop('pepperSkipTurnActive')
+    CombatService._prepare_character_for_turn(actor)
+    assert CombatService._can_take_combat_turn(actor)
+
+
+def test_pepper_skip_turn_advances_combat_automatically(grenade_game):
+    actor=grenade_game['actor_location']
+    target=grenade_game['target_location']
+    target.character.data['health'].setdefault('combatMeta',{})['pepperSkipTurns']=1
+    from sqlalchemy.orm.attributes import flag_modified
+    flag_modified(target.character,'data')
+    db.session.commit()
+    result=CombatService.end_turn(actor.location_id,grenade_game['lobby'].gm_id,actor.id)
+    assert any(row['location_character_id']==target.id for row in result.get('auto_skipped',[]))
+    assert not target.character.data['health']['combatMeta'].get('pepperSkipTurnActive')
+    assert target.character.data['health']['combatMeta']['pepperSkipTurns']==0
+
+
 def test_zero_damage_signal_round_never_creates_wounds_or_armor_wear(flash_round,monkeypatch):
     _,stack,actor,target,details=flash_round
     stack['name']='18x45 СМ'
