@@ -18,6 +18,7 @@ THERMAL_REACTION=re.compile(r'При получении\s+Термическог
 REACTION_STATS={'штраф перемещения':'movement_penalty','защита от физического урона':'physical_protection',
                 'тяжесть кровотечений':'bleeding_severity'}
 PHYSICAL_BACKLASH=re.compile(r'При получении Физического урона шанс\s+(\d+)%\s+получить\s+(\d+)\s+Термического урона',re.IGNORECASE)
+ROUND_PAIN_RELIEF=re.compile(r'Облегчает боль на\s*(\d+)(?:\s*уров\w*)?\s+каждый раунд',re.IGNORECASE)
 
 
 def equipped_artifacts(character_data):
@@ -93,7 +94,7 @@ def artifact_passive_profile(character_data):
         'armor_damage_reduction': 0, 'throw_range_bonus': 0,
         'strenuous_action_cost': 0, 'breath_duration_bonus': 0,
         'bleeding_severity': 0, 'radiation_per_movement': 0,
-        'health_per_movement': 0, 'pain_per_movement': 0,
+        'health_per_movement': 0, 'pain_per_movement': 0, 'pain_relief_per_round': 0,
         'healing_multiplier': 1.0,
         'protection': {key: 0 for key in ('physical', 'chemical', 'thermal', 'electric', 'radiation', 'psi')},
     }
@@ -160,8 +161,10 @@ def artifact_passive_profile(character_data):
         ) + _radiation_value(negative, positive=False)
         health_values = re.findall(r'Общее здоровье\s*([+-]\d+)\s*за перемещение', text, re.IGNORECASE)
         result['health_per_movement'] += sum(map(int, health_values))
-        pain_up = re.findall(r'Усиливает боль на\s*(\d+)\s*уров', text, re.IGNORECASE)
-        pain_down = re.findall(r'Облегчает боль на\s*(\d+)\s*уров', text, re.IGNORECASE)
+        result['pain_relief_per_round']+=sum(map(int,ROUND_PAIN_RELIEF.findall(text)))
+        pain_text=ROUND_PAIN_RELIEF.sub('',text)
+        pain_up = re.findall(r'Усиливает боль на\s*(\d+)\s*уров', pain_text, re.IGNORECASE)
+        pain_down = re.findall(r'Облегчает боль на\s*(\d+)\s*уров', pain_text, re.IGNORECASE)
         result['pain_per_movement'] += sum(map(int, pain_up)) - sum(map(int, pain_down))
         healing = re.search(r'Восстановление здоровья из любых источников\s*([\d.,]+)х', text, re.IGNORECASE)
         if healing:

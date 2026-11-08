@@ -1477,6 +1477,10 @@ def _advance_medication_time(health, effects, elapsed_seconds, *, include_turn_e
     remaining = max(0, _to_float(elapsed_seconds, 0))
     health["effects"] = identify_effects(effects or [])
     floor=minimum_pain(health,character_data) if recover_pain else 0
+    artifact_relief=0
+    if recover_pain and character_data:
+        from app.services.artifact_effects import artifact_passive_profile
+        artifact_relief=max(0,artifact_passive_profile(character_data)['pain_relief_per_round'])
     meta=health.setdefault('combatMeta',{})
     if recover_pain:meta.pop('painIncreased',None)
     pain_progress=max(0,_to_float(meta.get('painRecoverySeconds'),0))%6
@@ -1538,7 +1542,8 @@ def _advance_medication_time(health, effects, elapsed_seconds, *, include_turn_e
                 # Новая боль в том же интервале не снимается на его границе.
                 increased=bool(meta.pop('painIncreased',False)) or _to_float(health.get('painLevel'),0)>pain_before
                 ticks=int((pain_progress+1e-8)//6)
-                health['painLevel']=max(floor,_to_float(health.get('painLevel'),0)-max(0,ticks-int(increased)))
+                recovery=max(0,ticks-int(increased))+ticks*artifact_relief
+                health['painLevel']=max(floor,_to_float(health.get('painLevel'),0)-recovery)
                 pain_progress=max(0,pain_progress-6*ticks)
             else:health['painLevel']=max(floor,_to_float(health.get('painLevel'),0))
             meta['painRecoverySeconds']=pain_progress

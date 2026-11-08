@@ -38,6 +38,19 @@ module.exports=async({page,request,token,lobby,base,safeSession})=>{
     await round();await round();const expired=await get();assert.equal(reactions(expired.data).length,0);assert.equal(expired.data._artifact_profile.movement_penalty,0);
     await page.until("!document.getElementById('character-sheet-modal')?.innerText.includes('Пламень крови: реакция на термический урон')",'Истёкшая реакция исчезла из листа');
     await request(loc+'/combat/end',{},token);
+    const skin=rules.find(a=>a.name==='Вторая кожа'),skinCharacter=await get();assert.ok(skin);
+    skinCharacter.data.equipment={armor:{containers:[{item:{id:'skin-artifact',category:'artifact',name:skin.name,attributes:skin}}]}};
+    skinCharacter.data.health.painLevel=7;skinCharacter.data.health.combatMeta.painIncreased=false;
+    await request('/lobbies/characters/'+actor.id,{data:skinCharacter.data},token,'PUT');
+    await page.evaluate(`window.openCharacterSheet(${actor.id},'basic').then(()=>true)`);
+    await request(loc+'/combat/start',{location_character_ids:[first.location_character_id,second.location_character_id],
+        initiator_location_character_id:first.location_character_id,initiator_first:true},token);
+    await request(loc+'/combat/end_turn',{location_character_id:first.location_character_id},token);
+    assert.equal((await get()).data.health.painLevel,7);
+    await request(loc+'/combat/end_turn',{location_character_id:second.location_character_id},token);
+    assert.equal((await get()).data.health.painLevel,5);
+    await page.until("Number(document.querySelector('[name=\"health.painLevel\"]')?.value)===5",'Снижение боли Второй кожи видно в листе');
+    await request(loc+'/combat/end',{},token);
     const shard=rules.find(a=>a.name==='Пылающий осколок');assert.ok(shard);
     const gun=await get();gun.data.weapons=[{id:'shard-weapon',name:'Контрольное оружие',range:30,ergonomics:100,damage:5,
         ammo:20,durability:100,maxDurability:100,installedMagazine:{id:'shard-mag',name:'Контрольный магазин',ammo:[{
@@ -66,7 +79,8 @@ module.exports=async({page,request,token,lobby,base,safeSession})=>{
     await request(loc+'/combat/end',{},token);
     fs.writeFileSync(path.join(safeSession.artifacts,'artifact-reactions.json'),JSON.stringify({scene:'Припять',artifact:rule.name,
         damage:55,initialSeconds:active[0].remaining_seconds,nextSeconds:reactions(next.data)[0].remaining_seconds,
-        persistedAfterSave:true,expired:true,networkVisible:true,shard:{roll:50,damage:hitResult.damage,backlash:40,poolOnly:true}},null,2));
+        persistedAfterSave:true,expired:true,networkVisible:true,shard:{roll:50,damage:hitResult.damage,backlash:40,poolOnly:true},skin:{before:7,afterRound:5}},null,2));
     console.log('Артефакты: настоящее горение, временный штраф, сохранение, сетевое обновление и истечение по раундам проверены в Припяти.');
     console.log('Пылающий осколок: настоящее попадание, 50% на границе, 50 термического до защиты/40 после, только общий пул ОЗ.');
+    await require('./daily_needs.browser.cjs')({page,request,token,characterId:actor.id,safeSession});
 };

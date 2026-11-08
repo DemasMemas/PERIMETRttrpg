@@ -10091,8 +10091,10 @@ class CombatService:
             meta = health.setdefault('combatMeta', {})
             pain_level = max(0, CombatService._coerce_int(health.get('painLevel', 0), 0))
             pain_increased = bool(meta.get('painIncreased', False))
-            if not pain_increased and pain_level > 0:
-                health['painLevel'] = pain_level - 1
+            if pain_level > 0:
+                from app.services.effects import minimum_pain
+                recovery=int(not pain_increased)+max(0,artifact_passive_profile(data)['pain_relief_per_round'])
+                health['painLevel']=max(minimum_pain(health,data),pain_level-recovery)
             meta['painSnapshot'] = health.get('painLevel', 0)
             meta['painIncreased'] = False
             character.data = data

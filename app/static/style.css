@@ -3795,15 +3795,17 @@ input[type=range]::-webkit-slider-thumb {
 }
 .health-needs-panel {
     display: grid;
-    grid-template-columns: repeat(3, minmax(105px, 1fr)) minmax(220px, 2fr);
-    gap: 10px;
-    align-items: end;
-    margin: 0 0 14px;
-    padding: 10px 12px;
-    border: 1px solid rgba(255,255,255,0.06);
-    border-radius: 12px;
-    background: rgba(255,255,255,0.04);
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-column: span 2;
+    gap: 8px;
+    min-width: 0;
 }
+.health-need-controls { display: flex; align-items: stretch; gap: 4px; height: 38px; }
+.health-need-controls > button { padding: 0 7px; border-radius: 5px; }
+.health-need-value { display: flex; align-items: center; justify-content: center; flex: 1; min-width: 0; white-space: nowrap; }
+.health-need-value input { width: 1.6em; min-width: 0; padding: 0; border: 0; background: transparent; color: inherit; font: inherit; text-align: right; appearance: textfield; }
+.health-need-value input::-webkit-inner-spin-button,
+.health-need-value input::-webkit-outer-spin-button { appearance: none; margin: 0; }
 .health-need-field {
     min-width: 0;
 }
@@ -3825,9 +3827,6 @@ input[type=range]::-webkit-slider-thumb {
     white-space: normal;
 }
 @media (max-width: 900px) {
-    .health-needs-panel {
-        grid-template-columns: repeat(3, minmax(95px, 1fr));
-    }
     .health-needs-actions {
         grid-column: 1 / -1;
         padding-bottom: 0;
@@ -3837,9 +3836,6 @@ input[type=range]::-webkit-slider-thumb {
     .health-field-pool,
     .health-field-blood {
         grid-column: span 1;
-    }
-    .health-needs-panel {
-        grid-template-columns: 1fr;
     }
     .health-needs-actions {
         grid-template-columns: 1fr;

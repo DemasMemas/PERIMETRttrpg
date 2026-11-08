@@ -3500,6 +3500,17 @@ function renderHealthTab(data, container = null) {
                     <label>Радиация</label>
                     <input type="number" class="form-control" name="health.radiation" value="${health.radiation || 0}">
                 </div>
+                <div class="health-needs-panel">
+                    ${[['mealsToday','Еда сегодня'],['drinksToday','Вода сегодня']].map(([key,label])=>`
+                        <div class="health-field health-need-field">
+                            <label>${label}</label>
+                            <div class="health-need-controls">
+                                <button type="button" class="btn btn-sm btn-secondary" onclick="adjustDailyNeed('${key}',-1)" aria-label="${label}: уменьшить" ${!currentCharacterCanEdit || needs[key]<=0 ? 'disabled' : ''}>−</button>
+                                <div class="health-need-value"><input type="number" min="0" max="3" name="health.needs.${key}" value="${needs[key]}" aria-label="${label}" readonly><span>/3</span></div>
+                                <button type="button" class="btn btn-sm btn-secondary" onclick="adjustDailyNeed('${key}',1)" aria-label="${label}: увеличить" ${!currentCharacterCanEdit || needs[key]>=3 ? 'disabled' : ''}>+</button>
+                            </div>
+                        </div>`).join('')}
+                </div>
             </div>
             <details class="health-compact-panel health-blood-check" data-sheet-panel="blood-check">
                 <summary>
@@ -3549,10 +3560,6 @@ function renderHealthTab(data, container = null) {
                     <summary><span>\u042d\u0444\u0444\u0435\u043a\u0442\u044b \u0441\u0442\u0440\u0435\u0441\u0441\u0430</span><strong>${stressEffects.length}</strong></summary>
                     <div style="display:grid;gap:7px;padding-top:8px;">${stressEffectsHtml}</div>
                 </details>` : ''}
-            <div class="health-needs-panel">
-                <div class="health-need-field"><label>Еда сегодня</label><input type="number" min="0" max="3" class="form-control" name="health.needs.mealsToday" value="${needs.mealsToday}"><small>${needs.mealsToday}/3</small></div>
-                <div class="health-need-field"><label>Вода сегодня</label><input type="number" min="0" max="3" class="form-control" name="health.needs.drinksToday" value="${needs.drinksToday}"><small>${needs.drinksToday}/3</small></div>
-            </div>
             <hr>
             <h4>Зоны тела</h4>
             <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; margin-bottom: 15px;">
@@ -3827,6 +3834,16 @@ function refreshHealthPanel(data = currentCharacterData) {
     renderHealthTab(data, healthContainer);
     restoreSheetViewState(viewState);
 }
+
+window.adjustDailyNeed = function(key,amount) {
+    if (!currentCharacterCanEdit || sheetSaveBlocked || !['mealsToday','drinksToday'].includes(key) || ![-1,1].includes(amount)) return;
+    updateDataFromFields();
+    const health=currentCharacterData.health ||= {};
+    const needs=health.needs=normalizeDailyNeeds(health.needs);
+    needs[key]=Math.max(0,Math.min(3,needs[key]+amount));
+    refreshHealthPanel();
+    scheduleAutoSave();
+};
 
 window.adjustCharacterStress = async function(amount) {
     if (
