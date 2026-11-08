@@ -4,6 +4,7 @@ test('очередь сохраняет каждую запись источни
     const records=corpus();assert.equal(new Set(records.map(r=>r.id)).size,records.length);
     assert.ok(records.some(r=>r.kind==='contract'));assert.ok(records.some(r=>r.kind==='modification'));
     assert.ok(records.filter(r=>r.kind==='item').length>600);
+    assert.equal(records.filter(r=>r.kind==='artifact').length,95,'Артефакты берутся из отдельного справочника');
 });
 test('агент не может принять случай или сослаться на другую версию',()=>{
     const manifest={snapshotHash:'current',batches:[{id:'001',records:['item-1']}]};

@@ -5,7 +5,7 @@ const directory=path.join(root,'.private-testing','luna-audit');
 const dispositions=new Set(['candidate','scenario-proposed','needs-rule','not-tested']);
 function corpus(){
     const read=name=>JSON.parse(fs.readFileSync(path.join(root,'app/data',name),'utf8'));
-    const equipment=read('equipment_catalog.json'),creation=read('creation_rules.json');
+    const equipment=read('equipment_catalog.json'),creation=read('creation_rules.json'),world=read('world_rules.json');
     return [
         ...equipment.templates.map((data,index)=>({id:`item-${index}`,kind:'item',name:data.name,
             source:'app/data/equipment_catalog.json',pointer:`templates[${index}]`,data})),
@@ -13,6 +13,8 @@ function corpus(){
             source:'app/data/creation_rules.json',pointer:`recipes[${index}]`,data})),
         ...creation.modifications.map((data,index)=>({id:`mod-${index}`,kind:'modification',name:data.name||data.id,
             source:'app/data/creation_rules.json',pointer:`modifications[${index}]`,data})),
+        ...world.artifacts.map((data,index)=>({id:`artifact-${index}`,kind:'artifact',name:data.name,
+            source:'app/data/world_rules.json',pointer:`artifacts[${index}]`,data})),
         ...Object.entries(CASES).map(([id,data])=>({id:`contract-${id}`,kind:'contract',name:data.title,
             source:'tests/helpers/playtest_registry.cjs',pointer:id,data})),
     ];
@@ -32,9 +34,10 @@ function prompt(batch){return `Проверь пакет ${batch.id} на мод
 Если правило неизвестно, needs-rule; если не проверял, not-tested. Наличие функций или зелёного старого теста не означает приёмку.
 Отчёт JSON: {schema:1,batchId:"${batch.id}",snapshotHash:"${batch.snapshotHash}",model:"gpt-6-luna",executions:[{command,exitCode,observed}],results:[{recordId,disposition,title,rule,expected,observed,reproduction,evidence:[{path,line}],probe}]}. Одна строка results на каждую запись пакета; disposition только candidate/scenario-proposed/needs-rule/not-tested. Запрещены passed/confirmed/accepted. Найденная по коду проблема — кандидат до независимого воспроизведения. Не выдавай непроверенные записи за пройденные.
 Итоговый ответ короткий, с путями созданных файлов.`;}
-function prepare(size=12){
+function prepare(size=12,{scope='all'}={}){
     if(!Number.isInteger(size)||size<1||size>25)throw Error('Размер пакета: 1–25');
-    const id=crypto.randomUUID(),folder=path.join(directory,id),snapshotHash=codeVersion(),records=corpus();
+    if(!['all','artifacts'].includes(scope))throw Error('Неизвестная очередь');
+    const id=crypto.randomUUID(),folder=path.join(directory,id),snapshotHash=codeVersion(),records=corpus().filter(record=>scope==='all'||record.kind==='artifact');
     for(const name of ['batches','tasks','reports','probes'])fs.mkdirSync(path.join(folder,name),{recursive:true});
     const batches=[];
     for(let offset=0;offset<records.length;offset+=size){
@@ -43,11 +46,11 @@ function prepare(size=12){
         fs.writeFileSync(path.join(folder,'tasks',batch.id+'.md'),prompt(batch));
         batches.push({id:batch.id,records:batch.records.map(record=>record.id)});
     }
-    const manifest={schema:1,id,model:'gpt-6-luna',snapshotHash,createdAt:new Date().toISOString(),
-        coverage:'Исходный каталог, рецепты, модификации и семь контрактов; текущая БД и пользовательские шаблоны не экспортируются.',
-        counts:Object.fromEntries(['item','recipe','modification','contract'].map(kind=>[kind,records.filter(r=>r.kind===kind).length])),batches};
+    const manifest={schema:1,id,scope,model:'gpt-6-luna',snapshotHash,createdAt:new Date().toISOString(),
+        coverage:scope==='artifacts'?'95 исходных артефактов; каждое из трёх полей свойств требует отдельной сверки.':'Исходный каталог, артефакты, рецепты, модификации и семь контрактов; текущая БД и пользовательские шаблоны не экспортируются.',
+        counts:Object.fromEntries(['item','recipe','modification','artifact','contract'].map(kind=>[kind,records.filter(r=>r.kind===kind).length])),batches};
     fs.writeFileSync(path.join(folder,'manifest.json'),JSON.stringify(manifest,null,2));
-    fs.writeFileSync(path.join(directory,'CURRENT.json'),JSON.stringify({id},null,2));
+    fs.writeFileSync(path.join(directory,scope==='all'?'CURRENT.json':'CURRENT_ARTIFACTS.json'),JSON.stringify({id},null,2));
     return {folder,...manifest};
 }
 function validate(report,manifest){
@@ -65,8 +68,9 @@ function validate(report,manifest){
     }
     return report;
 }
-function collect(){
-    const {id}=JSON.parse(fs.readFileSync(path.join(directory,'CURRENT.json'),'utf8'));
+function collect(scope='all'){
+    if(!['all','artifacts'].includes(scope))throw Error('Неизвестная очередь');
+    const {id}=JSON.parse(fs.readFileSync(path.join(directory,scope==='all'?'CURRENT.json':'CURRENT_ARTIFACTS.json'),'utf8'));
     if(!/^[a-f0-9-]{36}$/.test(id))throw Error('Некорректный номер стенда');
     const folder=path.join(directory,id),manifest=JSON.parse(fs.readFileSync(path.join(folder,'manifest.json'),'utf8'));
     if(manifest.snapshotHash!==codeVersion())throw Error('Исходники изменились: подготовьте новую очередь');
@@ -83,9 +87,9 @@ function collect(){
     fs.writeFileSync(path.join(folder,'summary.json'),JSON.stringify(summary,null,2));return summary;
 }
 if(require.main===module){
-    try{const command=process.argv[2];if(command==='prepare'){const r=prepare(Number(process.argv[3]||12));console.log(JSON.stringify({folder:r.folder,counts:r.counts,batches:r.batches.length}));}
-        else if(command==='collect'){const r=collect();console.log(JSON.stringify({...r,results:undefined}));}
-        else throw Error('Команды: prepare [1–25] | collect');}
+    try{const command=process.argv[2];if(['prepare','prepare-artifacts'].includes(command)){const r=prepare(Number(process.argv[3]||12),{scope:command==='prepare'?'all':'artifacts'});console.log(JSON.stringify({folder:r.folder,counts:r.counts,batches:r.batches.length}));}
+        else if(['collect','collect-artifacts'].includes(command)){const r=collect(command==='collect'?'all':'artifacts');console.log(JSON.stringify({...r,results:undefined}));}
+        else throw Error('Команды: prepare [1–25] | collect | prepare-artifacts [1–25] | collect-artifacts');}
     catch(error){console.error(error.message);process.exitCode=1;}
 }
 module.exports={corpus,validate,prepare,collect};
