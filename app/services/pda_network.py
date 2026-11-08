@@ -81,6 +81,11 @@ def registry(lobby_id,location_id=None):
 
 
 def blocked(device,devices):
+    from app.services.artifact_effects import device_block_reason
+    character=device.get('character')
+    if character:
+        reason=device_block_reason(character.data or {},device.get('item'))
+        if reason:return reason
     if 'pda-b5' in device['mods']:return None
     weather=device['character'].lobby.weather_settings or {}
     from app.services.weather_rules import profile

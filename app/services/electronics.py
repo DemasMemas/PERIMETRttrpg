@@ -20,7 +20,9 @@ def state(item):
 
 def active(data):
     from app.services.portable_lights import walk
-    return any(is_dosimeter(item) and state(item)['on'] and state(item)['remaining_seconds']>0 for _,item in walk(data,True))
+    from app.services.artifact_effects import device_block_reason
+    return any(is_dosimeter(item) and state(item)['on'] and state(item)['remaining_seconds']>0
+        and not device_block_reason(data,item) for _,item in walk(data,True))
 
 
 def advance(data,seconds):
@@ -41,6 +43,9 @@ def preserve(current,incoming):
     previous={item.get('id'):state(item) for _,item in walk(current or {},True) if is_dosimeter(item) and item.get('id')}
     for _,item in walk(incoming,True):
         if is_dosimeter(item):item['deviceState']=deepcopy(previous.get(item.get('id'),state({})))
+        if (item.get('attributes') or {}).get('isActive'):
+            from app.services.artifact_effects import device_block_reason
+            if device_block_reason(incoming,item):item['attributes']['isActive']=False
 
 
 def templates():
@@ -69,6 +74,9 @@ def switch(item,data,on):
     """Таймер использует настоящее питание прибора, включая штатные фонари и КПК."""
     from app.services.exceptions import ValidationError
     from app.services.portable_lights import definition,pda_state,power,bindings
+    if on:
+        from app.services.artifact_effects import require_device_available
+        require_device_available(data,item)
     kind=definition(item)
     if kind=='pda':
         status=pda_state(item)

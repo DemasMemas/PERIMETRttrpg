@@ -2,6 +2,7 @@ import { Server } from './api.js';
 import { rememberEquipmentChoice } from './equipmentChoices.js';
 
 export function usesNightVision(data) {
+    if (data?._artifact_profile?.blocked_devices?.electronics?.length) return false;
     const helmet=data?.equipment?.helmet;
     if(helmet?.protectionDisabled)return false;
     const modules=(helmet?.installedModules||[]).filter(module=>!module.protectionDisabled);
@@ -28,9 +29,11 @@ export async function renderPortableLights(container,characterId,data,operate,is
             ? `${light.name} · ${light.activated?`${Math.ceil((light.remaining_seconds||0)/60)} мин осталось`:'не активирована'}${mount?` · ${mount}`:''}`
             : `${light.name} · ${light.uses_left}/10${mount?` · ${mount}`:''}${light.binding?` · ${light.binding.on?'включён':'выключен'}`:''}`;
         row.append(caption);
+        if (light.blocked_reason) {caption.textContent+=' · подавлен артефактом';caption.title=light.blocked_reason;}
         const button=(text,operation,extra={},disabled=false)=>{
             const control=document.createElement('button');control.type='button';control.className='btn btn-sm btn-secondary';
-            control.textContent=text;control.disabled=disabled || !ownTurn;
+            control.textContent=text;control.disabled=disabled || !ownTurn
+                || Boolean(light.blocked_reason && ['toggle','pda_toggle'].includes(operation) && !(light.kind==='pda'?light.pda_state?.on:light.binding?.on));
             control.dataset.lightOperation=operation;
             control.onclick=()=>operate({operation,path:light.path,source_id:light.id??null,...extra});row.append(control);
             return control;

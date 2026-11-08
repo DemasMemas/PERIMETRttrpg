@@ -183,8 +183,9 @@ def pda_state(item):
 
 
 def pda_ready(data):
+    from app.services.artifact_effects import device_block_reason
     return any(pda_state(item)['on'] and pda_state(item)['charge_percent']>0
-        for _,item in walk(data) if definition(item)=='pda')
+        and not device_block_reason(data,item) for _,item in walk(data) if definition(item)=='pda')
 
 
 def advance_pda(data,seconds):
@@ -203,8 +204,9 @@ def advance_pda(data,seconds):
     meta=(data.get('health') or {}).get('combatMeta') or {}
     charging=meta.get('pdaDynamo')
     if charging:
+        from app.services.artifact_effects import device_block_reason
         device=dynamo_device(data)
-        if not device:meta.pop('pdaDynamo',None)
+        if not device or device_block_reason(data,device):meta.pop('pdaDynamo',None)
         else:
             elapsed=max(0,float(charging.get('elapsed_seconds',0)))+seconds
             minutes=int(elapsed//60);charging['elapsed_seconds']=elapsed%60
@@ -354,6 +356,8 @@ def ready_sources(actor,*,objects=None):
     for binding in bindings(data):
         item=items.get(binding.get('id'))
         if not item or not binding.get('on'):continue
+        from app.services.artifact_effects import device_block_reason
+        if device_block_reason(data,item):continue
         if glow(item):
             if (item.get('glowState') or {}).get('remaining_seconds',0)<=0:continue
         elif (item.get('lightPower') or {}).get('uses_left',10)<=0:continue
@@ -522,6 +526,13 @@ def operate(character_id,user_id,payload):
     selected.setdefault('id',str(uuid4()));states=data.setdefault('health',{}).setdefault('combatMeta',{}).setdefault('portableLights',[])
     binding=next((item for item in states if item['id']==selected['id']),None)
     operation=payload.get('operation');cost=0
+    from app.services.artifact_effects import require_device_available
+    from app.services.electronics import state as dosimeter_state
+    switching_off=(operation=='dosimeter_toggle' and dosimeter_state(selected)['on']
+        or operation=='pda_toggle' and pda_state(selected)['on']
+        or operation=='toggle' and (binding and binding.get('on') or any(item is selected for _,item in nvg_items(data)) and nvg_on(selected)))
+    if not switching_off and operation not in {'prepare','stow','battery','dosimeter_battery','pda_battery','pda_hold','pda_stow','pda_dynamo_stop'}:
+        require_device_available(data,selected)
     if definition(selected)=='dosimeter':
         if selected.get('quantity',1)!=1:raise ValidationError('Разделите стопку дозиметров')
         from app.services.electronics import state as device_state,DOSIMETER_SECONDS

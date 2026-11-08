@@ -10233,6 +10233,8 @@ async function useItem(item, itemPath, options = {}) {
         return openDosimeter({characterId:currentCharacterId,itemId:item.id,itemPath,operate:payload=>window.operatePortableLight(payload)});
     }
     if (item.category === 'misc' && item.name === 'КПК') {
+        const blocked=currentCharacterData?._artifact_profile?.blocked_devices?.electronics;
+        if (blocked?.length) {showNotification(`КПК не работает: влияние артефакта «${blocked[0]}»`, 'system');return;}
         return openPdaShell({item, findItem: id => id
                 ? findInventoryItemById(currentCharacterData, id)
                 : (getItemByPath(itemPath)?.name === 'КПК' ? {item: getItemByPath(itemPath), path: itemPath} : null),
@@ -12974,6 +12976,18 @@ function formatBloodType(value) {
 }
 
 function toggleDevice(item, itemPath) {
+    if (!item.attributes?.isActive) {
+        const blocked=currentCharacterData?._artifact_profile?.blocked_devices || {};
+        const attrs=item.attributes || {},name=String(item.name || '').toLowerCase();
+        const radio=name.includes('рация') || name.includes('радиостанция') || name==='радио' || attrs.type==='radio' || attrs.device_kind==='radio';
+        const detector=item.category==='detector' || name.includes('детектор') || ['anomaly','artifact'].includes(attrs.type);
+        const electronic=radio || detector || attrs.power!==undefined || attrs.night_vision
+            || (item.installedModules || []).some(module=>module.slotType==='battery');
+        const reason=(blocked.electronics && electronic && blocked.electronics)
+            || (blocked.compass && (name.includes('компас') || attrs.device_kind==='compass') && blocked.compass)
+            || (blocked.radio && radio && blocked.radio) || (blocked.detector && detector && blocked.detector);
+        if (reason) {showNotification(`${item.name} не работает: влияние артефакта «${reason[0]}»`, 'system');return;}
+    }
     if (item.attributes?.isActive === undefined) item.attributes.isActive = false;
 
     if (!item.attributes.isActive) {

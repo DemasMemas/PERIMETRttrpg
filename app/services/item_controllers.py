@@ -204,6 +204,9 @@ def prepare(actor,data,payload,user_id):
     operation=payload.get('operation');cost={'install':5,'disarm':3,'detonate':1,'bind':0,'timer':3,'activate':3}.get(operation)
     if cost is None:raise ValidationError('Неизвестное действие взрывателя')
     character=actor.character
+    if operation!='disarm':
+        from app.services.artifact_effects import require_device_available
+        require_device_available(data,{'name':'Электронное устройство управления','attributes':{'device_kind':'timer'}})
     if operation=='disarm' and payload.get('attachment_id'):
         host,path,item=_find(character.lobby_id,payload['attachment_id']);local=host['local']
         if host['carrier']:

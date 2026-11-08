@@ -16252,7 +16252,7 @@ class CombatService:
             weapon_accuracy = CombatService._coerce_int(
                 weapon.get('accuracy', (weapon.get('attributes') or {}).get('accuracy')), 0
             )
-            module_accuracy=conditional_accuracy(weapon,fire_mode=fire_mode,distance=target_distance,
+            module_accuracy=conditional_accuracy(weapon,character_data=data,fire_mode=fire_mode,distance=target_distance,
                                                  posture=CombatService._posture_key(character),nvg=uses_nvg(data))
             weapon_accuracy=weapon_stat(weapon,'accuracy',weapon_accuracy)+module_accuracy
             if fire_mode=='aimed':weapon_accuracy+=modification_rule(weapon,'aimed_accuracy')

@@ -100,6 +100,9 @@ def account_status(character_id, user_id,payload=None):
 
 
 def device_status(character,device):
+    from app.services.artifact_effects import device_block_reason
+    reason=device_block_reason(character.data or {},device)
+    if reason:return {'account':None,'unavailable':reason}
     account = _account(character,device)
     from app.services.pda_profiles import public
     profiles=public(device) if device else {}
@@ -114,6 +117,8 @@ def account_action(character_id, user_id, operation, payload):
     if not isinstance(payload,dict):raise ValidationError('Выберите действие с аккаунтом КПК')
     device=_device(character,payload)
     if device is not None and operation in {'login','register','save_notes','switch_profile','move_file'}:
+        from app.services.artifact_effects import require_device_available
+        require_device_available(character.data or {},device)
         from app.services.portable_lights import pda_state
         power=pda_state(device)
         if not power['on'] or power['charge_percent']<=0:raise ValidationError('Включите исправный заряженный КПК')

@@ -79,8 +79,10 @@ def save(record):flag_modified(record['owner'],record['field'])
 
 
 def powered(record):
+    from app.services.artifact_effects import device_block_reason
     state=pda_state(record['item'])
-    return state['on'] and state['charge_percent']>0
+    character=record.get('character')
+    return state['on'] and state['charge_percent']>0 and not device_block_reason(character.data if character else {},record['item'])
 
 
 def cipher(record):

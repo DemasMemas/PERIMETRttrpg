@@ -50,6 +50,42 @@ def _signed(text, pattern):
     return int(match.group(1)) if match else 0
 
 
+def device_blocks(character_data):
+    """Объявленные запреты действуют только от надетых артефактов."""
+    result={}
+    for artifact in equipped_artifacts(character_data):
+        text=str((artifact.get('attributes') or {}).get('negative_effect') or '').casefold()
+        text=text.partition('не позволяет использовать ')[2]
+        for kind,needle in (('electronics','электроприбор'),('compass','компас'),('radio','раци'),('detector','детектор')):
+            if needle in text:result.setdefault(kind,[]).append(artifact.get('name') or 'Артефакт')
+    return result
+
+
+def device_block_reason(character_data,item):
+    from app.services.portable_lights import definition
+    if not isinstance(item,dict):return None
+    attrs=item.get('attributes') or {};name=str(item.get('name') or '').casefold()
+    blocks=device_blocks(character_data);kinds=[]
+    if 'компас' in name or attrs.get('device_kind')=='compass':kinds.append('compass')
+    if re.search(r'\bраци[яию]',name) or 'радиостанция' in name or name=='радио' or attrs.get('type')=='radio' or attrs.get('device_kind')=='radio':kinds.append('radio')
+    if item.get('category')=='detector' or 'детектор' in name or attrs.get('type') in {'anomaly','artifact'}:kinds.append('detector')
+    electronic=(definition(item) in {'hand','improved','head','module','pda','dosimeter'}
+        or item.get('slotType')=='nvg' or attrs.get('night_vision') or attrs.get('laser') or attrs.get('power') is not None
+        or attrs.get('device_kind') in {'timer','remote_detonator'}
+        or any(m.get('slotType')=='battery' for m in item.get('installedModules') or [] if isinstance(m,dict))
+        or any(kind in {'radio','detector'} for kind in kinds))
+    if electronic:kinds.append('electronics')
+    for kind in kinds:
+        if blocks.get(kind):return f'{item.get("name") or "Прибор"} не работает: влияние артефакта «{blocks[kind][0]}»'
+    return None
+
+
+def require_device_available(character_data,item):
+    from app.services.exceptions import ValidationError
+    reason=device_block_reason(character_data,item)
+    if reason:raise ValidationError(reason)
+
+
 def _percent(text, pattern):
     match = re.search(pattern + r'\s*([+-]\d+)%', text, re.IGNORECASE)
     return int(match.group(1)) if match else 0
@@ -96,6 +132,7 @@ def artifact_passive_profile(character_data):
         'bleeding_severity': 0, 'radiation_per_movement': 0,
         'health_per_movement': 0, 'pain_per_movement': 0, 'pain_relief_per_round': 0,
         'healing_multiplier': 1.0,
+        'blocked_devices':device_blocks(character_data),
         'protection': {key: 0 for key in ('physical', 'chemical', 'thermal', 'electric', 'radiation', 'psi')},
     }
     health = character_data.get('health') if isinstance(character_data, dict) else {}
