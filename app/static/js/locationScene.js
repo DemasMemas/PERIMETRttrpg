@@ -850,6 +850,7 @@ const objectInteractions = {
 };
 
 const interactionRequirements = {
+    open_lock: {requires_actor:true,max_distance:1,checks:[]},
     drop_down: { requires_actor: true, max_distance: 1 },
     level_up: { requires_actor: true, max_distance: 1 },
     level_down: { requires_actor: true, max_distance: 1 },
@@ -8966,6 +8967,7 @@ function getObjectActions(object) {
     if ((object?.type === 'corpse' || object?.type === 'body' || object?.properties?.is_corpse || hasContainerContents) && !actions.includes('open_container')) {
         actions.push('open_container');
     }
+    if(object.properties?.locked)return [...actions.filter(action=>!['toggle_door','open_container'].includes(action)),'open_lock'];
     return actions;
 }
 
@@ -9009,6 +9011,7 @@ function getActionRequirement(object, actionKey) {
 }
 
 function getStructureActionLabel(object, actionKey) {
+    if(actionKey==='open_lock')return object.properties?.lock_jammed?'Замок заклинило':'Вскрыть замок';
     if(actionKey==='trap_mask')return 'Замаскировать · 5 ОД';
     if(actionKey==='trap_defuse')return 'Обезвредить · 2 ОД';
     if(actionKey==='trap_recover')return 'Подобрать';
@@ -9032,6 +9035,7 @@ function getStructureActionLabel(object, actionKey) {
 }
 
 function getStructureActionIcon(actionKey) {
+    if(actionKey==='open_lock')return '⚿';
     if(actionKey==='trap_mask')return '◌';
     if(actionKey==='trap_defuse')return '⚒';
     if(actionKey==='trap_recover')return '↑';
@@ -10422,6 +10426,14 @@ async function executeStructureAction(object, actionKey, actorCharacterId = pend
         showNotification('Слишком далеко до объекта', 'system');
         return false;
     }
+    if(actionKey==='open_lock'){
+        try{
+            const {showObjectLock}=await import('./objectLocks.js');
+            await showObjectLock({lobbyId:window.currentLobbyId,characterId:actorCharacterId,object,
+                inCombat:combatState?.status==='active',onObject:updateLocationObject});
+            hideStructureInteraction();return true;
+        }catch(error){showNotification(error.message,'system');return false;}
+    }
     if(['move_crafted_cover','recover_crafted_cover'].includes(actionKey)){
         try{
             const character=await Server.getCharacter(actorCharacterId);
@@ -11178,11 +11190,11 @@ function showObjectContextMenu(clientX, clientY, object) {
             const isOpen = Boolean(object.properties?.is_open);
             actions.push({
                 label: object.type === 'hatch' ? (isOpen ? 'Закрыть люк' : 'Открыть люк') : (isOpen ? 'Закрыть дверь' : 'Открыть дверь'),
-                action: () => object.type === 'hatch'
-                    ? executeStructureAction(object,'toggle_door',getCurrentInteractionActor()?.model?.userData.characterId)
-                    : updateInteractiveObject(object.id, { properties: { is_open: !isOpen } })
+                action: () => executeStructureAction(object,'toggle_door',getCurrentInteractionActor()?.model?.userData.characterId)
             });
         }
+        if(action==='open_lock')actions.push({label:getStructureActionLabel(object,action),
+            action:()=>executeStructureAction(object,action,getCurrentInteractionActor()?.model?.userData.characterId)});
         if (action === 'toggle_fire') {
             actions.push({
                 label: object.properties?.is_lit ? 'Потушить' : 'Зажечь',
@@ -14697,6 +14709,10 @@ export function getSelectedLocationEditorAsset() {
             hp:source.properties?.cover_hp??source.properties?.cover_max_hp??COVER_CLASS_DEFAULTS[source.properties?.cover_class||'medium']?.maxHp??COVER_CLASS_DEFAULTS.medium.maxHp,
             protection:source.properties?.cover_physical_protection??source.properties?.cover_base_physical_protection??COVER_CLASS_DEFAULTS[source.properties?.cover_class||'medium']?.protection??COVER_CLASS_DEFAULTS.medium.protection,
         } : null,
+        lock:editorSelection.kind==='structure'&&(['door','window','hatch','chest','box','military_crate','shelf'].includes(source?.type)
+            ||Array.isArray(source?.properties?.contents)&&!['ground_item','corpse','body'].includes(source?.type)
+            &&!source?.properties?.is_ground_item&&!source?.properties?.is_corpse&&!source?.properties?.portable_station)
+            ?{locked:Boolean(source.properties?.locked),difficulty:source.properties?.lock_difficulty??8,jammed:Boolean(source.properties?.lock_jammed)}:null,
         hidden: Boolean(editorSelection.kind === 'structure' ? source?.properties?.gm_hidden : source?.gm_hidden) } : null;
 }
 
@@ -15863,6 +15879,16 @@ export async function setSelectedLocationTraversalCategory(category) {
     } catch(error) {
         showNotification(error.message||'Не удалось изменить проходимость','system');return false;
     }
+}
+export async function setSelectedLocationLock({locked,difficulty,jammed}) {
+    if(!window.isGM||editorSelections.length!==1||editorSelection?.kind!=='structure'||typeof locked!=='boolean'
+        ||typeof jammed!=='boolean'||![3,5,8,10,13,15,18].includes(difficulty))return false;
+    try{return await runLocationObjectCommand(async()=>{
+        const source=getSelectedEditorSource();if(!source)return false;
+        const updated=await editorUpdateObject(window.currentLobbyId,source.id,{properties:{
+            locked,lock_difficulty:difficulty,lock_jammed:jammed,...(locked?{is_open:false}:{})}});
+        updateLocationObject(updated);notifyEditorSelection();return true;
+    });}catch(error){showNotification(error.message||'Не удалось сохранить замок','system');return false;}
 }
 export async function setSelectedLocationCover({coverClass,maxHp,hp,protection}) {
     if (!window.isGM||editorSelections.length!==1||editorSelection?.kind!=='structure'
@@ -20080,6 +20106,7 @@ function closeContainerInteractionMenu() {
 }
 
 async function showContainerInteractionMenu(object) {
+    if(object.properties?.locked&&!window.isGM){showNotification('Объект заперт. Сначала вскройте замок','system');return;}
     closeContainerInteractionMenu();
     containerExchangeTarget = object;
 

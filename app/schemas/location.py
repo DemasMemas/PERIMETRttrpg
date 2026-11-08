@@ -1,4 +1,4 @@
-from marshmallow import Schema, fields, validate
+from marshmallow import Schema, fields, validate, post_dump
 from app.utils.defaults import default_location_lighting
 
 class LocationCreateSchema(Schema):
@@ -32,6 +32,14 @@ class LocationSchema(Schema):
     updated_at = fields.DateTime(dump_only=True)
 
 class LocationObjectSchema(Schema):
+    def __init__(self,*args,reveal_locked=False,**kwargs):
+        super().__init__(*args,**kwargs)
+        self.reveal_locked=reveal_locked
+
+    @post_dump
+    def protect_contents(self,data,**kwargs):
+        return data if self.reveal_locked else public_location_objects(data)
+
     revision = fields.Int(dump_only=True)
     id = fields.Int(dump_only=True)
     location_id = fields.Int(load_only=True)
@@ -40,3 +48,14 @@ class LocationObjectSchema(Schema):
     tile_x = fields.Int()
     tile_y = fields.Int()
     properties = fields.Dict()
+
+
+def public_location_objects(value):
+    """Редактирование и история остаются полными; сетевой общий снимок скрывает закрытые вещи."""
+    if isinstance(value,list):return [public_location_objects(item) for item in value]
+    if not isinstance(value,dict):return value
+    result={key:public_location_objects(item) for key,item in value.items()}
+    props=result.get('properties')
+    if isinstance(props,dict) and props.get('locked') and 'contents' in props:
+        result['properties']={**props,'contents':[],'contents_hidden':True}
+    return result

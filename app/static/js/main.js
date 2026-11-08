@@ -69,7 +69,7 @@ import {
     setLocationAssetResizeAxis, getLocationAssetResizeState,
     deleteSelectedLocationAsset, toggleSelectedLocationAssetsHidden, toggleSelectedLocationFire,
     updateSelectedLocationAssetDetails, previewSelectedLocationLamp, updateSelectedLocationRoof, generateSelectedLocationRoof,
-    setSelectedLocationTraversalCategory, setSelectedLocationCover,
+    setSelectedLocationTraversalCategory, setSelectedLocationCover, setSelectedLocationLock,
     setLocationDarknessOverlayVisible,
 } from './locationScene.js';
 import { getUserColorHex, updateMyColor } from './colors.js';
@@ -1064,6 +1064,7 @@ window.enterLocation = async function(locationId, { scoutView = null } = {}) {
                     const keepPreciseOpen = assetInspector.querySelector('.location-asset-precise')?.open || false;
                     const keepRoofOpen=assetInspector.querySelector('[data-roof-section-fields]')?.open||false;
                     const keepCoverOpen=assetInspector.querySelector('[data-selected-cover-fields]')?.open||false;
+                    const keepLockOpen=assetInspector.querySelector('[data-selected-lock-fields]')?.open||false;
                     assetInspector.replaceChildren();
                     if (!selection) {
                         const hint = document.createElement('p');
@@ -1129,6 +1130,19 @@ window.enterLocation = async function(locationId, { scoutView = null } = {}) {
                                 <label>Защита, % <input class="form-control" type="number" min="0" max="100" step="1" data-cover-field="protection"></label>
                             </div>
                             <button type="button" class="btn btn-secondary" data-cover-save>Сохранить укрытие</button>
+                        </details>
+                        <details class="location-cover-settings" data-selected-lock-fields hidden>
+                            <summary>Настройка замка</summary>
+                            <div class="location-cover-fields">
+                                <label><input type="checkbox" data-lock-setting="locked"> Заперт</label>
+                                <label>Сложность <select class="form-control" data-lock-setting="difficulty">
+                                    <option value="3">Очень лёгкий · 3</option><option value="5">Лёгкий · 5</option>
+                                    <option value="8">Средний · 8</option><option value="10">Тяжёлый · 10</option>
+                                    <option value="13">Очень тяжёлый · 13</option><option value="15">Безумный · 15</option>
+                                    <option value="18">Невозможный · 18</option>
+                                </select></label>
+                                <label><input type="checkbox" data-lock-setting="jammed"> Заклинило</label>
+                            </div><button type="button" class="btn btn-secondary" data-lock-save>Сохранить замок</button>
                         </details>
                         <div class="location-asset-resize-tools" data-resize-tools hidden>
                             <strong data-resize-status></strong>
@@ -1202,6 +1216,22 @@ window.enterLocation = async function(locationId, { scoutView = null } = {}) {
                                     hp: read('hp'), maxHp: read('maxHp'), protection: read('protection'),
                                 })) showNotification('Укрытие обновлено', 'success');
                             } finally { if (button.isConnected) button.disabled = false; }
+                        };
+                    }
+                    const lockFields=assetInspector.querySelector('[data-selected-lock-fields]');
+                    lockFields.hidden=!selection.lock||selection.selectedCount!==1;
+                    if(selection.lock&&selection.selectedCount===1){
+                        lockFields.open=keepLockOpen;
+                        for(const [key,value]of Object.entries(selection.lock)){
+                            const input=lockFields.querySelector(`[data-lock-setting="${key}"]`);
+                            if(input.type==='checkbox')input.checked=Boolean(value);else input.value=value;
+                        }
+                        lockFields.querySelector('[data-lock-save]').onclick=async event=>{
+                            const button=event.currentTarget;button.disabled=true;
+                            try{await setSelectedLocationLock({locked:lockFields.querySelector('[data-lock-setting="locked"]').checked,
+                                difficulty:Number(lockFields.querySelector('[data-lock-setting="difficulty"]').value),
+                                jammed:lockFields.querySelector('[data-lock-setting="jammed"]').checked});}
+                            finally{if(button.isConnected)button.disabled=false;}
                         };
                     }
                     assetInspector.querySelector('[data-asset-position]').textContent = `Клетка ${Math.floor(selection.x)}, ${Math.floor(selection.z)}`;
@@ -2133,18 +2163,33 @@ if (socket) {
             });
         }
     });
-    socket.on('location_editor_objects_changed', (data) => {
+    const hydrateLockedObjects=async data=>{
+        if(!window.isGM)return data;
+        const hydrate=async object=>{
+            if(!object?.properties?.contents_hidden)return object;
+            try{return await Server.getLocationObject(window.currentLobbyId,object.id);}catch{return object;}
+        };
+        return {...data,...(data.object?{object:await hydrate(data.object)}:{}),
+            ...(Array.isArray(data.objects)?{objects:await Promise.all(data.objects.map(hydrate))}:{})};
+    };
+    socket.on('location_editor_objects_changed', async (data) => {
         if (Number(data.location_id) === Number(getCurrentLocationId())) {
+            data=await hydrateLockedObjects(data);
+            if(Number(data.location_id)!==Number(getCurrentLocationId()))return;
             import('./locationScene.js').then(module => module.applyLocationEditorObjectsChange(data));
         }
     });
-    socket.on('location_objects_changed', (data) => {
+    socket.on('location_objects_changed', async (data) => {
         if (Number(data.location_id) === Number(getCurrentLocationId())) {
+            data=await hydrateLockedObjects(data);
+            if(Number(data.location_id)!==Number(getCurrentLocationId()))return;
             import('./locationScene.js').then(module => module.receiveLocationObjectEvent('applyLocationObjectsChange', data));
         }
     });
-    socket.on('location_object_created', (data) => {
+    socket.on('location_object_created', async (data) => {
         if (Number(data.location_id) === Number(getCurrentLocationId())) {
+            data=await hydrateLockedObjects(data);
+            if(Number(data.location_id)!==Number(getCurrentLocationId()))return;
             import('./locationScene.js').then(module => module.receiveLocationObjectEvent('addLocationObject', data.object));
         }
     });
@@ -2153,8 +2198,10 @@ if (socket) {
             import('./locationScene.js').then(module => module.receiveLocationObjectEvent('removeLocationObject', data.object_id));
         }
     });
-    socket.on('location_object_updated', (data) => {
+    socket.on('location_object_updated', async (data) => {
         if (Number(data.location_id) === Number(getCurrentLocationId())) {
+            data=await hydrateLockedObjects(data);
+            if(Number(data.location_id)!==Number(getCurrentLocationId()))return;
             import('./locationScene.js').then(module => module.receiveLocationObjectEvent('updateLocationObject', data.object));
         }
     });

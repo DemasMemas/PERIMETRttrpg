@@ -31,7 +31,7 @@ def apply_object_edit(location_id, lobby_id, data):
     terrain_cells, darkness = data.get('cells', []), data.get('darkness', [])
     if not isinstance(objects, list) or not isinstance(tiles, list) or len(objects) > 5000 or len(tiles) > 5000:
         raise ValidationError('Invalid object edit')
-    schema = LocationObjectSchema()
+    schema = LocationObjectSchema(reveal_locked=True)
     # Existing saves may contain NULL in these nullable model columns. History
     # must round-trip them rather than turn restoration into a validation error.
     for field in ('name', 'type', 'properties'):
@@ -202,7 +202,10 @@ def apply_object_edit(location_id, lobby_id, data):
                 restored_revisions.append((obj, revision + 1))
     from app.services.weather_rules import unhide,unhide_tile
     peers=[o for o in existing.values() if o.id not in removed]+[o for o in saved if o.id not in existing]
-    for obj in saved:unhide(location,obj,objects=peers)
+    from app.services.object_locks import validate_settings
+    for obj in saved:
+        validate_settings(obj,obj.properties or {})
+        unhide(location,obj,objects=peers)
     for item in tiles:
         x,z=item['x'],item['z']
         unhide_tile(location,next_tiles[z][x],x,z,peers)

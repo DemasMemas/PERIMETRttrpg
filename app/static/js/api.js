@@ -198,6 +198,14 @@ export const Server = {
             method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload),
         });
     },
+    async getLocationObject(lobbyId,objectId) {
+        return apiFetch(`/lobbies/${lobbyId}/locations/objects/${objectId}`);
+    },
+    async attemptObjectLock(lobbyId,objectId,payload) {
+        return apiFetch(`/lobbies/${lobbyId}/locations/objects/${objectId}/lock`,{
+            method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload),
+        });
+    },
     async performSocialCheck(characterId,payload) {
         return apiFetch(`/lobbies/characters/${characterId}/social-check`, {
             method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload),

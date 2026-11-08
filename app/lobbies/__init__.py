@@ -2629,7 +2629,7 @@ def get_location_detail(lobby_id, location_id, lobby, participant):
         db.session.commit()
 
     objects = LocationObject.query.filter_by(location_id=location.id).all()
-    obj_schema = LocationObjectSchema(many=True)
+    obj_schema = LocationObjectSchema(many=True,reveal_locked=participant.user_id==lobby.gm_id)
     from app.services.traps import projections
 
     return jsonify({
@@ -2857,6 +2857,8 @@ def add_location_object(lobby_id, location_id, lobby):
         tile_y=data['tile_y'],
         properties=data.get('properties', {})
     )
+    from app.services.object_locks import validate_settings
+    validate_settings(obj,obj.properties)
     db.session.add(obj)
     from app.services.weather_rules import unhide
     unhide(location,obj)
@@ -2866,7 +2868,7 @@ def add_location_object(lobby_id, location_id, lobby):
         'location_id': location_id,
         'object': payload
     }, room=f"location_{location_id}")
-    return jsonify(payload), 201
+    return jsonify(LocationObjectSchema(reveal_locked=True).dump(obj)), 201
 
 
 @lobbies_bp.route('/<int:lobby_id>/locations/<int:location_id>/object-edits', methods=['POST'])
@@ -2875,7 +2877,8 @@ def add_location_object(lobby_id, location_id, lobby):
 def edit_location_objects(lobby_id, location_id, lobby):
     from app.services.location_editor_history import apply_object_edit
     payload = apply_object_edit(location_id, lobby_id, request.get_json())
-    socketio.emit('location_editor_objects_changed', payload, room=f'location_{location_id}')
+    from app.schemas.location import public_location_objects
+    socketio.emit('location_editor_objects_changed', public_location_objects(payload), room=f'location_{location_id}')
     return jsonify(payload)
 
 
@@ -3022,18 +3025,47 @@ def change_location_objects_batch(lobby_id, location_id, lobby):
     phase = perf_counter()
     from app.services.weather_rules import unhide
     for obj in created:unhide(location,obj)
+    from app.services.object_locks import validate_settings
+    for obj in created:validate_settings(obj,obj.properties or {})
     db.session.commit()
     timings['persist_ms'] = (perf_counter() - phase) * 1000
     phase = perf_counter()
-    payload = {'location_id': location_id, 'objects': schema.dump(created, many=True),
+    payload = {'location_id': location_id, 'objects': LocationObjectSchema(reveal_locked=True).dump(created, many=True),
                'deleted_ids': [o.id for o in deleted]}
     timings['serialize_ms'] = (perf_counter() - phase) * 1000
     payload['timings'] = timings
     phase = perf_counter()
-    socketio.emit('location_objects_changed', payload, room=f'location_{location_id}')
+    from app.schemas.location import public_location_objects
+    socketio.emit('location_objects_changed', public_location_objects(payload), room=f'location_{location_id}')
     # Enqueue time is server work, not a claim about delivery latency.
     timings['emit_ms'] = (perf_counter() - phase) * 1000
     return jsonify(payload), 201 if request.method == 'POST' else 200
+
+
+@lobbies_bp.route('/<int:lobby_id>/locations/objects/<int:object_id>', methods=['GET'])
+@jwt_required()
+@requires_participant
+def get_location_object(lobby_id,object_id,lobby,participant):
+    obj=db.session.get(LocationObject,object_id)
+    if not obj or obj.location.lobby_id!=lobby_id:raise NotFoundError('Объект не найден')
+    return jsonify(LocationObjectSchema(reveal_locked=participant.user_id==lobby.gm_id).dump(obj))
+
+
+@lobbies_bp.route('/<int:lobby_id>/locations/objects/<int:object_id>/lock',methods=['POST'])
+@jwt_required()
+@requires_participant
+def attempt_object_lock(lobby_id,object_id,lobby,participant):
+    from app.services.object_locks import attempt
+    payload=request.get_json(silent=True) or {}
+    if not isinstance(payload,dict):raise ValidationError('Некорректная попытка вскрытия')
+    character,actor,obj,result=attempt(lobby_id,object_id,payload.get('character_id'),participant.user_id,payload)
+    if not result['duplicate']:
+        emit_character_update({'character_id':character.id,'updates':{'data':character.data_snapshot()},'source':'object_lock'})
+        socketio.emit('location_object_updated',{'location_id':obj.location_id,'object':LocationObjectSchema().dump(obj)},room=f'location_{obj.location_id}')
+        if LocationCombatState.query.filter_by(location_id=obj.location_id,status='active').first():
+            socketio.emit('combat_state_updated',CombatService.get_state(obj.location_id,participant.user_id),room=f'location_{obj.location_id}')
+    return jsonify({'operation':result,'data':character.data_snapshot(),
+        'object':LocationObjectSchema(reveal_locked=participant.user_id==lobby.gm_id).dump(obj)})
 
 
 @lobbies_bp.route('/<int:lobby_id>/locations/objects/<int:object_id>', methods=['DELETE'])
@@ -3069,6 +3101,12 @@ def update_location_object(lobby_id, object_id, lobby, participant):
     if not isinstance(data, dict):
         raise ValidationError('Object update must be an object')
     properties = data.get('properties') if isinstance(data.get('properties'), dict) else {}
+    from app.services.object_locks import LOCK_FIELDS,validate_settings
+    if LOCK_FIELDS.intersection(properties):
+        if participant.user_id!=lobby.gm_id:raise PermissionDenied('Настраивать замок может только ГМ')
+        validate_settings(obj,properties)
+    if properties.get('is_open') and properties.get('locked',(obj.properties or {}).get('locked')):
+        raise ValidationError('Замок закрыт. Сначала вскройте его')
     cover_fields = {'cover_class', 'cover_max_hp', 'cover_hp',
                     'cover_base_physical_protection', 'cover_physical_protection'}
     if cover_fields & properties.keys():
@@ -3091,10 +3129,10 @@ def update_location_object(lobby_id, object_id, lobby, participant):
                 or type(base_protection) is not int or not 0 <= base_protection <= 100
                 or type(protection) is not int or not 0 <= protection <= base_protection):
             raise ValidationError('Проверьте ОЗ и защиту укрытия')
-    if obj.type == 'hatch':
+    if obj.type in {'hatch','door','window'}:
         is_gm = participant.user_id == lobby.gm_id
         if not is_gm and (set(data) - {'properties','actor_character_id'} or set(properties) != {'is_open'}):
-            raise PermissionDenied('Players can only open or close hatches')
+            raise PermissionDenied('Игрок может только открыть или закрыть объект')
         if 'is_open' in properties:
             if type(properties['is_open']) is not bool:
                 raise ValidationError('is_open must be a boolean')
@@ -3113,15 +3151,14 @@ def update_location_object(lobby_id, object_id, lobby, participant):
                 level = level_of(obj)
                 actor_level = actor.floor_level or 0
                 footprint = CombatService._object_footprint_tiles(obj)
-                if actor_level not in {level,level-1} or not footprint or min(max(abs(actor.pos_x-x),abs(actor.pos_y-y)) for x,y in footprint) > 1:
-                    raise ValidationError('Too far from hatch')
-                if actor_level == level-1 and not any(o.type == 'ladder' and level_of(o) == actor_level
+                allowed_levels={level,level-1} if obj.type=='hatch' else {level}
+                if actor_level not in allowed_levels or not footprint or min(max(abs(actor.pos_x-x),abs(actor.pos_y-y)) for x,y in footprint) > 1:
+                    raise ValidationError('Подойдите к объекту на доступном этаже')
+                if obj.type=='hatch' and actor_level == level-1 and not any(o.type == 'ladder' and level_of(o) == actor_level
                         and (o.properties or {}).get('building_id') == (obj.properties or {}).get('building_id')
                         and contains(obj,o.tile_x+.5+(o.properties or {}).get('offset_x',0),o.tile_y+.5+(o.properties or {}).get('offset_z',0))
                         for o in LocationObject.query.filter_by(location_id=location.id).all()):
-                    raise ValidationError('A ladder is required to reach the hatch from below')
-                if (obj.properties or {}).get('locked') and properties['is_open']:
-                    raise ValidationError('Hatch is locked')
+                    raise ValidationError('Чтобы достать люк снизу, нужна лестница')
                 if not is_gm and (obj.properties or {}).get('gm_hidden'):
                     raise PermissionDenied('Hidden hatch cannot be used')
     if obj.type in {'ceiling_bulb', 'wall_bulb'} and participant.user_id != lobby.gm_id:
@@ -3183,7 +3220,7 @@ def update_location_object(lobby_id, object_id, lobby, participant):
         'location_id': location.id,
         'object': payload
     }, room=f"location_{location.id}")
-    return jsonify(payload), 200
+    return jsonify(LocationObjectSchema(reveal_locked=participant.user_id==lobby.gm_id).dump(obj)), 200
 
 
 @lobbies_bp.route('/<int:lobby_id>/locations/<int:location_id>/teams', methods=['GET', 'PUT'])

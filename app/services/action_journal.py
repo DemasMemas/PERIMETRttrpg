@@ -99,6 +99,7 @@ def entries(character):
 
 def record(actor, values, before, result=None, error=None):
     from app.services.combat import ACTION_CATALOG
+    if isinstance(result,tuple) and result and isinstance(result[-1],dict):result=result[-1]
     result = result if isinstance(result, dict) else getattr(result,'result',None)
     data = deepcopy(actor.character.data or {})
     meta = data.setdefault('health', {}).setdefault('combatMeta', {})
@@ -107,14 +108,14 @@ def record(actor, values, before, result=None, error=None):
     action_id = values.get('resume_pending_action_id') or values.get('pending_action_id') or payload.get('deferred_action_id') or payload.get('operation_id')
     existing = next((item for item in history if action_id and item['id'] == action_id), None)
     # Повторное исполнение уже принятого идентификатора не создаёт второй исход.
-    if existing and error:
+    if existing and (error or result and result.get('duplicate')):
         return
     pending = bool(result and result.get('pending_action'))
     key = values.get('action_key') or ('move' if 'new_x' in values else values.get('_journal_kind', 'action'))
     label = next((item['label'] for item in ACTION_CATALOG if item['key'] == key),
                  {'move':'Перемещение','end_turn':'Конец хода','end_combat':'Конец боя',
                   'weapon_grip':'Смена хвата','consumable_use':'Применение предмета','medical_procedure':'Медицинская процедура',
-                  'equipment_care':'Обработка перчаток','auto_injector':'Автоинъектор',
+                  'equipment_care':'Обработка перчаток','auto_injector':'Автоинъектор','object_lock':'Вскрытие замка',
                   'spend_resources':'Расход ресурсов','portable_light':'Фонарь','body_transport':'Переноска'}.get(key, 'Действие'))
     if key=='portable_light':
         label={'pda_profile':'Переключение профиля КПК','pda_wipe':'Очистка КПК'}.get(payload.get('operation'),label)
@@ -140,6 +141,10 @@ def record(actor, values, before, result=None, error=None):
     if result:
         from app.services.combat import CombatService
         summaries = [CombatService.format_attack_summary(result)]
+        if key=='object_lock':
+            summaries.append(f"{result.get('object_name','Объект')}: к20 {result.get('roll','—')} против СЛ {result.get('difficulty','—')} · "
+                +('замок открыт' if result.get('success') else 'попытка не удалась')
+                +('; отмычка сломалась' if result.get('tool_broken') else '')+('; замок заклинило' if result.get('jammed') else ''))
         if key in {'medical_procedure','consumable_use'}:
             source=(payload.get('source') or {}).get('snapshot') or {}
             item_name=result.get('item_name') or source.get('name')
