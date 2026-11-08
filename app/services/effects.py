@@ -764,6 +764,9 @@ def pain_gain_allowed(health,character_data):
 
 
 def _adjust_field(health: Dict[str, Any], field: str, delta: int, minimum: Optional[int] = 0, maximum: Optional[int] = None, *, character_data=None) -> None:
+    if field=='current' and delta>0:
+        from app.services.artifact_effects import healing_amount
+        delta=healing_amount(character_data,delta)
     if field=='painLevel' and delta>0 and not pain_gain_allowed(health,character_data):return
     if field == 'stress' and delta > 0 and health_blocks_new_stress(health):return
     if field=="stress":minimum=max(minimum or 0,min(10,_to_float((health.get("combatMeta") or {}).get("hunterStressDebt"),0)))
@@ -821,8 +824,10 @@ def _distribute_zone_healing(health: Dict[str, Any], amount: float) -> None:
         remaining -= applied
 
 
-def _heal_health_and_zones(health: Dict[str, Any], amount: float) -> None:
+def _heal_health_and_zones(health: Dict[str, Any], amount: float, *, character_data=None) -> None:
     """Heal the shared pool fully and distribute one healing budget over zones."""
+    from app.services.artifact_effects import healing_amount
+    amount=healing_amount(character_data,amount)
     current = _to_float(health.get("current", 0), 0)
     max_value = health.get("max")
     max_value = None if max_value in (None, "") else _to_float(max_value, None)
@@ -830,7 +835,7 @@ def _heal_health_and_zones(health: Dict[str, Any], amount: float) -> None:
     _distribute_zone_healing(health, amount)
 
 
-def _restore_limb_health_and_pool(health: Dict[str, Any], area: str, restored_health: Any) -> None:
+def _restore_limb_health_and_pool(health: Dict[str, Any], area: str, restored_health: Any, *, character_data=None) -> None:
     """Set a treated limb's health and add only the recovered amount to the pool."""
     zone = (health.get("zones") or {}).get(area)
     if not isinstance(zone, dict) or restored_health is None:
@@ -838,6 +843,9 @@ def _restore_limb_health_and_pool(health: Dict[str, Any], area: str, restored_he
     maximum = _to_float(zone.get("max"), _to_float(restored_health, 0))
     before = max(0, _to_float(zone.get("current"), 0))
     after = min(maximum, max(0, _to_float(restored_health, 0)))
+    if after>before:
+        from app.services.artifact_effects import healing_amount
+        after=min(maximum,before+healing_amount(character_data,after-before))
     zone["current"] = after
     zone["destructionDamage"] = max(0, maximum - after)
     recovered = max(0, after - before)
@@ -906,7 +914,7 @@ def apply_effect_to_health(health: Dict[str, Any], raw_effect: Any, *, character
         return health
 
     if effect_type == "heal":
-        _heal_health_and_zones(health, magnitude)
+        _heal_health_and_zones(health, magnitude,character_data=character_data)
         return health
 
     if effect_type == "regeneration":
@@ -1080,7 +1088,7 @@ def apply_periodic_effects_to_health(health: Dict[str, Any], effects: Iterable[A
             continue
         magnitude = abs(_to_float(effect.get("value", 0), 0))
         if effect["type"] == "regeneration":
-            _heal_health_and_zones(health, magnitude)
+            _heal_health_and_zones(health, magnitude,character_data=character_data)
         elif effect["type"] == "radiation_treatment":
             _adjust_field(health, "radiation", -magnitude, 0, None)
         elif effect["type"] == "blood_recovery":
@@ -1184,7 +1192,7 @@ def apply_expired_effects_to_health(health: Dict[str, Any], effects: Iterable[An
             area = str(effect.get("area") or "")
             if effect.get("cure_fracture") and area:
                 cured_fracture_areas.add(area)
-            _restore_limb_health_and_pool(health, area, effect.get("restore_limb_health"))
+            _restore_limb_health_and_pool(health, area, effect.get("restore_limb_health"),character_data=character_data)
     for activated_effect in activated:
         apply_effect_to_health(health, activated_effect,character_data=character_data)
     if cured_fracture_areas:
@@ -1379,7 +1387,7 @@ def advance_timed_effects(
             area = str(effect.get("area") or "")
             if effect.get("cure_fracture") and area:
                 cured_fracture_areas.add(area)
-            _restore_limb_health_and_pool(health, area, effect.get("restore_limb_health"))
+            _restore_limb_health_and_pool(health, area, effect.get("restore_limb_health"),character_data=character_data)
 
     combat_meta = health.get("combatMeta")
     for modifier_key in ('consumableModifiers', 'bleedingModifiers') if isinstance(combat_meta, dict) else ():

@@ -1555,7 +1555,7 @@ def start_lobby_rest(lobby_id, lobby):
             if background_is(character_data,'Атлет'):healed*=1.5
             healed = math.floor(healed)
             if healed > 0:
-                apply_effect_to_health(health, {'type': 'heal', 'value': healed})
+                apply_effect_to_health(health, {'type': 'heal', 'value': healed},character_data=character_data)
                 effects = [effect for effect in effects if effect.get('type') != 'next_rest_healing']
             if healed > 0 and isinstance(health.get('combatMeta'), dict):
                 health['combatMeta']['consumableModifiers'] = [

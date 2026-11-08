@@ -166,6 +166,13 @@ def artifact_passive_profile(character_data):
     return result
 
 
+def healing_amount(character_data,amount):
+    """Масштабировать только новый прирост ОЗ, не сохранённую силу препарата."""
+    value=float(amount)
+    if value<=0 or not character_data:return value
+    return value*artifact_passive_profile(character_data)['healing_multiplier']
+
+
 def radiation_clock_removed(character_data,effect,amount,*,health):
     """Цена только радиации, выведенной этим физическим артефактом."""
     if amount<=0:return 0
@@ -267,6 +274,7 @@ def apply_artifact_world_movement(character_data,*,artifact=None,health=None):
         for key in ('current', 'radiation', 'painLevel')
     }
     health_delta = profile['health_per_movement']
+    if health_delta>0:health_delta=healing_amount(character_data,health_delta)
     if health_delta:
         maximum = max(0, float(health.get('max') or health.get('maximum') or 700))
         health['current'] = min(

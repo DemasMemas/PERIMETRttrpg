@@ -40,12 +40,13 @@ def consume_reanimation(data):
     armor=data['equipment']['armor'];health=data.setdefault('health',{})
     armor['reanimationCharge']=False
     health['painLevel']=0
+    from app.services.artifact_effects import healing_amount
     recovered=0
     for zone in (health.get('zones') or {}).values():
         if not isinstance(zone,dict):continue
         before=max(0,float(zone.get('current') or 0))
         maximum=max(0,float(zone.get('max') or 0))
-        after=min(maximum,before+10)
+        after=min(maximum,before+healing_amount(data,10))
         zone['current']=after
         zone['destructionDamage']=max(0,maximum-after)
         recovered+=after-before

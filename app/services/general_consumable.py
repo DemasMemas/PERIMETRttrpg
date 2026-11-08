@@ -386,7 +386,7 @@ def _apply_profile(health, profile, direct, item, *, in_combat,character_data=No
     if direct.get("hp") is not None:
         hp = _number(direct.get("hp"))
         if hp > 0:
-            apply_effect_to_health(health, {"type": "heal", "value": hp, "source": source})
+            apply_effect_to_health(health, {"type": "heal", "value": hp, "source": source},character_data=character_data)
         elif hp < 0:
             health["current"] = max(0, _number(health.get("current")) + hp)
         changed = changed or bool(hp)

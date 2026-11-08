@@ -153,7 +153,7 @@ def _selected_effect(health, selected):
     return effect
 
 
-def _restore_zone_and_pool(health, area, restored_health):
+def _restore_zone_and_pool(health, area, restored_health, *, character_data=None):
     zone = (health.get('zones') or {}).get(area)
     if not isinstance(zone, dict):
         raise ConflictError('Выбранная часть тела больше не существует')
@@ -163,6 +163,9 @@ def _restore_zone_and_pool(health, area, restored_health):
         after = min(maximum, max(0, float(restored_health or 0)))
     except (TypeError, ValueError) as error:
         raise ValidationError('Некорректное здоровье части тела') from error
+    if after>before:
+        from app.services.artifact_effects import healing_amount
+        after=min(maximum,before+healing_amount(character_data,after-before))
     zone['current'] = after
     zone['destructionDamage'] = max(0, maximum - after)
     recovered = max(0, after - before)
@@ -940,7 +943,7 @@ def _apply_success(
     if (application.get('kind') == 'injury' and direct.get('surgical_kit')
             and not direct.get('catastrophic_limb_surgery')):
         plan = _disabled_limb_surgery_plan(health, direct, application)
-        restoration = _restore_zone_and_pool(health, plan['area'], plan['restored_health'])
+        restoration = _restore_zone_and_pool(health, plan['area'], plan['restored_health'],character_data=recipient_data)
         try:
             pain_delta = float(direct.get('pain_delta') or 0)
         except (TypeError, ValueError) as error:
@@ -975,15 +978,17 @@ def _apply_success(
 
         restoration = None
         if plan.get('restored_health') is not None:
-            restoration = _restore_zone_and_pool(health, plan['area'], plan['restored_health'])
+            restoration = _restore_zone_and_pool(health, plan['area'], plan['restored_health'],character_data=recipient_data)
         elif plan['mode']=='restore_lost_part':
             organ=(health.get('organs') or {}).get(plan['area'])
             if isinstance(organ,dict):
-                before=_numeric(organ.get('current'));organ['current']=_numeric(organ.get('max'))
+                from app.services.artifact_effects import healing_amount
+                before=_numeric(organ.get('current'));maximum=_numeric(organ.get('max'))
+                organ['current']=min(maximum,before+healing_amount(recipient_data,max(0,maximum-before)))
                 restoration={'area':plan['area'],'organ':True,'restored':organ['current']-before,'current':organ['current']}
             elif plan['area'] in LIMB_AREAS:
                 zone=(health.get('zones') or {}).get(plan['area']) or {}
-                restoration=_restore_zone_and_pool(health,plan['area'],_numeric(zone.get('max')))
+                restoration=_restore_zone_and_pool(health,plan['area'],_numeric(zone.get('max')),character_data=recipient_data)
         return {'kind': 'surgery', **{key: plan[key] for key in ('mode', 'area', 'uses')},
                 'restoration': restoration, 'pain_delta': pain_delta}
 
