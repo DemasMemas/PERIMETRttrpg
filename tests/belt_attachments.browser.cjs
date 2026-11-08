@@ -52,8 +52,10 @@ module.exports=async({page,request,token,lobby,offered,loc,npc,safeSession})=>{
     await page.evaluate(`(async()=>{const {Server}=await import('/static/js/api.js');await Server.waitForCharacterSave(${owner.id});return true})()`);
     snapshot=await saved();const stored=snapshot.data.inventory.backpack.find(i=>i.id===belt.id);
     assert.equal(stored.installedModules.filter(i=>i.slotType==='belt_tool').length,4);
+    assert.deepEqual(stored.installedModules.filter(i=>i.slotType==='belt_tool').map(i=>i.id).sort(),tools.map(i=>i.id).sort());
     evidence.step('Снятие целого пояса', {equippedBelt:belt.id,toolIds:tools.map(i=>i.id)},
-        {storedBelt:stored.id,toolIds:stored.installedModules.filter(i=>i.slotType==='belt_tool').map(i=>i.id)});
+        {storedBelt:stored.id,toolIds:stored.installedModules.filter(i=>i.slotType==='belt_tool').map(i=>i.id),
+            sameInstances:stored.installedModules.filter(i=>i.slotType==='belt_tool').every(i=>tools.some(t=>t.id===i.id))});
     await page.evaluate('window.equipBeltFromInventory(["inventory","backpack",0]).then(()=>true)');
     await page.until("document.querySelector('[data-belt-tools]')?.textContent.includes('Инструменты (4 / 4)')",'Инструменты вернулись вместе с поясом');
     await page.evaluate('window.unmountBeltTool(0);true');

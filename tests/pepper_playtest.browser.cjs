@@ -55,6 +55,11 @@ module.exports=async({page,request,token,lobby,loc,safeSession})=>{
     await page.until("document.getElementById('character-sheet-modal')?.textContent.includes('Перцовка: болевой шок на 6 часов')",'Эффект пришёл в открытый лист по сети');
     await page.evaluate("(()=>{const card=[...document.querySelectorAll('#health-right-column .health-effect-card')].find(e=>e.textContent.includes('Перцовка: болевой шок на 6 часов'));if(!card)throw Error('Нет карточки эффекта');let parent=card.parentElement;while(parent){if(parent.tagName==='DETAILS')parent.open=true;parent=parent.parentElement;}card.scrollIntoView({block:'center'});return true})()");
     await page.until("(()=>{const c=[...document.querySelectorAll('#health-right-column .health-effect-card')].find(e=>e.textContent.includes('Перцовка: болевой шок на 6 часов'));const r=c.getBoundingClientRect();return r.width>0&&r.y>=0&&r.bottom<=innerHeight})()",'Шок действительно виден в игровом интерфейсе');
+    const descriptions=await page.evaluate("[...document.querySelectorAll('#health-right-column .health-effect-card')].filter(e=>e.textContent.includes('Перцовка:')).map(e=>e.textContent)");
+    assert.ok(descriptions.some(text=>text.includes('−5 ко всем броскам до конца боя.')));
+    assert.ok(descriptions.some(text=>text.includes('−5 к броскам атаки и Внимательности до окончания эффекта.')));
+    assert.ok(descriptions.find(text=>text.includes('боле')&&text.includes('6 часов')).includes('выйти из болевого шока нельзя.'));
+    assert.ok(!descriptions.some(text=>text.includes('Последствия определяются описанием')||text.includes('кроме попытки очнуться')));
     const shot='pepper-head.png';fs.writeFileSync(path.join(safeSession.artifacts,shot),Buffer.from((await page.call('Page.captureScreenshot',{format:'png'})).data,'base64'));
     await request(loc+'/combat/end',{},token);
     evidence.publish({images:[shot],controls:{random:'к20 = 4; к100 = 99. Нет случайного раннего шока. Третий шок не требует броска.',time:'Между попаданиями штатно меняются ходы; 6 и 24 часа не проматываются'},

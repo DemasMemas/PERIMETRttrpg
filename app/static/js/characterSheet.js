@@ -3689,7 +3689,14 @@ function renderHealthTab(data, container = null) {
         const source = effectSourceLabels[effect.source] || sourceItem || (/^consumable-template:/.test(sourceName) ? 'применение предмета' : /[А-Яа-яЁё]/.test(sourceName) ? sourceName : '');
         const details = [];
         if (effect.requirement) details.push(`Требование: ${effect.requirement}`);
-        if (INSTANT_HEALTH_EFFECTS.has(effect.type)) {
+        const managedDescription = {
+            pepper_head_rolls: '−5 ко всем броскам до конца боя.',
+            pepper_day_penalty: '−5 к броскам атаки и Внимательности до окончания эффекта.',
+            pepper_three_head_hits: 'Блокирует действия. До окончания этого эффекта выйти из болевого шока нельзя.',
+        }[effect.source];
+        if (managedDescription) {
+            details.push(managedDescription);
+        } else if (INSTANT_HEALTH_EFFECTS.has(effect.type)) {
             details.push('Изменит показатель один раз после нажатия «Применить разово».');
         } else if (effect.type === 'generic') {
             details.push(effect.note || (effect.onExpire || effect.on_expire || effect.adjustments ? 'Изменения применяются в указанный срок.' : 'Дополнительное состояние; последствия указаны в описании ведущего.'));

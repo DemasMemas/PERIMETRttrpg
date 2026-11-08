@@ -8,7 +8,7 @@
         radiation:'Радиация',exhaustion:'Истощение',stress:'Стресс',headHits:'Попаданий в голову',damage:'Контрольный урон',armor:'Броня',
         distanceMeters:'Дистанция, м',shock:'Болевой шок',shockRoll:'Бросок шока',skippedTurns:'Пропущенных ходов ожидается',
         rollPenalty:'Штраф к броскам',painPerTurn:'Боль за ход',effects:'Эффекты',timeUnit:'Единица времени',
-        painLevel:'Боль',turnSkipped:'Ход пропущен',currentActor:'Следующий ход'};
+        painLevel:'Боль',turnSkipped:'Ход пропущен',currentActor:'Следующий ход',sameInstances:'Те же инструменты'};
     let state=null,selected=null,step=0,poll=null,busy=false,lastKey='';
     const node=(tag,text,className)=>{const element=document.createElement(tag);if(text!=null)element.textContent=text;if(className)element.className=className;return element;};
     async function api(url,body){const response=await fetch(url,body?{method:'POST',headers:{'Content-Type':'application/json','X-Review-Token':state.token},body:JSON.stringify(body)}:{});
@@ -16,7 +16,9 @@
     function valueNode(value){
         if(Array.isArray(value)){const list=node('ul');for(const item of value){const row=node('li');row.append(valueNode(item));list.append(row);}return list;}
         if(value&&typeof value==='object'){const facts=node('dl',null,'facts');for(const[key,valuePart]of Object.entries(value)){
-            const row=node('div');row.append(node('dt',labels[key]||key),node('dd'));row.lastChild.append(valueNode(valuePart));facts.append(row);
+            if(key==='id')continue;
+            const display=key==='toolIds'?`${valuePart.length} предмета`:['equippedBelt','storedBelt'].includes(key)?'Пояс':valuePart;
+            const row=node('div');row.append(node('dt',labels[key]||key),node('dd'));row.lastChild.append(valueNode(display));facts.append(row);
         }return facts;}
         const friendly={hand:'В руке',belt:'На поясе',hour:'Часы',true:'Да',false:'Нет'};
         return node('span',value===null||value===undefined?'Не требуется':friendly[value]??String(value));
