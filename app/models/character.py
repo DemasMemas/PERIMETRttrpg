@@ -36,6 +36,8 @@ class LobbyCharacter(db.Model):
         if needs_clocks(data):
             data.setdefault('health',{})['effects']=sync_clocks(data)
         data['_artifact_profile'] = artifact_passive_profile(data)
+        from app.services.artifact_special import snapshot as artifact_special_snapshot
+        data['_artifact_specials'] = artifact_special_snapshot(data)
         data['_revision'] = self.revision
         data['_character_id'] = self.id
         return data

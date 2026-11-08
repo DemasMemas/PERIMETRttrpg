@@ -14029,6 +14029,7 @@ class CombatService:
         if action_key=='trap':action={'key':'trap','label':'Ловушка','action_points':5,'free_actions':0,'movement_points':0}
         if action_key=='controller':action={'key':'controller','label':'Взрыватель','action_points':5,'free_actions':0,'movement_points':0}
         if action_key=='pda_access':action={'key':'pda_access','label':'Подключение КПК','action_points':3,'free_actions':0,'movement_points':0}
+        if action_key=='artifact_special':action={'key':'artifact_special','label':'Особое свойство артефакта','action_points':2,'free_actions':0,'movement_points':0}
         if not action:
             raise ValidationError("Unknown action")
 
@@ -14067,6 +14068,10 @@ class CombatService:
         order_plan=None
         reduction_plan=None
         cover_placement=None
+        if action_key=='artifact_special':
+            from app.services.artifact_special import prepare as artifact_plan
+            artifact_prepared=artifact_plan(character,data,attribute_choice,user_id)
+            special_action_cost=artifact_prepared['action_points']
         if action_key=='pda_access':
             from app.services.pda_access import prepare as access_plan,LABELS as access_labels
             access_prepared=access_plan(character,data,attribute_choice,user_id)
@@ -17251,6 +17256,10 @@ class CombatService:
             character.character.data=data;flag_modified(character.character,'data')
             narrative_action_details={'name':action['label'],'action_points':special_action_cost,'roll_required':False,
                 'ground_object_id':obj.id,'ground_object_event':'deleted' if removed else 'created' if created else 'updated'}
+        if action_key=='artifact_special':
+            from app.services.artifact_special import execute as execute_artifact
+            narrative_action_details=execute_artifact(character,data,attribute_choice,user_id,state)
+            character.character.data=data;flag_modified(character.character,'data')
         if action_key=='pda_access':
             from app.services.pda_access import execute as execute_access
             narrative_action_details=execute_access(character,data,attribute_choice,user_id,state)

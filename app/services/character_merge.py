@@ -4,7 +4,7 @@ from copy import deepcopy
 from app.services.exceptions import ConflictError
 
 _MISSING = object()
-TRANSPORT_FIELDS = {'_revision', '_character_id', '_artifact_profile'}
+TRANSPORT_FIELDS = {'_revision', '_character_id', '_artifact_profile', '_artifact_specials'}
 
 
 def clean_snapshot(data):

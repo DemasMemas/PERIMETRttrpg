@@ -369,6 +369,8 @@ def apply_periodic_clock(data,effect,*,health):
 
 
 def preserve(current,incoming):
+    from app.services.artifact_special import preserve as preserve_special
+    preserve_special(current,incoming)
     canonical=((current or {}).get('health') or {}).get('effects') or []
     incoming_effects=((incoming or {}).get('health') or {}).get('effects') or []
     if not needs_clocks(incoming) and not any(is_reaction(e) for e in [*canonical,*incoming_effects]):return

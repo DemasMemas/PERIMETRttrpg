@@ -4698,6 +4698,7 @@ async function renderEquipmentTab(data) {
                                     <button type="button" class="btn btn-sm btn-primary" onclick="addItemToArmorContainer(${idx})" style="width:100%;">Вставить</button>
                                 `}
                             </div>
+                            ${slot.item ? [slot.item,...(slot.item.installedModules||[])].map(renderArtifactSpecial).join('') : ''}
                             ${slot.item && slot.item.category === 'container' && slot.item.installedModules?.length ? `
                                 <div style="margin-top: 5px; font-size: 0.75rem; color: #aaa; word-break: break-all;">
                                     📦 ${slot.item.installedModules.map(m => m.name).join(', ')}
@@ -5658,6 +5659,32 @@ window.mountBeltTool = () => changeBeltTool('mount');
 window.unmountBeltTool = index => changeBeltTool('unmount',index);
 window.mountBeltArtifact = () => changeBeltTool('mount',null,'artifact');
 window.unmountBeltArtifact = index => changeBeltTool('unmount',index,'artifact');
+function renderArtifactSpecial(item) {
+    const state=(currentCharacterData?._artifact_specials||[]).find(entry=>entry.item_id===item?.id);
+    if(!state)return '';
+    const combat=window.locationCombatState?.status==='active';
+    const hint=state.reason||`Доступно: ${state.remaining_uses}/${state.capacity}`;
+    return `<div style="flex-basis:100%;font-size:.8rem;margin-top:5px;overflow-wrap:anywhere;">
+        <span>${escapeHtml(hint)}</span>
+        ${state.supported?`<button type="button" class="btn btn-sm" data-artifact-special="${escapeHtml(String(state.item_id))}"
+            onclick="window.activateArtifactSpecial(this.dataset.artifactSpecial)" ${!currentCharacterCanEdit||!state.available?'disabled':''}>
+            Применить${combat?` · ${state.action_points} ОД`:''}</button>`:''}
+    </div>`;
+}
+window.activateArtifactSpecial = async function(itemId) {
+    if(medicalOperationInProgress||!currentCharacterCanEdit)return;
+    const characterId=currentCharacterId;let locked=false;
+    try {
+        await forceSyncCharacter();await Server.waitForCharacterSave(characterId);
+        if(currentCharacterId!==characterId||sheetSaveBlocked||medicalOperationInProgress)return;
+        medicalOperationInProgress=locked=true;medicalRemoteUpdate=null;
+        const {runController}=await import('./itemControllers.js');
+        await runController(characterId,{item_id:itemId},data=>{
+            if(currentCharacterId===characterId)currentCharacterData=data;
+        },{actionKey:'artifact_special',send:Server.activateArtifactSpecial});
+    }catch(error){showNotification(error.message||'Не удалось применить артефакт','system');}
+    finally{if(locked){medicalOperationInProgress=false;medicalRemoteUpdate=null;await refreshSavedSheet(characterId);}}
+};
 async function changeBeltTool(operation,index,kind='tool') {
     if(medicalOperationInProgress||!currentCharacterCanEdit)return;
     const characterId=currentCharacterId;let locked=false;
@@ -14447,9 +14474,10 @@ async function renderInventoryTab(data) {
                 <p class="text-muted" style="margin:4px 0;">Действуют свойства артефакта, включая отрицательные. Защиты контейнера нет.</p>
                 ${(eq.belt.installedModules||[]).map((item,index)=>item?.slotType==='belt_artifact'?`
                     <div data-item-tooltip="true" data-item-template-id="${Number(item.templateId)||''}" data-path="equipment,belt,installedModules,${index}"
-                        style="border:1px solid #444;border-radius:4px;padding:6px;display:flex;align-items:center;gap:6px;">
+                        style="border:1px solid #444;border-radius:4px;padding:6px;display:flex;flex-wrap:wrap;align-items:center;gap:6px;">
                         <span style="flex:1;overflow-wrap:anywhere;">${escapeHtml(item.name)}</span>
                         <button type="button" class="btn btn-sm btn-secondary" onclick="unmountBeltArtifact(${index})">Снять${window.locationCombatState?.status==='active'?' · 3 ОД':''}</button>
+                        ${renderArtifactSpecial(item)}
                     </div>`:'').join('')}
             </div>`:''}
             <div style="display: flex; align-items: center; margin-top: 15px;">

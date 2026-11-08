@@ -1253,6 +1253,9 @@ def advance_timed_effects(
 ) -> List[Dict[str, Any]]:
     """Продвинуть игровые сроки; ходовые препараты — только при явном переводе времени."""
     effects=list(effects or [])
+    if character_data is not None and not _in_time_segments:
+        from app.services.artifact_special import advance as advance_artifact_special
+        advance_artifact_special(character_data, elapsed_seconds)
     artifact_clock=False
     if character_data:
         from app.services.artifact_effects import needs_clocks,sync_clocks,is_artifact_clock

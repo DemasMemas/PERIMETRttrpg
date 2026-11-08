@@ -70,6 +70,8 @@ export const Server = {
         ...(selection.location_id?{location_id:selection.location_id}:{})})}`),
     operateController: (characterId,payload) => apiFetch(`/lobbies/characters/${characterId}/controllers`,{
         method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}),
+    activateArtifactSpecial: (characterId,payload) => apiFetch(`/lobbies/characters/${characterId}/artifact-special`,{
+        method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}),
     getDetonations: lobbyId => apiFetch(`/lobbies/${lobbyId}/detonations`),
     resolveDetonation: (lobbyId,eventId,payload) => apiFetch(`/lobbies/${lobbyId}/detonations/${encodeURIComponent(eventId)}`,{
         method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}),

@@ -5390,6 +5390,15 @@ def character_controllers(character_id):
     return jsonify({'data':character.data_snapshot(),'result':result})
 
 
+@lobbies_bp.route('/characters/<int:character_id>/artifact-special',methods=['POST'])
+@jwt_required()
+def character_artifact_special(character_id):
+    from app.services.artifact_special import operate
+    character,result=operate(character_id,int(get_jwt_identity()),request.get_json(silent=True) or {})
+    emit_character_update({'character_id':character.id,'updates':{'data':character.data_snapshot()},'source':'artifact_special'})
+    return jsonify({'data':character.data_snapshot(),'result':result})
+
+
 @lobbies_bp.route('/<int:lobby_id>/detonations',methods=['GET'])
 @jwt_required()
 @requires_gm

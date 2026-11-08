@@ -48,6 +48,22 @@ def install(app,db,check_database,run_id,*,controlled_pepper=False,belt_artifact
         random=original.random,shuffle=original.shuffle)
     if controlled_artifacts:
         from app.services import artifact_effects
+        from flask import request,jsonify
+        from sqlalchemy.orm.attributes import flag_modified
+        from app.models import LobbyCharacter
+
+        @app.post('/__testing/artifact-preparation/'+run_id)
+        def prepare_artifact_wearing():
+            check_database()
+            from app.services.artifact_special import advance,DAY
+            character=db.session.get(LobbyCharacter,int(request.get_json()['character_id']))
+            assert character and character.name=='Проверка особого свойства'
+            data=deepcopy(character.data)
+            # Только подготовка собственного опыта: оставшиеся6с пройдут настоящим боевым раундом.
+            advance(data,DAY-6)
+            character.data=data;flag_modified(character,'data');db.session.commit()
+            return jsonify(character.data_snapshot())
+
         def artifact_roll(low,high):
             check_database()
             assert (low,high)==(1,100)
