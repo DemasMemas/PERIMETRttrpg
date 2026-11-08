@@ -6220,6 +6220,24 @@ class CombatService:
         )
 
     @staticmethod
+    def _apply_artifact_damage_reactions(target,data,damage,damage_type,round_number):
+        from app.services.artifact_effects import damage_reactions,damage_backlash
+        damage_reactions(data,damage,damage_type)
+        reactions=damage_backlash(data,damage,damage_type)
+        health=data.setdefault('health',{})
+        for reaction in reactions:
+            protection=CombatService._target_elemental_protection(data,reaction['damage_type'],target=target)
+            applied=reaction['raw_damage']*max(0,100-protection)/100
+            if CombatService._combat_background_active(target,'Стойкий'):applied*=.9
+            applied=max(0,round(applied))
+            reaction.update(damage=applied,protection=protection)
+            health['current']=max(0,CombatService._coerce_float(health.get('current'),0)-applied)
+            if applied:
+                CombatService._apply_damage_pain(data,applied,round_number,'artifact_backlash')
+                damage_reactions(data,applied,reaction['damage_type'])
+        return reactions
+
+    @staticmethod
     def _apply_attack_damage(
         target,
         damage,
@@ -6545,8 +6563,7 @@ class CombatService:
                     enqueue(precision_attacker,target,trauma,damage,zone,armor_penetrated,allow_bleeding)
                 else:
                     created_bleedings.extend(apply_trauma(target,data,trauma,trauma_rules,damage,impact,armor_penetrated,allow_bleeding))
-        from app.services.artifact_effects import damage_reactions
-        damage_reactions(data,damage,damage_type)
+        artifact_reactions=CombatService._apply_artifact_damage_reactions(target,data,damage,damage_type,current_round)
         sync_health_derived_statuses(health)
         resulting_condition = CombatService._character_condition(data)
         tough_nut=None
@@ -6586,6 +6603,7 @@ class CombatService:
         health['lastTraumas'] = traumas
         health['_attackOutcome'] = {
             'applied_damage':damage,
+            **({'artifact_reactions':artifact_reactions} if artifact_reactions else {}),
             **({'stop_layer':stop_layer} if stop_layer else {}),
             **({'neck_brace':neck_brace} if neck_brace else {}),
             'bleedings': created_bleedings,
@@ -7141,8 +7159,7 @@ class CombatService:
                 meta['damageStressRound'] = current_round
                 meta['pendingExplosionStress'] = True
             CombatService._apply_damage_pain(data, damage, current_round, source)
-        from app.services.artifact_effects import damage_reactions
-        damage_reactions(data,damage,damage_type)
+        artifact_reactions=CombatService._apply_artifact_damage_reactions(target,data,damage,damage_type,current_round)
         sync_health_derived_statuses(health)
         resulting_condition = CombatService._character_condition(data)
         survival=None
@@ -7165,6 +7182,7 @@ class CombatService:
         if previous_condition!='dead' and resulting_condition['state']=='dead':CombatService._notify_observed_death(target)
         return {
             'damage': damage,
+            **({'artifact_reactions':artifact_reactions} if artifact_reactions else {}),
             'tough_nut':survival,
             'health_before_state': previous_condition,
             'health_state': resulting_condition['state'],
@@ -8794,6 +8812,7 @@ class CombatService:
             **({'limb_hit':limb_hit} if limb_hit else {}),
         )
         attack_outcome = health.pop('_attackOutcome', {})
+        if attack_outcome.get('artifact_reactions'):result['artifact_reactions']=attack_outcome['artifact_reactions']
         if attack_outcome.get('stop_layer'):
             result['stop_layer']=attack_outcome['stop_layer'];final_damage=0;bleeding_result=None
         if attack_outcome.get('neck_brace'):
@@ -16762,6 +16781,7 @@ class CombatService:
                             allow_bleeding=False,
                             stress_trigger='anomalous_soul_projectile',
                             attacker=character,
+                            damage_type=object_profile['damage_type'],
                         )
                         attack_result.update({
                             'zone': zone,

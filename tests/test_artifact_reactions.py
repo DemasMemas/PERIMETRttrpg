@@ -1,5 +1,6 @@
 """Реактивные свойства каталога не действуют до получения нужного урона."""
 from copy import deepcopy
+from types import SimpleNamespace
 import pytest
 from app.services.artifact_effects import artifact_passive_profile
 from app.services.artifact_effects import damage_reactions, preserve, is_reaction
@@ -85,6 +86,58 @@ def test_burning_round_starts_reaction_and_round_clock_ticks_once(grenade_game):
     assert next(e for e in actor.character.data['health']['effects'] if is_reaction(e))['remaining_seconds']==remaining
     CombatService.end_turn(actor.location_id,case['lobby'].gm_id,target.id)
     assert next(e for e in actor.character.data['health']['effects'] if is_reaction(e))['remaining_seconds']==remaining-6
+
+
+@pytest.mark.parametrize('roll,extra',[(1,40),(50,40),(51,0),(100,0)])
+def test_shard_chance_boundary_and_extra_damage_only_in_general_pool(grenade_game,monkeypatch,roll,extra):
+    target=grenade_game['target_location'];target.character.data=equipped('Пылающий осколок');db.session.commit()
+    draws=[]
+    def percent(low,high):
+        assert (low,high)==(1,100);draws.append(roll);return roll
+    monkeypatch.setattr('app.services.artifact_effects.random',SimpleNamespace(randint=percent))
+    health=CombatService._apply_attack_damage(target,10,'chest',{'damage_type':'crushing'},trauma_checks=0,allow_bleeding=False)
+    assert health['current']==700-10-extra
+    assert health['zones']['chest']['current']==health['zones']['chest']['max']-10
+    assert draws==[roll]
+    reaction=health['_attackOutcome'].get('artifact_reactions',[])
+    assert len(reaction)==int(extra>0)
+    if reaction:assert reaction[0]['raw_damage']==50 and reaction[0]['protection']==20 and reaction[0]['damage']==40
+
+
+@pytest.mark.parametrize('damage,kind',[(0,'physical'),(5,'thermal'),(5,'electric'),(5,'chemical'),(5,'psi')])
+def test_shard_does_not_roll_for_other_or_zero_damage(grenade_game,monkeypatch,damage,kind):
+    target=grenade_game['target_location'];target.character.data=equipped('Пылающий осколок');db.session.commit()
+    def forbidden(*args):raise AssertionError('Не должно быть броска шанса')
+    monkeypatch.setattr('app.services.artifact_effects.random',SimpleNamespace(randint=forbidden))
+    result=CombatService._apply_general_damage(target,damage,damage_type=kind)
+    assert not result.get('artifact_reactions')
+    assert result['current_health']==700-damage
+
+
+def test_shard_extra_respects_full_thermal_protection_and_can_start_thermal_modifier(grenade_game,monkeypatch):
+    target=grenade_game['target_location'];data=equipped('Пылающий осколок')
+    data['equipment']['armor']['containers'].extend(equipped('Огненная вена')['equipment']['armor']['containers'])
+    data['equipment']['armor']['containers'][1]['item']['id']='second-artifact'
+    target.character.data=data;db.session.commit()
+    monkeypatch.setattr('app.services.artifact_effects.random',SimpleNamespace(randint=lambda a,b:50))
+    result=CombatService._apply_general_damage(target,10)
+    assert result['artifact_reactions'][0]['damage']==30
+    assert artifact_passive_profile(target.character.data)['protection']['physical']==5
+    data=deepcopy(target.character.data);data['equipment']['armor']['protection']={'thermal':100};target.character.data=data
+    before=data['health']['current'];result=CombatService._apply_general_damage(target,10)
+    assert result['artifact_reactions'][0]['damage']==0
+    assert result['current_health']==before-10
+
+
+def test_shard_general_damage_can_kill_without_zone_damage_or_repeating_backlash(grenade_game,monkeypatch):
+    target=grenade_game['target_location'];data=equipped('Пылающий осколок');data['health']['current']=45
+    target.character.data=data;db.session.commit();draws=[]
+    def percent(low,high):draws.append((low,high));return 50
+    monkeypatch.setattr('app.services.artifact_effects.random',SimpleNamespace(randint=percent))
+    result=CombatService._apply_general_damage(target,10)
+    assert result['current_health']==0 and result['health_state']=='dead'
+    assert draws==[(1,100)]
+    assert all(zone['current']==zone['max'] for zone in target.character.data['health']['zones'].values())
 
 
 @pytest.mark.parametrize('name,rounds,movement,physical,bleeding',[

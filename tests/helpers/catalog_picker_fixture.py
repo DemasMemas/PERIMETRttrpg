@@ -4,7 +4,7 @@ import re
 from uuid import UUID
 
 
-def install(app,db,check_database,run_id,*,controlled_pepper=False,belt_artifact=False):
+def install(app,db,check_database,run_id,*,controlled_pepper=False,belt_artifact=False,controlled_artifacts=False):
     assert str(UUID(run_id))==run_id and app.testing and not app.debug
     check_database()
     from app.models.templates import ItemTemplate
@@ -46,3 +46,10 @@ def install(app,db,check_database,run_id,*,controlled_pepper=False,belt_artifact
         return original.randint(low,high)
     combat.random=SimpleNamespace(randint=roll,choice=original.choice,uniform=original.uniform,
         random=original.random,shuffle=original.shuffle)
+    if controlled_artifacts:
+        from app.services import artifact_effects
+        def artifact_roll(low,high):
+            check_database()
+            assert (low,high)==(1,100)
+            return 50
+        artifact_effects.random=SimpleNamespace(randint=artifact_roll)

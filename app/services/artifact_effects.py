@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 import math
+import random
 from copy import deepcopy
 from hashlib import sha256
 
@@ -16,6 +17,7 @@ THERMAL_REACTION=re.compile(r'При получении\s+Термическог
     r'на\s+(\d+)\s+раунд\w*',re.IGNORECASE)
 REACTION_STATS={'штраф перемещения':'movement_penalty','защита от физического урона':'physical_protection',
                 'тяжесть кровотечений':'bleeding_severity'}
+PHYSICAL_BACKLASH=re.compile(r'При получении Физического урона шанс\s+(\d+)%\s+получить\s+(\d+)\s+Термического урона',re.IGNORECASE)
 
 
 def equipped_artifacts(character_data):
@@ -201,6 +203,23 @@ def damage_reactions(data,damage,damage_type):
                 'active':True,'tick':'time_elapsed','time_unit':'second','remaining':rounds*6,'remaining_seconds':rounds*6}
             effects[:]=[old for old in effects if old.get('source')!=source];effects.append(effect);created.append(effect)
     return created
+
+
+def damage_backlash(data,damage,damage_type):
+    """Один бросок на физический артефакт и исходное попадание; без рекурсии."""
+    if damage<=0 or damage_type!='physical':return []
+    result=[];seen=set()
+    for item in equipped_artifacts(data):
+        source=_clock_source(item,REACTION_PREFIX)
+        if source in seen:continue
+        seen.add(source)
+        match=PHYSICAL_BACKLASH.search(str((item.get('attributes') or {}).get('negative_effect') or ''))
+        if not match:continue
+        roll=random.randint(1,100)
+        if roll<=int(match.group(1)):
+            result.append({'artifact':item.get('name'),'source':source,'roll':roll,
+                'damage_type':'thermal','raw_damage':int(match.group(2))})
+    return result
 
 
 def healing_amount(character_data,amount):
