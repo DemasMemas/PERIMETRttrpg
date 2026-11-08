@@ -175,6 +175,7 @@ def snapshot(character_id,user_id,payload):
 
 
 def snapshot_source(source,devices):
+    from app.services.pda_instruments import readings
     character=source['character'];item=source['item']
     account=source['account'];contacts=PdaContact.query.filter_by(account_id=account.id).all() if account else []
     signals=_signals(source,devices)
@@ -198,7 +199,7 @@ def snapshot_source(source,devices):
             'can_send':any(peer['account'] and peer['account'].id==target.id and 'pda-b9' not in peer['mods'] and reaches(source,peer,devices) for peer in devices)})
     messages.extend(deepcopy((item.get('pdaNetwork') or {}).get('spam_messages') or []))
     messages.sort(key=lambda message:message.get('sent_at',0))
-    return {'account':{'id':account.id,'login':account.login} if account else None,'source':{'signal_id':source['signal_id'],
+    return {'instruments':readings(source),'account':{'id':account.id,'login':account.login} if account else None,'source':{'signal_id':source['signal_id'],
         'character_revision':getattr(character,'revision',None),'has_spam':'pda-b17' in source['mods'],
         'spam_remaining':int(((item.get('pdaNetwork') or {}).get('spam_job') or {}).get('remaining',0)),
         'transmit_range':source['range'],'blocked':blocked(source,devices),'jammer_on':bool((item.get('pdaNetwork') or {}).get('jammer_on')),

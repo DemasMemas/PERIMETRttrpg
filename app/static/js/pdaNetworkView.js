@@ -6,6 +6,7 @@ export function createPdaNetworkView({characterId,findSource,getData,operateHard
     const element=document.createElement('section');element.className='pda-network';
     element.innerHTML=`<p data-radio-status></p><button type="button" data-radio-jammer hidden></button>
         <div data-radio-proximity hidden><label><input type="checkbox" data-radio-proximity-sound> Звуковой сигнал о незнакомом КПК</label><button type="button" data-radio-test-sound>Проверить звук</button></div><p role="alert" data-radio-error></p>
+        <div data-radio-instruments hidden aria-live="polite"></div>
         <div data-radio-chat><div class="pda-radio-messages" data-radio-messages aria-live="polite"></div>
         <form data-radio-send><label>Получатель<select aria-label="Получатель сообщения КПК"></select></label>
         <label>Сообщение<textarea aria-label="Сообщение КПК" rows="3" maxlength="2000"></textarea></label><button type="submit">Передать</button></form>
@@ -46,6 +47,19 @@ export function createPdaNetworkView({characterId,findSource,getData,operateHard
         jammer.hidden=!source.has_jammer;jammer.textContent=source.jammer_on?'Выключить глушилку':'Включить глушилку · радиус 25 м';
         proximity.hidden=!source.has_proximity;sound.checked=source.proximity_sound!==false;
         spam.hidden=!source.has_spam;
+        const instruments=element.querySelector('[data-radio-instruments]');instruments.replaceChildren();
+        if(snapshot.instruments===null)instruments.append(node('p','На КПК нет мини-осциллографа.'));
+        else if(!snapshot.instruments?.length)instruments.append(node('p','Активных доступных приборов нет.'));
+        else for(const reading of snapshot.instruments){
+            const row=node('article','');row.className='pda-instrument';row.append(node('strong',reading.name));
+            if(reading.kind==='dosimeter')row.append(node('p',`Радиация: ${reading.radiation}`));
+            else{
+                row.append(node('p','Детектор аномалий включён'));
+                if(reading.avoidance_chance!==undefined)row.append(node('p',`Шанс избежать аномалии: ${reading.avoidance_chance}%`));
+                if(reading.bonus!==undefined)row.append(node('p',`Бонус при встрече с аномалией: ${reading.bonus}`));
+            }
+            instruments.append(row);
+        }
         const feed=element.querySelector('[data-radio-messages]'),bottom=feed.scrollHeight-feed.scrollTop-feed.clientHeight<40;
         feed.replaceChildren();
         for(const message of snapshot.messages){const author=message.outgoing?(message.recipient?'Вы → '+message.recipient:'Вы · общий канал'):
@@ -121,6 +135,8 @@ export function createPdaNetworkView({characterId,findSource,getData,operateHard
     controls();
     return {element,refresh,setActive(value,mode){
         active=value;element.querySelector('[data-radio-chat]').hidden=mode!=='chat';element.querySelector('[data-radio-contacts]').hidden=mode!=='contacts';
+        element.querySelector('[data-radio-instruments]').hidden=mode!=='instruments';
+        status.hidden=mode==='instruments';jammer.style.display=mode==='instruments'?'none':'';proximity.style.display=mode==='instruments'?'none':'';
         if(active&&!timer){timer=setInterval(onUpdate,5000);void refresh();}else if(!active&&timer){clearInterval(timer);timer=null;}
     },close(){closed=true;active=false;if(timer)clearInterval(timer);window.removeEventListener('pda-network-updated',onUpdate);window.removeEventListener('pda-game-time-updated',onUpdate);}};
 }

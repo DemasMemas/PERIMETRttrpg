@@ -9,6 +9,7 @@ import {createPdaWipeControl} from './pdaWipeControl.js';
 const sections = [
     ['chat', 'Общий чат', 'Сообщения участников Зоны'],
     ['contacts', 'Контакты', 'Люди и каналы связи'],
+    ['instruments', 'Показания приборов', 'Мини-осциллограф'],
     ['charges', 'Заряды', 'Дистанционные взрыватели'],
     ['access', 'Подключения', 'Кабельное и дистанционное управление'],
     ['gallery', 'Галерея', 'Фото, видео и аудио'],
@@ -143,7 +144,7 @@ export function openPdaShell({ item, findItem, getData, operate, canEdit, charac
         const current = findItem(item.id)?.item || item;
         if(!item.id&&current.id)item.id=current.id;
         const state = powerState(current);
-        networkView?.setActive(state.on&&['chat','contacts'].includes(selected),selected);
+        networkView?.setActive(state.on&&['chat','contacts','instruments'].includes(selected),selected);
         accessView?.setActive(state.on&&selected==='access');
         const power = modal.querySelector('[data-pda-power]');
         const accountButton = modal.querySelector('[data-pda-account]');
@@ -159,6 +160,7 @@ export function openPdaShell({ item, findItem, getData, operate, canEdit, charac
         power.disabled = busy || !canEdit || state.broken || (!state.on && state.charge <= 0);
         nav.replaceChildren();
         for (const [id, label] of sections) {
+            if(id==='instruments'&&!(current.modifications||[]).some(mod=>mod.ruleId==='pda-b6'))continue;
             const button = document.createElement('button');
             button.type = 'button';
             button.textContent = label;
@@ -486,8 +488,8 @@ export function openPdaShell({ item, findItem, getData, operate, canEdit, charac
                     content.append(row);
                 }
             }
-        } else if(selected==='chat'||selected==='contacts'){
-            heading.textContent=selected==='chat'?'Радиосвязь':'Контакты';
+        } else if(selected==='chat'||selected==='contacts'||selected==='instruments'){
+            heading.textContent=selected==='chat'?'Радиосвязь':selected==='instruments'?'Показания приборов':'Контакты';
             networkView ||= createPdaNetworkView({characterId,findSource:()=>findItem(item.id),getData,operateHardware:operate,canEdit});
             content.append(networkView.element);networkView.setActive(true,selected);
         } else if(selected==='charges'){

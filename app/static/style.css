@@ -4286,3 +4286,5 @@ input[type=range]::-webkit-slider-thumb {
 .crafting-modification-info { display:flex; flex-wrap:wrap; gap:7px 12px; align-items:baseline; padding:10px; margin:10px 0; border:1px solid var(--panel-border); border-radius:7px; }
 .crafting-modification-info p { flex-basis:100%; margin:0; }
 @media(max-width:650px) { .crafting-recipe-layout { grid-template-columns:minmax(0,1fr); } .crafting-recipe-cards { max-height:220px; } }
+.pda-instrument { margin: 10px 0; padding: 10px 12px; border: 1px solid #486340; border-radius: 5px; }
+.pda-instrument p { margin: 4px 0 0; }

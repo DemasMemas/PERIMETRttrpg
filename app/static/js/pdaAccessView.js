@@ -105,7 +105,7 @@ export function createPdaAccessView({characterId,selection,onSaved,canEdit,getDa
             body.append(profiles);
         }
         const tabs=node('div');tabs.className='pda-access-tabs';
-        for(const [id,label]of [['account','Аккаунт и заметки'],['chat','Общий чат'],['contacts','Контакты'],['files','Файлы'],['charges','Заряды']]){
+        for(const [id,label]of [['account','Аккаунт и заметки'],['chat','Общий чат'],['contacts','Контакты'],...(target.network?.instruments!==null&&target.network?.instruments!==undefined?[['instruments','Показания приборов']]:[]),['files','Файлы'],['charges','Заряды']]){
             const b=button(label,()=>{tab=id;if(id==='files'){body.replaceChildren();void refresh();}else paint();});if(tab===id)b.classList.add('active');tabs.append(b);
         }
         body.append(tabs);
@@ -125,7 +125,7 @@ export function createPdaAccessView({characterId,selection,onSaved,canEdit,getDa
                 form.append(l,p,mode,submit);form.onsubmit=e=>{e.preventDefault();void act({operation:mode.value,login:login.value,password:password.value},true);};
                 body.append(node('p','Логин: 3–32 буквы, цифры, точки, дефисы или _. Пароль: 6–128 символов.'),form);
             }
-        }else if(tab==='chat'||tab==='contacts'){
+        }else if(tab==='chat'||tab==='contacts'||tab==='instruments'){
             const service={getPdaNetwork:async()=>{
                 const fresh=await Server.getPdaAccess(characterId,request({session_id:selected}));
                 if(!fresh.network)throw Error('Нет положения подключённого КПК на карте');return fresh.network;
@@ -155,7 +155,7 @@ export function createPdaAccessView({characterId,selection,onSaved,canEdit,getDa
     }
     const update=()=>{void refresh();};
     window.addEventListener('pda-access-updated',update);window.addEventListener('pda-game-time-updated',update);
-    return {element,setActive(value){active=value;network?.setActive(value&&(tab==='chat'||tab==='contacts'),tab);
+    return {element,setActive(value){active=value;network?.setActive(value&&['chat','contacts','instruments'].includes(tab),tab);
         if(active&&!timer){timer=setInterval(update,5000);void refresh();}else if(!active&&timer){clearInterval(timer);timer=null;}
     },close(){closed=true;active=false;if(timer)clearInterval(timer);network?.close();window.removeEventListener('pda-access-updated',update);window.removeEventListener('pda-game-time-updated',update);}};
 }
