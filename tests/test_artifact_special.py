@@ -493,3 +493,92 @@ def test_shell_is_connected_to_real_armor_damage_sources(grenade_game, monkeypat
         ignite(target, 2, source='Проверка Панциря')
         tick(target, 1)
     assert target.character.data['equipment']['armor']['currentStageDurability'] == before
+
+
+@pytest.mark.parametrize('name,seconds', [('Ментальный бастион', 30), ('Щит сознания', 60)])
+def test_psi_immunity_only_blocks_directed_exposure_and_expires(name, seconds):
+    data = ready(name=name)
+    data['health']['psyState'] = 10
+    use(data)
+    direct = CombatService._increase_psy_state(data, 20, 'пси-удар', directed=True)
+    assert direct['received'] == 0 and direct['after'] == 10 and direct['artifact_immune']
+    field = CombatService._increase_psy_state(data, 20, 'psy_field')
+    assert field['received'] > 0 and not field['artifact_immune']
+    anomaly = CombatService._increase_psy_state(data, 20, 'anomaly')
+    assert anomaly['received'] > 0
+    reduction = CombatService._increase_psy_state(data, -5, 'medicine', directed=True)
+    assert reduction['received'] == -5
+    health = data['health']
+    health['effects'] = advance_timed_effects(health, health['effects'], seconds, character_data=data)
+    assert CombatService._increase_psy_state(data, 20, 'пси-удар', directed=True)['received'] > 0
+
+
+@pytest.mark.parametrize('name', ['Ментальный бастион', 'Щит сознания'])
+@pytest.mark.parametrize('attack', ['Пси-удар', 'Зомбирование', 'Приказ смерти'])
+def test_psi_immunity_blocks_real_psion_actions_and_secondary_effects(grenade_game, name, attack):
+    from app.services.effects import apply_effect_to_health
+    from app.services.world_rules import mutant_character_data, mutant_profile
+    victim, psion = grenade_game['actor_location'], grenade_game['target_location']
+    victim.character.data = ready(name=name)
+    psion.character.data = mutant_character_data(mutant_profile('Псионик'))
+    psion.pos_x, psion.pos_y = victim.pos_x+2, victim.pos_y
+    psion.facing_x, psion.facing_y = -1, 0
+    psion.action_points_current = 20
+    db.session.commit()
+    gm = grenade_game['lobby'].gm_id
+    CombatService.perform_action(victim.location_id, gm, victim.id, 'artifact_special',
+        attribute_choice={'operation_id': 'psi-protection', 'item_id': 'reactive-artifact'})
+    CombatService.end_turn(victim.location_id, gm, victim.id)
+    if attack == 'Приказ смерти':
+        apply_effect_to_health(victim.character.data['health'],
+            {'type': 'zombification', 'source': 'previous-zombification', 'active': True})
+    before_psy = victim.character.data['health'].get('psyState', 0)
+    before_controller = victim.controlled_by
+    before_ap = psion.action_points_current
+    index = next(i for i, item in enumerate(psion.character.data['weapons']) if item['name'].casefold() == attack.casefold())
+    result = CombatService.perform_action(psion.location_id, gm, psion.id, 'mutant_psy_attack',
+        weapon_index=index, target_character_id=victim.character_id)
+    action = result['mutant_action']
+    assert action['artifact_immune'] and action['save'] is None
+    assert victim.character.data['health'].get('psyState', 0) == before_psy
+    assert victim.controlled_by == before_controller
+    assert psion.action_points_current == before_ap-action['action_points']
+    effects = victim.character.data['health']['effects']
+    assert not any(e['type'] in {'concussion', 'death_order'} or e.get('source') == 'psyionik' for e in effects)
+    if attack == 'Приказ смерти':
+        assert any(e.get('source') == 'previous-zombification' for e in effects), 'Иммунитет не лечит прежнее зомбирование'
+
+
+def test_psi_immunity_blocks_clone_hit_but_not_ordinary_damage(grenade_game):
+    from app.services.world_rules import mutant_character_data, mutant_profile
+    victim, clone = grenade_game['actor_location'], grenade_game['target_location']
+    victim.character.data = ready(name='Ментальный бастион')
+    use(victim.character.data)
+    clone.character.data = mutant_character_data(mutant_profile('Псионик'))
+    clone.character.data['basic']['psi_clone_damage'] = 20
+    result = {}
+    CombatService._apply_mutant_melee_hit_effects(clone, victim, 'Удар', 10, result)
+    assert victim.character.data['health']['psyState'] == 0
+    assert CombatService._apply_general_damage(victim, 10)['current_health'] == 90
+
+
+def test_mind_shield_blocks_new_stress_in_both_paths_but_allows_reduction_and_expires(grenade_game):
+    from app.services.effects import apply_effect_to_health, health_blocks_new_stress
+    actor = grenade_game['actor_location']
+    actor.character.data = ready(name='Щит сознания')
+    data = actor.character.data
+    data['health']['stress'] = 5
+    use(data)
+    assert health_blocks_new_stress(data['health'], include_medicine=False)
+    assert CombatService.apply_stress_trigger(actor, 3, check_manifestation=False)['blocked']
+    apply_effect_to_health(data['health'], {'type': 'stress', 'value': 3}, character_data=data)
+    assert data['health']['stress'] == 5
+    apply_effect_to_health(data['health'], {'type': 'stress_effect', 'source': 'stress_manifestation'}, character_data=data)
+    assert not any(e['type'] == 'stress_effect' for e in data['health']['effects'])
+    apply_effect_to_health(data['health'], {'type': 'stress', 'value': -2}, character_data=data)
+    assert data['health']['stress'] == 3
+    health = data['health']
+    health['effects'] = advance_timed_effects(health, health['effects'], 60, character_data=data)
+    assert not health_blocks_new_stress(health)
+    CombatService.apply_stress_trigger(actor, 1, check_manifestation=False)
+    assert health['stress'] == 4

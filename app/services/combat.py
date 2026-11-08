@@ -4349,7 +4349,7 @@ class CombatService:
         return attempt
 
     @staticmethod
-    def _increase_psy_state(character_data, amount, source, loc_char=None, apply_protection=True):
+    def _increase_psy_state(character_data, amount, source, loc_char=None, apply_protection=True, *, directed=False):
         data = character_data if isinstance(character_data, dict) else {}
         health = data.setdefault('health', {})
         before = max(
@@ -4363,6 +4363,10 @@ class CombatService:
             'armor': 0, 'temporary': 0, 'equipment': [],
         }
         received = incoming * (1 - defense['total'] / 100) if incoming > 0 else incoming
+        from app.services.artifact_special import stat_value
+        immune = directed and incoming > 0 and stat_value(data, 'directed_psi_immunity') > 0
+        if immune:
+            received = 0
         received = round(received*(character_passives(data)['psy_state_multiplier'] if received>0 else 1), 2)
         after = max(0, round(before + received, 2))
         health['psyState'] = after
@@ -4380,6 +4384,7 @@ class CombatService:
             'prevented': round(incoming - received, 2) if incoming > 0 else 0,
             'defense': defense,
             'source': source,
+            'artifact_immune': immune,
             'crisis': None,
         }
 
@@ -4694,7 +4699,7 @@ class CombatService:
         )
         if clone_psy_damage > 0:
             psy_state = CombatService._increase_psy_state(
-                target_data, clone_psy_damage, 'psi_clone_attack', loc_char=target,
+                target_data, clone_psy_damage, 'psi_clone_attack', loc_char=target, directed=True,
             )
             effects.append({
                 'kind': 'psi_clone_attack',
@@ -16636,16 +16641,19 @@ class CombatService:
                 target = mutant_action_details.pop('target')
                 target_data = target.character.data if target.character and isinstance(target.character.data, dict) else {}
                 attack_name = mutant_action_details['attack_name'].casefold()
+                from app.services.artifact_special import stat_value
+                immune = stat_value(target_data, 'directed_psi_immunity') > 0
+                mutant_action_details['artifact_immune'] = immune
                 psy_amount = 20 if attack_name == 'пси-удар' else (10 if attack_name == 'зомбирование' else 0)
                 mutant_action_details['psy_state'] = CombatService._increase_psy_state(
-                    target_data, psy_amount, attack_name, loc_char=target,
+                    target_data, psy_amount, attack_name, loc_char=target, directed=True,
                 ) if psy_amount else None
                 difficulty = 15 if attack_name in {'пси-удар', 'приказ смерти'} else 18
-                save = CombatService._mutant_saving_throw(
+                save = None if immune else CombatService._mutant_saving_throw(
                     target, 'skills.physical.will', difficulty,
                 )
                 mutant_action_details['save'] = save
-                if attack_name == 'пси-удар' and not save['success']:
+                if attack_name == 'пси-удар' and not immune and not save['success']:
                     apply_effect_to_health(target_data.setdefault('health', {}), {
                         'type': 'concussion', 'name': 'Контузия',
                         'remaining': 1, 'tick': 'turn_end',
@@ -16654,7 +16662,7 @@ class CombatService:
                     mutant_action_details['dropped'] = CombatService._apply_fall_or_drop(
                         target, target_data, 'right_arm',
                     )
-                elif attack_name == 'зомбирование' and not save['success']:
+                elif attack_name == 'зомбирование' and not immune and not save['success']:
                     health = target_data.setdefault('health', {})
                     meta = health.setdefault('combatMeta', {})
                     meta['zombificationPreviousController'] = target.controlled_by
@@ -16664,7 +16672,7 @@ class CombatService:
                         'type': 'zombification', 'name': 'Зомбирование',
                         'source': 'psyionik', 'active': True,
                     })
-                elif attack_name == 'приказ смерти':
+                elif attack_name == 'приказ смерти' and not immune:
                     effects = normalize_effect_list(
                         target_data.setdefault('health', {}).get('effects') or []
                     )

@@ -858,6 +858,9 @@ def _restore_limb_health_and_pool(health: Dict[str, Any], area: str, restored_he
 
 def health_blocks_new_stress(health: Dict[str, Any], *, include_medicine=True) -> bool:
     """Физическая невозможность получить стресс и действующая медикаментозная защита, без RNG."""
+    from app.services.artifact_special import stat_value
+    if stat_value({'health': health}, 'stress_immunity') > 0:
+        return True
     if include_medicine and any(effect.get('blocks_new_stress') and effect.get('active', True)
                                and (effect.get('remaining') is None or _to_float(effect.get('remaining'), 0) > 0)
                                for effect in normalize_effect_list(health.get('effects') or [])):

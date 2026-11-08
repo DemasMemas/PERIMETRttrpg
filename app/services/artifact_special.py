@@ -29,6 +29,8 @@ BUFFS = {
     'Огненная вена': (18, {'breathless_immunity': 1}),
     'Сердце грозы': (12, {'movement_penalty': -20, 'skill_strength': 5, 'breathless_immunity': 1}),
     'Панцирь': (60, {'armor_wear_immunity': 1}),
+    'Ментальный бастион': (30, {'directed_psi_immunity': 1}),
+    'Щит сознания': (60, {'directed_psi_immunity': 1, 'stress_immunity': 1}),
 }
 STAT_LABELS = {'movement_penalty': 'Штраф перемещения', 'skill_strength': 'Сила',
                'physical_protection': 'Защита от физического урона', 'chemical_protection': 'Защита от химического урона',
@@ -36,6 +38,8 @@ STAT_LABELS = {'movement_penalty': 'Штраф перемещения', 'skill_s
                'immune_physical': 'Игнорирование физического урона'}
 STAT_LABELS['breathless_immunity'] = 'Бег и спринт без одышки'
 STAT_LABELS['armor_wear_immunity'] = 'Броня не теряет прочность'
+STAT_LABELS['directed_psi_immunity'] = 'Иммунитет к направленным пси-атакам'
+STAT_LABELS['stress_immunity'] = 'Стресс не повышается'
 
 
 def is_special_effect(effect):

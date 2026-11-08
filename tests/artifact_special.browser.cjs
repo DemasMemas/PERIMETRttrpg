@@ -195,6 +195,54 @@ module.exports=async({page,request,token,lobby,loc,locationId,rules,safeSession}
     await request(loc+'/combat/end_turn',{location_character_id:placed.location_character_id},token);
     assert.equal((await get()).data.equipment.armor.currentStageDurability,950,'После минуты снова действует износ от горения');
     await request(loc+'/combat/end',{},token);
+    const psion=await request('/lobbies/'+lobby.id+'/mutants',{mutant_type:'Псионик',name:'Проверка пси-иммунитета'},token);
+    const psionPlaced=await request(loc+'/spawn_character',{character_id:psion.id,tile_x:43,tile_y:46},token);
+    await request(loc+'/characters/'+psion.id+'/facing',{facing_x:-1,facing_y:0},token,'PATCH');
+    const psiResults=[];
+    for(const [name,seconds,identity] of [['Ментальный бастион',30,'native-mental-bastion'],['Щит сознания',60,'native-mind-shield']]){
+        const artifact=rules.find(row=>row.name===name),fresh=await get();assert.ok(artifact);
+        fresh.data.equipment.armor.containers=[{item:{id:identity,name,category:'artifact',quantity:1,attributes:artifact}}];
+        fresh.data.health.effects=fresh.data.health.effects.filter(effect=>effect.type!=='burning');
+        await request(url,{data:fresh.data},token,'PUT');
+        await request('/__testing/artifact-preparation/'+safeSession.runId,{character_id:character.id},token);
+        await request(loc+'/combat/start',{location_character_ids:[placed.location_character_id],
+            initiator_location_character_id:placed.location_character_id,initiator_first:true},token);
+        await request(loc+'/combat/end_turn',{location_character_id:placed.location_character_id},token);
+        await request(loc+'/combat/end',{},token);
+        await request(loc+'/combat/start',{location_character_ids:[placed.location_character_id,psionPlaced.location_character_id],
+            initiator_location_character_id:placed.location_character_id,initiator_first:true},token);
+        await page.evaluate(`window.openCharacterSheet(${character.id},'equipment').then(()=>true)`);
+        await page.until("document.querySelector('.equipment-panel-tab[data-panel=armor]')",'Броня с пси-защитой');
+        await page.evaluate("document.querySelector('.equipment-panel-tab[data-panel=armor]').click();true");
+        await page.until(`document.querySelector('[data-artifact-special="${identity}"]')&&!document.querySelector('[data-artifact-special="${identity}"]').disabled`,name+' готов');
+        await page.evaluate(`document.querySelector('[data-artifact-special="${identity}"]').click();true`);
+        await page.evaluate('window.__artifactUsePromise.then(()=>true)');
+        assert.equal((await get()).data.health.effects.find(e=>e.artifact_stat==='directed_psi_immunity').remaining_seconds,seconds);
+        let stressBlocked=null;
+        if(name==='Щит сознания'){
+            const stressBefore=(await get()).data.health.stress;
+            const stress=await request('/lobbies/'+lobby.id+'/characters/'+character.id+'/stress',{amount:1},token);
+            assert.equal(stress.stress.blocked,true);assert.equal(stress.data.health.stress,stressBefore);stressBlocked=true;
+        }
+        const psionTurn=await request(loc+'/combat/end_turn',{location_character_id:placed.location_character_id},token);
+        const psiBefore=(await get()).data.health.psyState??0,apBefore=psionTurn.current_character.action_points_current;
+        const strike=await request(loc+'/combat/action',{location_character_id:psionPlaced.location_character_id,
+            action_key:'mutant_psy_attack',weapon_index:0,target_character_id:character.id},token);
+        assert.equal(strike.mutant_action.artifact_immune,true);assert.equal(strike.mutant_action.save,null);
+        assert.equal((await get()).data.health.psyState,psiBefore);
+        assert.equal((await request(loc+'/combat',null,token,'GET')).current_character.action_points_current,apBefore-3);
+        await request(loc+'/combat/end',{},token);await changeMinutes(1);
+        assert.ok(!(await get()).data.health.effects.some(e=>e.artifact_stat==='directed_psi_immunity'));
+        if(name==='Щит сознания'){
+            const stressBefore=(await get()).data.health.stress;
+            const stress=await request('/lobbies/'+lobby.id+'/characters/'+character.id+'/stress',{amount:1},token);
+            assert.equal(stress.data.health.stress,stressBefore+1);
+        }
+        psiResults.push({name,seconds,realButton:true,realPsionStrikeBlocked:true,attackerActionPoints:3,stressBlocked,expired:true});
+    }
+    const psiResponses=await page.evaluate('window.__artifactHttp');
+    assert.deepEqual(psiResponses.map(row=>row.status),Array(9).fill(200),JSON.stringify(psiResponses));
+    actionResponses.push(...psiResponses.slice(7));
     fs.writeFileSync(path.join(safeSession.artifacts,'artifact-special.json'),JSON.stringify({scene:'Припять',artifact:rule.name,
         preparedWornSeconds:86394,realRoundSeconds:6,readyAfterRealRound:true,realButtonActivations:2,apPerUse:1,
         first:{radiation:0,hp:200,cooldown:86400},second:{radiation:0,hp:300,cooldown:86394},reopened:true,
@@ -202,11 +250,13 @@ module.exports=async({page,request,token,lobby,loc,locationId,rules,safeSession}
         heatHeart:{buttonActivated:true,protectedRoundDamage:0,expiredRoundDamage:50},
         fieryVein:{buttonActivated:true,preparedBreathlessness:1000,clearedBreathlessness:0,effectSeconds:18,expiredAfterThreeRounds:true},
         stormHeart:{buttonActivated:true,movement:-20,strength:5,effectiveBreathlessness:0,sleepAfterFirstMinute:552,sleepExpired:true},
-        shell:{buttonActivated:true,protectedRounds:10,stageDurabilityBefore:1000,stageDurabilityProtected:1000,stageDurabilityAfterExpiry:950}},null,2));
+        shell:{buttonActivated:true,protectedRounds:10,stageDurabilityBefore:1000,stageDurabilityProtected:1000,stageDurabilityAfterExpiry:950},
+        psiImmunities:psiResults},null,2));
     console.log('Особые свойства: подготовленное ношение+реальный раунд, две кнопки Ядра твари по1ОД без рук, радиация→ОЗ; общий срок после первого, переоткрытие.');
     console.log('Генератор: кнопка без радиации, фактический штраф перемещения−1→−3,600→594секунд за раунд; истечение по игровому времени возвращает−1.');
     console.log('Сердце жара: настоящая кнопка и настоящее горение; первый раунд0урона, после истечения50.');
     console.log('Огненная вена: подготовленная одышка1000снята настоящей кнопкой, флаг18сек истёк за3настоящих раунда.');
     console.log('Сердце грозы: настоящая кнопка,−20/+5,оды́шка подавлена в клиентском состоянии; после12сек один сон600сек, перевод времени учитывает остаток/пробуждение.');
     console.log('Панцирь: настоящая кнопка,10 реальных раундов горения без износа брони; следующий раунд после минуты снимает50прочности.');
+    console.log('Ментальный бастион и Щит сознания: настоящие кнопки, реальные Пси-удары не воздействуют, атакующий тратит3ОД; стресс блокируется Щитом и возвращается после истечения.');
 };
