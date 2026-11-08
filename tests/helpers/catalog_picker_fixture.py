@@ -4,7 +4,7 @@ import re
 from uuid import UUID
 
 
-def install(app,db,check_database,run_id):
+def install(app,db,check_database,run_id,*,controlled_pepper=False):
     assert str(UUID(run_id))==run_id and app.testing and not app.debug
     check_database()
     from app.models.templates import ItemTemplate
@@ -36,6 +36,9 @@ def install(app,db,check_database,run_id):
     from app.services import combat
     original=combat.random
     def roll(low,high):
-        check_database();return 4 if (low,high)==(1,20) else original.randint(low,high)
+        check_database()
+        if (low,high)==(1,20):return 4
+        if controlled_pepper and (low,high)==(1,100):return 99
+        return original.randint(low,high)
     combat.random=SimpleNamespace(randint=roll,choice=original.choice,uniform=original.uniform,
         random=original.random,shuffle=original.shuffle)

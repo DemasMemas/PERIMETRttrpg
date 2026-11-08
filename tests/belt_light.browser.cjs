@@ -2,6 +2,7 @@
 const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path');
 module.exports=async({page,request,token,lobby,offered,loc,npc,safeSession})=>{
     assert.ok(['catalog','equipment'].includes(process.env.VTT_SAFE_SCENARIO));assert.ok(safeSession.verified);
+    const evidence=process.env.VTT_SAFE_SCENARIO==='equipment'?require('./helpers/playtest_registry.cjs').evidenceWriter(safeSession,'belt-light'):null;
     await page.call('Emulation.setDeviceMetricsOverride',{width:1920,height:1080,deviceScaleFactor:1,mobile:false});
     const item=(t,id)=>({id,templateId:t.id,name:t.name,category:t.category,attributes:structuredClone(t.attributes||{}),quantity:1,weight:t.weight,volume:t.volume});
     const belt=item(offered.global.find(t=>t.category==='belt'),'light-browser-belt');
@@ -38,9 +39,15 @@ module.exports=async({page,request,token,lobby,offered,loc,npc,safeSession})=>{
     const after=await request(loc+'/combat',null,token,'GET');
     assert.equal(after.current_character.action_points_current,before.current_character.action_points_current-3);
     assert.equal(after.current_character.portable_lights.find(s=>s.id===lamp.id).mount,'belt');
+    evidence?.step('Включённый фонарь перенесён из руки на пояс',
+        {mount:'hand',actionPoints:before.current_character.action_points_current},
+        {mount:after.current_character.portable_lights.find(s=>s.id===lamp.id).mount,actionPoints:after.current_character.action_points_current});
     await request(loc+'/combat/action',{location_character_id:placed.location_character_id,action_key:'draw_weapon',weapon_index:0},token);
     const saved=await request('/lobbies/characters/'+owner.id,null,token,'GET');
     assert.notEqual(saved.data.health.combatMeta.weaponGripHands,1,'После крепления доступны обе руки');
+    const armed=await request(loc+'/combat',null,token,'GET');assert.equal(armed.current_character.weapon_grip_hands,2);
+    evidence?.step('Оружие после крепления фонаря', {occupiedHand:'Фонарь'},
+        {weapon:saved.data.weapons[0].name,gripHands:armed.current_character.weapon_grip_hands});
     await page.evaluate('window.closeCharacterSheet();true');
     await page.until("mapAudit.scene.children.some(light=>light.isSpotLight&&Math.abs(light.position.x-49.5)<.1&&Math.abs(light.position.z-50.85)<.1)",'Настоящий луч у персонажа');
     const visualHeight=await page.evaluate("mapAudit.scene.children.find(light=>light.isSpotLight&&Math.abs(light.position.x-49.5)<.1&&Math.abs(light.position.z-50.85)<.1).position.y");
@@ -58,6 +65,8 @@ module.exports=async({page,request,token,lobby,offered,loc,npc,safeSession})=>{
     await page.until(`${row(his.id)}?.textContent.includes('на поясе')`,'ХИС на поясе');
     const status=await request('/lobbies/characters/'+owner.id+'/portable-lights',null,token,'GET');
     assert.equal(status.lights.find(light=>light.id===his.id).remaining_seconds,1800);
+    evidence?.step('На свободное крепление помещён активный ХИС', {durationSeconds:1800},
+        {remainingSeconds:status.lights.find(light=>light.id===his.id).remaining_seconds,mount:status.lights.find(light=>light.id===his.id).mount});
     for(const[width,height]of [[1920,1080],[1600,900],[1366,768],[1280,720]]){
         await page.call('Emulation.setDeviceMetricsOverride',{width,height,deviceScaleFactor:1,mobile:false});
         await page.until(`(()=>{const root=document.getElementById('sheet-tab-equipment').getBoundingClientRect();return [...document.querySelectorAll('.portable-light-row')].filter(row=>['${lamp.id}','${his.id}'].includes(row.dataset.lightId)).every(row=>{const r=row.getBoundingClientRect();return r.y>=root.y&&r.bottom<=root.bottom&&r.right<=root.right})})()`,'Оба источника видны '+width);
@@ -65,4 +74,8 @@ module.exports=async({page,request,token,lobby,offered,loc,npc,safeSession})=>{
         if(width===1280)await shot('belt-his-1280x720.png');
     }
     console.log('Свет на поясе: штатная установка g62, перенос включённого фонаря из руки за 3 ОД, обе руки доступны оружию, настоящий луч и два ракурса Припяти, ХИС без сброса таймера, четыре настольных размера.');
+    evidence?.publish({images:['belt-light-before-hand.png','belt-light-after-belt.png','belt-light-other-angle.png','belt-his-1280x720.png'],
+        controls:{random:'Бросков в этом сценарии нет',time:'ХИС активируется на 1800 игровых секунд; ход времени не ускоряется'},
+        limitations:['Высота луча проверена стоя; сидя и лёжа отдельно визуально не проверялись.',
+            'Один клиент ГМа. Права отдельного игрока этим случаем не подтверждаются.']});
 };
