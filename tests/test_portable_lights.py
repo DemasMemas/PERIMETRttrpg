@@ -92,6 +92,30 @@ def operate(client,case,auth_headers,operation,**payload):
               'character_revision':actor.character.revision,**payload})
 
 
+@pytest.mark.parametrize('in_combat,new_charge,expected_on',[(False,7,True),(False,0,False),(True,7,None)])
+def test_hand_lamp_replacement_is_one_action_only_outside_combat(client,grenade_game,auth_headers,in_combat,new_charge,expected_on):
+    actor=install(grenade_game['actor_location']);data=deepcopy(actor.character.data)
+    old=data['inventory']['pockets'][0];old['lightPower']={'uses_left':6,'elapsed_seconds':123,'scheduled_on':True}
+    data['inventory']['pockets'].append({'id':'replacement-lamp','name':'Улучшенный фонарик','category':'misc','quantity':1,
+        'lightPower':{'uses_left':new_charge,'elapsed_seconds':321}})
+    data['health'].setdefault('combatMeta',{})['portableLights']=[{'id':old['id'],'mount':'hand','on':True}]
+    actor.character.data=data
+    if not in_combat:LocationCombatState.query.filter_by(location_id=actor.location_id).one().status='inactive'
+    db.session.commit();before=deepcopy(actor.character.data);points=actor.action_points_current
+    response=operate(client,grenade_game,auth_headers,'prepare',path=['inventory','pockets',1],source_id='replacement-lamp',mount='hand')
+    if in_combat:
+        assert response.status_code==400
+        assert bindings(actor.character.data)==bindings(before) and actor.character.data['inventory']==before['inventory']
+    else:
+        assert response.status_code==200,response.json
+        assert bindings(actor.character.data)==[{'id':'replacement-lamp','mount':'hand','on':expected_on}]
+        old,new=actor.character.data['inventory']['pockets']
+        assert old['lightPower']=={'uses_left':6,'elapsed_seconds':123,'scheduled_on':False}
+        assert new['lightPower']['uses_left']==new_charge and new['lightPower']['elapsed_seconds']==321
+        assert response.json['light_operation']['action_points']==0
+    assert actor.action_points_current==points
+
+
 def test_prepare_toggle_and_battle_end_consume_one_use(client,grenade_game,auth_headers):
     actor=install(grenade_game['actor_location']);before=actor.action_points_current
     assert operate(client,grenade_game,auth_headers,'prepare').status_code==200

@@ -46,8 +46,11 @@ test('ближний свет сохраняет горизонтальную ш
     assert.ok(Math.atan(1.4/1.5)<light.angle,'В ближнюю землю попадает вертикальная часть луча');
     const shader={uniforms:{},vertexShader:T.ShaderLib.standard.vertexShader,fragmentShader:T.ShaderLib.standard.fragmentShader};
     material.onBeforeCompile(shader);
+    const camera=new T.PerspectiveCamera();camera.updateMatrixWorld();scene.onBeforeRender(null,scene,camera);
     assert.equal(shader.previousHandler,true);assert.ok(shader.fragmentShader.includes('portableBeamMask'));
-    assert.equal(shader.uniforms.portableBeamOrigins.value[0].w,Math.atan(2.5/35));
+    assert.equal(light.decay,-1,'Затухание задаёт профиль без перебора источников в пикселе');
+    assert.equal(shader.uniforms.portableBeamShapes.value[0].x,Math.cos(Math.atan(2.5/35)));
+    assert.equal(shader.uniforms.portableBeamShapes.value[0].z,35);
     assert.equal(renderer.count,1,'Активен один источник');
     assert.equal(scene.children.filter(node=>node.isSpotLight).length,4,'Места подготовлены заранее');
     const version=material.version;

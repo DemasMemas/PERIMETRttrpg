@@ -143,6 +143,7 @@ export function createTerrainMaterialLayer(THREE, { world = false } = {}) {
         terrainMaterialDarkness: { value: textures[0] }, terrainMaterialHasDarkness: { value: 0 },
         terrainKindsSize: { value: new THREE.Vector2(1, 1) } };
     let texture = null;
+    const materials=new Set(),seasonal={snow:world,ice:world};
     const layer = {
         ready: atlas.promise,
         setShoreGrass(detail) {
@@ -176,6 +177,11 @@ export function createTerrainMaterialLayer(THREE, { world = false } = {}) {
             texture.image.data[offset + 1] = side;
             texture.image.data[offset + 2] = water;
             texture.needsUpdate = true;
+            // Не занимаем четыре канала текстур снега/льда в летней подлокации:
+            // они нужны картам теней фонарей. Редактор включает их при добавлении.
+            for(const [kind,id] of [['snow',6],['ice',12]])if(!seasonal[kind]&&(top===id||side===id)){
+                seasonal[kind]=true;materials.forEach(material=>{material.needsUpdate=true;});
+            }
         },
         fill(tiles, originX = 0, originZ = 0) {
             tiles.forEach((row, z) => row.forEach((tile, x) => layer.update(originX + x, originZ + z, tile)));
@@ -190,6 +196,7 @@ export function createTerrainMaterialLayer(THREE, { world = false } = {}) {
             disposed = true;
             texture?.dispose(); texture = null; uniforms.terrainKinds.value = null;
             if (!world) [...textures, ...snowTextures, ...iceTextures].forEach(texture => texture.dispose());
+            materials.clear();
         },
         diagnostics() { return { ready: atlas.ready.value === 1, error: atlas.error,
             atlasBytes: TERRAIN_ATLAS_CELL ** 2 * TERRAIN_ATLAS_COLUMNS * TERRAIN_ATLAS_ROWS * 4 * 4,
@@ -197,10 +204,11 @@ export function createTerrainMaterialLayer(THREE, { world = false } = {}) {
             iceBytes: Math.ceil(2 * 512 ** 2 * 4 * 4 / 3),
             materials: TERRAIN_MATERIALS.length, lookupBytes: texture?.image.data.byteLength || 0 }; },
         apply(material, { sides = false, smooth = false, shore = false, waterSides = world, iceGlaze = false } = {}) {
+            materials.add(material);
             material.extensions = { ...material.extensions, derivatives: true, shaderTextureLOD: true };
             const previousCompile = material.onBeforeCompile;
             const previousKey = material.customProgramCacheKey?.bind(material);
-            material.customProgramCacheKey = () => `${previousKey?.() || ''}:terrain-pbr-v14:${world}:${sides}:${smooth}:${shore}:${waterSides}:${iceGlaze}`;
+            material.customProgramCacheKey = () => `${previousKey?.() || ''}:terrain-pbr-v15:${world}:${sides}:${smooth}:${shore}:${waterSides}:${iceGlaze}:${seasonal.snow}:${seasonal.ice}`;
             material.onBeforeCompile = shader => {
                 previousCompile?.(shader);
                 Object.assign(shader.uniforms, uniforms);
@@ -243,6 +251,12 @@ export function createTerrainMaterialLayer(THREE, { world = false } = {}) {
                         }`)
                     .replace('#include <aomap_fragment>', `#include <aomap_fragment>
                         reflectedLight.indirectDiffuse *= mix(1.0, mix(1.0, terrainArm.r, 0.7), terrainCoverage);`);
+                if(!seasonal.snow)shader.fragmentShader=shader.fragmentShader
+                    .replace('uniform sampler2D terrainSnowColorRoughness;','#define terrainSnowColorRoughness terrainAtlasColor\n')
+                    .replace('uniform sampler2D terrainSnowNormal;','#define terrainSnowNormal terrainAtlasNormal\n');
+                if(!seasonal.ice)shader.fragmentShader=shader.fragmentShader
+                    .replace('uniform sampler2D terrainIceColorRoughness;','#define terrainIceColorRoughness terrainAtlasColor\n')
+                    .replace('uniform sampler2D terrainIceNormal;','#define terrainIceNormal terrainAtlasNormal\n');
             };
         },
     };

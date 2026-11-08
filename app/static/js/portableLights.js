@@ -100,7 +100,13 @@ export async function renderPortableLights(container,characterId,data,operate,is
 export function createPortableLightRenderer(THREE,scene) {
     const lights=new Map();
     const materials=new Map(),spotPool=[];
-    let beamOrigins=null,lensGeometry=null,lensMaterial=null;
+    let beamShapes=null,beamUp=null,lensGeometry=null,lensMaterial=null;
+    const previousBeforeRender=scene.onBeforeRender;
+    const beforeRender=function(renderer,renderScene,camera,...rest){
+        previousBeforeRender?.call(this,renderer,renderScene,camera,...rest);
+        if(!beamShapes)return;
+        beamUp.set(0,1,0).transformDirection(camera.matrixWorldInverse);
+    };
     const verticalHalfAngle=Math.PI/3;
     // Узкая ширина по горизонтали сохраняется, по вертикали луч достигает
     // ближней земли. Обычный круглый конус пересекал её лишь через 13 метров.
@@ -111,38 +117,55 @@ export function createPortableLightRenderer(THREE,scene) {
         const previous=material.onBeforeCompile,previousKey=material.customProgramCacheKey;
         const hook=(shader,renderer)=>{
             previous?.call(material,shader,renderer);
-            shader.uniforms.portableBeamOrigins={value:beamOrigins};
+            shader.uniforms.portableBeamShapes={value:beamShapes};
+            shader.uniforms.portableBeamUp={value:beamUp};
             for(const stage of ['vertexShader','fragmentShader']){
                 if(!shader[stage]?.includes('#include <lights_pars_begin>'))continue;
                 const chunk=THREE.ShaderChunk.lights_pars_begin.replace(
                     'directLight.color *= spotEffect *',
-                    'directLight.color *= portableBeamMask(spotLight.position, directLight.direction, spotLight.direction) * spotEffect *');
+                    'directLight.color *= portableBeamMask(spotLight.decay, directLight.direction, spotLight.direction, lightDistance) * spotEffect *')
+                    .replace('directLight.visible = true;', 'directLight.visible = ( directLight.color != vec3( 0.0 ) );');
                 shader[stage]=shader[stage].replace('#include <lights_pars_begin>',`
-                    uniform vec4 portableBeamOrigins[4];
-                    float portableBeamMask(vec3 position, vec3 ray, vec3 direction) {
-                        vec3 up = mat3(viewMatrix) * vec3(0.0, 1.0, 0.0);
-                        for (int beam = 0; beam < 4; beam++) {
-                            if (portableBeamOrigins[beam].w <= 0.0) continue;
-                            vec3 origin = (viewMatrix * vec4(portableBeamOrigins[beam].xyz, 1.0)).xyz;
-                            if (distance(origin, position) > 0.001) continue;
+                    uniform vec4 portableBeamShapes[4];
+                    uniform vec3 portableBeamUp;
+                    float portableBeamMask(float marker, vec3 ray, vec3 direction, float lightDistance) {
+                        if (marker >= 0.0) return 1.0;
+                        vec3 up = portableBeamUp;
+                        int beam = int(-marker - 1.0);
                             vec3 flatRay = ray - up * dot(ray, up);
                             vec3 flatDirection = direction - up * dot(direction, up);
-                            if (length(flatRay) < 0.00001 || length(flatDirection) < 0.00001) return 1.0;
-                            float angle = portableBeamOrigins[beam].w;
-                            float horizontal = smoothstep(cos(angle), cos(angle * 0.6), dot(normalize(flatRay), normalize(flatDirection)));
+                            float rayLength = length(flatRay), directionLength = length(flatDirection);
+                            if (rayLength < 0.00001 || directionLength < 0.00001) return 1.0;
+                            vec4 shape = portableBeamShapes[beam];
+                            float along = dot(flatRay, flatDirection / directionLength);
+                            float horizontal = smoothstep(shape.x, shape.y, along / rayLength);
                             // Расширяется только нижняя часть; верх луча остаётся прежним.
                             if (dot(ray, up) < dot(direction, up)) {
-                                horizontal *= smoothstep(cos(angle), cos(angle * 0.6), dot(ray, direction));
+                                horizontal *= smoothstep(shape.x, shape.y, dot(ray, direction));
                             }
-                            return horizontal;
-                        }
-                        return 1.0;
+                            float forward = max(0.0, along * lightDistance);
+                            float farEdge = shape.z;
+                            // Последние полметра образуют округлый конец: центр дальше краёв.
+                            if (forward > shape.z - 0.5) {
+                                float side = lightDistance * sqrt(max(0.0, dot(flatRay, flatRay) - along * along));
+                                float sideRatio = min(1.0, side / shape.w);
+                                farEdge -= 0.5 * (1.0 - sqrt(1.0 - sideRatio * sideRatio));
+                            }
+                            float reach = 1.0 - smoothstep(farEdge - 0.15, farEdge, forward);
+                            // Не гасим последние метры линейным затуханием Three.js.
+                            return horizontal * reach * mix(1.0, 0.2, min(1.0, forward / shape.z));
                     }
                     ${chunk}`);
             }
+            // За узкой границей луча не нужны ни выборка мягкой тени, ни BRDF.
+            const begin=THREE.ShaderChunk.lights_fragment_begin;
+            const call='getSpotDirectLightIrradiance( spotLight, geometry, directLight );';
+            const start=begin.indexOf(call),end=begin.indexOf('\n\t}',start);
+            if(start>=0&&end>start)shader.fragmentShader=shader.fragmentShader.replace('#include <lights_fragment_begin>',
+                begin.slice(0,start)+call+'\n if (directLight.visible) {'+begin.slice(start+call.length,end)+'\n }'+begin.slice(end));
         };
         material.onBeforeCompile=hook;
-        material.customProgramCacheKey=()=>`${previousKey?.call(material)||''}:portable-beam-v1`;
+        material.customProgramCacheKey=()=>`${previousKey?.call(material)||''}:portable-beam-v4`;
         materials.set(material,{hook,previous,previousKey});material.needsUpdate=true;
     }
     function beamShadow(light,horizontalHalfAngle) {
@@ -157,7 +180,7 @@ export function createPortableLightRenderer(THREE,scene) {
         };
     }
     function attach(root) {
-        if(!beamOrigins||!root)return;
+        if(!beamShapes||!root)return;
         root.traverse(child=>{if(child.isMesh)for(const material of [].concat(child.material||[]))attachBeamMaterial(material);});
     }
     function shadowSettings(light) {
@@ -171,11 +194,14 @@ export function createPortableLightRenderer(THREE,scene) {
     }
     function prepare() {
         if(spotPool.length)return;
-        beamOrigins=Array.from({length:4},()=>new THREE.Vector4(0,0,0,0));
+        beamShapes=Array.from({length:4},()=>new THREE.Vector4());beamUp=new THREE.Vector3(0,1,0);
+        scene.onBeforeRender=beforeRender;
         lensGeometry=new THREE.SphereGeometry(.035,8,6);
         lensMaterial=new THREE.MeshBasicMaterial({color:'#fff4d8',transparent:true,opacity:.7,depthWrite:false,toneMapped:false});
         for(let index=0;index<4;index++){
-            const light=new THREE.SpotLight('#fff4d8',0,20,verticalHalfAngle,.4,1);
+            // В r128 decay <= 0 отключает штатное затухание. Отрицательный
+            // номер связывает собственный луч с профилем без поиска в каждом пикселе.
+            const light=new THREE.SpotLight('#fff4d8',0,20,verticalHalfAngle,.4,-index-1);
             shadowSettings(light);beamShadow(light,Math.atan(2.5/20));
             const lens=new THREE.Mesh(lensGeometry,lensMaterial);lens.userData.portableEmitter=true;
             scene.add(light,light.target,lens);
@@ -220,7 +246,9 @@ export function createPortableLightRenderer(THREE,scene) {
                         prepare();entry=spotPool.find(slot=>!slot.active);
                         entry.active=true;entry.light.visible=true;entry.light.intensity=11.5;entry.lens.visible=true;
                         entry.light.distance=source.range||20;
-                        beamShadow(entry.light,Math.atan((source.end_width||5)/2/(source.range||20)));
+                        const angle=Math.atan((source.end_width||5)/2/(source.range||20));
+                        beamShapes[-entry.light.decay-1].set(Math.cos(angle),Math.cos(angle*.6),source.range||20,(source.end_width||5)/2);
+                        beamShadow(entry.light,angle);
                     }
                     entry.source=source;lights.set(source.id,entry);
                 }
@@ -243,29 +271,16 @@ export function createPortableLightRenderer(THREE,scene) {
                 entry.light.target.updateMatrixWorld();entry.light.shadow.needsUpdate=true;
                 entry.lens.position.copy(entry.light.position);
             }
-            // Радиальным источникам передаём свободные места карт теней;
-            // четыре фонаря сохраняют те же программы при включении/выключении.
-            const radialCount=[...lights.values()].filter(entry=>!entry.light.isSpotLight).length;
-            let idleIndex=0;
-            for(const entry of spotPool)entry.light.castShadow=entry.active||idleIndex++>=radialCount;
-            if(beamOrigins){
-                beamOrigins.forEach(origin=>origin.set(0,0,0,0));let index=0;
-                for(const {light,source}of lights.values())if(light.isSpotLight){
-                    beamOrigins[index++].set(light.position.x,light.position.y,light.position.z,
-                        Math.atan((source.end_width||5)/2/(source.range||20)));
-                }
-                attach(scene);
-            }
         },
         dirty() { for (const {light} of lights.values()) light.shadow.needsUpdate=true; },
         dispose() {
             for (const entry of lights.values())if(!entry.light.isSpotLight)dispose(entry);lights.clear();
             for(const entry of spotPool)dispose(entry);spotPool.length=0;
-            beamOrigins?.forEach(origin=>origin.set(0,0,0,0));
             for(const [material,state]of materials)if(material.onBeforeCompile===state.hook){
                 material.onBeforeCompile=state.previous;material.customProgramCacheKey=state.previousKey;material.needsUpdate=true;
             }
             materials.clear();lensGeometry?.dispose();lensMaterial?.dispose();
+            if(scene.onBeforeRender===beforeRender)scene.onBeforeRender=previousBeforeRender;
         },
         get count(){return lights.size},
     };

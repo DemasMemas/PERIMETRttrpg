@@ -124,6 +124,20 @@ function compile(layer, options) {
     return { material, ...result };
 }
 
+test('летняя подлокация освобождает каналы текстур для фонарей, редактор возвращает снег и лёд', async()=>{
+    const {THREE}=environment(),layer=createTerrainMaterialLayer(THREE);await layer.ready;
+    layer.resize(2,1);layer.fill([[{terrain:'grass'},{terrain:'concrete'}]]);
+    const initial=compile(layer),key=initial.material.customProgramCacheKey();
+    assert.doesNotMatch(initial.fragmentShader,/uniform sampler2D terrain(?:Snow|Ice)/);
+    layer.update(0,0,{terrain:'snow'});
+    assert.equal(initial.material.needsUpdate,true);assert.notEqual(initial.material.customProgramCacheKey(),key);
+    const snowy=compile(layer);assert.match(snowy.fragmentShader,/uniform sampler2D terrainSnowNormal/);
+    assert.doesNotMatch(snowy.fragmentShader,/uniform sampler2D terrainIceNormal/);
+    layer.update(1,0,{terrain:'ice'});
+    const winter=compile(layer);assert.match(winter.fragmentShader,/uniform sampler2D terrainIceNormal/);
+    assert.match(winter.fragmentShader,/uniform sampler2D terrainSnowNormal/);layer.dispose();
+});
+
 test('only global shores and grass walls next to water use the existing earth side texture',async()=>{
     const {THREE}=environment(),world=createTerrainMaterialLayer(THREE,{world:true}),local=createTerrainMaterialLayer(THREE);
     await world.ready;world.resize(4,4);world.update(1,1,{terrain:'water'});local.update(0,0,{terrain:'water'});

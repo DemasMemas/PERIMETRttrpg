@@ -719,6 +719,16 @@ def operate(character_id,user_id,payload):
             weapons[index].setdefault('id',str(uuid4()));binding['weapon_id']=weapons[index]['id']
         if mount=='hand':
             from app.services.weapon_grip import functional_arms
+            if not actor and not glow(selected):
+                items={item.get('id'):item for _,item in walk(data)}
+                replaced=[entry for entry in states if entry.get('mount')=='hand'
+                    and definition(items.get(entry.get('id'),{})) in {'hand','improved'}]
+                if replaced:
+                    binding['on']=any(entry.get('on') for entry in replaced) and power(selected)['uses_left']>0
+                    for entry in replaced:
+                        old=items[entry['id']]
+                        if 'scheduled_on' in power(old):power(old)['scheduled_on']=False
+                    states[:]=[entry for entry in states if entry not in replaced]
             primary=actor.drawn_weapon_index if actor else data.get('activeWeaponIndex')
             armed=type(primary) is int and 0<=primary<len(data.get('weapons') or [])
             meta=data.get('health',{}).get('combatMeta',{})

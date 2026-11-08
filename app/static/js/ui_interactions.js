@@ -275,7 +275,7 @@ export function initDraggablePanels() {
         if (modalContent.dataset.draggableInitialized === 'true') return;
         const modal = modalContent.closest('.modal');
         const panelId = modal?.id;
-        if (!panelId) return;
+        if (!panelId || panelId === 'character-sheet-modal') return;
         makeDraggable(modalContent, modalContent, panelId);
         modalContent.dataset.draggableInitialized = 'true';
     });
