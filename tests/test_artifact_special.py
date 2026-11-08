@@ -429,3 +429,67 @@ def test_sniper_reposition_uses_same_breathlessness_immunity_as_actual_movement(
     assert sniper_status(actor)['mode'] == 'walk'
     use(actor.character.data)
     assert sniper_status(actor)['mode'] == 'run'
+
+
+def armored_shell():
+    data = ready(name='Панцирь')
+    data['health'].update(current=700, radiation=0)
+    data['equipment']['armor'].update(name='Проверочная броня', category='armor', stage=2,
+        stageDurability=1000, currentStageDurability=300, protection={'physical': 10}, attributes={})
+    return data
+
+
+@pytest.mark.parametrize('stage', [1, 2, 5])
+def test_shell_prevents_stage_and_broken_armor_wear_without_repairing_or_protecting_body(grenade_game, stage):
+    target = grenade_game['actor_location']
+    data = armored_shell()
+    armor = data['equipment']['armor']
+    armor.update(stage=stage, currentStageDurability=0 if stage == 5 else 300, durability=10,
+                 brokenDamage=40, brokenProtectionLoss=2)
+    use(data)
+    before = deepcopy(armor)
+    assert CombatService._damage_armor_item(armor, {}, 5000, character_data=data)['damage'] == 0
+    assert armor == before
+    target.character.data = data
+    assert CombatService._apply_general_damage(target, 25)['current_health'] == 675
+    health = target.character.data['health']
+    health['effects'] = advance_timed_effects(health, health['effects'], 60, character_data=target.character.data)
+    armor = target.character.data['equipment']['armor']
+    assert CombatService._damage_armor_item(armor, {}, 100, character_data=target.character.data)['damage'] == 100
+    assert armor != before
+
+
+@pytest.mark.parametrize('source', ['bullet', 'fragment', 'blast', 'anomaly', 'burning'])
+def test_shell_is_connected_to_real_armor_damage_sources(grenade_game, monkeypatch, source):
+    target, attacker = grenade_game['actor_location'], grenade_game['target_location']
+    target.character.data = armored_shell()
+    use(target.character.data)
+    before = target.character.data['equipment']['armor']['currentStageDurability']
+    if source == 'bullet':
+        attacker.character.data = {'weapons': [{}], 'health': {'current': 700, 'max': 700}}
+        monkeypatch.setattr(CombatService, '_ranged_damage_profile', lambda weapon: ({
+            'damage': 100, 'armor_piercing': 10, 'bleeding': '', 'effective_range': 100,
+            'damage_type': 'bullet'}, None))
+        result = CombatService._resolve_attack(target, attacker,
+            {'weapon_index': 0, 'hit_difficulty': 1, 'fire_mode': 'single', 'round_number': 1},
+            aimed_zone='chest', forced_roll=20)
+        assert result['hit'] and result['armor_damage'][0]['damage'] == 0
+    elif source == 'fragment':
+        result = CombatService._explosion_fragment_hit(target, 100, 10, 'chest', {}, 1)
+        assert result['armor_damage'][0]['damage'] == 0
+    elif source == 'blast':
+        from test_grenade_rules import quiet_explosion, profile
+        quiet_explosion(monkeypatch)
+        result = CombatService.resolve_explosion(target.location_id, target.pos_x-.5, target.pos_y,
+                                                profile(blast_base=100))
+        hit = next(row for row in result['targets'] if row['character_id'] == target.character_id)
+        assert hit['blast_armor_damage'][0]['damage'] == 0
+    elif source == 'anomaly':
+        result = CombatService._apply_anomaly_equipment_damage(target.character.data, 100,
+            {'category': 'thermal', 'armor_damage_multiplier': 2})
+        assert result[0]['damage'] == 0
+    else:
+        from app.services.burning import ignite, tick
+        ignite(target, 2, source='Проверка Панциря')
+        tick(target, 1)
+    assert target.character.data['equipment']['armor']['currentStageDurability'] == before

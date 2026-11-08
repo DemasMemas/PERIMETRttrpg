@@ -28,12 +28,14 @@ BUFFS = {
     'Сердце притяжения': (6, {'immune_physical': 1}),
     'Огненная вена': (18, {'breathless_immunity': 1}),
     'Сердце грозы': (12, {'movement_penalty': -20, 'skill_strength': 5, 'breathless_immunity': 1}),
+    'Панцирь': (60, {'armor_wear_immunity': 1}),
 }
 STAT_LABELS = {'movement_penalty': 'Штраф перемещения', 'skill_strength': 'Сила',
                'physical_protection': 'Защита от физического урона', 'chemical_protection': 'Защита от химического урона',
                'immune_thermal': 'Игнорирование термического урона', 'immune_chemical': 'Игнорирование химического урона',
                'immune_physical': 'Игнорирование физического урона'}
 STAT_LABELS['breathless_immunity'] = 'Бег и спринт без одышки'
+STAT_LABELS['armor_wear_immunity'] = 'Броня не теряет прочность'
 
 
 def is_special_effect(effect):
@@ -186,7 +188,7 @@ def execute(actor, data, payload, user_id, combat=None):
             source = PREFIX + sha256(str(item['id']).encode()).hexdigest()[:24] + ':' + stat
             effects[:] = [effect for effect in effects if effect.get('source') != source]
             effects.append({'id': source, 'source': source, 'type': 'custom', 'name': f"{item['name']}: особое свойство",
-                            'note': f"{STAT_LABELS[stat]}{'' if stat.startswith('immune_') or stat == 'breathless_immunity' else f' {amount:+g}'} на {duration} сек.",
+                            'note': f"{STAT_LABELS[stat]}{'' if stat.startswith('immune_') or stat.endswith('_immunity') else f' {amount:+g}'} на {duration} сек.",
                             'artifact_stat': stat, 'value': amount, 'active': True, 'tick': 'time_elapsed',
                             'time_unit': 'second', 'remaining': duration, 'remaining_seconds': duration})
             if item['name'] == 'Сердце грозы' and stat == 'movement_penalty':

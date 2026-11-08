@@ -167,16 +167,46 @@ module.exports=async({page,request,token,lobby,loc,locationId,rules,safeSession}
     assert.equal(sleeping.data._artifact_profile.movement_penalty,0);
     assert.equal(sleeping.data._artifact_profile.skill_strength,0);
     await changeMinutes(10);assert.ok(!(await get()).data.health.effects.some(effect=>effect.type==='sleep'));
+    const shell=rules.find(row=>row.name==='Панцирь'),shellData=await get();assert.ok(shell);
+    Object.assign(shellData.data.equipment.armor,{name:'Проверочная броня',category:'armor',stage:1,
+        stageDurability:1000,currentStageDurability:1000,protection:{thermal:100},attributes:{},
+        containers:[{item:{id:'native-shell',name:shell.name,category:'artifact',quantity:1,attributes:shell}}]});
+    await request(url,{data:shellData.data},token,'PUT');
+    await request('/__testing/artifact-preparation/'+safeSession.runId,{character_id:character.id},token);
+    await request(loc+'/combat/start',{location_character_ids:[placed.location_character_id],
+        initiator_location_character_id:placed.location_character_id,initiator_first:true},token);
+    await request(loc+'/combat/end_turn',{location_character_id:placed.location_character_id},token);
+    const shellBurning=await get();shellBurning.data.health.effects.push({type:'burning',name:'Горение',remaining:12,
+        tick:'round_end',source:'native-shell-burning',damage_per_round:50});
+    await request(url,{data:shellBurning.data},token,'PUT');
+    await page.evaluate(`window.openCharacterSheet(${character.id},'equipment').then(()=>true)`);
+    await page.until("document.querySelector('.equipment-panel-tab[data-panel=armor]')",'Броня с Панцирем');
+    await page.evaluate("document.querySelector('.equipment-panel-tab[data-panel=armor]').click();true");
+    await page.until("document.querySelector('[data-artifact-special=\"native-shell\"]')&&!document.querySelector('[data-artifact-special=\"native-shell\"]').disabled",'Панцирь готов');
+    await page.evaluate("document.querySelector('[data-artifact-special=\"native-shell\"]').click();true");
+    await page.evaluate('window.__artifactUsePromise.then(()=>true)');
+    const shellResponses=await page.evaluate('window.__artifactHttp');
+    assert.deepEqual(shellResponses.map(row=>row.status),[200,200,200,200,200,200,200],JSON.stringify(shellResponses));
+    actionResponses.push(...shellResponses.slice(6));
+    assert.equal((await get()).data.health.effects.find(e=>e.artifact_stat==='armor_wear_immunity').remaining_seconds,60);
+    for(let round=0;round<10;round++)await request(loc+'/combat/end_turn',{location_character_id:placed.location_character_id},token);
+    const shellExpired=await get();assert.equal(shellExpired.data.equipment.armor.currentStageDurability,1000);
+    assert.ok(!shellExpired.data.health.effects.some(e=>e.artifact_stat==='armor_wear_immunity'));
+    await request(loc+'/combat/end_turn',{location_character_id:placed.location_character_id},token);
+    assert.equal((await get()).data.equipment.armor.currentStageDurability,950,'После минуты снова действует износ от горения');
+    await request(loc+'/combat/end',{},token);
     fs.writeFileSync(path.join(safeSession.artifacts,'artifact-special.json'),JSON.stringify({scene:'Припять',artifact:rule.name,
         preparedWornSeconds:86394,realRoundSeconds:6,readyAfterRealRound:true,realButtonActivations:2,apPerUse:1,
         first:{radiation:0,hp:200,cooldown:86400},second:{radiation:0,hp:300,cooldown:86394},reopened:true,
         actionResponses,generator:{buttonActivated:true,movementBefore:-1,movementActive:-3,initialSeconds:600,afterRound:594,expired:true},
         heatHeart:{buttonActivated:true,protectedRoundDamage:0,expiredRoundDamage:50},
         fieryVein:{buttonActivated:true,preparedBreathlessness:1000,clearedBreathlessness:0,effectSeconds:18,expiredAfterThreeRounds:true},
-        stormHeart:{buttonActivated:true,movement:-20,strength:5,effectiveBreathlessness:0,sleepAfterFirstMinute:552,sleepExpired:true}},null,2));
+        stormHeart:{buttonActivated:true,movement:-20,strength:5,effectiveBreathlessness:0,sleepAfterFirstMinute:552,sleepExpired:true},
+        shell:{buttonActivated:true,protectedRounds:10,stageDurabilityBefore:1000,stageDurabilityProtected:1000,stageDurabilityAfterExpiry:950}},null,2));
     console.log('Особые свойства: подготовленное ношение+реальный раунд, две кнопки Ядра твари по1ОД без рук, радиация→ОЗ; общий срок после первого, переоткрытие.');
     console.log('Генератор: кнопка без радиации, фактический штраф перемещения−1→−3,600→594секунд за раунд; истечение по игровому времени возвращает−1.');
     console.log('Сердце жара: настоящая кнопка и настоящее горение; первый раунд0урона, после истечения50.');
     console.log('Огненная вена: подготовленная одышка1000снята настоящей кнопкой, флаг18сек истёк за3настоящих раунда.');
     console.log('Сердце грозы: настоящая кнопка,−20/+5,оды́шка подавлена в клиентском состоянии; после12сек один сон600сек, перевод времени учитывает остаток/пробуждение.');
+    console.log('Панцирь: настоящая кнопка,10 реальных раундов горения без износа брони; следующий раунд после минуты снимает50прочности.');
 };

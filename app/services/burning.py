@@ -288,7 +288,8 @@ def tick(target,round_number):
     for slot in ('armor','helmet'):
         item=(data.get('equipment') or {}).get(slot)
         if isinstance(item,dict):
-            CombatService._damage_armor_item(item,CombatService._template_attributes(item),damage)
+            CombatService._damage_armor_item(item,CombatService._template_attributes(item),damage,
+                                            character_data=data)
     if harmful:
         was_alive=CombatService._character_condition(data)['state']!='dead'
         body_damage=max(e.get('damage_per_round') or 50 for e in harmful)
