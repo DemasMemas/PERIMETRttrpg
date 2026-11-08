@@ -5049,9 +5049,16 @@ class CombatService:
         return max(1, math.floor(10 * coefficient * max(0, base_durability)))
 
     @staticmethod
-    def _damage_armor_item(item, attributes, incoming_damage, damage_type='physical', *, character_data=None):
+    def _damage_armor_item(item, attributes, incoming_damage, damage_type='physical', *, character_data=None, raw_damage=None):
+        from app.services.artifact_special import stat_value
         damage = max(0, CombatService._coerce_float(incoming_damage, 0))
-        if damage <= 0:
+        if damage <= 0 and raw_damage is None:
+            return None
+        immune = stat_value(character_data, 'armor_wear_immunity') > 0
+        restore = 0
+        if immune and stat_value(character_data, 'armor_restore_on_hit') > 0:
+            restore = damage if raw_damage is None else max(0, CombatService._coerce_float(raw_damage, 0))
+        if damage <= 0 and restore <= 0:
             return None
         stage = max(1, min(5, CombatService._coerce_int(item.get('stage'), 1)))
         capacity = max(
@@ -5065,10 +5072,13 @@ class CombatService:
             item.get('currentStageDurability'),
             capacity if stage < 5 else 0,
         )
-        from app.services.artifact_special import stat_value
-        if stat_value(character_data, 'armor_wear_immunity') > 0:
+        if immune:
+            restored = min(restore, max(0, capacity - current)) if stage < 5 else 0
+            if restored > 0:
+                current += restored
+                item['currentStageDurability'] = current
             return {'name': item.get('name'), 'stage_before': stage, 'stage_after': stage,
-                    'stage_durability': current, 'damage': 0}
+                    'stage_durability': current, 'damage': 0, **({'restored': restored} if restored else {})}
         item['stageDurability'] = capacity
         original_stage = stage
         remaining = damage
@@ -7078,7 +7088,7 @@ class CombatService:
             for layer in layers:
                 result=(CombatService._damage_gas_mask(layer['item'],'bullet') if layer.get('is_gas_mask') else
                         CombatService._damage_armor_item(layer['item'],layer['attributes'],incoming*layer.get('wear_multiplier',1),
-                                                       character_data=data))
+                                                       character_data=data, raw_damage=incoming))
                 if result:wear.append(result)
         if crystal_first:
             from app.services.equipment_care import consume_liquid_crystal
@@ -7438,7 +7448,7 @@ class CombatService:
                     continue
                 damage_result = CombatService._damage_armor_item(
                     layer['item'], layer['attributes'], blast*layer.get('wear_multiplier',1),
-                    character_data=target_data,
+                    character_data=target_data, raw_damage=0 if wave_blocked else wave_incoming,
                 )
                 if damage_result:
                     blast_armor_damage.append(damage_result)
@@ -8725,7 +8735,7 @@ class CombatService:
                     layer['item'],
                     layer['attributes'],
                     max(0, profile['damage'] - artifact_armor_reduction),
-                    character_data=target_data,
+                    character_data=target_data, raw_damage=profile['damage'],
                 )
             if damage_result:
                 armor_damage.append(damage_result)
@@ -10865,7 +10875,7 @@ class CombatService:
                     {'fire':'thermal','burn':'thermal','heat':'thermal','acid':'chemical','poison':'chemical',
                      'electricity':'electric'}.get(str(profile.get('damage_type') or profile.get('category') or '').lower(),
                          profile.get('damage_type') or profile.get('category') or 'physical'),
-                    character_data=character_data,
+                    character_data=character_data, raw_damage=damage,
                 )
             else:
                 result = None

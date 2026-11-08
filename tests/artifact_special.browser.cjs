@@ -270,6 +270,43 @@ module.exports=async({page,request,token,lobby,loc,locationId,rules,safeSession}
     const giftResponses=await page.evaluate('window.__artifactHttp');
     assert.deepEqual(giftResponses.map(row=>row.status),Array(10).fill(200),JSON.stringify(giftResponses));
     actionResponses.push(...giftResponses.slice(9));
+    const shield=rules.find(row=>row.name==='Живой щит'),shieldData=await get();assert.ok(shield);
+    Object.assign(shieldData.data.equipment.armor,{stage:2,stageDurability:1000,currentStageDurability:800,
+        protection:{thermal:100},containers:[{item:{id:'native-live-shield',name:shield.name,category:'artifact',quantity:1,attributes:shield}}]});
+    shieldData.data.health.current=700;
+    shieldData.data.health.effects=shieldData.data.health.effects.filter(effect=>effect.type!=='burning');
+    await request(url,{data:shieldData.data},token,'PUT');
+    await request('/__testing/artifact-preparation/'+safeSession.runId,{character_id:character.id},token);
+    await request(loc+'/combat/start',{location_character_ids:[placed.location_character_id],
+        initiator_location_character_id:placed.location_character_id,initiator_first:true},token);
+    const endShieldRound=()=>request(loc+'/combat/end_turn',{location_character_id:placed.location_character_id},token);
+    await endShieldRound();
+    const shieldBurning=await get();shieldBurning.data.health.effects.push({type:'burning',name:'Горение',remaining:12,
+        tick:'round_end',source:'native-shield-burning',damage_per_round:50});
+    await request(url,{data:shieldBurning.data},token,'PUT');
+    await page.evaluate(`window.openCharacterSheet(${character.id},'equipment').then(()=>true)`);
+    await page.until("document.querySelector('.equipment-panel-tab[data-panel=armor]')",'Броня с Живым щитом');
+    await page.evaluate("document.querySelector('.equipment-panel-tab[data-panel=armor]').click();true");
+    await page.until("document.querySelector('[data-artifact-special=\"native-live-shield\"]:not(:disabled)')",'Живой щит готов');
+    await page.evaluate("document.querySelector('[data-artifact-special=\"native-live-shield\"]').click();true");
+    await page.evaluate('window.__artifactUsePromise.then(()=>true)');
+    const shieldResponses=await page.evaluate('window.__artifactHttp');
+    assert.deepEqual(shieldResponses.map(row=>row.status),Array(11).fill(200),JSON.stringify(shieldResponses));
+    actionResponses.push(...shieldResponses.slice(10));
+    assert.equal((await get()).data.health.effects.find(effect=>effect.artifact_stat==='armor_restore_on_hit').remaining_seconds,60);
+    for(const expected of [850,900]){
+        await endShieldRound();
+        const armor=(await get()).data.equipment.armor;
+        assert.equal(armor.currentStageDurability,expected,'Каждый раунд горения восстанавливает 50 прочности');
+        assert.equal(armor.stage,2,'Восстанавливается только текущая стадия');
+    }
+    for(let round=2;round<10;round++)await endShieldRound();
+    const shieldExpired=await get();
+    assert.equal(shieldExpired.data.equipment.armor.currentStageDurability,1000);
+    assert.ok(!shieldExpired.data.health.effects.some(effect=>effect.artifact_stat==='armor_restore_on_hit'));
+    await endShieldRound();
+    assert.equal((await get()).data.equipment.armor.currentStageDurability,950,'После минуты износ снова действует');
+    await request(loc+'/combat/end',{},token);
     fs.writeFileSync(path.join(safeSession.artifacts,'artifact-special.json'),JSON.stringify({scene:'Припять',artifact:rule.name,
         preparedWornSeconds:86394,realRoundSeconds:6,readyAfterRealRound:true,realButtonActivations:2,apPerUse:1,
         first:{radiation:0,hp:200,cooldown:86400},second:{radiation:0,hp:300,cooldown:86394},reopened:true,
@@ -279,7 +316,8 @@ module.exports=async({page,request,token,lobby,loc,locationId,rules,safeSession}
         stormHeart:{buttonActivated:true,movement:-20,strength:5,effectiveBreathlessness:0,sleepAfterFirstMinute:552,sleepExpired:true},
         shell:{buttonActivated:true,protectedRounds:10,stageDurabilityBefore:1000,stageDurabilityProtected:1000,stageDurabilityAfterExpiry:950},
         psiImmunities:psiResults,fireGift:{realButton:true,physicalProtection:30,seconds:18,
-            healthBefore:700,healthAfterTwoRounds:700,healthAfterThreeRounds:450,noRepeatedCost:true}},null,2));
+            healthBefore:700,healthAfterTwoRounds:700,healthAfterThreeRounds:450,noRepeatedCost:true},
+        liveShield:{realButton:true,stage:2,seconds:60,durability:[800,850,900,1000,950]}},null,2));
     console.log('Особые свойства: подготовленное ношение+реальный раунд, две кнопки Ядра твари по1ОД без рук, радиация→ОЗ; общий срок после первого, переоткрытие.');
     console.log('Генератор: кнопка без радиации, фактический штраф перемещения−1→−3,600→594секунд за раунд; истечение по игровому времени возвращает−1.');
     console.log('Сердце жара: настоящая кнопка и настоящее горение; первый раунд0урона, после истечения50.');
@@ -288,4 +326,5 @@ module.exports=async({page,request,token,lobby,loc,locationId,rules,safeSession}
     console.log('Панцирь: настоящая кнопка,10 реальных раундов горения без износа брони; следующий раунд после минуты снимает50прочности.');
     console.log('Ментальный бастион и Щит сознания: настоящие кнопки, реальные Пси-удары не воздействуют, атакующий тратит3ОД; стресс блокируется Щитом и возвращается после истечения.');
     console.log('Дар пламени: настоящая кнопка, +30% физической защиты3раунда, затем ровно−250ОЗ, следующего списания нет.');
+    console.log('Живой щит: настоящая кнопка, горение восстанавливает 800→850→900→1000 прочности на стадии 2; после минуты износ до 950.');
 };

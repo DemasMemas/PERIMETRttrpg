@@ -628,3 +628,68 @@ def test_fire_gift_cost_survives_removal_and_cannot_be_forged_removed_or_reduced
     health['effects'] = advance_timed_effects(health, health['effects'], 18, character_data=data)
     assert health['current'] == 0
     assert CombatService._character_condition(data)['state'] == 'dead'
+
+
+def armored_live_shield():
+    data = ready(name='Живой щит')
+    data['health'].update(current=700, radiation=0)
+    data['equipment']['armor'].update(name='Проверочная броня', category='armor', stage=2,
+        stageDurability=1000, currentStageDurability=300, protection={'physical':50}, attributes={})
+    return data
+
+
+def test_live_shield_repairs_each_hit_only_within_current_stage_and_expires():
+    data = armored_live_shield()
+    armor = data['equipment']['armor']
+    use(data)
+    first = CombatService._damage_armor_item(armor, {}, 0, character_data=data, raw_damage=50)
+    assert (first['damage'], first['restored'], armor['currentStageDurability']) == (0, 50, 350)
+    assert use(data)['replayed']
+    assert armor['currentStageDurability'] == 350
+    second = CombatService._damage_armor_item(armor, {}, 5000, character_data=data)
+    assert (second['damage'], second['restored'], armor['stage'], armor['currentStageDurability']) == (0, 650, 2, 1000)
+    broken = {**armor, 'stage':5, 'currentStageDurability':0, 'durability':10, 'brokenDamage':40}
+    before = deepcopy(broken)
+    assert CombatService._damage_armor_item(broken, {}, 500, character_data=data)['damage'] == 0
+    assert broken == before
+    health = data['health']
+    health['effects'] = advance_timed_effects(health, health['effects'], 60, character_data=data)
+    after = CombatService._damage_armor_item(armor, {}, 80, character_data=data, raw_damage=150)
+    assert after['damage'] == 80 and armor['currentStageDurability'] == 920
+
+
+@pytest.mark.parametrize('source,repair', [('bullet',50), ('fragment',100), ('blast',100), ('anomaly',100), ('burning',50)])
+def test_live_shield_restores_raw_damage_from_actual_armor_paths(grenade_game, monkeypatch, source, repair):
+    target, attacker = grenade_game['actor_location'], grenade_game['target_location']
+    target.character.data = armored_live_shield()
+    use(target.character.data)
+    if source == 'bullet':
+        attacker.character.data = {'weapons':[{}], 'health':{'current':700, 'max':700}}
+        monkeypatch.setattr(CombatService, '_ranged_damage_profile', lambda weapon: ({
+            'damage':50, 'armor_piercing':55, 'bleeding':'', 'effective_range':100, 'damage_type':'bullet'}, None))
+        result = CombatService._resolve_attack(target, attacker,
+            {'weapon_index':0, 'hit_difficulty':1, 'fire_mode':'single', 'round_number':1},
+            aimed_zone='chest', forced_roll=20)
+        assert result['hit'] and result['armor_damage'][0]['restored'] == repair
+        assert target.character.data['health']['current'] < 700
+    elif source == 'fragment':
+        result = CombatService._explosion_fragment_hit(target, 100, 10, 'chest', {}, 1)
+        assert result['armor_damage'][0]['restored'] == repair
+    elif source == 'blast':
+        from test_grenade_rules import quiet_explosion, profile
+        quiet_explosion(monkeypatch)
+        result = CombatService.resolve_explosion(target.location_id, target.pos_x-.5, target.pos_y,
+                                                 profile(blast_base=100))
+        hit = next(row for row in result['targets'] if row['character_id'] == target.character_id)
+        assert 0 < hit['blast_damage'] < repair
+        assert hit['blast_armor_damage'][0]['restored'] == repair
+    elif source == 'anomaly':
+        result = CombatService._apply_anomaly_equipment_damage(target.character.data, 100,
+            {'category':'thermal', 'armor_damage_multiplier':2})
+        assert result[0]['restored'] == repair
+    else:
+        from app.services.burning import ignite, tick
+        ignite(target, 2, source='Проверка Живого щита')
+        tick(target, 1)
+        assert target.character.data['health']['current'] == 650
+    assert target.character.data['equipment']['armor']['currentStageDurability'] == 300 + repair
