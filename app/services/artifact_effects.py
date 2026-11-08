@@ -64,6 +64,8 @@ def device_blocks(character_data):
 def device_block_reason(character_data,item):
     from app.services.portable_lights import definition
     if not isinstance(item,dict):return None
+    from app.services.electronics import burned
+    if burned(item):return f'{item.get("name") or "Прибор"} сгорел: использование и ремонт невозможны'
     attrs=item.get('attributes') or {};name=str(item.get('name') or '').casefold()
     blocks=device_blocks(character_data);kinds=[]
     if 'компас' in name or attrs.get('device_kind')=='compass':kinds.append('compass')

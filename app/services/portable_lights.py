@@ -528,6 +528,9 @@ def operate(character_id,user_id,payload):
     selected.setdefault('id',str(uuid4()));states=data.setdefault('health',{}).setdefault('combatMeta',{}).setdefault('portableLights',[])
     binding=next((item for item in states if item['id']==selected['id']),None)
     operation=payload.get('operation');cost=0
+    from app.services.electronics import burned
+    if burned(selected) and operation not in {'prepare','stow','pda_hold','pda_stow','pda_dynamo_stop'}:
+        raise ValidationError('Прибор сгорел: использование и ремонт невозможны')
     from app.services.artifact_effects import require_device_available
     from app.services.electronics import state as dosimeter_state
     switching_off=(operation=='dosimeter_toggle' and dosimeter_state(selected)['on']
@@ -722,7 +725,7 @@ def operate(character_id,user_id,payload):
         if definition(selected)=='module' and mount!='weapon':raise ValidationError('Оружейный модуль крепится к оружию')
         if glow(selected) and (mount not in {'hand','belt'} or (selected.get('glowState') or {}).get('remaining_seconds',0)<=0):
             raise ValidationError('Этот источник света нельзя снова активировать')
-        binding={'id':selected['id'],'mount':mount,'on':bool(glow(selected) or (previous or {}).get('on') or (selected.get('lightPower') or {}).get('scheduled_on')),
+        binding={'id':selected['id'],'mount':mount,'on':not burned(selected) and bool(glow(selected) or (previous or {}).get('on') or (selected.get('lightPower') or {}).get('scheduled_on')),
             **{key:previous[key] for key in ('battle_used','period_used') if previous and key in previous}}
         if mount in {'weapon','taped'}:
             index=payload.get('weapon_index')

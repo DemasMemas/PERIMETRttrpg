@@ -12976,6 +12976,7 @@ function formatBloodType(value) {
 }
 
 function toggleDevice(item, itemPath) {
+    if(item.electronicsState?.burned){showNotification('Прибор сгорел: использование и ремонт невозможны','system');return;}
     if (!item.attributes?.isActive) {
         const blocked=currentCharacterData?._artifact_profile?.blocked_devices || {};
         const attrs=item.attributes || {},name=String(item.name || '').toLowerCase();

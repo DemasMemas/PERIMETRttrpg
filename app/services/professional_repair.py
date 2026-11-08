@@ -46,6 +46,8 @@ def _prepare(location_id,user_id,payload):
         raise ValidationError('Выберите оружие или броню для ремонта')
     try:item=resolve_item_path(actor.character.data or {},path)
     except ValueError as error:raise ValidationError(str(error)) from error
+    from app.services.electronics import burned
+    if burned(item):raise ValidationError('Прибор сгорел и не подлежит ремонту')
     if payload.get('item_id') is not None and item.get('id')!=payload['item_id']:
         raise ConflictError('Предмет перемещён. Откройте ремонт заново.')
     if type(item.get('quantity',1)) is not int or item.get('quantity',1)!=1:

@@ -29,10 +29,10 @@ export async function renderPortableLights(container,characterId,data,operate,is
             ? `${light.name} · ${light.activated?`${Math.ceil((light.remaining_seconds||0)/60)} мин осталось`:'не активирована'}${mount?` · ${mount}`:''}`
             : `${light.name} · ${light.uses_left}/10${mount?` · ${mount}`:''}${light.binding?` · ${light.binding.on?'включён':'выключен'}`:''}`;
         row.append(caption);
-        if (light.blocked_reason) {caption.textContent+=' · подавлен артефактом';caption.title=light.blocked_reason;}
+        if (light.blocked_reason) {caption.textContent+=light.burned?' · сгорел':' · подавлен артефактом';caption.title=light.blocked_reason;}
         const button=(text,operation,extra={},disabled=false)=>{
             const control=document.createElement('button');control.type='button';control.className='btn btn-sm btn-secondary';
-            control.textContent=text;control.disabled=disabled || !ownTurn
+            control.textContent=text;control.disabled=disabled || !ownTurn || Boolean(light.burned&&!['stow','pda_stow'].includes(operation))
                 || Boolean(light.blocked_reason && ['toggle','pda_toggle'].includes(operation) && !(light.kind==='pda'?light.pda_state?.on:light.binding?.on));
             control.dataset.lightOperation=operation;
             control.onclick=()=>operate({operation,path:light.path,source_id:light.id??null,...extra});row.append(control);
@@ -45,7 +45,7 @@ export async function renderPortableLights(container,characterId,data,operate,is
         if(light.kind==='pda'){
             button(`${light.pda_state?.on?'Выключить':'Включить'}${active?' · 1 ОД':''}`,
                 'pda_toggle',{},!light.pda_state?.on && (light.pda_state?.charge_percent??100)<=0);
-            if(result.batteries.length){
+            if(!light.burned&&result.batteries.length){
                 const choices=document.createElement('select');choices.className='form-control';
                 choices.setAttribute('aria-label','Батарейки для КПК');
                 result.batteries.filter(battery=>battery.name==='Батарейки').forEach(battery=>{
@@ -86,7 +86,7 @@ export async function renderPortableLights(container,characterId,data,operate,is
                 taped.textContent=`Закрепить на оружии${active?' · 1 ОД + достать':''}`;taped.disabled=!ownTurn;taped.onclick=()=>operate({operation:'prepare',path:light.path,source_id:light.id??null,mount:'taped',weapon_index:Number(weapons.value)});optionRow(weapons,taped);
             }
         }
-        if (result.batteries.length && light.kind!=='glow') {
+        if (!light.burned && result.batteries.length && light.kind!=='glow') {
             const choices=document.createElement('select');choices.className='form-control';choices.setAttribute('aria-label','Батарейка для фонаря');
             result.batteries.forEach((battery,index)=>{const option=document.createElement('option');option.value=JSON.stringify(battery.path);option.textContent=battery.name;choices.append(option)});
             rememberEquipmentChoice(choices,`${characterId}:light-battery:${row.dataset.lightId}`);

@@ -199,6 +199,8 @@ def repair_equipment(
 ) -> Dict[str, Any]:
     tool = resolve_item_path(character_data, tool_path)
     target = resolve_item_path(character_data, target_path)
+    from app.services.electronics import burned
+    if burned(target):raise ValueError('Прибор сгорел и не подлежит ремонту')
     profile = _repair_profile(tool, tool_template)
     from app.services.character_traits import trait_count,background_is
     if isinstance(profile,dict):

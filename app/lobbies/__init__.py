@@ -5241,11 +5241,12 @@ def portable_lights(character_id):
         items=[]
         from app.services.artifact_effects import device_block_reason
         from app.services.equipment_modifications import visor_light_mount,helmet_module_available
+        from app.services.electronics import burned
         for path,item in walk(character.data or {}):
             if definition(item)=='dosimeter':continue
             binding=next((binding for binding in bindings(character.data) if binding.get('id')==item.get('id')),None)
             items.append({'path':path,'id':item.get('id'),'name':item.get('name'),'kind':definition(item),'binding':binding,
-                'blocked_reason':device_block_reason(character.data or {},item),
+                'blocked_reason':device_block_reason(character.data or {},item),'burned':burned(item),
                 'uses_left':(item.get('lightPower') or {}).get('uses_left',10),'visor_mount':visor_light_mount(character.data,path),
                 'belt_mount':belt_light_mount(character.data,path,item),
                 'mount_available':(not (binding and binding.get('mount')=='head' and item.get('slotType')=='light') or visor_light_mount(character.data,path))
@@ -5256,7 +5257,7 @@ def portable_lights(character_id):
         for path,item in nvg_items(character.data or {}):
             if path[:3]!=['equipment','helmet','installedModules']:continue
             items.append({'path':path,'id':item.get('id'),'name':item.get('name') or 'ПНВ','kind':'nvg',
-                'blocked_reason':device_block_reason(character.data or {},item),
+                'blocked_reason':device_block_reason(character.data or {},item),'burned':burned(item),
                 'binding':{'mount':'nvg','on':bool(nvg_on(item))},'uses_left':(item.get('lightPower') or {}).get('uses_left',10),
                 'mount_available':helmet_module_available(character.data,path)})
         batteries=[{'path':path,'name':item.get('name')} for path,item in walk(character.data or {},True)

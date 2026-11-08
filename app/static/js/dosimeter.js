@@ -24,6 +24,7 @@ export async function openDosimeter({characterId,itemId,itemPath,operate}){
         if(!selected){panel.append(node('p','Дозиметр перемещён. Откройте его снова.'),close);return;}
         itemId ||= selected.item.id;
         const state=selected.item.deviceState||{},remaining=state.remaining_seconds??604800;
+        if(selected.item.electronicsState?.burned){panel.append(node('p','Прибор сгорел: использование и ремонт невозможны'),close);return;}
         panel.append(node('p',`${state.on?'Включён':'Выключен'} · батарейка: ${(remaining/6048).toFixed(1)}%`));
         const act=async(operation,extra={})=>{
             if(busy)return;busy=true;for(const button of panel.querySelectorAll('button'))button.disabled=true;
