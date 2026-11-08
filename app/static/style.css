@@ -729,6 +729,9 @@ body:has(#panel-chat[data-chat-docked="true"]:not([hidden])) #panel-characters {
 .portable-light-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 10px 0; border-bottom: 1px solid var(--input-border); }
 .portable-light-row strong { flex: 1 0 100%; }
 .portable-light-row .form-control { width: auto; max-width: 260px; }
+.portable-light-options { display: flex; flex: 0 0 100%; align-items: center; gap: 8px; min-width: 0; }
+.portable-light-options .form-control { flex: 1 1 0; min-width: 0; margin: 0; }
+.portable-light-options .btn { flex: 0 0 auto; }
 .chat-panel[data-chat-view="actions"] .chat-human,
 .chat-panel .chat-input-area[hidden] { display: none; }
 .message.chat-roll { border-left: 3px solid #9caff0; background: rgba(92, 112, 174, 0.14); }

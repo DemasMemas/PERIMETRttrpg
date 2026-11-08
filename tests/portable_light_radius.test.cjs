@@ -48,6 +48,20 @@ test('ближний свет сохраняет горизонтальную ш
     material.onBeforeCompile(shader);
     assert.equal(shader.previousHandler,true);assert.ok(shader.fragmentShader.includes('portableBeamMask'));
     assert.equal(shader.uniforms.portableBeamOrigins.value[0].w,Math.atan(2.5/35));
-    assert.equal(renderer.count,1,'Дополнительных источников нет');renderer.dispose();
+    assert.equal(renderer.count,1,'Активен один источник');
+    assert.equal(scene.children.filter(node=>node.isSpotLight).length,4,'Места подготовлены заранее');
+    const version=material.version;
+    renderer.update([],new Map());assert.equal(renderer.count,0);
+    assert.equal(scene.children.filter(node=>node.isSpotLight).length,4,'Выключение не меняет число графических мест');
+    assert.equal(material.version,version,'Выключение не пересобирает материал');
+    const prepared=[];renderer.warm({compile(root){prepared.push(root.children.filter(node=>node.isSpotLight&&node.visible).length);}},null);
+    assert.deepEqual(prepared,[1,0],'Подготовка не включает четыре карты теней одновременно');
+    assert.ok(!scene.children.some(node=>node.userData.portableEmitter&&node.visible));
+    renderer.update([{character_id:1,posture:'standing',facing_x:0,facing_y:1,
+        portable_lights:[{id:'lamp',mount:'head',range:35,end_width:5}]}],new Map([[1,{model}]]));
+    assert.equal(material.version,version,'Повторное включение не пересобирает материал');
+    const emitter=scene.children.find(node=>node.userData.portableEmitter&&node.visible);
+    assert.equal(emitter.position.y,2.65,'Видимый источник находится у головы');
+    assert.equal(light.intensity,11.5);renderer.dispose();
     assert.equal(material.onBeforeCompile,previous);assert.equal(renderer.count,0);
 });

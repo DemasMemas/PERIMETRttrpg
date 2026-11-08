@@ -51,6 +51,10 @@ def describe_template(item):
     category = item['category']
     attrs = item.get('attributes') or {}
     original = clean_description(attrs.get('source_description', item.get('description')))
+    if _name(item['name']) in {'фонарик','улучшенный фонарик','налобный фонарик','налобный фонарь'} and category!='weapon_module':
+        original=re.sub(r'Зона действия фонарика\s*[-—:]\s*конус с высотой\s*\d+\s*и основанием\s*\d+\.?', '', original,flags=re.I)
+        original=re.sub(r'Конус света:\s*\d+\s*м,?\s*ширина на конце\s*\d+\s*м\.?', '', original,flags=re.I)
+        return clean_description('Конус света: 20 м, ширина на конце 5 м. '+original)
     clauses = []
     if category == 'consumable' and _name(item['name']) in CONSUMABLE_DESCRIPTIONS:
         return CONSUMABLE_DESCRIPTIONS[_name(item['name'])]

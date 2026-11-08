@@ -1,6 +1,7 @@
 """Луч, питание, руки и оплата переносного света на настоящих игровых моделях."""
 from copy import deepcopy
 import math
+import pytest
 
 from sqlalchemy.orm.attributes import flag_modified
 
@@ -154,11 +155,47 @@ def test_beam_limits_sideways_target_and_real_wall(grenade_game):
     assert covers(actor,target)
     target.pos_y=actor.pos_y+2;db.session.commit()
     assert not covers(actor,target)
+
     target.pos_y=actor.pos_y;db.session.commit()
     wall=LocationObject(location_id=actor.location_id,type='wall',name='Целая стена',tile_x=7,tile_y=5,
         properties={'rotation':math.pi/2,'dimensions':{'width':5,'depth':.2,'height':3}})
     db.session.add(wall);db.session.commit()
     assert not covers(actor,target)
+
+
+def test_twenty_meter_beam_preserves_five_meter_end_width(grenade_game):
+    actor=install(grenade_game['actor_location'],on=True);target=grenade_game['target_location']
+    source=ready_sources(actor)[0]
+    assert source['range']==20 and source['end_width']==5
+    target.pos_x,target.pos_y=actor.pos_x+20,actor.pos_y;assert covers(actor,target)
+    target.pos_x=actor.pos_x+20.01;assert not covers(actor,target)
+    target.pos_x,target.pos_y=actor.pos_x+10,actor.pos_y+1.2;assert covers(actor,target)
+    target.pos_y=actor.pos_y+1.4;assert not covers(actor,target)
+
+
+@pytest.mark.parametrize('mount,posture,height',[('head','standing',1.65),('head','prone',.32),
+    ('hand','standing',1.2),('hand','sitting',.8),('belt','standing',1)])
+def test_emitter_uses_mount_height_instead_of_ground(grenade_game,mount,posture,height):
+    from app.services.portable_lights import mount_height
+    actor=install(grenade_game['actor_location'],on=True);actor.posture=posture
+    # Наличие крепления на поясе проверяется отдельными сценариями.
+    assert mount_height(mount,posture)==height
+    if mount!='belt':
+        bindings(actor.character.data)[0]['mount']=mount
+        source=ready_sources(actor)[0]
+        assert source['mount_height']==height
+        assert abs(source['y']-CombatService.physical_position(actor)['height']-height)<1e-8
+
+
+@pytest.mark.parametrize('name,previous',[('Фонарик','Зона действия фонарика - конус с высотой 35 и основанием 5.'),
+    ('Улучшенный фонарик','Зона действия фонарика - конус с высотой 55 и основанием 8. Не имеет штрафов.')])
+def test_old_light_template_serializes_current_range_without_changing_storage(name,previous):
+    from app.schemas.templates import ItemTemplateSchema
+    source={'name':name,'category':'misc','description':previous,'attributes':{}}
+    public=ItemTemplateSchema().dump(source)
+    assert '20 м' in public['description'] and '5 м' in public['description']
+    assert '35' not in public['description'] and '55' not in public['description']
+    assert source['description']==previous
 
 
 def test_night_accuracy_glare_and_nvg_aim_ban(grenade_game):

@@ -16508,6 +16508,7 @@ export async function loadLocationInStages(data, { signal, onProgress } = {}) {
         while (!signal?.aborted && scene === loadingScene) {
             const step = stages.next();
             if (step.done) return true;
+            portableLightRenderer?.attach(scene);
             onProgress?.(step.value);
             // Allow the progress indicator to paint and the cancel button to receive input.
             await new Promise(resolve => requestAnimationFrame(() => setTimeout(resolve, 0)));
@@ -16520,6 +16521,7 @@ export async function loadLocationInStages(data, { signal, onProgress } = {}) {
 }
 
 function* buildLocationStages(data) {
+    portableLightRenderer?.dispose();portableLightRenderer=null;
     basementCutaway?.dispose(); basementCutaway = null;
     basementContour = null; basementContourSignature = '';
     disposeLocationLightField();
@@ -16603,6 +16605,7 @@ function* buildLocationStages(data) {
     clearUnusedLocationModels();
     grassDetailGroup = null;
     clearAllCharacters();
+    portableLightRenderer=createPortableLightRenderer(THREE,scene);portableLightRenderer.prepare();
     markLoadStage('resetMs');
     yield { percent: 25, detail: 'Подготавливаем поверхность.' };
     loadStageAt = performance.now();
@@ -16780,6 +16783,7 @@ function* buildLocationStages(data) {
         locationLoadTrace.loadMs = +Object.values(locationLoadTrace.stages).reduce((sum, ms) => sum + ms, 0).toFixed(1);
         locationLoadTrace.loadedAt = performance.now();
     }
+    portableLightRenderer?.warm(renderer,camera);
     yield { percent: 90, detail: 'Подготавливаем интерфейс.' };
 }
 

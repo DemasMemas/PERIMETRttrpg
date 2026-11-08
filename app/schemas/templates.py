@@ -10,6 +10,9 @@ class ItemTemplateSchema(Schema):
             profile = enrich_imported_consumable(attributes, data.get('description') or '')
             if profile is not None:
                 data['attributes'] = {**attributes, 'consumable': profile}
+        if data.get('name','').casefold() in {'фонарик','улучшенный фонарик','налобный фонарик','налобный фонарь'} and data.get('category')!='weapon_module':
+            from app.services.catalog_descriptions import describe_template
+            data['description']=describe_template(data)
         return normalize_template(data)
 
     id = fields.Int(dump_only=True)

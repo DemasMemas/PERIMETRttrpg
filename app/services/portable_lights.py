@@ -11,6 +11,13 @@ from app.services.exceptions import ValidationError, PermissionDenied, ConflictE
 from app.services.transaction import atomic_operation
 from app.services.action_journal import journaled
 
+BEAM_RANGE=20
+BEAM_END_WIDTH=5
+
+def mount_height(mount,posture='standing'):
+    values={'head':(1.65,1.15,.32),'belt':(1,.65,.22)}.get(mount,(1.2,.8,.28))
+    return values[{'standing':0,'sitting':1,'prone':2}.get(posture,0)]
+
 NAMES={'фонарик':'hand','улучшенный фонарик':'improved','налобный фонарик':'head','налобный фонарь':'head'}
 
 
@@ -360,11 +367,11 @@ def ready_sources(actor,*,objects=None):
         facing=math.hypot(actor.facing_x or 0,actor.facing_y or 0) or 1
         radial=glow(item)
         result.append({'id':binding['id'],'mount':mount,'improved':definition(item)=='improved' or radial,
-            'radial':radial,'range':glow_range(item) if radial else 35,'end_width':5,
+            'radial':radial,'range':glow_range(item) if radial else BEAM_RANGE,'end_width':BEAM_END_WIDTH,'mount_height':mount_height(mount,actor.posture),
             'x':actor.pos_x+.5+(.35*(actor.facing_x or 0)/facing if not radial else 0),
             'z':actor.pos_y+.5+(.35*(actor.facing_y or 0)/facing if not radial else 0),
             'y':CombatService.physical_position(actor,objects=objects)['height']+
-                ({'standing':1.0,'sitting':.65,'prone':.22}.get(actor.posture,1.0) if mount=='belt' else 1.4),
+                mount_height(mount,actor.posture),
             'facing_x':actor.facing_x,'facing_y':actor.facing_y,'floor_level':actor.floor_level or 0})
     return result
 
@@ -418,12 +425,11 @@ def covers(actor,target,*,wide=False,objects=None):
     length=math.sqrt(dx*dx+dz*dz+dy*dy)
     facing=math.hypot(actor.facing_x or 0,actor.facing_y or 0)
     if not facing:return []
-    angle=math.cos(math.pi/4 if wide else math.atan(2.5/35))
     dot=(dx*(actor.facing_x or 0)+dz*(actor.facing_y or 0))/(length*facing) if length>1e-9 else 1
-    if length>35:return []
     if CombatService._cover_analysis(actor.location_id,actor,target,objects=objects).get('zones',{}).get('head'):
         return []
-    return [source for source in sources if (length<=source['range'] if source.get('radial') else dot>=angle-1e-9)]
+    return [source for source in sources if length<=source['range'] and (source.get('radial') or
+        dot>=math.cos(math.pi/4 if wide else math.atan(source['end_width']/2/source['range']))-1e-9)]
 
 
 def illumination(target,*,actors=None,objects=None):
@@ -480,7 +486,7 @@ def missing_templates(existing,subcategory=None):
     if subcategory:return []
     names={str(item.get('name') or '').strip().casefold() for item in existing if item.get('category')!='weapon_module'}
     return [{'id':-32001-index,'name':name,'category':'misc','subcategory':None,'price':price,'weight':.5,'volume':1,
-        'compatible_ids':[],'description':'Конус света: 35 м, ширина на конце 5 м. Батарейка: 10 использований. Включить или выключить — 1 ОД.',
+        'compatible_ids':[],'description':'Конус света: 20 м, ширина на конце 5 м. Батарейка: 10 использований. Включить или выключить — 1 ОД.',
         'attributes':{'portable_light':kind}}
         for index,(name,kind,price) in enumerate([('Фонарик','hand',400),('Улучшенный фонарик','improved',1500),('Налобный фонарик','head',1500)])
         if name.casefold() not in names]

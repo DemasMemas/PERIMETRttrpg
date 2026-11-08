@@ -33,6 +33,11 @@ export async function renderPortableLights(container,characterId,data,operate,is
             control.textContent=text;control.disabled=disabled || !ownTurn;
             control.dataset.lightOperation=operation;
             control.onclick=()=>operate({operation,path:light.path,source_id:light.id??null,...extra});row.append(control);
+            return control;
+        };
+        const optionRow=(select,control)=>{
+            const options=document.createElement('div');options.className='portable-light-options';
+            options.append(select,control);row.append(options);
         };
         if(light.kind==='pda'){
             button(`${light.pda_state?.on?'Выключить':'Включить'}${active?' · 1 ОД':''}`,
@@ -45,10 +50,10 @@ export async function renderPortableLights(container,characterId,data,operate,is
                     option.textContent=battery.name;choices.append(option);
                 });
                 if(choices.options.length){
-                    row.append(choices);
-                    button(`Заменить батарейку${active?' · 3 ОД + достать':''}`,'pda_battery');
-                    row.lastElementChild.onclick=()=>operate({operation:'pda_battery',path:light.path,
+                    const replace=button(`Заменить батарейку${active?' · 3 ОД + достать':''}`,'pda_battery');
+                    replace.onclick=()=>operate({operation:'pda_battery',path:light.path,
                         source_id:light.id??null,battery_path:JSON.parse(choices.value)});
+                    optionRow(choices,replace);
                 }
             }
             root.append(row);continue;
@@ -74,18 +79,16 @@ export async function renderPortableLights(container,characterId,data,operate,is
                     const option=document.createElement('option');option.value=index;option.textContent=weapon.name || weapon.model || `Оружие ${index+1}`;weapons.append(option);
                 });
                 rememberEquipmentChoice(weapons,`${characterId}:light-weapon:${row.dataset.lightId}`);
-                row.append(weapons);
                 const taped=document.createElement('button');taped.type='button';taped.className='btn btn-sm btn-secondary';
-                taped.textContent=`Закрепить на оружии${active?' · 1 ОД + достать':''}`;taped.disabled=!ownTurn;taped.onclick=()=>operate({operation:'prepare',path:light.path,source_id:light.id??null,mount:'taped',weapon_index:Number(weapons.value)});row.append(taped);
+                taped.textContent=`Закрепить на оружии${active?' · 1 ОД + достать':''}`;taped.disabled=!ownTurn;taped.onclick=()=>operate({operation:'prepare',path:light.path,source_id:light.id??null,mount:'taped',weapon_index:Number(weapons.value)});optionRow(weapons,taped);
             }
         }
         if (result.batteries.length && light.kind!=='glow') {
             const choices=document.createElement('select');choices.className='form-control';choices.setAttribute('aria-label','Батарейка для фонаря');
             result.batteries.forEach((battery,index)=>{const option=document.createElement('option');option.value=JSON.stringify(battery.path);option.textContent=battery.name;choices.append(option)});
             rememberEquipmentChoice(choices,`${characterId}:light-battery:${row.dataset.lightId}`);
-            row.append(choices);
             const replace=document.createElement('button');replace.type='button';replace.className='btn btn-sm btn-secondary';replace.textContent=`Заменить батарейку${active?' · 1 ОД + достать':''}`;replace.disabled=!ownTurn;
-            replace.onclick=()=>operate({operation:'battery',path:light.path,source_id:light.id??null,battery_path:JSON.parse(choices.value)});row.append(replace);
+            replace.onclick=()=>operate({operation:'battery',path:light.path,source_id:light.id??null,battery_path:JSON.parse(choices.value)});optionRow(choices,replace);
         }
         if (!canEdit) row.querySelectorAll('button,select').forEach(control=>{control.disabled=true});
         root.append(row);
@@ -96,8 +99,8 @@ export async function renderPortableLights(container,characterId,data,operate,is
 // Динамический свет не пересчитывает статическое поле сцены при каждом шаге.
 export function createPortableLightRenderer(THREE,scene) {
     const lights=new Map();
-    const materials=new Map();
-    let beamOrigins=null;
+    const materials=new Map(),spotPool=[];
+    let beamOrigins=null,lensGeometry=null,lensMaterial=null;
     const verticalHalfAngle=Math.PI/3;
     // Узкая ширина по горизонтали сохраняется, по вертикали луч достигает
     // ближней земли. Обычный круглый конус пересекал её лишь через 13 метров.
@@ -157,13 +160,46 @@ export function createPortableLightRenderer(THREE,scene) {
         if(!beamOrigins||!root)return;
         root.traverse(child=>{if(child.isMesh)for(const material of [].concat(child.material||[]))attachBeamMaterial(material);});
     }
+    function shadowSettings(light) {
+        light.castShadow=true;light.shadow.mapSize.set(512,512);light.shadow.camera.near=.08;
+        light.shadow.bias=-.0002;light.shadow.normalBias=.015;light.shadow.autoUpdate=false;
+    }
+    function idle(entry) {
+        entry.active=false;entry.signature=null;entry.light.intensity=0;entry.light.visible=false;
+        entry.light.position.set(0,-10000,0);entry.light.target.position.set(0,-10000,1);
+        entry.light.target.updateMatrixWorld();entry.light.shadow.needsUpdate=false;entry.lens.visible=false;
+    }
+    function prepare() {
+        if(spotPool.length)return;
+        beamOrigins=Array.from({length:4},()=>new THREE.Vector4(0,0,0,0));
+        lensGeometry=new THREE.SphereGeometry(.035,8,6);
+        lensMaterial=new THREE.MeshBasicMaterial({color:'#fff4d8',transparent:true,opacity:.7,depthWrite:false,toneMapped:false});
+        for(let index=0;index<4;index++){
+            const light=new THREE.SpotLight('#fff4d8',0,20,verticalHalfAngle,.4,1);
+            shadowSettings(light);beamShadow(light,Math.atan(2.5/20));
+            const lens=new THREE.Mesh(lensGeometry,lensMaterial);lens.userData.portableEmitter=true;
+            scene.add(light,light.target,lens);
+            const entry={light,lens,source:null,active:false};idle(entry);spotPool.push(entry);
+        }
+        attach(scene);
+    }
     function dispose(entry) {
         scene.remove(entry.light);
+        if(entry.lens)scene.remove(entry.lens);
         if(entry.light.target)scene.remove(entry.light.target);
         entry.light.shadow.map?.dispose();entry.light.shadow.mapPass?.dispose();
     }
     return {
-        attach,
+        attach,prepare,
+        warm(renderer,camera){
+            prepare();attach(scene);
+            if(spotPool.some(entry=>entry.active)){renderer.compile?.(scene,camera);return;}
+            const slot=spotPool.find(entry=>!entry.active);
+            if(!slot)return;
+            slot.light.visible=true;
+            try{renderer.compile?.(scene,camera);}finally{slot.light.visible=false;}
+            renderer.compile?.(scene,camera);
+        },
         update(characters,models,groundSources=[]) {
             const wanted=[];
             for (const character of characters || []) {
@@ -173,21 +209,20 @@ export function createPortableLightRenderer(THREE,scene) {
             }
             for(const source of groundSources||[])wanted.push({source,character:null,model:null,modelEntry:null});
             const selected=new Set(wanted.slice(0,4).map(({source})=>source.id));
-            for (const [key,entry] of lights) if (!selected.has(key)) {dispose(entry);lights.delete(key)}
+            for (const [key,entry] of lights) if (!selected.has(key)) {if(entry.light.isSpotLight)idle(entry);else dispose(entry);lights.delete(key)}
             for (const {source,character,model,modelEntry} of wanted.slice(0,4)) {
                 let entry=lights.get(source.id);
                 if (!entry) {
-                    const halfAngle=Math.atan((source.end_width||5)/2/(source.range||35));
-                    const light=source.radial?new THREE.PointLight('#dcf0aa',12,source.range||5,1)
-                        :new THREE.SpotLight('#fff4d8',14,source.range||35,verticalHalfAngle,.4,1);
-                    light.castShadow=true;light.shadow.mapSize.set(512,512);light.shadow.camera.near=.08;
-                    light.shadow.bias=-.0002;light.shadow.normalBias=.015;light.shadow.autoUpdate=false;
-                    if(!source.radial){
-                        beamOrigins??=Array.from({length:4},()=>new THREE.Vector4(0,0,0,0));
-                        beamShadow(light,halfAngle);
+                    if(source.radial){
+                        const light=new THREE.PointLight('#dcf0aa',12,source.range||5,1);shadowSettings(light);
+                        scene.add(light);entry={light,source};
+                    }else{
+                        prepare();entry=spotPool.find(slot=>!slot.active);
+                        entry.active=true;entry.light.visible=true;entry.light.intensity=11.5;entry.lens.visible=true;
+                        entry.light.distance=source.range||20;
+                        beamShadow(entry.light,Math.atan((source.end_width||5)/2/(source.range||20)));
                     }
-                    scene.add(light);if(light.target)scene.add(light.target);
-                    entry={light,source};lights.set(source.id,entry);
+                    entry.source=source;lights.set(source.id,entry);
                 }
                 if(source.radial){
                     const height=source.mount==='belt'?({standing:1,sitting:.65,prone:.22}[character?.posture]??1):1.1;
@@ -197,32 +232,40 @@ export function createPortableLightRenderer(THREE,scene) {
                     continue;
                 }
                 const fx=Number(modelEntry.facingX??character.facing_x)||0,fz=Number(modelEntry.facingY??character.facing_y)||0,length=Math.hypot(fx,fz)||1;
-                const y=model.position.y+(source.mount==='belt'?({standing:1,sitting:.65,prone:.22}[character.posture]??1)
-                    :({standing:1.4,sitting:.95,prone:.3}[character.posture]||1.4));
+                const height=source.mount_height??({head:{standing:1.65,sitting:1.15,prone:.32},belt:{standing:1,sitting:.65,prone:.22}}[source.mount]?.[character.posture]
+                    ??{standing:1.2,sitting:.8,prone:.28}[character.posture]??1.2);
+                const y=model.position.y+height;
                 const signature=[model.position.x,y,model.position.z,fx,fz].join(':');
                 if (entry.signature===signature) continue;
                 entry.signature=signature;
                 entry.light.position.set(model.position.x+.35*fx/length,y,model.position.z+.35*fz/length);
-                entry.light.target.position.set(model.position.x+35.35*fx/length,model.position.y,model.position.z+35.35*fz/length);
+                entry.light.target.position.set(model.position.x+((source.range||20)+.35)*fx/length,model.position.y,model.position.z+((source.range||20)+.35)*fz/length);
                 entry.light.target.updateMatrixWorld();entry.light.shadow.needsUpdate=true;
+                entry.lens.position.copy(entry.light.position);
             }
+            // Радиальным источникам передаём свободные места карт теней;
+            // четыре фонаря сохраняют те же программы при включении/выключении.
+            const radialCount=[...lights.values()].filter(entry=>!entry.light.isSpotLight).length;
+            let idleIndex=0;
+            for(const entry of spotPool)entry.light.castShadow=entry.active||idleIndex++>=radialCount;
             if(beamOrigins){
                 beamOrigins.forEach(origin=>origin.set(0,0,0,0));let index=0;
                 for(const {light,source}of lights.values())if(light.isSpotLight){
                     beamOrigins[index++].set(light.position.x,light.position.y,light.position.z,
-                        Math.atan((source.end_width||5)/2/(source.range||35)));
+                        Math.atan((source.end_width||5)/2/(source.range||20)));
                 }
                 attach(scene);
             }
         },
         dirty() { for (const {light} of lights.values()) light.shadow.needsUpdate=true; },
         dispose() {
-            for (const entry of lights.values()) dispose(entry);lights.clear();
+            for (const entry of lights.values())if(!entry.light.isSpotLight)dispose(entry);lights.clear();
+            for(const entry of spotPool)dispose(entry);spotPool.length=0;
             beamOrigins?.forEach(origin=>origin.set(0,0,0,0));
             for(const [material,state]of materials)if(material.onBeforeCompile===state.hook){
                 material.onBeforeCompile=state.previous;material.customProgramCacheKey=state.previousKey;material.needsUpdate=true;
             }
-            materials.clear();
+            materials.clear();lensGeometry?.dispose();lensMaterial?.dispose();
         },
         get count(){return lights.size},
     };
