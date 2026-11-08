@@ -61,6 +61,7 @@ module.exports=async({page,request,token,lobby,offered,loc,npc,safeSession})=>{
     for(const[width,height]of [[1920,1080],[1600,900],[1366,768],[1280,720]]){
         await page.call('Emulation.setDeviceMetricsOverride',{width,height,deviceScaleFactor:1,mobile:false});
         await page.until(`(()=>{const root=document.getElementById('sheet-tab-equipment').getBoundingClientRect();return [...document.querySelectorAll('.portable-light-row')].filter(row=>['${lamp.id}','${his.id}'].includes(row.dataset.lightId)).every(row=>{const r=row.getBoundingClientRect();return r.y>=root.y&&r.bottom<=root.bottom&&r.right<=root.right})})()`,'Оба источника видны '+width);
+        await page.until("(()=>{const grid=document.querySelector('[data-weapon-index=\"-1\"] .weapon-summary-grid');return grid&&[...grid.children].every(cell=>{const label=cell.querySelector('strong').getBoundingClientRect(),r=cell.getBoundingClientRect();return label.right<=r.right+.5})})()",'Характеристики кулаков не перекрываются '+width);
         if(width===1280)await shot('belt-his-1280x720.png');
     }
     console.log('Свет на поясе: штатная установка g62, перенос включённого фонаря из руки за 3 ОД, обе руки доступны оружию, настоящий луч и два ракурса Припяти, ХИС без сброса таймера, четыре настольных размера.');

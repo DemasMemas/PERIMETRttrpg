@@ -6136,7 +6136,7 @@ async function renderWeapons(weapons, weaponTemplates, moduleTemplates, weaponMo
     weaponsHtml.push(`
         <div data-weapon-index="-1" style="border:1px solid var(--panel-border); padding:10px; margin-bottom:10px;">
             <div style="font-weight:bold; margin-bottom:5px;">Кулаки</div>
-            <div style="display:grid; grid-template-columns:repeat(4, minmax(90px, 1fr)); gap:8px; margin-bottom:10px; background:rgba(0,0,0,0.1); padding:8px; border-radius:4px;">
+            <div class="weapon-summary-grid" style="display:grid; gap:8px; margin-bottom:10px; background:rgba(0,0,0,0.1); padding:8px; border-radius:4px;">
                 <div><strong>Урон:</strong> ${fistDamage}</div>
                 <div><strong>Точность:</strong> 0</div>
                 <div><strong>Бронебойность:</strong> 0%</div>
@@ -6164,7 +6164,7 @@ async function renderWeapons(weapons, weaponTemplates, moduleTemplates, weaponMo
             const attrs = template?.attributes || weapon.attributes || {};
             fieldsHtml = `
                 <div style="font-weight: bold; margin-bottom: 5px;">${escapeHtml(weapon.name)}</div>
-                <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin-bottom: 10px; background: rgba(0,0,0,0.1); padding: 8px; border-radius: 4px;">
+                <div class="weapon-summary-grid melee-summary-grid" style="display: grid; gap: 8px; margin-bottom: 10px; background: rgba(0,0,0,0.1); padding: 8px; border-radius: 4px;">
                     <div><strong>Урон:</strong> ${attrs.damage || 0}</div>
                     <div><strong>Точность:</strong> ${attrs.accuracy || 0}</div>
                     <div><strong>Бронебойность:</strong> ${attrs.armor_piercing || 0}%</div>

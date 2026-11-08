@@ -2430,7 +2430,13 @@ input[type="number"] {
   margin-bottom: 0;
   padding: 12px;
 }
-.equipment-workspace .equipment-panels { min-width: 0; }
+.equipment-workspace .equipment-panels { min-width: 0; container-type:inline-size; container-name:equipment-actions; }
+.weapon-summary-grid { grid-template-columns:repeat(4,minmax(0,1fr)); }
+.weapon-summary-grid.melee-summary-grid { grid-template-columns:repeat(3,minmax(0,1fr)); }
+.weapon-summary-grid > div { min-width:0; overflow-wrap:anywhere; }
+@container equipment-actions (max-width:650px) {
+  .weapon-summary-grid, .weapon-summary-grid.melee-summary-grid { grid-template-columns:repeat(2,minmax(0,1fr)); }
+}
 .equipment-workspace .loadout-main { grid-template-columns: minmax(0, 1fr) 140px minmax(0, 1fr); gap: 7px; }
 .equipment-workspace .loadout-column { gap: 6px; }
 .equipment-workspace .loadout-figure { grid-column: 2; grid-row: 1; min-height: 264px; width: 140px; }
