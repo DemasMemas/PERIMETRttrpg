@@ -8,7 +8,6 @@ let rainSpeeds = [];
 let weatherAudioUnlocked = false;
 let desiredRainAudio = { enabled: false, volume: 0 };
 let desiredEmissionAudio = { enabled: false, volume: 0 };
-let audioUnlockButton = null;
 
 const RAIN_VOLUME_FACTOR = 0.5;
 const EMISSION_VOLUME_FACTOR = 0.05; // ещё тише
@@ -81,25 +80,16 @@ function setLoopingSound(sound, state) {
     }
     if (weatherAudioUnlocked && sound.paused) {
         const request = sound.play();
-        request?.then?.(() => updateAudioUnlockButton()).catch?.((error) => {
+        request?.catch?.((error) => {
             weatherAudioUnlocked = false;
-            updateAudioUnlockButton();
             console.warn('Weather audio could not be played.', error);
         });
     }
 }
 
-function updateAudioUnlockButton() {
-    if (!audioUnlockButton) return;
-    const needed = (desiredRainAudio.enabled && rainSound?.paused)
-        || (desiredEmissionAudio.enabled && emissionSound?.paused);
-    audioUnlockButton.hidden = !needed;
-}
-
 function syncWeatherAudio() {
     setLoopingSound(rainSound, desiredRainAudio);
     setLoopingSound(emissionSound, desiredEmissionAudio);
-    updateAudioUnlockButton();
 }
 
 function unlockWeatherAudio() {
@@ -119,17 +109,12 @@ export function initWeather() {
     emissionSound.loop = true;
     rainSound.volume = 0;
     emissionSound.volume = 0;
-    audioUnlockButton = document.createElement('button');
-    audioUnlockButton.type = 'button';
-    audioUnlockButton.className = 'weather-audio-unlock';
-    audioUnlockButton.textContent = 'Включить звуки погоды';
-    audioUnlockButton.hidden = true;
-    audioUnlockButton.addEventListener('click', unlockWeatherAudio);
-    document.body.appendChild(audioUnlockButton);
     ['pointerdown', 'keydown', 'touchstart'].forEach((eventName) => {
         window.addEventListener(eventName, unlockWeatherAudio, { capture: true, passive: true });
     });
-    syncWeatherAudio();
+    // Пытаемся начать автоматически; если браузер запрещает autoplay,
+    // следующий пользовательский ввод повторит попытку без отдельной кнопки.
+    unlockWeatherAudio();
 }
 
 export function applyWeather(settings) {

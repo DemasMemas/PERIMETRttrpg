@@ -35,13 +35,29 @@ test('weather audio starts on player input without an external library', () => {
     vm.runInContext(source.slice(start, end).replaceAll('export function ', 'function '), context);
     context.initWeather();
     vm.runInContext('desiredRainAudio = { enabled: true, volume: 0.4 }; syncWeatherAudio();', context);
-    assert.equal(sounds[0].plays, 0);
-    assert.equal(button.hidden, false);
+    assert.equal(sounds[0].plays, 1);
+    assert.equal(button.hidden, true);
     listeners.get('pointerdown')();
     assert.equal(sounds[0].plays, 1);
     vm.runInContext('desiredEmissionAudio = { enabled: true, volume: 0.05 }; syncWeatherAudio();', context);
     assert.equal(sounds[1].plays, 1);
     assert.equal(sounds[1].loop, true);
+});
+
+test('запрещённый autoplay повторяется при первом вводе без кнопки поверх игры',async()=>{
+    const source=read('weather.js'),sounds=[],listeners=new Map();let buttons=0;
+    class Audio {
+        constructor(){this.paused=true;this.plays=0;sounds.push(this)}
+        play(){if(++this.plays===1)return Promise.reject(Error('NotAllowedError'));this.paused=false;return Promise.resolve()}
+        pause(){this.paused=true}
+    }
+    const context=createSceneContext({window:{Audio,addEventListener:(name,fn)=>listeners.set(name,fn)},
+        document:{createElement(){buttons++;return{}},body:{appendChild(){}}},console:{warn(){}}});
+    vm.runInContext(source.slice(source.indexOf('let rainSound = null;'),source.indexOf('export function applyWeather(')).replaceAll('export function ','function '),context);
+    context.initWeather();vm.runInContext('desiredRainAudio={enabled:true,volume:.4};syncWeatherAudio()',context);
+    await Promise.resolve();assert.equal(sounds[0].plays,1);assert.equal(sounds[0].paused,true);
+    listeners.get('pointerdown')();await Promise.resolve();assert.equal(sounds[0].plays,2);assert.equal(sounds[0].paused,false);
+    listeners.get('keydown')();assert.equal(sounds[0].plays,2);assert.equal(buttons,0);
 });
 
 test('lobby clock blends twilight and cloud clarity changes lighting', () => {

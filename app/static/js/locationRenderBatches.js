@@ -28,7 +28,7 @@ export function createLocationRenderBatches(THREE, scene, roots) {
         // keep their original draw, even if their program cache keys coincide.
         let compile = material.onBeforeCompile;
         const fields = [];
-        for (const name of ['directionalLightFieldPrototype', 'surfacePattern']) {
+        for (const name of ['portableLightBeam', 'directionalLightFieldPrototype', 'surfacePattern']) {
             const state = material.userData[name];
             if (!state) continue;
             if (!state.batchKey || state.compile !== compile) return null;

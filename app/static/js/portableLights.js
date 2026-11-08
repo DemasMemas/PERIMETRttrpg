@@ -115,6 +115,7 @@ export function createPortableLightRenderer(THREE,scene) {
         const current=materials.get(material);
         if(current?.hook===material.onBeforeCompile)return;
         const previous=material.onBeforeCompile,previousKey=material.customProgramCacheKey;
+        const previousBatch=material.userData.portableLightBeam;
         const hook=(shader,renderer)=>{
             previous?.call(material,shader,renderer);
             shader.uniforms.portableBeamShapes={value:beamShapes};
@@ -166,7 +167,11 @@ export function createPortableLightRenderer(THREE,scene) {
         };
         material.onBeforeCompile=hook;
         material.customProgramCacheKey=()=>`${previousKey?.call(material)||''}:portable-beam-v4`;
-        materials.set(material,{hook,previous,previousKey});material.needsUpdate=true;
+        // Профиль и uniform-объекты общие для сцены: объединение её статических
+        // деталей безопасно и при выключенных, и при включённых фонарях.
+        material.userData.portableLightBeam={batchKey:`portable-beam-v4:${scene.id}`,
+            compile:hook,previousCompile:previous};
+        materials.set(material,{hook,previous,previousKey,previousBatch});material.needsUpdate=true;
     }
     function beamShadow(light,horizontalHalfAngle) {
         // В Three r128 камера тени по умолчанию квадратная. Узкая горизонтальная
@@ -182,6 +187,14 @@ export function createPortableLightRenderer(THREE,scene) {
     function attach(root) {
         if(!beamShapes||!root)return;
         root.traverse(child=>{if(child.isMesh)for(const material of [].concat(child.material||[]))attachBeamMaterial(material);});
+    }
+    function detachMaterial(material){
+        const state=materials.get(material);
+        if(!state||material.onBeforeCompile!==state.hook)return false;
+        material.onBeforeCompile=state.previous;material.customProgramCacheKey=state.previousKey;
+        if(state.previousBatch)material.userData.portableLightBeam=state.previousBatch;
+        else delete material.userData.portableLightBeam;
+        materials.delete(material);material.needsUpdate=true;return true;
     }
     function shadowSettings(light) {
         light.castShadow=true;light.shadow.mapSize.set(512,512);light.shadow.camera.near=.08;
@@ -216,7 +229,7 @@ export function createPortableLightRenderer(THREE,scene) {
         entry.light.shadow.map?.dispose();entry.light.shadow.mapPass?.dispose();
     }
     return {
-        attach,prepare,
+        attach,attachMaterial:attachBeamMaterial,detachMaterial,prepare,
         warm(renderer,camera){
             prepare();attach(scene);
             if(spotPool.some(entry=>entry.active)){renderer.compile?.(scene,camera);return;}
@@ -276,9 +289,7 @@ export function createPortableLightRenderer(THREE,scene) {
         dispose() {
             for (const entry of lights.values())if(!entry.light.isSpotLight)dispose(entry);lights.clear();
             for(const entry of spotPool)dispose(entry);spotPool.length=0;
-            for(const [material,state]of materials)if(material.onBeforeCompile===state.hook){
-                material.onBeforeCompile=state.previous;material.customProgramCacheKey=state.previousKey;material.needsUpdate=true;
-            }
+            for(const material of materials.keys())detachMaterial(material);
             materials.clear();lensGeometry?.dispose();lensMaterial?.dispose();
             if(scene.onBeforeRender===beforeRender)scene.onBeforeRender=previousBeforeRender;
         },

@@ -100,7 +100,7 @@ test('refresh failure retains the last valid field; only scene disposal detaches
     const end = source.indexOf('export function getLocationStaticLightFieldDiagnostics(', start);
     let disposed = 0, detached = 0, notices = 0;
     const field = { update() { throw Error('refresh failed'); }, detach() { detached++; }, dispose() { disposed++; } };
-    const context = { locationStaticLightField: field, currentLocationData: data([]),
+    const context = { locationStaticLightField: field, portableLightRenderer: null, currentLocationData: data([]),
         locationStaticLightFieldRefreshTimer: 9, getLocationStaticFieldSources: () => [],
         console: { error() {} }, showNotification() { notices++; }, clearTimeout() {},
         forEachStaticLightFieldMaterial: fn => fn({}), performance };

@@ -11538,7 +11538,7 @@ function attachStaticLightFieldToRoot(root, level) {
     if (!locationStaticLightField
         || root?.userData?.roofPlan
         || !locationStaticLightField.field.levels.some(item => item.id === level)) {
-        portableLightRenderer?.attach(root);
+        if(!locationSceneLoading)portableLightRenderer?.attach(root);
         return;
     }
     const seen = new Set();
@@ -11547,6 +11547,7 @@ function attachStaticLightFieldToRoot(root, level) {
         for (const material of Array.isArray(child.material) ? child.material : [child.material]) {
             if (!material || seen.has(material)) continue;
             seen.add(material);
+            if(!material.userData.directionalLightFieldPrototype)portableLightRenderer?.detachMaterial(material);
             locationStaticLightField.attach(material, level);
         }
     });
@@ -12078,10 +12079,16 @@ function refreshStaticLightField() {
             const replacement = createLocationDirectionalLightField(THREE, currentLocationData,
                 getLocationStaticFieldSources(), getTileHeight,
                 renderer.capabilities.maxTextureSize);
-            forEachStaticLightFieldMaterial(material => locationStaticLightField.detach(material));
+            forEachStaticLightFieldMaterial(material => {
+                portableLightRenderer?.detachMaterial(material);
+                locationStaticLightField.detach(material);
+            });
             locationStaticLightField.dispose();
             locationStaticLightField = replacement;
-            forEachStaticLightFieldMaterial((material, level) => replacement.attach(material, level));
+            forEachStaticLightFieldMaterial((material, level) => {
+                replacement.attach(material, level);
+                portableLightRenderer?.attachMaterial(material);
+            });
         }
     } catch (error) {
         console.error('Light field refresh failed; retaining the previous field', error);
@@ -12105,7 +12112,10 @@ function disposeLocationLightField() {
         locationStaticLightFieldRefreshTimer = null;
     }
     if (!locationStaticLightField) return;
-    forEachStaticLightFieldMaterial(material => locationStaticLightField.detach(material));
+    forEachStaticLightFieldMaterial(material => {
+        portableLightRenderer?.detachMaterial(material);
+        locationStaticLightField.detach(material);
+    });
     locationStaticLightField.dispose();
     locationStaticLightField = null;
 }
@@ -12116,7 +12126,11 @@ function initializeLocationLightField() {
     const startedAt = performance.now();
     locationStaticLightField = createLocationDirectionalLightField(THREE, currentLocationData,
         getLocationStaticFieldSources(), getTileHeight, renderer.capabilities.maxTextureSize);
-    forEachStaticLightFieldMaterial((material, level) => locationStaticLightField.attach(material, level));
+    forEachStaticLightFieldMaterial((material, level) => {
+        portableLightRenderer?.detachMaterial(material);
+        locationStaticLightField.attach(material, level);
+        portableLightRenderer?.attachMaterial(material);
+    });
     locationStaticLightField.stats.initializationMs = performance.now() - startedAt;
 }
 
@@ -16508,7 +16522,6 @@ export async function loadLocationInStages(data, { signal, onProgress } = {}) {
         while (!signal?.aborted && scene === loadingScene) {
             const step = stages.next();
             if (step.done) return true;
-            portableLightRenderer?.attach(scene);
             onProgress?.(step.value);
             // Allow the progress indicator to paint and the cancel button to receive input.
             await new Promise(resolve => requestAnimationFrame(() => setTimeout(resolve, 0)));

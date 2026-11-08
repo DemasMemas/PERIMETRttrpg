@@ -68,3 +68,36 @@ test('ближний свет сохраняет горизонтальную ш
     assert.equal(light.intensity,11.5);renderer.dispose();
     assert.equal(material.onBeforeCompile,previous);assert.equal(renderer.count,0);
 });
+
+test('подготовка фонарей сохраняет объединение деталей и исключает неизвестные шейдеры',async()=>{
+    const three=new vm.SourceTextModule(fs.readFileSync(path.join(__dirname,'../tmp/browser-vendor/three.module.js'),'utf8'));
+    await three.link(()=>{throw Error('Неожиданный импорт');});await three.evaluate();
+    const portable=new vm.SourceTextModule(fs.readFileSync(path.join(__dirname,'../app/static/js/portableLights.js'),'utf8'));
+    await portable.link(async specifier=>new vm.SyntheticModule(specifier==='./api.js'?['Server']:['rememberEquipmentChoice'],function(){
+        this.setExport(specifier==='./api.js'?'Server':'rememberEquipmentChoice',{});
+    }));await portable.evaluate();
+    const batchModule=new vm.SourceTextModule(fs.readFileSync(path.join(__dirname,'../app/static/js/locationRenderBatches.js'),'utf8'));
+    await batchModule.link(async()=>new vm.SyntheticModule(['isFireObject'],function(){this.setExport('isFireObject',()=>false);}));await batchModule.evaluate();
+    const T=three.namespace,scene=new T.Scene(),roots=[];
+    for(let i=0;i<3;i++){
+        const root=new T.Group(),material=new T.MeshStandardMaterial({color:i===0?'red':'green'});
+        if(i===2)material.onBeforeCompile=shader=>{shader.unrecognised=true};
+        root.position.x=i*2;root.add(new T.Mesh(new T.BoxGeometry(1,1,1),material));roots.push(root);scene.add(root);
+    }
+    const lamps=portable.namespace.createPortableLightRenderer(T,scene);lamps.prepare();
+    const fieldModule=new vm.SourceTextModule(fs.readFileSync(path.join(__dirname,'../app/static/js/locationDirectionalLightFieldPrototype.js'),'utf8'));
+    await fieldModule.link(()=>{throw Error('Неожиданный импорт поля');});await fieldModule.evaluate();
+    // Реальный порядок загрузки: ранний переносной профиль снимается,
+    // подключается статическое поле, переносной профиль возвращается снаружи.
+    for(const root of roots){const material=root.children[0].material;
+        assert.ok(lamps.detachMaterial(material));
+        fieldModule.namespace.applyDirectionalLightFieldMaterial(material,{id:123},{levels:[{id:0}]},0);
+        lamps.attachMaterial(material);
+    }
+    const batches=batchModule.namespace.createLocationRenderBatches(T,scene,()=>roots);batches.prepare();
+    assert.equal(scene.children.filter(mesh=>mesh.userData.locationRenderBatch).length,1);
+    assert.ok(!roots[0].children[0].visible&&!roots[1].children[0].visible);
+    assert.ok(roots[2].children[0].visible,'Неизвестный обработчик не объединяется');
+    batches.restore();assert.ok(roots.every(root=>root.children[0].visible));batches.dispose();lamps.dispose();
+    assert.ok(roots.every(root=>!root.children[0].material.userData.portableLightBeam));
+});
