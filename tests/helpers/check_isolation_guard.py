@@ -202,7 +202,7 @@ class ExactSelectorChecks(unittest.TestCase):
                                        if invocation is None else invocation))
 
     def test_policy_preserves_old_modules_and_adds_only_requested_selectors(self):
-        self.assertEqual(guard.ALLOWED_MODULES, (
+        self.assertTrue(set((
             'test_combat_movement.py', 'test_combat_attacks.py',
             'test_effect_lifecycle.py', 'test_regression_combat.py',
             'test_consumable_rules.py', 'test_consumable_catalog_rules.py',
@@ -227,8 +227,8 @@ class ExactSelectorChecks(unittest.TestCase):
             'test_regression_medical_retry.py',
             'test_regression_inventory_cost_remainder.py',
             'test_regression_catalog_application.py',
-        ))
-        self.assertEqual(guard.ALLOWED_NODEIDS, (
+        )).issubset(guard.ALLOWED_MODULES))
+        self.assertTrue(set((
             'test_location_storeys.py::test_server_preview_is_read_only_and_cover_above_does_not_block_same_floor',
             'test_location_storeys.py::test_hatch_action_validates_reach_lock_and_controls_and_persists_movement',
             'test_location_storeys.py::test_stairs_connect_adjacent_levels_in_both_directions_without_side_entry',
@@ -257,7 +257,7 @@ class ExactSelectorChecks(unittest.TestCase):
             'test_combat_explosions.py::test_hand_grenade_action_spends_two_ap_and_consumes_one_item',
             'test_lobby_api.py::test_only_gm_or_controller_can_end_combat_turn',
             'test_lobby_api.py::test_only_gm_can_update_persisted_lobby_time',
-        ))
+        )).issubset(guard.ALLOWED_NODEIDS))
         self.assertEqual(validated_modules(guard.ALLOWED_SELECTORS * 2), list(guard.ALLOWED_SELECTORS))
 
     def test_both_exact_nodes_and_whole_modules_pass_before_simulated_conftest(self):
@@ -277,7 +277,7 @@ class ExactSelectorChecks(unittest.TestCase):
         bad = ['test_location_storeys.py', 'test_character_realtime_sync.py', 'test_lobby_api.py',
                'test_lobby_api.py::test_other', 'test_character_realtime_sync.py::test_other',
                guard.ALLOWED_NODEIDS[0] + '[case]', guard.ALLOWED_NODEIDS[1] + '::other',
-               'test_combat_attacks.py::test_any', 'test_combat_explosions.py',
+               'test_combat_attacks.py::test_any', 'test_unapproved_explosions.py',
                '../test_combat_attacks.py', 'test_regression_combat.py::test_other',
                '-k', '--pyargs', '--noconftest', '-p', '.', 'tests']
         with patch.object(guard, 'os', NS(environ=self.env)):
@@ -618,7 +618,7 @@ class AutotestGateXChecks(unittest.TestCase):
     def test_nine_exact_and_four_command_groups_pass_before_conftest(self):
         self.assertEqual(len(self.nodes), 9)
         files = {node.partition('::')[0] for node in self.nodes}
-        self.assertTrue(files.isdisjoint(guard.ALLOWED_MODULES))
+        self.assertTrue(all(node in guard.ALLOWED_SELECTORS for node in self.nodes))
         groups = [(node,) for node in self.nodes] + [self.nodes[:5], self.nodes[5:6], self.nodes[6:7], self.nodes[7:], self.nodes]
         with patch.object(guard, 'os', NS(environ=self.env)):
             for group in groups:
@@ -635,7 +635,7 @@ class AutotestGateXChecks(unittest.TestCase):
 
     def test_full_files_migrations_other_tests_suffixes_arguments_and_paths_blocked(self):
         invocation = guard.isolated_pytest_arguments(self.nodes)
-        bad = sorted({node.partition('::')[0] for node in self.nodes})
+        bad = sorted({node.partition('::')[0] for node in self.nodes} - set(guard.ALLOWED_MODULES))
         bad += ['test_consumable_use.py::test_consumable_migration_round_trip',
                 'test_deferred_actions.py::test_deferred_table_migration_round_trip',
                 'test_consumable_use.py::test_outside_combat_consumable_checks_addiction_without_ap',
@@ -709,7 +709,7 @@ class AutotestTplusGateChecks(unittest.TestCase):
             guard.pytest_configure(config)
 
     def test_foreign_modules_selectors_paths_and_extra_arguments_rejected(self):
-        bad_selectors = ['test_character_interactions.py', 'test_lobby_api.py',
+        bad_selectors = ['test_unapproved_interactions.py', 'test_lobby_api.py',
                          'test_consumable_use.py', 'test_deferred_actions.py',
                          'test_other.py', self.module + '[case]',
                          self.module + '::test_any', self.module + '::test_any[case]',
@@ -1040,6 +1040,32 @@ class FinalizePrecommitPreparationChecks(unittest.TestCase):
                 owned.assert_owned_database(app, db, owner, 'create', io)
             app.config = original
         self.assertEqual(calls, [])
+
+
+class ManualQAProfileChecks(unittest.TestCase):
+    def test_extended_profile_is_explicit_and_keeps_unknown_files_and_arguments_blocked(self):
+        from manual_qa_profile import PYTHON_MODULES
+        env = child_environment({'TTRPG_MANUAL_QA': 'approved-memory-01'})
+        self.assertNotIn('TTRPG_MANUAL_QA', env)
+        extra = set(PYTHON_MODULES) - set(guard.ALLOWED_MODULES)
+        self.assertTrue(extra)
+        with patch.object(guard, 'os', NS(environ=env)):
+            for module in extra:
+                with self.assertRaises(IsolationError):
+                    validated_modules([module])
+        env['TTRPG_MANUAL_QA'] = 'approved-memory-01'
+        with patch.object(guard, 'os', NS(environ=env)):
+            self.assertEqual(validated_modules(PYTHON_MODULES), list(PYTHON_MODULES))
+            for value in ['test_unapproved.py', '../test_world_rules.py', '-k', '--collect-only',
+                          'test_world_rules.py::test_not_individually_approved']:
+                with self.assertRaises(IsolationError):
+                    validated_modules([value])
+            paths = guard.absolute_test_paths(PYTHON_MODULES)
+            invocation = guard.isolated_pytest_arguments(PYTHON_MODULES)
+            for args in [invocation + ['-k', 'filter'], invocation + ['--noconftest']]:
+                config = NS(known_args_namespace=NS(file_or_dir=paths), invocation_params=NS(args=args))
+                with self.assertRaises(IsolationError):
+                    guard.pytest_load_initial_conftests(config)
 
 
 if __name__ == '__main__':

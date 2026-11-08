@@ -14322,6 +14322,7 @@ async function renderVestTemplatePouches() {
 // ========== 6. ВКЛАДКА "ИНВЕНТАРЬ" ==========
 async function renderInventoryTab(data) {
     const container = document.getElementById('sheet-tab-inventory');
+    if (!container) return;
     normalizeCharacterAmmoSlots(data);
     const inv = data.inventory || {};
     const eq = data.equipment || {};
@@ -14332,6 +14333,8 @@ async function renderInventoryTab(data) {
 
     // Загружаем все возможные шаблоны предметов
     const allTemplates = await getAllItemTemplates();
+
+    if (document.getElementById('sheet-tab-inventory') !== container) return;
 
     // Фильтруем нужные категории из allTemplates
     const visibleTemplates = window.isGM ? allTemplates : allTemplates.filter(t => t.source !== 'local');

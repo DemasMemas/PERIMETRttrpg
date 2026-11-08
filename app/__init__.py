@@ -139,7 +139,8 @@ def create_app(config_name='default'):
     app.register_blueprint(lobbies_bp, url_prefix='/lobbies')
 
     # Импорт сокет-обработчиков
-    from app.sockets import auth, chat, dice, markers
+    from app.sockets import register_handlers
+    register_handlers()
 
     @app.route('/')
     def index():

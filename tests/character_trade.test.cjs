@@ -1,5 +1,6 @@
 const {test}=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path');
-const load=()=>import(`data:text/javascript;base64,${Buffer.from(fs.readFileSync(path.join(__dirname,'../app/static/js/characterTrade.js'),'utf8')).toString('base64')}`);
+const {pathToFileURL}=require('node:url');
+const load=()=>import(pathToFileURL(path.join(__dirname,'../app/static/js/characterTrade.js')).href);
 const base={actorOffer:[],targetOffer:[],actorMoney:100,targetMoney:0,actorBalance:1000,targetBalance:500};
 test('денежный подарок разрешён, пустое предложение и неверные суммы отклоняются',async()=>{
     const {validateTrade}=await load();

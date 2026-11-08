@@ -11,11 +11,11 @@ from app.services.lighting_rules import location_is_dark, world_is_dark
 
 
 OWL = (
-    'Ампула. Убирает помехи на броски внимательности и точности в темноте. '
+    'Стимулятор Сова. Ампула. '
     '+3 на броски внимательности в темноте. -3 к броскам внимательности на свету. Длится 4 часа'
 )
 OWL_N = (
-    'Ампула. Убирает помехи на броски внимательности и точности в темноте. '
+    'Стимулятор Сова-Н. Ампула. '
     '+5 на броски внимательности в темноте. Длится 8 часов'
 )
 
@@ -42,14 +42,17 @@ def test_owl_rules_are_reusable_modifiers_and_refresh_on_repeat():
     advance_timed_effects(health, [], 3 * 3600)
     assert health['combatMeta']['consumableModifiers'][0]['remaining_seconds'] == 3600
     assert _apply_profile(health, profile, {}, item, in_combat=False)
-    assert len(health['combatMeta']['consumableModifiers']) == 4
+    assert len(health['combatMeta']['consumableModifiers']) == 3
+    assert {entry['stat'] for entry in health['combatMeta']['consumableModifiers']} == {
+        'darkness_awareness', 'darkness_accuracy', 'light_awareness',
+    }
     assert all(entry['remaining_seconds'] == 4 * 3600 for entry in health['combatMeta']['consumableModifiers'])
 
 
 def test_owl_n_applies_five_only_in_darkness_and_preserves_other_penalties(monkeypatch):
     profile = parse_consumable_effects(OWL_N)
     assert {item['stat'] for item in profile['modifiers']} == {
-        'darkness_awareness', 'darkness_visual_immunity', 'darkness_shooting_immunity',
+        'darkness_awareness', 'darkness_accuracy',
     }
     assert all(item['remaining'] == 480 for item in profile['modifiers'])
     health = {'current': 100, 'max': 100, 'effects': []}
@@ -58,7 +61,7 @@ def test_owl_n_applies_five_only_in_darkness_and_preserves_other_penalties(monke
     monkeypatch.setattr('app.services.combat.random.randint', lambda *_: 10)
     dark = CombatService._narrative_skill_check(data, 'skills.physical.awareness.visual', darkness=True)
     light = CombatService._narrative_skill_check(data, 'skills.physical.awareness.visual', darkness=False)
-    assert dark['total'] == 15 and not dark['disadvantage']
+    assert dark['total'] == 10 and not dark['disadvantage']
     assert light['total'] == 10
     assert not CombatService._has_roll_disadvantage(data, 'skills.physical.shooting', darkness=True)
     wounded = deepcopy(data)

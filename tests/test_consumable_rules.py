@@ -598,7 +598,10 @@ def test_world_radiation_drugs_keep_percent_capacity_and_day_duration():
             item for item in profile["effects"]
             if item["type"] == "radiation_filter"
         )
-        assert profile["direct"]["exhaustion_delta"] == 1
+        if description == 'Препарат "Радист". Ампула.':
+            assert not profile['direct'].get('exhaustion_delta')
+        else:
+            assert profile["direct"]["exhaustion_delta"] == 1
         assert effect["value"] == percent
         assert effect["capacity"] == capacity
         assert effect["remaining_capacity"] == capacity
@@ -607,9 +610,10 @@ def test_world_radiation_drugs_keep_percent_capacity_and_day_duration():
         assert effect["remaining_seconds"] == 24 * 60 * 60
 
     radist = parse_consumable_effects('Препарат "Радист". Ампула.')
-    temporary_exhaustion = next(
+    periodic_exhaustion = next(
         item for item in radist["effects"]
-        if item["type"] == "temporary_exhaustion"
+        if item["type"] == "periodic_adjustment"
     )
-    assert temporary_exhaustion["remaining"] == 3
-    assert temporary_exhaustion["tick"] == "turn_end"
+    assert periodic_exhaustion["remaining"] == 3
+    assert periodic_exhaustion["tick"] == "turn_end"
+    assert periodic_exhaustion['adjustments'] == [{'field': 'exhaustion', 'delta': 1, 'min': 0, 'max': 10}]

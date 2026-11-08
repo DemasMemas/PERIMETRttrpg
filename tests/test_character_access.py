@@ -76,7 +76,10 @@ def test_pda_accounts_are_world_scoped_and_available_to_other_characters(client,
     created = client.post(account_url(first, '/register'), headers=auth,
                           json={'login': 'Stalker', 'password': 'secret-one'})
     assert created.status_code == 200
-    assert client.get(account_url(first), headers=auth).json == created.json
+    status = client.get(account_url(first), headers=auth)
+    assert status.status_code == 200
+    assert status.json['account'] == created.json['account']
+    assert created.json['data']['_revision'] == first.revision
     account = db.session.get(PdaAccount, created.json['account']['id'])
     assert account.lobby_id == world.id and account.password_hash != 'secret-one'
     assert client.post(account_url(second, '/register'), headers=auth,
@@ -84,16 +87,17 @@ def test_pda_accounts_are_world_scoped_and_available_to_other_characters(client,
     assert client.post(account_url(second, '/login'), headers=auth,
                        json={'login': 'stalker', 'password': 'secret-two'}).status_code == 401
     assert client.post(account_url(second, '/login'), headers=auth,
-                       json={'login': 'stalker', 'password': 'secret-one'}).json == created.json
+                       json={'login': 'stalker', 'password': 'secret-one'}).json['account'] == created.json['account']
     saved = client.post(account_url(second, '/save_notes'), headers=auth,
                         json={'notes': 'Тайник у северного моста'})
     assert saved.status_code == 200
     assert saved.json['account']['notes'] == 'Тайник у северного моста'
-    assert client.get(account_url(first), headers=auth).json == saved.json
+    assert client.get(account_url(first), headers=auth).json['account'] == saved.json['account']
     assert client.post(account_url(first, '/logout'), headers=auth).json['account'] is None
+    assert client.get(account_url(first), headers=auth).json['account'] is None
     assert client.post(account_url(first, '/save_notes'), headers=auth,
                        json={'notes': 'Без входа'}).status_code == 400
-    assert client.get(account_url(second), headers=auth).json == saved.json
+    assert client.get(account_url(second), headers=auth).json['account'] == saved.json['account']
     assert client.get(account_url(first), headers=headers(case, case['viewer'])).status_code == 403
     separate = client.post(account_url(third, '/register'), headers=auth,
                            json={'login': 'Stalker', 'password': 'secret-two'})

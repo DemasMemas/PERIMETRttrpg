@@ -59,6 +59,8 @@ def test_get_migrates_legacy_map_and_socket_preserves_offset(client, app, create
                                             'updates': [{'x': 1, 'z': 0, 'terrain': 'grass'}, {'x': 0, 'z': 1, 'terrain': 'grass'}]})
         db.session.expire_all()
         after = client.get(url, headers=headers).get_json()
+        assert after['tiles_data'][0][1]['terrain'] == 'grass'
+        assert after['tiles_data'][1][0]['terrain'] == 'grass'
         assert after['tiles_data'][1][1] == first['tiles_data'][1][1]
         old_editor = deepcopy(after['tiles_data'])
         old_editor[1][1].pop('water_level_offset')

@@ -147,6 +147,7 @@ def account_action(character_id, user_id, operation, payload):
         return device_status(character,device)
     if operation == 'logout':
         _assign(character,device,None)
+        db.session.flush()
         return device_status(character,device)
     if operation == 'save_notes':
         account = _account(character,device)
