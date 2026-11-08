@@ -22,12 +22,21 @@ module.exports=async({page,request,token,lobby,base,connect,debugPort,safeSessio
             await client.until(`window.socket?.connected&&window.currentLocationId===${location.id}&&document.getElementById('scene-loading-screen').classList.contains('is-hidden')`,'Сцена готова');
         }
         const weatherChecks=[];
-        const click=async selector=>{
-            const p=await page.evaluate(`(()=>{const e=document.querySelector(${JSON.stringify(selector)});if(!e)return null;const r=e.getBoundingClientRect();return r.width&&r.height?{x:r.x+r.width/2,y:r.y+r.height/2}:null})()`);
+        const click=async(selector,client=page)=>{
+            const p=await client.evaluate(`(()=>{const e=document.querySelector(${JSON.stringify(selector)});if(!e)return null;const r=e.getBoundingClientRect();return r.width&&r.height?{x:r.x+r.width/2,y:r.y+r.height/2}:null})()`);
             assert.ok(p,'Видимая кнопка '+selector);
-            await page.call('Input.dispatchMouseEvent',{type:'mousePressed',...p,button:'left',clickCount:1});
-            await page.call('Input.dispatchMouseEvent',{type:'mouseReleased',...p,button:'left',clickCount:1});
+            await client.call('Input.dispatchMouseEvent',{type:'mousePressed',...p,button:'left',clickCount:1});
+            await client.call('Input.dispatchMouseEvent',{type:'mouseReleased',...p,button:'left',clickCount:1});
         };
+        for(const client of [page,peer])await client.evaluate(`(()=>{
+            const nativePlay=HTMLMediaElement.prototype.play,probe={calls:[]};window.__weatherAudioProbe=probe;
+            HTMLMediaElement.prototype.play=function(...args){
+                const row={url:this.currentSrc||this.src,resolved:false,rejected:null,element:this};probe.calls.push(row);
+                const result=nativePlay.apply(this,args);
+                result?.then?.(()=>{row.resolved=true},error=>{row.rejected=String(error?.name||error)});
+                return result;
+            };return true;
+        })()`);
         assert.equal(await peer.evaluate(`Boolean(document.querySelector('#location-time-btn,#location-weather-btn'))`),false,'Игрок не получает управление погодой/временем');
         await click('#location-time-btn');
         await page.until(`!document.getElementById('location-time-panel').hidden&&document.querySelector('#location-time-panel #lobby-game-day')`,'Исходные поля мирового времени доступны с подлокации');
@@ -71,12 +80,15 @@ module.exports=async({page,request,token,lobby,base,connect,debugPort,safeSessio
             const frameTiming=await page.evaluate(`new Promise(resolve=>{let last=performance.now(),times=[];function frame(now){times.push(now-last);last=now;if(times.length===60){times.sort((a,b)=>a-b);resolve({medianFrameMs:times[30],p95FrameMs:times[57]})}else requestAnimationFrame(frame)}requestAnimationFrame(frame)})`);
             weatherChecks.push({name,...await page.evaluate(`window.getLocationWeatherDiagnostics()`),...frameTiming});
             if(name==='rain'){
-                const button=await page.evaluate(`(()=>{const b=document.querySelector('.weather-audio-unlock');if(!b||b.hidden)return null;const r=b.getBoundingClientRect();return{x:r.x+r.width/2,y:r.y+r.height/2}})()`);
-                if(button){
-                    await page.call('Input.dispatchMouseEvent',{type:'mousePressed',...button,button:'left',clickCount:1});
-                    await page.call('Input.dispatchMouseEvent',{type:'mouseReleased',...button,button:'left',clickCount:1});
+                for(const client of [page,peer]){
+                    // Автозапуск пробуется при инициализации; реальный игровой ввод повторяет play(), если браузер отклонил autoplay.
+                    await click('#chat-toggle',client);
+                    await client.until(`window.__weatherAudioProbe?.calls.some(c=>c.url.endsWith('/static/audio/rain.mp3')&&c.resolved&&!c.element.paused&&c.element.volume>0)`,'Звук дождя действительно воспроизводится в подлокации');
+                    const audio=await client.evaluate(`(()=>{const c=window.__weatherAudioProbe.calls.find(c=>c.url.endsWith('/static/audio/rain.mp3')&&c.resolved&&!c.element.paused&&c.element.volume>0);return c?{url:c.url,volume:c.element.volume,loop:c.element.loop,paused:c.element.paused}:null})()`);
+                    assert.ok(audio&&audio.loop&&audio.volume>0,'Дождь звучит циклично с ненулевой громкостью на каждом клиенте');
+                    weatherChecks.push({name:'rain-audio',client:client===page?'gm':'observer',...audio});
+                    await click('#chat-toggle',client);
                 }
-                await page.until(`document.querySelector('.weather-audio-unlock')?.hidden`,'Существующий звук дождя воспроизводится в подлокации');
             }
             if(drops){
                 const wet=await page.evaluate(`window.getLocationWeatherDiagnostics()`);

@@ -18,7 +18,7 @@ module.exports=async({peer,request,recipient,token,api,read})=>{
     await peer.until("[...document.querySelectorAll('#pockets-container [data-path]')].some(row=>row.textContent.includes('КПК'))",'КПК виден в инвентаре');
     await peer.evaluate("(()=>{const row=[...document.querySelectorAll('#pockets-container [data-path]')].find(row=>row.textContent.includes('КПК'));row.querySelector('[data-widget-key=use]').click();return true})()");
     await peer.until("document.querySelector('#pda-shell-modal .pda-shell-nav button')",'КПК открыт');
-    await peer.evaluate("document.querySelector('#pda-shell-modal .pda-shell-nav button:nth-child(4)').click();true");
+    await peer.evaluate("[...document.querySelectorAll('#pda-shell-modal .pda-shell-nav button')].find(button=>button.textContent==='Файлы').click();true");
     await peer.until("[...document.querySelectorAll('#pda-shell-modal .pda-file-card button')].some(button=>button.textContent==='Записать в КПК')",'Книга доступна для записи');
     await peer.evaluate("[...document.querySelectorAll('#pda-shell-modal button')].find(button=>button.textContent==='Записать в КПК').click();true");
     await peer.until("[...document.querySelectorAll('#pda-shell-modal .pda-file-card button')].some(button=>button.textContent==='Читать · 4 часа')",'Книга записана в КПК');
@@ -26,7 +26,7 @@ module.exports=async({peer,request,recipient,token,api,read})=>{
     await peer.until("document.querySelector('#pda-shell-modal')?.innerText.includes('Чтение идёт')",'Начато настоящее чтение');
     assert.equal((await read()).data.crafting.current.kind,'book');
     await request(api+'/time',{game_day:1,game_time_minutes:270},token,'PATCH');
-    await peer.evaluate("document.querySelector('#pda-shell-modal .pda-shell-nav button:nth-child(4)').click();true");
+    await peer.evaluate("[...document.querySelectorAll('#pda-shell-modal .pda-shell-nav button')].find(button=>button.textContent==='Файлы').click();true");
     await peer.until("document.querySelector('#pda-shell-modal')?.innerText.includes('Прочитано')",'Книга прочитана');
     await peer.evaluate("document.querySelector('#pda-shell-modal [data-pda-close]').click();true");
     await peer.evaluate(`window.openCharacterSheet(${recipient.id},'equipment').then(()=>true)`);

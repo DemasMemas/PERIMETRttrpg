@@ -16,6 +16,17 @@ module.exports=async({page,request,token,lobby,base,connect,debugPort,safeSessio
         assert.ok(point,'Кнопка не перекрыта: '+selector);
         for(const type of ['mousePressed','mouseReleased'])await client.call('Input.dispatchMouseEvent',{type,...point,button:'left',buttons:type==='mousePressed'?1:0,clickCount:1});
     };
+    const clickPdaSection=async label=>{
+        const selector='#pda-shell-modal .pda-shell-nav button';
+        await page.until(`Array.from(document.querySelectorAll(${JSON.stringify(selector)})).some(button=>button.textContent.trim()===${JSON.stringify(label)})`,'раздел КПК доступен: '+label);
+        let point;
+        for(let attempt=0;attempt<20&&!point;attempt++){
+            point=await page.evaluate(`(async()=>{const e=Array.from(document.querySelectorAll(${JSON.stringify(selector)})).find(button=>button.textContent.trim()===${JSON.stringify(label)});e.scrollIntoView({block:'center',behavior:'instant'});await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));const r=e.getBoundingClientRect(),x=r.x+r.width/2,y=r.y+r.height/2;return e.isConnected&&e.contains(document.elementFromPoint(x,y))?{x,y}:null})()`);
+            if(!point)await pause(50);
+        }
+        assert.ok(point,'Раздел КПК не перекрыт: '+label);
+        for(const type of ['mousePressed','mouseReleased'])await page.call('Input.dispatchMouseEvent',{type,...point,button:'left',buttons:type==='mousePressed'?1:0,clickCount:1});
+    };
     const set=async(selector,value)=>page.evaluate(`(()=>{const e=document.querySelector(${JSON.stringify(selector)});e.value=${JSON.stringify(String(value))};e.dispatchEvent(new Event('change',{bubbles:true}))})()`);
     const step=async index=>{
         await click(`${root} [data-go-step="${index}"]`);
@@ -101,7 +112,11 @@ module.exports=async({page,request,token,lobby,base,connect,debugPort,safeSessio
     await step(7);
     assert.equal(await page.evaluate(`document.querySelector('${root} [data-skill-meta="finalRaises:physical.agility"]').textContent`),'Следующее повышение: 3 очк. (как до 13)');
     const books=rules.startingPurchaseTemplates.filter(item=>item.attributes?.book_kind);
-    assert.equal(books.filter(item=>item.attributes.book_kind==='skill').length,3);
+    const skillBooks=books.filter(item=>item.attributes.book_kind==='skill');
+    const skillNames=Object.values(rules.skills).flatMap(skills=>Object.values(skills));
+    assert.equal(skillBooks.length,16);
+    assert.deepEqual(skillBooks.map(item=>item.name.match(/Раздел: (.+)$/)?.[1]).sort(),skillNames.sort(),
+        'Каждому навыку соответствует своя электронная книга');
     assert.equal(books.filter(item=>item.attributes.book_kind==='equipment').length,16);
     await set(`${root} [data-purchase-category]`,'books');
     assert.match(await page.evaluate(`document.querySelector('${root} [data-purchase-catalog]').textContent`),/Книги навыков.*Книги снаряжения/s);
@@ -205,18 +220,20 @@ module.exports=async({page,request,token,lobby,base,connect,debugPort,safeSessio
     const pdaIndex=character.data.inventory.pockets.findIndex(item=>item.name==='КПК');
     await click(`#pockets-container > [data-path="inventory,pockets,${pdaIndex}"] [data-widget-key=use]`);
     await page.until('document.querySelector("#pda-shell-modal .pda-shell-nav button")','оболочка КПК открыта');
-    assert.equal(await page.evaluate('document.querySelectorAll("#pda-shell-modal .pda-shell-nav button").length'),12);
+    assert.ok(await page.evaluate(`['Подключения','Файлы','Модификации'].every(label=>Array.from(document.querySelectorAll('#pda-shell-modal .pda-shell-nav button')).some(button=>button.textContent.trim()===label))`),'разделы подключений, файлов и модификаций доступны');
     assert.ok((await page.evaluate('document.querySelector("#pda-shell-modal .pda-shell-brand").textContent')).includes('PERIMETR / КПК'));
-    await click('#pda-shell-modal .pda-shell-nav button:nth-child(5)');
-    assert.ok((await page.evaluate('document.querySelector("#pda-shell-modal [data-pda-content]").textContent')).includes('пока недоступны'));
-    await click('#pda-shell-modal .pda-shell-nav button:nth-child(12)');
+    await clickPdaSection('Подключения');
+    await page.until('document.querySelector("#pda-shell-modal .pda-access")','содержимое подключений КПК загружено');
+    await page.until('document.querySelector("#pda-shell-modal .pda-access").textContent.includes("Доступные устройства")','список подключаемых устройств загружен');
+    assert.ok((await page.evaluate('document.querySelector("#pda-shell-modal .pda-access").textContent')).includes('Доступные устройства'));
+    await clickPdaSection('Модификации');
     await page.until('document.querySelector("#pda-shell-modal .pda-shell-main select option")','каталог модификаций КПК загружен');
     assert.equal(await page.evaluate('document.querySelectorAll("#pda-shell-modal .pda-shell-main select:first-of-type option").length'),25);
     await screenshot('pda-modifications');
-    await click('#pda-shell-modal .pda-shell-nav button:nth-child(5)');
+    await clickPdaSection('Файлы');
     await screenshot('creation-pda-desktop');
-    await page.call('Emulation.setDeviceMetricsOverride',{width:430,height:860,deviceScaleFactor:1,mobile:false});
-    await screenshot('creation-pda-mobile');
+    await page.call('Emulation.setDeviceMetricsOverride',{width:1280,height:720,deviceScaleFactor:1,mobile:false});
+    await screenshot('creation-pda-laptop');
     await page.call('Emulation.clearDeviceMetricsOverride');
     await click('#pda-shell-modal [data-pda-power]');
     await page.until('document.querySelector("#pda-shell-modal [data-pda-status]").textContent==="ВЫКЛЮЧЕН"','КПК выключен');
@@ -365,7 +382,7 @@ module.exports=async({page,request,token,lobby,base,connect,debugPort,safeSessio
         ? `#pockets-container > [data-path="inventory,pockets,${pdaPocket}"] [data-widget-key=use]`
         : `#backpack-container > [data-path="inventory,backpack,${pdaBag}"] [data-widget-key=use]`);
     await page.until('document.querySelector("#pda-shell-modal .pda-shell-nav button")','КПК открыт после выдачи книги');
-    await click('#pda-shell-modal .pda-shell-nav button:nth-child(4)');
+    await clickPdaSection('Файлы');
     await page.until(`[...document.querySelectorAll('#pda-shell-modal .pda-file-card strong')].some(node=>node.textContent.includes(${JSON.stringify(books[0].name)}))`,'книга доступна для записи');
     await click('#pda-shell-modal .pda-file-card button');
     await page.until(`[...document.querySelectorAll('#pda-shell-modal .pda-file-card strong')].some(node=>node.textContent.includes(${JSON.stringify(books[0].name)}))&&document.querySelector('#pda-shell-modal .pda-file-card button')?.textContent.includes('Читать')`,'книга появилась в файлах КПК');

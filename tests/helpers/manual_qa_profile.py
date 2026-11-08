@@ -138,6 +138,8 @@ NODE_MODULES = (
 )
 
 PYTHON_ADDITIONS = (
+    'test_atomic_inventory.py',
+    'test_belt_attachments.py',
     'test_pda_device_accounts.py',
     'test_socket_app_factory.py',
     'test_manual_qa_time.py',

@@ -19,7 +19,9 @@ function collector(){
         const response=await original(...args),url=new URL(typeof args[0]==='string'?args[0]:args[0].url,location.href);
         if(url.origin===location.origin&&(/medical-procedure$|\/combat\/action$|\/characters\/\d+$/.test(url.pathname))){
             const text=await response.clone().text();let body;try{body=JSON.parse(text)}catch{body={nonJson:true}}
-            med.http.push({path:url.pathname,method:args[1]?.method||'GET',status:response.status,body});
+            let requestBody={};try{requestBody=JSON.parse(args[1]?.body||'{}')}catch{}
+            med.http.push({path:url.pathname,method:args[1]?.method||'GET',status:response.status,
+                operation_id:requestBody.operation_id??null,deferred_action_id:requestBody.deferred_action_id??null,body});
         }return response;
     };return true;
 }
@@ -117,12 +119,14 @@ module.exports=async({page,request,token,lobby,base,connect,debugPort,safeSessio
         await rejectMove('patient-locked-after-reload');check('debt-lock-reload');
         await ok(page,combat+'/end_turn',{location_character_id:actorId});
         await ok(peer,combat+'/end_turn',{location_character_id:patientId});
-        const paid=await database('ready');assert.equal(paid.deferred.status,'ready');assert.equal(paid.deferred.remaining,0);assert.equal(paid.deferred.payload.medicine_roll,1);assert.equal(paid.receipt_count,0);assert.equal(paid.draws.length,1);
-        assert.equal(paid.characters.find(c=>c.id===patient.id).movement_locked,true);await rejectMove('patient-locked-ready');
-        const body={operation_id:id,deferred_action_id:id,target_character_id:patient.id,source,application,combat_location_id:location.id,actor_location_character_id:actorId,interaction_request_id:consent.id};
-        const failure=await ok(page,'/lobbies/characters/'+physician.id+'/medical-procedure',body);
+        // Обновление боя запускает штатное завершение действия; наблюдаем его запрос без конкурентного ручного POST.
+        await page.until(`med.http.some(r=>r.path.endsWith('/medical-procedure')&&r.method==='POST'&&r.operation_id===${JSON.stringify(id)}&&r.deferred_action_id===${JSON.stringify(id)}&&r.status===200)`,'automatic deferred medical procedure');
+        const automatic=await page.evaluate(`med.http.find(r=>r.path.endsWith('/medical-procedure')&&r.method==='POST'&&r.operation_id===${JSON.stringify(id)}&&r.deferred_action_id===${JSON.stringify(id)}&&r.status===200)`);
+        assert.ok(automatic);record('automatic-medical-resume',{status:automatic.status,operation_id:automatic.operation_id,deferred_action_id:automatic.deferred_action_id,body:automatic.body});
+        const failure=automatic.body;
         assert.equal(failure.medical_result.success,false);assert.equal(failure.medical_result.roll,1);assert.equal(failure.medical_result.difficulty,4);assert.deepEqual(privatePaths(failure),[]);
         const failed=await database('failed');const doctor=c=>c.characters.find(p=>p.id===physician.id),patientDB=c=>c.characters.find(p=>p.id===patient.id);
+        assert.equal(failed.deferred.status,'completed');assert.equal(failed.deferred.remaining,0);assert.equal(failed.deferred.payload.medicine_roll,1);assert.equal(failed.receipt_count,1);assert.equal(failed.draws.length,1);
         const trusted=copy(doctor(failed).data.health.combatMeta.mustDoRetry);assert.equal(trusted.kind,'medical');assert.equal(trusted.difficulty,4);
         assert.equal(trusted.medical_retry.server_authoritative,true);assert.equal(trusted.medical_retry.target_character_id,patient.id);
         assert.equal(doctor(failed).data.inventory.backpack[0].quantity,1);assert.equal(patientDB(failed).data.health.current,100);assert.equal(failed.receipt_count,1);assert.equal(failed.deferred.status,'completed');assert.equal(patientDB(failed).movement_locked,false);
@@ -138,7 +142,8 @@ module.exports=async({page,request,token,lobby,base,connect,debugPort,safeSessio
         const saved=await page.evaluate(`(async()=>{const {Server}=await import('/static/js/api.js');const {rememberCharacterSnapshots}=await import('/static/js/characterPersistence.js');rememberCharacterSnapshots(${JSON.stringify(failure)});await Server.getCharacter(${physician.id});return Server.updateCharacter(${physician.id},{data:${JSON.stringify(publicData)}})})()`);assert.ok(saved.data);
         const afterSave=await database('public-sheet-save');assert.deepEqual(doctor(afterSave).data.health.combatMeta.mustDoRetry,trusted);assert.equal(doctor(afterSave).data.notes,publicData.notes);
         // Also exercise the rendered sheet autosave using its real notes field.
-        await page.evaluate(`openCharacterSheet(${physician.id})`);await page.until(`document.querySelector('#sheet-tabs [data-tab="notes"]')`,'notes tab');await click(page,'#sheet-tabs [data-tab="notes"]');
+        const beforeSheet=await page.evaluate(`({modal:document.getElementById('character-sheet-modal')?.style.display,open:document.body.classList.contains('character-sheet-open'),notifications:[...document.querySelectorAll('.notification')].map(n=>n.textContent).slice(-3)})`);record('before-sheet-open',beforeSheet);
+        await page.evaluate(`window.openCharacterSheet(${physician.id},'basic').then(()=>true)`);await page.until(`document.querySelector('#sheet-tabs [data-tab="notes"]')`,'notes tab');await click(page,'#sheet-tabs [data-tab="notes"]');
         await page.evaluate(`(()=>{const n=document.querySelector('#sheet-content [name="notes"]');n.value='MR01 actual sheet autosave';n.dispatchEvent(new Event('input',{bubbles:true}));return true})()`);
         await page.until(`med.http.some(r=>r.method==='PUT'&&r.status===200&&r.body.data?.notes==='MR01 actual sheet autosave')`,'actual sheet autosave HTTP');
         await page.evaluate(`(async()=>{const s=await import('/static/js/characterSheet.js');s.closeCharacterSheet()})()`);
@@ -169,8 +174,26 @@ module.exports=async({page,request,token,lobby,base,connect,debugPort,safeSessio
             record('completed-client',{events:await client.evaluate(`med.events`),hud:await client.evaluate(`(${hud.toString()})()`)});}
         await shots('completed');check('native-ui-retry-original-parameters');check('single-effect-no-second-resource-or-ap');check('two-client-success-and-cleared-retry');
         const replay=await browserRequest(page,combat+'/action',{location_character_id:actorId,action_key:'must_do_it'});assert.equal(replay.status,400);record('retry-replay',replay);
-        const replayMedical=await browserRequest(page,'/lobbies/characters/'+physician.id+'/medical-procedure',body);record('medical-replay',replayMedical);assert.equal(replayMedical.status,403,'Completed consent rejects an other-patient medical replay before completion claim');
-        const final=await database('after-replays');assert.deepEqual(final,completed);assert.equal((await state()).current_character.action_points_current,apBefore);check('replay-rejected-unchanged-db-and-rng');
+        const replayBody={operation_id:id,deferred_action_id:id,target_character_id:patient.id,source,application,combat_location_id:location.id,actor_location_character_id:actorId,interaction_request_id:consent.id};
+        const replayMedical=await browserRequest(page,'/lobbies/characters/'+physician.id+'/medical-procedure',replayBody);record('medical-replay',replayMedical);assert.equal(replayMedical.status,403,'Completed consent rejects an other-patient medical replay before completion claim');
+        const final=await database('after-replays');
+        const finalComparable=copy(final),completedComparable=copy(completed);
+        const finalDoctor=finalComparable.characters.find(c=>c.id===physician.id),completedDoctor=completedComparable.characters.find(c=>c.id===physician.id);
+        const journalBefore=completedDoctor.data.health.combatMeta.actionJournal,journalAfter=finalDoctor.data.health.combatMeta.actionJournal;
+        assert.equal(journalAfter.length,journalBefore.length+1,'В журнал добавлен только отклонённый повтор');
+        assert.deepEqual(journalAfter.slice(0,-1),journalBefore,'Прежние записи журнала не изменились');
+        const rejected=journalAfter.at(-1);
+        assert.deepEqual(rejected,{id:rejected.id,timestamp:rejected.timestamp,action:'must_do_it',label:'Должен это сделать',
+            location_id:location.id,status:'rejected',action_points:0,movement_points:0,free_actions:0,
+            reason:replay.body.error.message});
+        assert.equal(replay.body.error.message,'Describe the check approved by the GM');
+        assert.ok(!journalBefore.some(entry=>entry.id===rejected.id));
+        assert.equal(finalDoctor.revision,completedDoctor.revision+1,'Запись отказа повышает ревизию персонажа ровно на один');
+        journalAfter.pop();finalDoctor.revision=completedDoctor.revision;
+        assert.deepEqual(finalComparable,completed,'Повторы не меняют прочие данные персонажей, здоровье, оплату, расход и RNG');
+        assert.equal((await state()).current_character.action_points_current,apBefore);check('replay-rejected-unchanged-db-and-rng');
+        for(const client of clients)assert.equal(client.events.has('Runtime.exceptionThrown'),false,
+            'Фоновое завершение лечения и открытие листов не вызывают исключений JavaScript');
         result.status='PASS';save();
     }catch(error){result.status=error.name==='AssertionError'?'FAIL':'BLOCKED';result.failure={name:error.name,message:String(error.message).replace(/eyJ[\w-]+\.[\w-]+\.[\w-]+/g,'[test-token]')};save();await shots('failure').catch(()=>{});throw error;}
     finally{if(context&&protocol)await protocol.call('Target.disposeBrowserContext',{browserContextId:context.browserContextId}).catch(()=>{});await peer?.close().catch(()=>{});await protocol?.close().catch(()=>{});}

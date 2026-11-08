@@ -11,6 +11,26 @@ const root = path.resolve(__dirname, '..');
 const isolation = require('./helpers/browser_isolation.cjs');
 const safeSession = process.env.VTT_SAFE_RUN_ID ? isolation.createSession(process.env) : null;
 
+// Записываем исполнение сценариев, а не одно лишь наличие/загрузку файла.
+if (safeSession) {
+    const Module=require('node:module'),originalLoad=Module._load,wrapped=new WeakMap(),runs=[];
+    Module._load=function(request,parent,isMain){
+        const value=originalLoad.apply(this,arguments);
+        if(typeof value!=='function'||!String(request).endsWith('.browser.cjs'))return value;
+        const filename=Module._resolveFilename(request,parent,isMain);
+        if(path.dirname(filename)!==__dirname)return value;
+        if(!wrapped.has(value))wrapped.set(value,Object.assign(async function(...args){
+            const row={file:path.relative(root,filename).replaceAll('\\','/'),status:'running',started:new Date().toISOString()};
+            const save=()=>fs.writeFileSync(path.join(safeSession.artifacts,'scenario-execution.json'),JSON.stringify(runs,null,2));
+            runs.push(row);save();
+            try{const result=await value.apply(this,args);row.status='passed';return result;}
+            catch(error){row.status='failed';row.error=String(error.message).replace(/eyJ[\w-]+\.[\w-]+\.[\w-]+/g,'[токен скрыт]').slice(0,1500);throw error;}
+            finally{row.finished=new Date().toISOString();save();}
+        },value));
+        return wrapped.get(value);
+    };
+}
+
 async function connect(url) {
     const socket = new WebSocket(url);
     await new Promise((resolve, reject) => { socket.onopen = resolve; socket.onerror = reject; });
@@ -46,7 +66,7 @@ async function connect(url) {
     };
     const call = (method, params = {}) => new Promise((resolve, reject) => {
         const id = ++nextId;
-        const timer = setTimeout(() => { waiting.delete(id); reject(new Error(`Timed out: ${method}`)); }, process.env.VTT_WATER_FINAL==='1'||process.env.VTT_WATER_GEOMETRY==='1'||process.env.VTT_SECONDARY_TOOLS==='1'||process.env.VTT_ROAD_TERRAIN==='1'||process.env.VTT_BRIDGE_BANK==='1'?90000:30000);
+        const timer = setTimeout(() => { waiting.delete(id); reject(new Error(`Timed out: ${method}`)); }, ['fog-water','water-final'].includes(process.env.VTT_SAFE_SCENARIO)||process.env.VTT_WATER_FINAL==='1'||process.env.VTT_WATER_GEOMETRY==='1'||process.env.VTT_SECONDARY_TOOLS==='1'||process.env.VTT_ROAD_TERRAIN==='1'||process.env.VTT_BRIDGE_BANK==='1'?90000:30000);
         waiting.set(id, message => {
             clearTimeout(timer);
             if (message.closed && method !== 'Browser.close') reject(new Error(`Browser connection closed: ${method}`));
@@ -142,7 +162,7 @@ else:
         await request('/auth/register', { username: 'browser-gm', email: 'browser-gm@example.test', password: 'browser-test-password' });
         const login = await request('/auth/login', { username: 'browser-gm', password: 'browser-test-password' });
         const token = login.access_token;
-        const waterGeometry=process.env.VTT_WATER_GEOMETRY==='1'||process.env.VTT_WATER_FINAL==='1'||process.env.VTT_WORLD_SCULPT==='1';
+        const waterGeometry=process.env.VTT_SAFE_SCENARIO==='water-final'||process.env.VTT_WATER_GEOMETRY==='1'||process.env.VTT_WATER_FINAL==='1'||process.env.VTT_WORLD_SCULPT==='1';
         const lobby = await request('/lobbies/', { name: 'Direct object browser test', map_type: 'empty', chunks_width: 2, chunks_height: waterGeometry?2:1 }, token);
         await request(`/lobbies/${lobby.id}/chunks?min_chunk_x=0&max_chunk_x=1&min_chunk_y=0&max_chunk_y=${waterGeometry?1:0}`, null, token, 'GET');
         await request(`/lobbies/${lobby.id}/chunks/0/0/tile/31/10`, { objects: [
@@ -314,8 +334,19 @@ if(typeof renderFacingPreview==='function'){const original=renderFacingPreview;r
             await require('./electronics.browser.cjs')({page,request,token,lobby,base,connect,debugPort,safeSession});
             return;
         }
+        const auditedEditorScenarios = {
+            'building-shell': './location_building_shell.browser.cjs',
+            'editor-history': './location_editor_history.browser.cjs',
+            'fog-water': './location_fog_water.browser.cjs',
+            'water-final': './water_final.browser.cjs',
+        };
+        if (safeSession && Object.hasOwn(auditedEditorScenarios, process.env.VTT_SAFE_SCENARIO)) {
+            await require(auditedEditorScenarios[process.env.VTT_SAFE_SCENARIO])({page,request,token,lobby,base,connect,debugPort,safeSession});
+            return;
+        }
         if (safeSession && process.env.VTT_SAFE_SCENARIO === 'catalog') {
             await require('./catalog_picker.browser.cjs')({page,request,token,lobby,base,safeSession});
+            await require('./manual_qa_sleep.browser.cjs')({page,request,token,lobby,base,safeSession});
             return;
         }
         if (safeSession && process.env.VTT_SAFE_SCENARIO === 'locks') {

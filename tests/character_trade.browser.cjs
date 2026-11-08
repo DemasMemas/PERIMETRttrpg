@@ -151,7 +151,7 @@ module.exports=async({page,request,token,lobby,base,connect,debugPort,safeSessio
     vestBefore.data.equipment.vest={id:'own-vest',templateId:vestTemplate.id,model:String(vestTemplate.id),name:vestTemplate.name,
         pouches,attributes:vestTemplate.attributes,totalCapacity:vestTemplate.attributes.total_capacity||0};
     await request('/lobbies/characters/'+b.id,{data:vestBefore.data},token,'PUT');
-    await page.evaluate(`window.openCharacterSheet(${b.id},'inventory');true`);
+    await page.evaluate(`(async()=>{await window.openCharacterSheet(${b.id},'inventory');return true})()`);
     await page.until(`document.querySelector('select[name="equipment.vest.model"]')`,'Разгрузка видна в обычном листе');
     assert.equal(await page.evaluate(`document.querySelector('.vest-pouch-name').textContent`),pouches[0].name,'Готовый подсумок подписан вместо пустого списка');
     await page.evaluate(`(()=>{const select=document.querySelector('select[name="equipment.vest.model"]');select.value='${nextVest.id}';select.dispatchEvent(new Event('change',{bubbles:true}));return true})()`);
@@ -169,9 +169,9 @@ module.exports=async({page,request,token,lobby,base,connect,debugPort,safeSessio
     await page.until(`document.querySelector('.vest-mount-usage')?.textContent==='Объём подсумков: 2 / 8'`,'Профильная скидка 0,5 уменьшает занимаемый объём');
     assert.equal(await page.evaluate(`document.querySelector('#vest-pouches-container .container-item').dataset.widgetIdentity`),'\u007b"id":"medical-pouch-owned"\u007d');
     await page.evaluate(`document.querySelector('button[onclick="addVestPouch()"]').click();true`);
-    await page.evaluate(`document.querySelector('#pouch-select-modal .pouch-confirm').click();true`);
+    assert.equal(await page.evaluate(`document.getElementById('pouch-select-modal')!==null`),false,
+        'Слишком большой подсумок не предлагается для установки');
     assert.equal(await page.evaluate(`document.querySelectorAll('#vest-pouches-container .container-item').length`),1,'Превышение объёма не добавляет подсумок');
-    await page.evaluate(`document.querySelector('#pouch-select-modal .pouch-cancel').click();true`);
     await page.evaluate(`document.querySelector('.vest-mount-usage').scrollIntoView({block:'center'});true`);
     const modularShot=await page.call('Page.captureScreenshot',{format:'png'});
     fs.writeFileSync(path.join(safeSession.artifacts,'vest-modular.png'),Buffer.from(modularShot.data,'base64'));
@@ -440,9 +440,9 @@ module.exports=async({page,request,token,lobby,base,connect,debugPort,safeSessio
         const tabs=[...document.querySelectorAll('#crafting-modal [role=tab]')];
         const cards=document.querySelectorAll('#crafting-modal .crafting-recipe-card');
         const categories=document.querySelectorAll('#crafting-modal .crafting-categories button');
-        return tabs.length===3&&cards.length>0&&categories.length>1&&
+        return tabs.map(tab=>tab.dataset.craftingTab).join(',')==='creation,modifications,salvage,other'&&cards.length>0&&categories.length>1&&
             document.querySelector('[data-crafting-pane=modifications]').hidden;
-    })()`));
+    })()`),'В создании доступны четыре вкладки, карточки рецептов и категории');
     const catalogWidth=await page.evaluate(`(()=>{const panel=document.querySelector('#crafting-modal .modal-content');
         return {scroll:panel.scrollWidth,visible:panel.clientWidth}})()`);
     assert.ok(catalogWidth.scroll<=catalogWidth.visible+2,JSON.stringify(catalogWidth));

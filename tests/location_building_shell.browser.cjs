@@ -155,7 +155,7 @@ async function runFurnishedBuilding({page,request,token,lobby,loc,base,connect,d
     }finally{peer.close();await page.call('Target.closeTarget',{targetId:target.targetId}).catch(()=>{});}
 }
 
-module.exports = async ({page,request,token,lobby,base,connect,debugPort}) => {
+module.exports = async ({page,request,token,lobby,base,connect,debugPort,safeSession}) => {
     const api = `/lobbies/${lobby.id}`;
     const loc = await request(`${api}/locations`, { name:'Shell acceptance', world_tile_x:12,world_tile_z:12,
         grid_width:24,grid_height:24,tiles_data:Array.from({length:24},()=>Array.from({length:24},()=>({terrain:process.env.VTT_BUILDING_GRASS==='1'||process.env.VTT_BUILDING_FURNISHED==='1'?'grass':'bare_dirt',height:1,objects:[]}))) },token);
@@ -201,11 +201,12 @@ module.exports = async ({page,request,token,lobby,base,connect,debugPort}) => {
         f.elements.shape.dispatchEvent(new Event('change',{bubbles:true}));
         document.querySelector('[data-shell-preview]').click()})()`);
     assert.equal((await detail()).objects.length,0,'preview must not persist objects');
+    await page.until('document.querySelector("[data-shell-create]")?.disabled===false','предпросмотр здания завершён');
     assert.equal(await page.evaluate('document.querySelector("[data-shell-create]").disabled'),false);
     assert.ok(await page.evaluate('document.querySelector("dialog[open]").getBoundingClientRect().bottom <= innerHeight'));
     // Read preview in the ordinary game camera; retain only a temporary inspection frame.
     if(process.env.VTT_SHELL_INSPECT==='1'){
-        const file=path.join(os.tmpdir(),'vtt-shell-preview.png');
+        const file=path.join(safeSession?.artifacts || os.tmpdir(),'vtt-shell-preview.png');
         fs.writeFileSync(file,Buffer.from((await page.call('Page.captureScreenshot',{format:'png'})).data,'base64'));
         console.log('INSPECTION FRAME',file);
     }
@@ -257,8 +258,86 @@ module.exports = async ({page,request,token,lobby,base,connect,debugPort}) => {
         assert.ok(await page.evaluate(`shellRender.s.children.filter(m=>m.userData.locationObject?.type==='floor'&&m.userData.locationObject.properties.level===-1).every(m=>!m.visible)`),'upper slabs hidden');
         await page.evaluate('L.setLocationViewLevel(0);locationControls.target.set(3.2,1,3.2);locationControls.object.position.set(9,8,11);locationControls.update();true');await pause(200);
         assert.ok(await page.evaluate(`shellRender.s.children.some(m=>m.visible&&m.userData.locationObject?.type==='floor'&&m.userData.locationObject.properties.level===-1)`),'basement geometry remains behind the surface opening');
-        await click(await pointAt(3.2,1,3.2));
-        const colorBefore=await page.evaluate(`(()=>{const a=L.getSelectedLocationEditorAsset();window.colorAsset=a;const root=shellRender.s.children.find(m=>m.userData.locationObject?.type==='floor'&&m.userData.locationObject.properties.level===0&&Math.abs(m.position.x-a.x)<.01&&Math.abs(m.position.z-a.z)<.01);window.colorObjectId=root.userData.locationObjectId;window.materialBefore=root.children.find(c=>c.isMesh).material.userData.darkBaseColor.toArray();return a.color})()`);
+        await page.evaluate(`(()=>{for(const id of ['panel-tools','panel-characters']){const panel=document.getElementById(id);
+            if(panel&&!panel.classList.contains('collapsed'))panel.querySelector('.toggle-btn')?.click()}return true})()`);
+        await page.until(`['panel-tools','panel-characters'].every(id=>!document.getElementById(id)||document.getElementById(id).classList.contains('collapsed'))`,'инспекторы сцены свёрнуты перед выбором пола');
+        const floorCandidates=await page.evaluate(`(async()=>{const {s,c}=shellRender,T=window.T,A=await import('/static/js/locationArchitecture.js');
+            const objects=[],roots=[];s.traverse(node=>{if(node.userData?.locationObject){objects.push(node.userData.locationObject);
+                if(node.userData.locationObject.type==='floor'&&Number(node.userData.locationObject.properties?.level||0)===0&&node.visible)roots.push(node)}});
+            const canvas=document.querySelector('#location-canvas canvas'),rect=canvas.getBoundingClientRect(),out=[];
+            for(const root of roots){const object=root.userData.locationObject,pose=A.floorVisualPose(object,objects),parts=A.floorSlabParts(object,objects),
+                top=root.position.y+pose.height+.002,key='structure:'+root.userData.locationObjectId;
+                for(const part of parts)for(const [u,v]of [[0,0],[-.3,0],[.3,0],[0,-.3],[0,.3],[-.2,-.2],[-.2,.2],[.2,-.2],[.2,.2]]){
+                    const along=part.x+u*part.width,across=part.z+v*part.depth,world={x:pose.x+along*pose.axis.x+across*pose.normal.x,
+                        y:top,z:pose.z+along*pose.axis.z+across*pose.normal.z},ndc=new T.Vector3(world.x,world.y,world.z).project(c);
+                    if(ndc.x<-.95||ndc.x>.95||ndc.y<-.95||ndc.y>.95||ndc.z< -1||ndc.z>1)continue;
+                    const x=rect.left+(ndc.x+1)*rect.width/2,y=rect.top+(1-ndc.y)*rect.height/2,target=document.elementFromPoint(x,y);
+                    out.push({selectionKey:key,world,x,y,reachable:target===canvas||canvas.contains(target),target:target?.tagName||null,area:pose.width*pose.depth});
+                }}
+            return out.sort((a,b)=>b.area-a.area)})()`);
+        const selectedFloorPoints=[];let floorSelectionKey=null;const triedFloorPoints=[];
+        for(const candidate of floorCandidates.slice(0,60)){
+            if(floorSelectionKey&&candidate.selectionKey!==floorSelectionKey)continue;
+            if(!candidate.reachable){triedFloorPoints.push({selectionKey:candidate.selectionKey,screen:[candidate.x,candidate.y],target:candidate.target,selected:null});continue;}
+            await page.evaluate(`(()=>{for(const id of ['panel-tools','panel-characters']){const panel=document.getElementById(id);
+                if(panel&&!panel.classList.contains('collapsed'))panel.querySelector('.toggle-btn')?.click()}return true})()`);
+            const liveReachable=await page.evaluate(`(()=>{const canvas=document.querySelector('#location-canvas canvas'),target=document.elementFromPoint(${candidate.x},${candidate.y});
+                return target===canvas||canvas.contains(target)})()`);
+            if(!liveReachable){triedFloorPoints.push({selectionKey:candidate.selectionKey,screen:[candidate.x,candidate.y],selected:null,reason:'точка перекрыта после подготовки кандидатов'});continue;}
+            await page.call('Input.dispatchMouseEvent',{type:'mouseMoved',x:candidate.x,y:candidate.y});
+            for(const type of ['mousePressed','mouseReleased'])await page.call('Input.dispatchMouseEvent',{
+                type,x:candidate.x,y:candidate.y,button:'left',buttons:type==='mousePressed'?1:0,clickCount:1});
+            await page.evaluate('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
+            const selected=await page.evaluate('L.getSelectedLocationEditorAsset()?.selectionKey||null');
+            triedFloorPoints.push({selectionKey:candidate.selectionKey,screen:[candidate.x,candidate.y],selected});
+            if(selected===candidate.selectionKey){if(floorSelectionKey&&floorSelectionKey!==selected)selectedFloorPoints.length=0;floorSelectionKey=selected;
+                if(selectedFloorPoints.some(point=>Math.hypot(point.x-candidate.world.x,point.z-candidate.world.z)<.04))continue;
+                selectedFloorPoints.push(candidate.world);if(selectedFloorPoints.length>=3)break;
+            }else if(floorSelectionKey&&selected!==floorSelectionKey){floorSelectionKey=null;selectedFloorPoints.length=0;}
+        }
+        assert.ok(floorSelectionKey&&selectedFloorPoints.length>=3,
+            `Три реальные точки клика выбирают один и тот же пол; попытки=${JSON.stringify(triedFloorPoints)}`);
+        const readFloorDraw=(selectionKey,points)=>page.evaluate(`(async()=>{
+            const {r,s,c}=shellRender,T=window.T,A=await import('/static/js/locationArchitecture.js');
+            const id=String(${JSON.stringify(selectionKey)}).replace(/^structure:/,'');let root=null;const objects=[];
+            s.traverse(node=>{if(node.userData?.locationObjectId!=null&&String(node.userData.locationObjectId)===id)root=node;
+                if(node.userData?.locationObject)objects.push(node.userData.locationObject)});
+            if(!root||root.userData.locationObject?.type!=='floor')return {error:'Выбранный пол не найден по selectionKey',id,selectionKey:${JSON.stringify(selectionKey)}};
+            const floor=root.userData.locationObject,pose=A.floorVisualPose(floor,objects),points=${JSON.stringify(points)};
+            if(L.getSelectedLocationEditorAsset()?.selectionKey!==${JSON.stringify(selectionKey)})
+                return {error:'selection changed before draw sampling',id,selectionKey};
+            // На время замера убираем только метки редактора, иначе подсветка клетки меняет RGB пола.
+            const selectionOverlays=[];s.traverse(node=>{
+                if(!node.isMesh||!node.material?.isMeshBasicMaterial)return;
+                const color=node.material.color.getHex();
+                const ring=node.geometry?.type==='RingGeometry'&&node.renderOrder===100&&[0x8be2cb,0xffb66e].includes(color);
+                const hover=node.geometry?.type==='BoxGeometry'&&color===0xffaa00&&node.material.transparent&&node.material.opacity===.5;
+                if(ring||hover){selectionOverlays.push([node,node.visible]);node.visible=false;}
+            });
+            const gl=r.getContext(),w=gl.drawingBufferWidth,h=gl.drawingBufferHeight,unique=new Map(),background=new Uint8Array(4);
+            try{r.render(s,c);gl.finish();
+                gl.readPixels(2,h-3,1,1,gl.RGBA,gl.UNSIGNED_BYTE,background);
+                for(const point of points){const ndc=new T.Vector3(point.x,point.y,point.z).project(c);
+                    if(ndc.x<-.95||ndc.x>.95||ndc.y<-.95||ndc.y>.95||ndc.z< -1||ndc.z>1)continue;
+                    const px=Math.max(0,Math.min(w-1,Math.floor((ndc.x+1)*.5*w)));
+                    const py=Math.max(0,Math.min(h-1,Math.floor((ndc.y+1)*.5*h))),pixel=new Uint8Array(4);
+                    gl.readPixels(px,py,1,1,gl.RGBA,gl.UNSIGNED_BYTE,pixel);
+                    unique.set(px+','+py,{x:px,y:py,rgb:[pixel[0],pixel[1],pixel[2]]});
+                }
+            }finally{selectionOverlays.forEach(([node,visible])=>node.visible=visible);r.render(s,c);}
+            const samples=[...unique.values()],backgroundRgb=[background[0],background[1],background[2]];
+            const lit=samples.filter(p=>p.rgb.reduce((sum,channel)=>sum+channel,0)>24
+                &&Math.max(...p.rgb.map((channel,index)=>Math.abs(channel-backgroundRgb[index])))>15);
+            return {id,samples,lit:lit.length,background:backgroundRgb,points:points.length,
+                dimensions:{width:pose.width,depth:pose.depth},floorPosition:{x:pose.x,z:pose.z}};
+        })()`);
+        const colorBefore=await page.evaluate(`(()=>{const a=L.getSelectedLocationEditorAsset();window.colorAsset=a;
+            if(!a?.selectionKey?.startsWith('structure:')||a.structureType!=='floor')throw Error('Ожидается выбранный объект пола');
+            window.colorObjectId=a.selectionKey.slice('structure:'.length);return {color:a.color,selectionKey:a.selectionKey,x:a.x,z:a.z,rotation:a.rotation}})()`);
+        assert.equal(colorBefore.selectionKey,floorSelectionKey,'реальные клики выбрали именно пол для RGB-сэмплов');
+        const drawBefore=await readFloorDraw(colorBefore.selectionKey,selectedFloorPoints);
+        assert.ok(!drawBefore.error&&drawBefore.samples.length===3&&drawBefore.lit>=3,
+            `Выбран видимый не чёрный участок пола: ${JSON.stringify(drawBefore)}`);
         assert.equal(await page.evaluate(`L.updateSelectedLocationAssetDetails({...colorAsset,x:colorAsset.x+.25})`),true);
         assert.equal(await page.evaluate(`L.updateSelectedLocationAssetDetails(colorAsset)`),true);
         for(const offset of [.25,0]){
@@ -269,10 +348,30 @@ module.exports = async ({page,request,token,lobby,base,connect,debugPort}) => {
         for(const [code,key] of [['KeyQ','q'],['KeyE','e']]){
             await page.call('Input.dispatchKeyEvent',{type:'keyDown',code,key});await page.call('Input.dispatchKeyEvent',{type:'keyUp',code,key});await pause(500);
         }
-        assert.equal(await page.evaluate('L.getSelectedLocationEditorAsset().color'),colorBefore,'precise transforms and Q/E retain material color');
-        assert.equal(await page.evaluate(`(()=>{const root=shellRender.s.children.find(m=>m.userData.locationObjectId===colorObjectId);return JSON.stringify(root.children.find(c=>c.isMesh).material.userData.darkBaseColor.toArray())===JSON.stringify(materialBefore)})()`),true,'actual material tint survives movement');
+        // Q/E остаются реальными проверяемыми поворотами. Их шаг зависит от камеры,
+        // поэтому пара нажатий не обязана взаимно компенсироваться; перед RGB-сравнением
+        // возвращаем записанную исходную позу через тот же редактор свойств.
+        const originalPose={x:colorBefore.x,z:colorBefore.z,rotation:colorBefore.rotation};
+        assert.equal(await page.evaluate(`L.updateSelectedLocationAssetDetails(${JSON.stringify(originalPose)})`),true,
+            'Исходная поза пола принята редактором после реальных Q/E');
+        await page.until(`(()=>{const a=L.getSelectedLocationEditorAsset(),b=${JSON.stringify(colorBefore)};return a?.selectionKey===b.selectionKey
+            &&Math.abs(a.x-b.x)<.01&&Math.abs(a.z-b.z)<.01
+            &&Math.abs((((a.rotation-b.rotation+540)%360)-180))<.01})()`,'Исходная поза пола восстановлена после Q/E');
+        const colorAfter=await page.evaluate(`(()=>{const a=L.getSelectedLocationEditorAsset();return {color:a?.color,x:a?.x,z:a?.z,rotation:a?.rotation}})()`);
+        assert.equal(colorAfter.color,colorBefore.color,'Перемещения и Q/E сохраняют цвет в данных объекта');
+        assert.ok(Math.abs(colorAfter.x-colorBefore.x)<.01&&Math.abs(colorAfter.z-colorBefore.z)<.01
+            &&Math.abs((((colorAfter.rotation-colorBefore.rotation+540)%360)-180))<.01,
+            `Перед сравнением пикселей пол возвращён в исходное положение и угол: ${JSON.stringify({before:colorBefore,after:colorAfter})}`);
+        const drawAfter=await readFloorDraw(colorBefore.selectionKey,selectedFloorPoints);
+        assert.ok(!drawAfter.error&&drawAfter.samples.length===3&&drawAfter.lit>=3,
+            `После перемещений видимый участок пола не чёрный: ${JSON.stringify(drawAfter)}`);
+        const rgbDelta=drawBefore.samples.map((before,index)=>before.rgb.map((channel,component)=>
+            Math.abs(channel-(drawAfter.samples[index]?.rgb[component]??255))));
+        assert.ok(drawBefore.samples.length===drawAfter.samples.length
+            &&rgbDelta.every(pixel=>pixel.every(channel=>channel<=8)),
+            `Разница отрисованного цвета после возврата не превышает 8/255 на канал: ${JSON.stringify({drawBefore,drawAfter,rgbDelta})}`);
         assert.ok(await page.evaluate(`shellRender.s.children.filter(m=>m.userData.locationObject?.type==='roof').every(m=>m.children.every(c=>!c.isMesh||!c.visible))`),'shell roofs follow ordinary camera cutaway');
-        // Restore the original camera before the existing draw and movement checks.
+        // Возвращаем исходную камеру перед остальными проверками рисования и движения.
         await page.evaluate(`locationControls.target.set(8,1,8);locationControls.object.position.set(17,18,22);locationControls.update();true`);
         const floor=built.objects.find(o=>o.type==='floor'&&o.properties.level===0);
         await request(`${api}/locations/objects/${floor.id}`,{properties:{color:'#ac9872'}},token,'PATCH');
@@ -282,7 +381,10 @@ module.exports = async ({page,request,token,lobby,base,connect,debugPort}) => {
         await page.evaluate(`L.setLocationViewLevel(0);true`);
         // Repeating at the same site must preserve every object and the manual edit.
         await draw();
-        await page.evaluate(`document.querySelector('[data-shell-preview]').click();document.querySelector('dialog form').requestSubmit(document.querySelector('[data-shell-create]'));true`);
+        await page.evaluate(`document.querySelector('[data-shell-preview]').click();true`);
+        await page.until(`document.querySelector('dialog[open] [data-shell-create]')?.disabled===false`,
+            'Предпросмотр повторной постройки готов');
+        await page.evaluate(`document.querySelector('dialog[open] [data-shell-create]').click();true`);
         await page.until(`document.body.innerText.includes('На этом месте уже есть')`,'overlap refused');
         const after=await detail();assert.equal(after.objects.length,built.objects.length);
         assert.equal(after.objects.find(o=>o.id===floor.id).properties.color,'#ac9872');
@@ -302,9 +404,9 @@ module.exports = async ({page,request,token,lobby,base,connect,debugPort}) => {
         const retained=await detail();
         if(process.env.VTT_SHELL_INSPECT==='1'){
             await page.evaluate(`L.setLocationViewLevel(-1);true`);await pause(800);
-            fs.writeFileSync(path.join(os.tmpdir(),'vtt-shell-basement.png'),Buffer.from((await page.call('Page.captureScreenshot',{format:'png'})).data,'base64'));
+            fs.writeFileSync(path.join(safeSession?.artifacts || os.tmpdir(),'vtt-shell-basement.png'),Buffer.from((await page.call('Page.captureScreenshot',{format:'png'})).data,'base64'));
             await page.evaluate(`L.setLocationViewLevel(1);locationControls.object.position.set(${g.minX+8},12,${g.minZ+10});locationControls.target.set(${g.minX+4},3.4,${g.minZ+4});locationControls.update();true`);await pause(800);
-            fs.writeFileSync(path.join(os.tmpdir(),'vtt-shell-created.png'),Buffer.from((await page.call('Page.captureScreenshot',{format:'png'})).data,'base64'));
+            fs.writeFileSync(path.join(safeSession?.artifacts || os.tmpdir(),'vtt-shell-created.png'),Buffer.from((await page.call('Page.captureScreenshot',{format:'png'})).data,'base64'));
         }
         await page.evaluate('window.shellReloadMarker=true;true');
         await page.call('Page.reload');
@@ -322,7 +424,7 @@ module.exports = async ({page,request,token,lobby,base,connect,debugPort}) => {
         await page.evaluate(`(()=>{const f=document.querySelector('dialog form');f.elements.shape.value='C';f.elements.width.value=10;f.elements.depth.value=10;f.elements.wealth.value='poor';f.elements.condition.value='ruins';f.elements.shape.dispatchEvent(new Event('change',{bubbles:true}));document.querySelector('[data-shell-preview]').click()})()`);
         if(process.env.VTT_SHELL_INSPECT==='1'){
             await pause(700);
-            fs.writeFileSync(path.join(os.tmpdir(),'vtt-shell-ruins.png'),Buffer.from((await page.call('Page.captureScreenshot',{format:'png'})).data,'base64'));
+            fs.writeFileSync(path.join(safeSession?.artifacts || os.tmpdir(),'vtt-shell-ruins.png'),Buffer.from((await page.call('Page.captureScreenshot',{format:'png'})).data,'base64'));
         }
         await page.evaluate(`document.querySelector('dialog').close();true`);
         assert.equal((await detail()).objects.length,after.objects.length,'cancelled ruin preview persists nothing');
@@ -412,7 +514,7 @@ async function runInterior({page,request,token,lobby,loc}) {
     for(const level of [0,1,-1])for(const camera of [[10,12,13],[4,10,13]]) {
         await page.evaluate(`L.setLocationEditMode(false);L.setLocationViewLevel(${level});locationControls.target.set(5,${1+level*2.4},5);locationControls.object.position.set(${camera[0]},${camera[1]+level*2.4},${camera[2]});locationControls.update();true`);
         await pause(250);
-        const file=path.join(os.tmpdir(),`vtt-interior-${level}-${camera[0]}.png`);
+        const file=path.join(safeSession?.artifacts || os.tmpdir(),`vtt-interior-${level}-${camera[0]}.png`);
         fs.writeFileSync(file,Buffer.from((await page.call('Page.captureScreenshot',{format:'png'})).data,'base64'));
         console.log('INTERIOR FRAME',file);
     }

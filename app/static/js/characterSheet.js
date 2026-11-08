@@ -4369,10 +4369,11 @@ window.saveSpecialTraitTemplate = async function() {
 };
 
 // ========== 5. ВКЛАДКА "ЭКИПИРОВКА" ==========
-async function renderEquipmentTab(data) {
+async function renderEquipmentTab(data, { focusWeaponIndex = null } = {}) {
     const renderVersion = ++equipmentRenderVersion;
     const container = document.getElementById('sheet-tab-equipment');
     if (!container) return;
+    const restoreWeaponPanels = Boolean(container.querySelector('.loadout-weapon-details'));
     equipmentOpenPanels = new Set(
         [...container.querySelectorAll('details[data-equipment-panel][open]')]
             .map(panel => panel.dataset.equipmentPanel)
@@ -4854,7 +4855,8 @@ async function renderEquipmentTab(data) {
     const viewState = captureSheetViewState();
     container.innerHTML = html;
     await renderWeapons(weapons, weaponTemplates, weaponModuleTemplates, weaponModTemplates);
-    renderEquipmentLoadout(container, data, weaponTemplates, helmetTemplates, gasMaskTemplates, armorTemplates);
+    renderEquipmentLoadout(container, data, weaponTemplates, helmetTemplates, gasMaskTemplates, armorTemplates,
+        { focusWeaponIndex, restoreWeaponPanels });
     const loadout = container.querySelector('.equipment-loadout') || container;
     await renderPortableLights(loadout,currentCharacterId,data,window.operatePortableLight,
         ()=>renderVersion===equipmentRenderVersion,currentCharacterCanEdit&&!medicalOperationInProgress).catch(error=>console.warn('Не удалось загрузить фонари:',error));
@@ -5053,7 +5055,8 @@ function renderEquipmentFigure(equipment, armorTemplates, helmetTemplates) {
     </div>`;
 }
 
-function renderEquipmentLoadout(container, data, weaponTemplates, helmetTemplates, gasMaskTemplates, armorTemplates) {
+function renderEquipmentLoadout(container, data, weaponTemplates, helmetTemplates, gasMaskTemplates, armorTemplates,
+    { focusWeaponIndex, restoreWeaponPanels }) {
     const groups = [...container.querySelectorAll(':scope > .equipment-group[data-equipment-group]')];
     if (groups.length < 6) return;
     const equipment = data.equipment || {};
@@ -5167,6 +5170,9 @@ function renderEquipmentLoadout(container, data, weaponTemplates, helmetTemplate
         button.addEventListener('click', () => selectPanel(button.dataset.panel));
     });
     selectPanel(navigation.querySelector(`[data-panel="${equipmentActivePanel}"]`) ? equipmentActivePanel : groups[0].dataset.equipmentGroup);
+    const selectedWeaponIndex = Number.isInteger(Number(data.activeWeaponIndex))
+        && (Number(data.activeWeaponIndex) === -1 || weapons[Number(data.activeWeaponIndex)])
+        ? Number(data.activeWeaponIndex) : weapons.length ? 0 : -1;
     container.querySelectorAll('#weapons-container > [data-weapon-index]').forEach(card => {
         const key = `weapon-${card.dataset.weaponIndex}`;
         const details = document.createElement('details');
@@ -5174,7 +5180,8 @@ function renderEquipmentLoadout(container, data, weaponTemplates, helmetTemplate
         details.dataset.equipmentPanel = key;
         const index = Number(card.dataset.weaponIndex);
         const weapon = index >= 0 ? weapons[index] : null;
-        details.open = true;
+        details.open = focusWeaponIndex !== null ? index === focusWeaponIndex
+            : restoreWeaponPanels ? equipmentOpenPanels.has(key) : index === selectedWeaponIndex;
         const summary = document.createElement('summary');
         summary.textContent = weapon
             ? `${weapon.name || 'Оружие'}${melee.some(entry => entry.index === index) ? '' : ` · ${getWeaponAmmoCount(weapon)} патр.`}`
@@ -17951,7 +17958,7 @@ window.addWeapon = function() {
     updateDataFromFields();
     if (!currentCharacterData.weapons) currentCharacterData.weapons = [];
     currentCharacterData.weapons.push({ id: generateItemId() });
-    renderEquipmentTab(currentCharacterData);
+    renderEquipmentTab(currentCharacterData, { focusWeaponIndex: currentCharacterData.weapons.length - 1 });
     scheduleAutoSave();
 };
 

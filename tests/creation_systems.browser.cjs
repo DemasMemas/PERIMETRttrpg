@@ -20,9 +20,9 @@ module.exports=async({peer,request,recipient,token,api,read})=>{
         await peer.evaluate(`window.openCharacterSheet(${recipient.id},'equipment').then(()=>true)`);
         await peer.until("document.querySelector('#character-crafting-open')",'Кнопка создания в листе');
         await peer.evaluate("document.querySelector('#character-crafting-open').click();true");
-        await peer.until("document.querySelector('[data-crafting-tab=other]')",'Открыты вкладки создания');
-        await peer.evaluate("document.querySelector('[data-crafting-tab=other]').click();true");
-        await peer.until("document.querySelector('.crafting-salvage select')",'Разбор доступен в реальном окне');
+        await peer.until("document.querySelector('[data-crafting-tab=salvage]')",'Открыты вкладки создания');
+        await peer.evaluate("document.querySelector('[data-crafting-tab=salvage]').click();true");
+        await peer.until("document.querySelector('.crafting-salvage select')?.getClientRects().length",'Разбор виден в отдельной вкладке');
     };
     await open();
     await peer.evaluate(`(async()=>{
@@ -30,7 +30,7 @@ module.exports=async({peer,request,recipient,token,api,read})=>{
         const candidates=s.inventory.filter(e=>e.salvage_kind),tools=s.inventory.filter(e=>e.salvage_tool_bonus>0);
         document.querySelector('.crafting-salvage').open=true;
         const target=document.querySelector('select[aria-label="Предмет для разбора"]');target.value=candidates.findIndex(e=>e.item.id===${JSON.stringify(pistol.id)});target.dispatchEvent(new Event('change'));
-        document.querySelector('select[aria-label="Один инструмент"]').value=tools.findIndex(e=>e.item.id==='salvage-browser-hammer');
+        document.querySelector('select[aria-label="Инструмент для разбора"]').value=tools.findIndex(e=>e.item.id==='salvage-browser-hammer');
         window.__originalConfirm=window.confirm;window.confirm=()=>true;
         [...document.querySelectorAll('.crafting-salvage button')].find(b=>b.textContent==='Начать разбор').click();return true;
     })()`);
@@ -46,7 +46,8 @@ module.exports=async({peer,request,recipient,token,api,read})=>{
     let saved=(await read()).data;
     assert.ok(!saved.inventory.pockets.some(i=>i.id===pistol.id));
     assert.ok(saved.crafting.history.at(-1).materials.some(i=>i.name==='Металлические детали'&&i.quantity>0));
-    await peer.until(`document.querySelector('.crafting-flamethrowers select[aria-label="Ёмкость огнемёта"]')`,'Появилось обслуживание огнемёта');
+    await peer.evaluate("document.querySelector('[data-crafting-tab=other]').click();true");
+    await peer.until(`document.querySelector('.crafting-flamethrowers select[aria-label="Ёмкость огнемёта"]')?.getClientRects().length`,'Обслуживание огнемёта видно во вкладке другого');
     for(const word of ['Бензин','сжатого воздуха']){
         await peer.evaluate(`(()=>{const select=document.querySelector('.crafting-flamethrowers select');select.value=[...select.options].find(o=>o.textContent.includes(${JSON.stringify(word)})).value;[...document.querySelectorAll('.crafting-flamethrowers button')].find(b=>b.textContent.startsWith('Заменить ёмкость')).click();return true})()`);
         await peer.until(`(async()=>{const {Server}=await import('/static/js/api.js');const w=(await Server.getCrafting(${recipient.id})).flamethrowers[0];return !!w.resources[${word==='Бензин'?0:1}]})()`,'Установлена реальная ёмкость: '+word);
@@ -56,6 +57,7 @@ module.exports=async({peer,request,recipient,token,api,read})=>{
     const loc=api+'/locations/'+p.location_id;
     const state=await request(loc+'/combat/start',{location_character_ids:[p.actor_id],initiator_location_character_id:p.actor_id,initiator_first:true},token);
     await peer.until(`window.locationCombatState?.status==='active'&&window.locationCombatState.current_character?.character_id===${recipient.id}`,'Обычный игрок получил свой ход');
+    await peer.until(`(()=>{const button=[...document.querySelectorAll('#crafting-modal .crafting-flamethrowers button')].find(button=>button.textContent.trim()==='Короткий залп · 3 ОД');return window.locationCombatState?.status==='active'&&window.locationCombatState.current_character?.character_id===${recipient.id}&&button?.getClientRects().length>0&&!button.disabled})()`,'Кнопка короткого залпа видна и готова после обновления интерфейса');
     await peer.evaluate("[...document.querySelectorAll('.crafting-flamethrowers button')].find(b=>b.textContent==='Короткий залп · 3 ОД').click();true");
     await peer.until("!document.querySelector('#crafting-modal')",'Лист закрыт для выбора точки залпа');
     const actor=state.current_character;

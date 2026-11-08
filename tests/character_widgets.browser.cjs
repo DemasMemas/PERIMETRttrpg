@@ -21,7 +21,7 @@ module.exports = async ({ page, request, token, lobby, login, profile, base, con
             category: 'ammo', quantity: 6, volume: .02, attributes: { caliber: '9x19', damage: 25 } },
             { id: 'widget-medicine', templateId: medicine.id + 1000000, name: 'Проверочный препарат', category: 'consumable', quantity: 3, volume: .1, contents: [],
                 attributes: { consumable: { direct: { pain: -1 } } } },
-            { id: 'widget-pda', name: 'КПК', category: 'device', contents: [], pdaState: { on: true, charge_percent: 100 } }] },
+            { id: 'widget-physical-pda-qa', name: 'КПК', category: 'misc', quantity: 1, weight: .3, volume: .5, contents: [] }] },
     } }, token);
     const other = await request(`/lobbies/${lobby.id}/characters`, { name: 'Виджеты — второй', data: {
         health: { current: 100, max: 100, painLevel: 2, effects: [] },
@@ -58,10 +58,46 @@ module.exports = async ({ page, request, token, lobby, login, profile, base, con
         fs.writeFileSync(path.join(artifactDir,'widget-catalogue-readiness.json'),JSON.stringify(state,null,2));
         throw error;
     }
+    const physicalPdaId = 'widget-physical-pda-qa';
+    const physicalPdaPath = '[data-path="inventory,pockets,2"]';
+    await pinBlock('inventory-item', physicalPdaPath);
+    const physicalPdaPreference = (await prefs()).find(pin => pin.characterId === character.id
+        && pin.references.length === 1 && pin.references[0].block === 'inventory-item'
+        && pin.references[0].binding?.identity?.id === physicalPdaId);
+    await page.evaluate('window.closeCharacterSheet()');
+    const physicalPdaWidgetId = physicalPdaPreference?.id;
+    if (physicalPdaWidgetId) await page.until(`document.querySelector('#character-widget-${physicalPdaWidgetId} .widget-inventory-name')`, 'виджет физического КПК появился');
+    const physicalPdaWidget = physicalPdaWidgetId ? await page.evaluate(`(()=>{
+        const panel=document.querySelector('#character-widget-${physicalPdaWidgetId}');
+        const row=panel?.querySelector('.widget-inventory-name');
+        const item=row?.closest('[data-widget-identity]');
+        return {present:Boolean(panel),name:row?.value||row?.querySelector('input')?.value||row?.textContent?.trim()||null,
+            identity:item?.dataset.widgetIdentity?JSON.parse(item.dataset.widgetIdentity):null,
+            reference:JSON.parse(localStorage.getItem(${JSON.stringify(key)})||'[]').find(pin=>pin.id===${JSON.stringify(physicalPdaWidgetId)})?.references?.[0]||null};
+    })()`) : null;
+    if (physicalPdaWidgetId) {
+        await page.evaluate(`document.querySelector('#character-widget-${physicalPdaWidgetId} .panel-header button[aria-label^="Открепить:"]')?.click()`);
+        await page.until(`!document.querySelector('#character-widget-${physicalPdaWidgetId}')`, 'физический КПК откреплён штатной кнопкой');
+    }
+    const physicalPdaUnpinned = !(await prefs()).some(pin => pin.references[0]?.binding?.identity?.id === physicalPdaId);
+    const physicalPdaProbe = { itemPath: 'inventory.pockets.2', itemId: physicalPdaId,
+        preferenceReference: physicalPdaPreference?.references?.[0] || null, widget: physicalPdaWidget,
+        unpinned: physicalPdaUnpinned };
+    fs.writeFileSync(path.join(artifactDir, 'physical-pda-widget-probe.json'), JSON.stringify(physicalPdaProbe, null, 2));
+    assert.ok(physicalPdaPreference, 'Закрепление КПК сохраняет ссылку на конкретный предмет инвентаря');
+    assert.deepEqual(physicalPdaWidget?.identity, {id: physicalPdaId}, 'Виджет показывает КПК с тем же идентификатором');
+    assert.equal(physicalPdaWidget?.name, 'КПК');
+    assert.equal(physicalPdaWidget?.reference?.binding?.identity?.id, physicalPdaId);
+    assert.equal(physicalPdaUnpinned, true, 'КПК откреплён штатной кнопкой виджета');
+    await page.evaluate(`window.openCharacterSheet(${character.id})`);
+    await page.until(`document.body.classList.contains('character-sheet-open') && document.querySelectorAll('#sheet-content .sheet-pin').length>10`, 'sheet restored after physical PDA probe');
+
     const agreed = await page.evaluate(`[...document.querySelectorAll('#sheet-content .sheet-pin')].flatMap(b=>b.dataset.pinBlocks.split(' '))`);
+    const legacyPdaAvailable = agreed.includes('equipment:pda');
+    fs.writeFileSync(path.join(artifactDir, 'legacy-pda-availability.json'), JSON.stringify({ legacyPdaAvailable, physicalPdaProbe }, null, 2));
     for (const block of ['health-pool', 'health-status', 'blood-check', 'infection', 'needs', 'organs', 'health-summary', 'effects', 'effect', 'addictions', 'zone:head',
         'weapon-mastery:pistols', 'equipment:helmet', 'equipment:gasMask', 'equipment:armor', 'protection:armor', 'coverage:armor', 'modifications:armor',
-        'equipment:detector', 'cosmetic:headphones', 'cosmetic:glasses', 'cosmetic:gloves', 'cosmetic:jewelry', 'equipment:pda', 'inventory-weight', 'pockets', 'backpack', 'inventory-item', 'money', 'notes']) {
+        'equipment:detector', 'cosmetic:headphones', 'cosmetic:glasses', 'cosmetic:gloves', 'cosmetic:jewelry', 'inventory-weight', 'pockets', 'backpack', 'inventory-item', 'money', 'notes']) {
         assert.ok(agreed.includes(block), `agreed block ${block}`);
     }
     assert.equal(agreed.includes('loadout'), false);
@@ -302,7 +338,10 @@ module.exports = async ({ page, request, token, lobby, login, profile, base, con
         fs.writeFileSync(path.join(artifactDir,'reg-repro-a-hover.png'),Buffer.from((await page.call('Page.captureScreenshot',{format:'png'})).data,'base64'));
     }
 
-    if(focusRegression)return;
+    if(focusRegression){
+        assert.equal(legacyPdaAvailable,true,'Старая панель модификаций КПК доступна');
+        return;
+    }
     await pinField('health.painLevel');
     await pinField('equipment.armor.currentStageDurability');
     await pinAction("window.rollSkill('physical.will', 'Воля')");
@@ -397,6 +436,7 @@ module.exports = async ({ page, request, token, lobby, login, profile, base, con
     console.log('Map widgets screenshot:', mapScreenshot);
     if (process.env.VTT_WIDGETS_FOCUSED === '1') {
         console.log('PASS: pinned checkmark, cosmetic button placement, separate mastery progress, decimal measurements, actions, realtime and reload persistence');
+        assert.equal(legacyPdaAvailable,true,'Старая панель модификаций КПК доступна');
         return;
     }
     const version = await (await fetch(`http://127.0.0.1:${debugPort}/json/version`)).json();
@@ -458,6 +498,7 @@ module.exports = async ({ page, request, token, lobby, login, profile, base, con
     assert.equal((await prefs()).length, savedCount);
     console.log('PASS: same widgets work in real local scene; sheet masks local controls/FPS and restores them');
     console.log('PASS: individual fields/actions, weapon/status blocks, hidden room UI, multi-character saves, existing skill roll and reload dialog, realtime updates, personal preferences, drag/collapse/reload');
+    assert.equal(legacyPdaAvailable,true,'Старая панель модификаций КПК доступна');
 };
 
 module.exports.skillValuesExpression = WIDGET_SKILL_VALUES_EXPRESSION;

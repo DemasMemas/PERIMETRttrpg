@@ -68,6 +68,7 @@ module.exports=async({page,request,token,lobby,safeSession})=>{
   await page.evaluate("cancelLocationAssetPlacement();selectLocationEditorTool('select');document.activeElement?.blur();window.rotationSelectionEvents=[];window.addEventListener('location-editor-selection',e=>rotationSelectionEvents.push(e.detail))");
   const clickObject=async(x,shift=false)=>{
    const point=await page.evaluate("(()=>{locationControls.object.updateMatrixWorld(true);const p=new T.Vector3("+x+".5,1.5,8.5).project(locationControls.object),r=document.querySelector('#location-canvas canvas').getBoundingClientRect();return{x:r.x+(p.x+1)*r.width/2,y:r.y+(1-p.y)*r.height/2}})()");
+   assert.equal(await page.evaluate(`(()=>Boolean(document.elementFromPoint(${point.x},${point.y})?.closest('#location-canvas canvas')))()`),true,'точка выбора не перекрыта интерфейсом');
    if(shift)await page.call('Input.dispatchKeyEvent',{type:'keyDown',code:'ShiftLeft',key:'Shift',modifiers:8});
    for(const type of ['mousePressed','mouseReleased'])await page.call('Input.dispatchMouseEvent',{type,...point,button:'left',buttons:type==='mousePressed'?1:0,clickCount:1,modifiers:shift?8:0});
    if(shift)await page.call('Input.dispatchKeyEvent',{type:'keyUp',code:'ShiftLeft',key:'Shift'});
@@ -75,8 +76,13 @@ module.exports=async({page,request,token,lobby,safeSession})=>{
   const localSettled=async()=>{await page.until("!L.getLocationEditorHistoryState().busy",'local saved');await pause(200);};
   await clickObject(7);await page.until("L.getSelectedLocationEditorAsset()?.structureType==='box' && L.getSelectedLocationEditorAsset()?.x===7.5",'select local box');
   await turn('location-selected',"L.getSelectedLocationEditorAsset().rotation",localSettled);
+  // Inspector sélectionné recouvre la carte: le réduire avant le clic additif pour que le rayon atteigne le canvas.
+  await page.evaluate('UI.collapseMapToolsPanel()');
+  await page.until("document.getElementById('panel-tools')?.classList.contains('collapsed')",'inspecteur réduit avant sélection multiple');
   await clickObject(9,true);
-  assert.equal((await page.evaluate('rotationSelectionEvents.at(-1)')).selectedCount,2);
+  await page.until('L.getSelectedLocationEditorAsset()?.selectedCount===2','deux objets sélectionnés');
+  assert.equal((await page.evaluate('L.getSelectedLocationEditorAsset()?.selectedCount')),2);
+  assert.equal((await page.evaluate('rotationSelectionEvents.at(-1)?.selectedCount')),2,'событие выбора сообщает оба объекта');
   await turn('location-group',"L.getSelectedLocationEditorAsset().rotation",localSettled);
   const stored=await request(api,null,token,'GET');evidence.stored=stored.objects.map(o=>({id:o.id,name:o.name,x:o.tile_x,y:o.tile_y,rotation:o.properties.rotation}));
   assert.equal(evidence.stored.find(o=>o.name==='Rotation 12').rotation,0,'unselected unchanged');

@@ -1,9 +1,9 @@
 const fs=require('node:fs'),path=require('node:path'),assert=require('node:assert/strict');
 const pause=ms=>new Promise(r=>setTimeout(r,ms));
-module.exports=async({page,request,token,lobby,base,connect,debugPort})=>{
+module.exports=async({page,request,token,lobby,base,connect,debugPort,safeSession})=>{
     const baseline=!!process.env.VTT_WATER_BASELINE_DIR,mode=process.env.VTT_WATER_REGRESSION_STATE||(baseline?'before':'after'),fast=process.env.VTT_WATER_FINAL_FAST==='1';
     const fix=process.env.VTT_WATER_SHORE_FIX==='1';
-    const output=process.env.VTT_WATER_REGRESSION_OUTPUT||path.resolve(__dirname,fix?'../docs/material-previews/water-shore-fix':'../docs/material-previews/water-final');fs.mkdirSync(output,{recursive:true});
+    const output=safeSession?.artifacts||process.env.VTT_WATER_REGRESSION_OUTPUT||path.resolve(__dirname,fix?'../docs/material-previews/water-shore-fix':'../docs/material-previews/water-final');fs.mkdirSync(output,{recursive:true});
     const shot=async(name)=>{if(fast||process.env.VTT_WATER_FINAL_VIEW&&process.env.VTT_WATER_FINAL_VIEW!==name&&!(process.env.VTT_WATER_FINAL_VIEW==='world-flat'&&name.startsWith('world-flat-')))return;await pause(400);await page.evaluate('new Promise(requestAnimationFrame)');fs.writeFileSync(path.join(output,mode+'-'+name+'.png'),Buffer.from((await page.call('Page.captureScreenshot',{format:'png'})).data,'base64'));};
     const measure=async(local)=>page.evaluate(`(()=>{const {renderer:r,scene,camera}=${local?'localRender':'{renderer:W.renderer,scene:W.scene,camera:W.camera}'},gl=r.getContext(),p=new Uint8Array(4);const sample=()=>{const start=performance.now();r.render(scene,camera);gl.readPixels(0,0,1,1,gl.RGBA,gl.UNSIGNED_BYTE,p);return {ms:performance.now()-start,calls:r.info.render.calls,triangles:r.info.render.triangles,textures:r.info.memory.textures,geometries:r.info.memory.geometries}};sample();const a=[sample(),sample(),sample()].sort((a,b)=>a.ms-b.ms);return {...a[1],fps:1000/a[1].ms,shaderErrors:r.info.programs.filter(p=>p.diagnostics?.runnable===false).length,webgl2:r.capabilities.isWebGL2,device:gl.getParameter(gl.getExtension("WEBGL_debug_renderer_info")?.UNMASKED_RENDERER_WEBGL||gl.RENDERER)}})()`);
     if(process.env.VTT_WATER_REGRESSION_ONLY==='1'){

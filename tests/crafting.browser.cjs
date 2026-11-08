@@ -9,6 +9,8 @@ module.exports=async({peer,page,request,recipient,token,api,read})=>{
         const template=all.find(t=>t.name===name);assert.ok(template,'Шаблон '+name);
         data.inventory.pockets.push({id:'craft-'+template.id,name,templateId:template.id,category:template.category,attributes:template.attributes,quantity:1,weight:template.weight,volume:template.volume});
     }
+    const grenade=all.find(t=>t.category==='grenade');assert.ok(grenade,'Актуальный шаблон гранаты для рецепта растяжки');
+    data.inventory.pockets.push({id:'craft-grenade-'+grenade.id,name:grenade.name,templateId:grenade.id,category:grenade.category,attributes:grenade.attributes,quantity:1,weight:grenade.weight,volume:grenade.volume});
     await request('/lobbies/characters/'+recipient.id,{data},token,'PUT');
     await peer.evaluate(`window.openCharacterSheet(${recipient.id},'equipment').then(()=>true)`);
     await peer.evaluate("document.querySelector('#character-crafting-open').click();true");

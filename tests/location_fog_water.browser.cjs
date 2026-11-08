@@ -35,7 +35,7 @@ module.exports=async({page,request,token,lobby,base,connect,debugPort,safeSessio
     ]},token);
     const hiddenId=objects.objects[0].id;
     const scout={check:{success:true},point:{x:50,y:47,floor_level:0,facing_x:1,facing_y:0}};
-    await page.evaluate(`(async()=>{window.T=threeModule;const add=T.Scene.prototype.add;T.Scene.prototype.add=function(...objects){if(objects.some(o=>o.renderOrder===4||o.userData?.locationObjectId))window.fogCheckScene=this;return add.apply(this,objects)};await enterLocation(${location.id},{scoutView:${JSON.stringify(scout)}});true})()`);
+    await page.evaluate(`(async()=>{window.T=threeModule;window.L=await import('/static/js/locationScene.js');const add=T.Scene.prototype.add;T.Scene.prototype.add=function(...objects){if(objects.some(o=>o.renderOrder===4||o.userData?.locationObjectId))window.fogCheckScene=this;return add.apply(this,objects)};await enterLocation(${location.id},{scoutView:${JSON.stringify(scout)}});true})()`);
     await page.until('window.fogCheckScene&&document.getElementById("scene-loading-screen").classList.contains("is-hidden")','туман на копии полигона');
     const camera='locationControls.target.set(32,1,28);locationControls.object.position.set(52,40,58);locationControls.update()';
     await page.evaluate(camera);
@@ -97,7 +97,7 @@ module.exports=async({page,request,token,lobby,base,connect,debugPort,safeSessio
         await peer.evaluate('window.fogBeforeReload=true;true');
         await peer.call('Page.reload',{ignoreCache:true});
         await peer.until('!window.fogBeforeReload&&typeof enterLocation==="function"&&window.isGM===false','игрок перезагрузил страницу');
-        await peer.evaluate(`(async()=>{window.T=await import('three');const add=T.Scene.prototype.add;T.Scene.prototype.add=function(...objects){if(objects.some(o=>o.renderOrder===4))window.fogCheckScene=this;return add.apply(this,objects)};await enterLocation(${location.id});true})()`);
+        await peer.evaluate(`(async()=>{window.T=await import('three');window.L=await import('/static/js/locationScene.js');const add=T.Scene.prototype.add;T.Scene.prototype.add=function(...objects){if(objects.some(o=>o.renderOrder===4))window.fogCheckScene=this;return add.apply(this,objects)};await enterLocation(${location.id});true})()`);
         await peer.until('window.fogCheckScene&&document.getElementById("scene-loading-screen").classList.contains("is-hidden")','туман восстановлен после перезагрузки');
         assert.equal(await peer.evaluate(`fogCheckScene.children.find(mesh=>mesh.userData?.locationObjectId===${hiddenId})?.visible??null`),false);
         console.log(JSON.stringify({visual_polygon_2:true,deep_water:true,fog_indices:after,gmHidden,playerState,

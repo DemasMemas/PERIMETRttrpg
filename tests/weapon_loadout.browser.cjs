@@ -39,7 +39,8 @@ module.exports=async({page,request,token,lobby,safeSession})=>{
         throw Error('Ожидаемое состояние оружия не сохранено');
     };
     await page.evaluate(`window.openCharacterSheet(${character.id},'equipment')`);
-    await click('[data-equipment-panel="weapons"] > summary');
+    await page.until('document.querySelector("#sheet-tab-equipment .equipment-panel-nav .equipment-panel-tab[data-panel=weapons]") && document.querySelector("#weapons-container")','лист экипировки загружен');
+    await click('#sheet-tab-equipment .equipment-panel-tab[data-panel="weapons"]');
     await click('#sheet-tab-equipment [onclick="addWeapon()"]');
     await page.until('document.getElementById("weapon-model-select-0")','выбор модели');
     await set('#weapon-model-select-0',gun.id+1000000);
@@ -56,7 +57,8 @@ module.exports=async({page,request,token,lobby,safeSession})=>{
     await click('[onclick="selectWeaponModel(0)"]');
     await waitSaved(d=>d.weapons[0]?.templateId===gun.id+1000000);
     const openStats=async()=>{
-        for(const selector of ['[data-equipment-panel="weapons"]','[data-equipment-panel="weapon-0"]',
+        await click('#sheet-tab-equipment .equipment-panel-tab[data-panel="weapons"]');
+        for(const selector of ['[data-equipment-panel="weapon-0"]',
             '#weapons-container [data-weapon-index="0"] details']){
             await page.until(`document.querySelector(${JSON.stringify(selector)})`,'панель оружия загружена');
             if(!await page.evaluate(`document.querySelector(${JSON.stringify(selector)}).open`))await click(selector+' > summary');
@@ -85,7 +87,9 @@ module.exports=async({page,request,token,lobby,safeSession})=>{
     const epoch=await page.evaluate('performance.timeOrigin');
     await page.call('Page.reload');
     await page.until(`performance.timeOrigin>${epoch}&&Boolean(window.openCharacterSheet)`,'новый документ загрузил лист персонажа');
-    await page.evaluate(`window.openCharacterSheet(${character.id},'equipment')`);await openStats();
+    await page.evaluate(`window.openCharacterSheet(${character.id},'equipment')`);
+    await page.until(`document.querySelector('#sheet-tab-equipment .equipment-panel-nav .equipment-panel-tab[data-panel="weapons"]') && document.querySelector('#weapons-container [data-weapon-index="0"]')`,'лист оружия загружен после перезагрузки');
+    await openStats();
     const reloaded=await read();assert.deepEqual(reloaded.data.weapons[0].installedModules,weapon.installedModules);
     await click('[onclick="unequipModuleFromWeapon(0, \'handguard\')"]');
     const detached=await waitSaved(d=>d.weapons[0]?.installedModules?.length===2);
@@ -94,6 +98,8 @@ module.exports=async({page,request,token,lobby,safeSession})=>{
     // У гранатомёта тот же интерфейс показывает только два разрешённых слота.
     await click('#sheet-tab-equipment [onclick="addWeapon()"]');
     await page.until('document.getElementById("weapon-model-select-1")','вторая модель');
+    assert.deepEqual(await page.evaluate(`[...document.querySelectorAll('.loadout-weapon-details[open]')].map(p=>p.dataset.equipmentPanel)`),
+        ['weapon-1'],'Новое оружие раскрыто сразу, остальные карточки свёрнуты');
     await set('#weapon-model-select-1',launcher.id+1000000);await click('[onclick="selectWeaponModel(1)"]');
     await waitSaved(d=>d.weapons[1]?.templateId===launcher.id+1000000);
     assert.equal(await page.evaluate('Boolean(document.querySelector(`[onclick="equipModuleToWeapon(1, \'barrel\')"]`))'),false);

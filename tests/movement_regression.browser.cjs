@@ -15,6 +15,29 @@ function expectedMovementCost(route,rule,multiplier){
     const climb=Number(route.climb_cost||0),travel=Math.max(0,route.cost-climb);
     return Math.round((travel*multiplier/rule.divisor+climb)*1e9)/1e9;
 }
+function expectedSurfaceRouteCost(start,end,fixture){
+    const dx=end.x-start.x,dy=end.y-start.y,length=Math.hypot(dx,dy);
+    if(!length)return 0;
+    const cuts=new Set([0,1]);
+    for(const [axis,delta] of [['x',dx],['y',dy]]){
+        if(!delta)continue;
+        const lo=Math.min(start[axis]+.5,end[axis]+.5),hi=Math.max(start[axis]+.5,end[axis]+.5);
+        for(let boundary=Math.floor(lo)+1;boundary<Math.ceil(hi);boundary++){
+            const t=(boundary-start[axis]-.5)/delta;if(t>0&&t<1)cuts.add(t);
+        }
+    }
+    const ordered=[...cuts].sort((a,b)=>a-b);let cost=0;
+    for(let index=0;index<ordered.length-1;index++){
+        const t=(ordered[index]+ordered[index+1])/2;
+        const x=Math.floor(start.x+dx*t+.5),y=Math.floor(start.y+dy*t+.5);
+        const tile=fixture.tiles_data?.[y]?.[x]||{};
+        const difficult=['snow','sand','swamp','ice'].includes(tile.terrain)
+            ||(fixture.objects||[]).some(object=>object.tile_x===x&&object.tile_y===y
+                &&/^nature_(bush|tall_grass)_(green|dry|dead)$/.test(object.properties?.visual_asset||''));
+        cost+=length*(ordered[index+1]-ordered[index])*(difficult?2:1);
+    }
+    return Math.round(cost*1e9)/1e9;
+}
 function navigationCandidates(fixture){
     const stairs=fixture.objects.flatMap((object,index)=>object.type==='stairs'?[{sourceIndex:index,x:object.tile_x,y:object.tile_y,level:object.properties.level||0,building:object.properties.building_id,rotation:object.properties.rotation||0,dimensions:object.properties.dimensions}]:[]);
     const stair=stairs.find(s=>s.x===7&&s.y===9&&s.level===0&&s.building==='pripyat-0');assert.ok(stair,'существующий марш Припяти');
@@ -143,11 +166,12 @@ module.exports=async({page,request,token,base,connect,debugPort,safeSession,fixt
             await peer.evaluate(`(()=>{const delta=new T.Vector3(${x+.5}-locationControls.target.x,${height}-locationControls.target.y,${y+.5}-locationControls.target.z);locationControls.object.position.add(delta);locationControls.target.add(delta);locationControls.object.zoom=4;locationControls.object.updateProjectionMatrix();locationControls.update();locationControls.object.updateMatrixWorld(true)})()`);
             return peer.evaluate(`(()=>{const p=new T.Vector3(${x+.5},${height},${y+.5}).project(locationControls.object),r=document.querySelector('#location-canvas canvas').getBoundingClientRect();return{x:r.left+(p.x+1)*r.width/2,y:r.top+(1-p.y)*r.height/2}})()`);
         };
+        let expectedPosition={x:41,y:48};
         const armPreview=async(mode,x,y)=>{
             const prepared=await prepareModePreview({...selectionOptions(mode,'select-'+mode),
                 baseline:async(state)=>{
                     const route=(await preview(x,y)).route;assert.ok(route);
-                    if(process.env.VTT_SAFE_SCENARIO==='surface')assert.equal(route.cost,x===44?4:2,'№102: серверный вес сложной поверхности');assert.equal(route.climb_cost,0,'проверяется обычный шаг без цены перелезания');
+                    if(process.env.VTT_SAFE_SCENARIO==='surface')assert.equal(route.cost,expectedSurfaceRouteCost(expectedPosition,{x,y},fixture),'№102: цена пути по клеткам сложной поверхности');assert.equal(route.climb_cost,0,'проверяется обычный шаг без цены перелезания');
                     const price=expectedMovementCost(route,rules[mode],state.current_character.posture_modifiers.movement_multiplier);
                     result.phases.push({stage:'baseline-'+mode,target:[x,y],server:resourceSnapshot(state.current_character),price,readiness:await readReadiness()});save();
                     return{state,route,price};
@@ -189,6 +213,7 @@ module.exports=async({page,request,token,base,connect,debugPort,safeSession,fixt
             const before=await armPreview(mode,x,y),counts=await Promise.all([page,peer].map(async client=>(await ui(client)).events.length));
             for(const type of ['mousePressed','mouseReleased'])await peer.call('Input.dispatchMouseEvent',{type,...before.point,button:'left',buttons:type==='mousePressed'?1:0,clickCount:1});
             for(const client of [page,peer])await client.until(`L.characterPose(${actor.id}).x===${x}&&L.characterPose(${actor.id}).y===${y}&&L.getCombatState().current_character.movement_points_current===${before.state.current_character.movement_points_current-before.price}`,'движение/ОП через серверное событие');
+            expectedPosition={x,y};
             const after=await server();await peer.evaluate('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
             const snapshots=await Promise.all([page,peer].map(ui));result.phases.push({stage:'committed-'+mode,before:resourceSnapshot(before.state.current_character),after:resourceSnapshot(after.current_character),expectedCost:before.price,ui:snapshots});save();
             assert.equal(after.current_character.movement_points_current,before.state.current_character.movement_points_current-before.price);
@@ -213,6 +238,7 @@ module.exports=async({page,request,token,base,connect,debugPort,safeSession,fixt
 };
 module.exports.serverMovementRules=serverMovementRules;
 module.exports.expectedMovementCost=expectedMovementCost;
+module.exports.expectedSurfaceRouteCost=expectedSurfaceRouteCost;
 module.exports.navigationCandidates=navigationCandidates;
 
 module.exports.movementUISnapshotExpression=movementUISnapshotExpression;

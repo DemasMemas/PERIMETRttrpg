@@ -434,7 +434,13 @@ module.exports=async({page,request,token,lobby,base,connect,debugPort,safeSessio
             }else if(drugName.includes('Воля')){
                 for(const client of [page,peer])await client.until(`document.querySelector('#sheet-tab-basic')?.textContent.includes('Заблокировано боли: 0; после действия вернётся: 0')`,'Счётчик заблокированной боли виден обоим клиентам');
             }else if(drugName.includes('Сова')){
-                for(const client of [page,peer])await client.until(`document.querySelector('#sheet-tab-basic')?.textContent.includes('Без помехи к стрельбе в темноте: активно')`,'Защита от помех темноты показана словами');
+                const owlModifiers=after.combatMeta.consumableModifiers.filter(modifier=>
+                    ['darkness_awareness','darkness_accuracy','light_awareness','darkness_visual_immunity','darkness_shooting_immunity'].includes(modifier.stat));
+                assert.deepEqual(Object.fromEntries(owlModifiers.map(modifier=>[modifier.stat,modifier.value])),
+                    {darkness_awareness:3,darkness_accuracy:3,light_awareness:-3});
+                assert.ok(owlModifiers.every(modifier=>modifier.remaining_seconds===4*3600));
+                assert.equal(after.needs.sleptToday,true,'Сова немедленно закрывает потребность во сне');
+                for(const client of [page,peer])await client.until(`(()=>{const text=document.querySelector('#sheet-tab-basic')?.textContent||'';return text.includes('Внимательность в темноте без ПНВ: +3')&&text.includes('Точность в темноте без ПНВ: +3')&&text.includes('Внимательность на свету: -3')})()`,'Бонусы Совы для темноты и штраф на свету показаны в обоих листах');
             }else{
                 assert.ok(!after.combatMeta.consumableModifiers?.some(m=>m.stat==='movement_points'));
                 assert.ok(after.effects.some(effect=>effect.type==='stress_resistance'&&effect.remaining===6&&effect.tick==='movement_end'));

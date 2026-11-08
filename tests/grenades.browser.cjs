@@ -1,5 +1,6 @@
 // Настоящий бросок и личные реакции двух клиентов на неизменённой копии Припяти.
 const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path');
+const {waitForDocument}=require('./durable_reload.browser.cjs');
 module.exports=async({page,request,token,lobby,base,connect,debugPort,safeSession,location,actor,player})=>{
     const url=`/lobbies/${lobby.id}/locations/${location.id}`,state=()=>request(url+'/combat',null,token,'GET');
     const version=await(await fetch(`http://127.0.0.1:${debugPort}/json/version`)).json();
@@ -17,8 +18,8 @@ module.exports=async({page,request,token,lobby,base,connect,debugPort,safeSessio
     };
     const targetPoint=async(client,x,y)=>client.evaluate(`(()=>{locationControls.object.updateMatrixWorld(true);const p=new T.Vector3(${x+.5},1,${y+.5}).project(locationControls.object),r=document.querySelector('#location-container canvas').getBoundingClientRect();return{x:r.x+(p.x+1)*r.width/2,y:r.y+(1-p.y)*r.height/2}})()`);
     const enter=async client=>{
-        await client.until('typeof enterLocation==="function"&&window.socket?.connected','комната готова');
-        await client.evaluate(`(async()=>{window.L=await import('/static/js/locationScene.js');window.T=await import('three');await enterLocation(${location.id})})()`);
+        await client.until('Boolean(window.enterLocation)&&window.socket?.connected','комната готова');
+        await client.evaluate(`(async()=>{window.L=await import('/static/js/locationScene.js');window.T=await import('three');await window.enterLocation(${location.id})})()`);
         await client.until('window.locationControls&&document.getElementById("scene-loading-screen").classList.contains("is-hidden")','Припять загружена');
         await client.evaluate(`L.setLocationEditMode(false);locationControls.enableDamping=false;locationControls.target.set(41.5,1,49.5);locationControls.object.position.set(47,12,59);locationControls.update();window.grenadeEvents=[];window.grenadeSheets=[];void socket.on('combat_explosion',e=>grenadeEvents.push(e));void socket.on('character_data_updated',e=>grenadeSheets.push(e))`);
     };
@@ -47,7 +48,9 @@ module.exports=async({page,request,token,lobby,base,connect,debugPort,safeSessio
         peer=await connect(tabs.find(t=>t.id===tab.targetId).webSocketDebuggerUrl);
         await peer.call('Page.enable');await peer.call('Runtime.enable');
         await peer.evaluate(`localStorage.setItem('access_token',${JSON.stringify(player.access_token)});localStorage.setItem('user_id',${JSON.stringify(String(player.user_id))})`);
-        await peer.call('Page.navigate',{url:base+`/lobbies/${lobby.id}/page`});
+        const roomHref=base+`/lobbies/${lobby.id}/page`;
+        await peer.call('Page.navigate',{url:roomHref});
+        await waitForDocument(peer,{href:roomHref,label:'начальная загрузка второго клиента'});
         await enter(peer);await enter(page);
         if(await page.evaluate('!document.querySelector("#panel-chat").hidden'))await button(page,'#chat-toggle');
         await page.evaluate(`(()=>{const list=document.querySelector('#panel-chat .chat-messages');for(let i=0;i<100;i++){const row=document.createElement('div');row.textContent='Проверка прокрутки '+i;list.append(row)}})()`);
@@ -110,8 +113,10 @@ module.exports=async({page,request,token,lobby,base,connect,debugPort,safeSessio
         assert.equal((await state()).pending_explosives.length,0);
         assert.equal((await request(`/lobbies/characters/${outsider.id}`,null,token,'GET')).data.health.current,700,'исключённая цель не повреждена');
         for(const client of [page,peer])await client.until(`grenadeSheets.some(e=>e.character_id===${victim.id}&&e.updates?.data?.health?.current===${saved.data.health.current})`,'лист цели обновлён у обоих');
+        const reloadEpoch=await peer.evaluate('performance.timeOrigin');
         await peer.call('Page.reload');
-        for(let attempt=0;;attempt++)try{await enter(peer);break;}catch(e){if(attempt>=3||!/Inspected target navigated or closed|Execution context was destroyed|Cannot find context/.test(e.message))throw e;}
+        await waitForDocument(peer,{href:roomHref,afterEpoch:reloadEpoch,label:'повторная загрузка после взрыва'});
+        await enter(peer);
         assert.equal((await state()).pending_explosives.length,0);
         assert.equal((await request(`/lobbies/characters/${victim.id}`,null,token,'GET')).data.health.current,saved.data.health.current);
         // Отдельная проверка штатного лечения контузии; гарантированный успех навыком, без подмены d20.
@@ -133,13 +138,12 @@ module.exports=async({page,request,token,lobby,base,connect,debugPort,safeSessio
         await request(url+'/combat/adjust',{location_character_id:victimId,action_points:5},token);
         await page.until('L.getCombatState()?.current_character?.effects?.some(e=>e.type==="burning")','горение синхронизировано');
         await page.evaluate(`L.showCombatActionMenu(innerWidth/2,innerHeight/2,${victim.id})`);
-        await button(page,'#combat-action-menu [aria-label="Огонь и вода"]');
+        await button(page,'#combat-action-menu [aria-label="Тушение огня"]');
         await button(page,'#combat-fire-water-menu .fire-water-items button');
-        for(const client of [page,peer])await client.until('L.getCombatState()?.current_character?.water_in_hand?.litres===2','вода в руке у обоих клиентов');
-        await page.evaluate(`L.showCombatActionMenu(innerWidth/2,innerHeight/2,${victim.id})`);
-        await button(page,'#combat-action-menu [aria-label="Огонь и вода"]');
+        for(const client of [page,peer])await client.until('L.getCombatState()?.current_character?.water_in_hand?.litres===1','литр воды в руке у обоих клиентов');
+        await page.until('document.querySelector("#combat-fire-water-menu .fire-pour")?.disabled===false','меню обновилось после получения воды');
         await button(page,'#combat-fire-water-menu .fire-pour');
-        for(const client of [page,peer])await client.until('!L.getCombatState()?.current_character?.water_in_hand&&L.getCombatState()?.current_character?.effects?.some(e=>e.type==="burning"&&e.remaining===4)','два литра сокращают горение на четыре раунда');
+        for(const client of [page,peer])await client.until('!L.getCombatState()?.current_character?.water_in_hand&&L.getCombatState()?.current_character?.effects?.some(e=>e.type==="burning"&&e.remaining===6)','литр воды сокращает горение на два раунда');
         const watered=await request(`/lobbies/characters/${victim.id}`,null,token,'GET');
         assert.equal(watered.data.inventory.pockets.length,0,'вода расходуется на сервере');
         assert.equal((await state()).current_character.action_points_current,4,'доставание и обливание стоили три ОД');

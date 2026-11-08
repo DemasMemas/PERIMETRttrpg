@@ -1,5 +1,6 @@
 // Выстрелы, слух и раундовый спад у двух клиентов на копии Припяти.
 const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path');
+const {waitForDocument}=require('./durable_reload.browser.cjs');
 module.exports=async({page,peer,request,token,lobby,url,actor,victim,actorId,victimId,safeSession,enter})=>{
     await request(url+'/combat/end',{},token);
     for(const character of [actor,victim]){
@@ -29,8 +30,11 @@ module.exports=async({page,peer,request,token,lobby,url,actor,victim,actorId,vic
     assert.ok(mid.data.health.effects.some(e=>e.type==='deafness'&&e.value===80),'в конце личного хода глухота не спала');
     await request(url+'/combat/end_turn',{location_character_id:victimId},token);
     for(const client of [page,peer])await client.until(`L.getCombatState()?.characters?.find(c=>c.character_id===${actor.id})?.effects?.some(e=>e.type==='deafness'&&e.value===60)`,'в конце раунда спад ровно на двадцать');
+    const reloadHref=await peer.evaluate('location.href');
+    const reloadEpoch=await peer.evaluate('performance.timeOrigin');
     await peer.call('Page.reload');
-    for(let attempt=0;;attempt++)try{await enter(peer);break;}catch(e){if(attempt>=3||!/navigated or closed|context was destroyed|Cannot find context/.test(e.message))throw e;}
+    await waitForDocument(peer,{href:reloadHref,afterEpoch:reloadEpoch,label:'перезагрузка второго клиента после шума'});
+    await enter(peer);
     const saved=await request(`/lobbies/characters/${actor.id}`,null,token,'GET');
     assert.ok(saved.data.health.effects.some(e=>e.type==='deafness'&&e.value===60));
     assert.equal(saved.data.weapons[0].ammo,8);
