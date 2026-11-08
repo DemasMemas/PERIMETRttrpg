@@ -111,12 +111,72 @@ module.exports=async({page,request,token,lobby,loc,locationId,rules,safeSession}
     await request(loc+'/combat/end_turn',{location_character_id:placed.location_character_id},token);
     const expiredHeat=await get();assert.equal(expiredHeat.data.health.current,heatBefore-50,'После истечения вернулся обычный урон горения');
     await request(loc+'/combat/end',{},token);
+    const vein=rules.find(row=>row.name==='Огненная вена'),veinData=await get();assert.ok(vein);
+    veinData.data.equipment.armor.containers=[{item:{id:'native-fiery-vein',name:vein.name,category:'artifact',quantity:1,attributes:vein}}];
+    veinData.data.health.effects=veinData.data.health.effects.filter(effect=>effect.type!=='burning');
+    await request(url,{data:veinData.data},token,'PUT');
+    await request('/__testing/artifact-preparation/'+safeSession.runId,{character_id:character.id},token);
+    await request(loc+'/combat/start',{location_character_ids:[placed.location_character_id],
+        initiator_location_character_id:placed.location_character_id,initiator_first:true},token);
+    await request(loc+'/combat/end_turn',{location_character_id:placed.location_character_id},token);
+    await request('/__testing/artifact-preparation/'+safeSession.runId,{character_id:character.id,breathlessness:true},token);
+    assert.equal((await request(loc+'/combat',null,token,'GET')).current_character.strenuous_movement_blocked_until_round,1000);
+    await page.evaluate(`window.openCharacterSheet(${character.id},'equipment').then(()=>true)`);
+    await page.until("document.querySelector('.equipment-panel-tab[data-panel=armor]')",'Броня с Огненной веной');
+    await page.evaluate("document.querySelector('.equipment-panel-tab[data-panel=armor]').click();true");
+    await page.until("document.querySelector('[data-artifact-special=\"native-fiery-vein\"]')&&!document.querySelector('[data-artifact-special=\"native-fiery-vein\"]').disabled",'Огненная вена готова');
+    await page.evaluate("document.querySelector('[data-artifact-special=\"native-fiery-vein\"]').click();true");
+    await page.evaluate('window.__artifactUsePromise.then(()=>true)');
+    const veinResponses=await page.evaluate('window.__artifactHttp');
+    assert.deepEqual(veinResponses.map(row=>row.status),[200,200,200,200,200],JSON.stringify(veinResponses));
+    actionResponses.push(...veinResponses.slice(4));
+    assert.equal((await request(loc+'/combat',null,token,'GET')).current_character.strenuous_movement_blocked_until_round,0);
+    const breathEffect=d=>d.health.effects.find(effect=>effect.artifact_stat==='breathless_immunity');
+    assert.equal(breathEffect((await get()).data).remaining_seconds,18);
+    for(let i=0;i<3;i++)await request(loc+'/combat/end_turn',{location_character_id:placed.location_character_id},token);
+    assert.ok(!breathEffect((await get()).data));
+    await request(loc+'/combat/end',{},token);
+    const stormHeart=rules.find(row=>row.name==='Сердце грозы'),stormData=await get();assert.ok(stormHeart);
+    stormData.data.equipment.armor.containers=[{item:{id:'native-storm-heart',name:stormHeart.name,category:'artifact',quantity:1,attributes:stormHeart}}];
+    stormData.data.skills.physical={strength:{base:10}};
+    await request(url,{data:stormData.data},token,'PUT');
+    await request('/__testing/artifact-preparation/'+safeSession.runId,{character_id:character.id},token);
+    await request(loc+'/combat/start',{location_character_ids:[placed.location_character_id],
+        initiator_location_character_id:placed.location_character_id,initiator_first:true},token);
+    await request(loc+'/combat/end_turn',{location_character_id:placed.location_character_id},token);
+    await request('/__testing/artifact-preparation/'+safeSession.runId,{character_id:character.id,breathlessness:true},token);
+    assert.equal((await request(loc+'/combat',null,token,'GET')).current_character.strenuous_movement_blocked_until_round,1000);
+    await page.evaluate(`window.openCharacterSheet(${character.id},'equipment').then(()=>true)`);
+    await page.until("document.querySelector('.equipment-panel-tab[data-panel=armor]')",'Броня с Сердцем грозы');
+    await page.evaluate("document.querySelector('.equipment-panel-tab[data-panel=armor]').click();true");
+    await page.until("document.querySelector('[data-artifact-special=\"native-storm-heart\"]')&&!document.querySelector('[data-artifact-special=\"native-storm-heart\"]').disabled",'Сердце грозы готово');
+    await page.evaluate("document.querySelector('[data-artifact-special=\"native-storm-heart\"]').click();true");
+    await page.evaluate('window.__artifactUsePromise.then(()=>true)');
+    const stormResponses=await page.evaluate('window.__artifactHttp');
+    assert.deepEqual(stormResponses.map(row=>row.status),[200,200,200,200,200,200],JSON.stringify(stormResponses));
+    actionResponses.push(...stormResponses.slice(5));
+    assert.equal((await request(loc+'/combat',null,token,'GET')).current_character.strenuous_movement_blocked_until_round,0);
+    const stormActive=await get();assert.equal(stormActive.data._artifact_profile.movement_penalty,-20);
+    assert.equal(stormActive.data._artifact_profile.skill_strength,5);
+    await request(loc+'/combat/end',{},token);
+    const changeMinutes=async minutes=>{const now=await request('/lobbies/'+lobby.id,null,token,'GET'),at=now.game_day*1440+now.game_time_minutes+minutes;
+        await request('/lobbies/'+lobby.id+'/time',{game_day:Math.floor(at/1440),game_time_minutes:at%1440},token,'PATCH');};
+    await changeMinutes(1);
+    const sleeping=await get(),sleep=sleeping.data.health.effects.filter(effect=>effect.type==='sleep');
+    assert.equal(sleep.length,1);assert.equal(sleep[0].remaining_seconds,552,'12секусиления+48секужепрошедшегосна');
+    assert.equal(sleeping.data._artifact_profile.movement_penalty,0);
+    assert.equal(sleeping.data._artifact_profile.skill_strength,0);
+    await changeMinutes(10);assert.ok(!(await get()).data.health.effects.some(effect=>effect.type==='sleep'));
     fs.writeFileSync(path.join(safeSession.artifacts,'artifact-special.json'),JSON.stringify({scene:'Припять',artifact:rule.name,
         preparedWornSeconds:86394,realRoundSeconds:6,readyAfterRealRound:true,realButtonActivations:2,apPerUse:1,
         first:{radiation:0,hp:200,cooldown:86400},second:{radiation:0,hp:300,cooldown:86394},reopened:true,
         actionResponses,generator:{buttonActivated:true,movementBefore:-1,movementActive:-3,initialSeconds:600,afterRound:594,expired:true},
-        heatHeart:{buttonActivated:true,protectedRoundDamage:0,expiredRoundDamage:50}},null,2));
+        heatHeart:{buttonActivated:true,protectedRoundDamage:0,expiredRoundDamage:50},
+        fieryVein:{buttonActivated:true,preparedBreathlessness:1000,clearedBreathlessness:0,effectSeconds:18,expiredAfterThreeRounds:true},
+        stormHeart:{buttonActivated:true,movement:-20,strength:5,effectiveBreathlessness:0,sleepAfterFirstMinute:552,sleepExpired:true}},null,2));
     console.log('Особые свойства: подготовленное ношение+реальный раунд, две кнопки Ядра твари по1ОД без рук, радиация→ОЗ; общий срок после первого, переоткрытие.');
     console.log('Генератор: кнопка без радиации, фактический штраф перемещения−1→−3,600→594секунд за раунд; истечение по игровому времени возвращает−1.');
     console.log('Сердце жара: настоящая кнопка и настоящее горение; первый раунд0урона, после истечения50.');
+    console.log('Огненная вена: подготовленная одышка1000снята настоящей кнопкой, флаг18сек истёк за3настоящих раунда.');
+    console.log('Сердце грозы: настоящая кнопка,−20/+5,оды́шка подавлена в клиентском состоянии; после12сек один сон600сек, перевод времени учитывает остаток/пробуждение.');
 };

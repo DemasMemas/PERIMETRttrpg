@@ -14,7 +14,7 @@ def status(actor,state=None):
     state=state or LocationCombatState.query.filter_by(location_id=actor.location_id).first()
     if not state or state.status!='active' or (actor.cover_object_id and actor.cover_object_id!=pending.get('id')) or (state.round_number or 1)>pending.get('expires_after_round',0):
         current.pop('sniperOldCover',None);flag_modified(actor.character,'data');return None
-    mode='walk' if (actor.strenuous_movement_blocked_until_round or 0)>=(state.round_number or 1) else 'run'
+    mode='walk' if C._strenuous_movement_is_blocked(actor,'run',state.round_number or 1) else 'run'
     try:
         C._validate_equipment_movement(actor.character.data,mode)
         C._validate_posture_movement(actor.posture,mode,actor.character.data)

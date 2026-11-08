@@ -50,7 +50,7 @@ def install(app,db,check_database,run_id,*,controlled_pepper=False,belt_artifact
         from app.services import artifact_effects
         from flask import request,jsonify
         from sqlalchemy.orm.attributes import flag_modified
-        from app.models import LobbyCharacter
+        from app.models import LobbyCharacter,LocationCharacter
 
         @app.post('/__testing/artifact-preparation/'+run_id)
         def prepare_artifact_wearing():
@@ -59,8 +59,13 @@ def install(app,db,check_database,run_id,*,controlled_pepper=False,belt_artifact
             character=db.session.get(LobbyCharacter,int(request.get_json()['character_id']))
             assert character and character.name=='Проверка особого свойства'
             data=deepcopy(character.data)
-            # Только подготовка собственного опыта: оставшиеся6с пройдут настоящим боевым раундом.
-            advance(data,DAY-6)
+            if request.get_json().get('breathlessness'):
+                model=LocationCharacter.query.filter_by(character_id=character.id).one()
+                model.strenuous_movement_blocked_until_round=1000
+                model.movement_mode_this_turn='walk'
+            else:
+                # Только подготовка собственного опыта: оставшиеся6с пройдут настоящим боевым раундом.
+                advance(data,DAY-6)
             character.data=data;flag_modified(character,'data');db.session.commit()
             return jsonify(character.data_snapshot())
 

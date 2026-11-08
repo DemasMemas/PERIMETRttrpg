@@ -9708,9 +9708,11 @@ class CombatService:
         health = character_data.get('health') if isinstance(character_data.get('health'), dict) else {}
         combat_meta = health.get('combatMeta') if isinstance(health.get('combatMeta'), dict) else {}
         modifiers = combat_meta.get('consumableModifiers')
+        from app.services.artifact_special import stat_value as artifact_special_stat
+        artifact_bonus = artifact_special_stat(character_data, stat_name) if stat_name == 'breathless_immunity' else 0
         if not isinstance(modifiers, list):
-            return 0
-        total = 0
+            return artifact_bonus
+        total = artifact_bonus
         for item in modifiers:
             if not isinstance(item, dict):
                 continue
@@ -11702,7 +11704,7 @@ class CombatService:
             'movement_evasion': CombatService._movement_evasion_active(loc_char),
             'movement_distance_this_turn': loc_char.movement_distance_this_turn or 0,
             'correction_distance_this_turn': loc_char.correction_distance_this_turn or 0,
-            'strenuous_movement_blocked_until_round': loc_char.strenuous_movement_blocked_until_round or 0,
+            'strenuous_movement_blocked_until_round': 0 if CombatService._consumable_stat_value_bonus(data,'breathless_immunity')>0 else loc_char.strenuous_movement_blocked_until_round or 0,
             'posture': posture,
             'posture_label': posture_profile['label'],
             'posture_change_options': posture_change_options,

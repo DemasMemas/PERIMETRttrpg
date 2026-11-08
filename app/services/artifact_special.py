@@ -26,11 +26,14 @@ BUFFS = {
     'Ядро пепелища': (18, {'immune_thermal': 1, 'movement_penalty': -4}),
     'Печенка': (6, {'immune_chemical': 1}),
     'Сердце притяжения': (6, {'immune_physical': 1}),
+    'Огненная вена': (18, {'breathless_immunity': 1}),
+    'Сердце грозы': (12, {'movement_penalty': -20, 'skill_strength': 5, 'breathless_immunity': 1}),
 }
 STAT_LABELS = {'movement_penalty': 'Штраф перемещения', 'skill_strength': 'Сила',
                'physical_protection': 'Защита от физического урона', 'chemical_protection': 'Защита от химического урона',
                'immune_thermal': 'Игнорирование термического урона', 'immune_chemical': 'Игнорирование химического урона',
                'immune_physical': 'Игнорирование физического урона'}
+STAT_LABELS['breathless_immunity'] = 'Бег и спринт без одышки'
 
 
 def is_special_effect(effect):
@@ -45,6 +48,14 @@ def damage_immunity(data, damage_type):
                and _number(effect.get('value')) > 0
                and _number(effect.get('remaining_seconds', effect.get('remaining'))) > 0
                for effect in ((data or {}).get('health') or {}).get('effects') or [])
+
+
+def stat_value(data, stat):
+    return sum(float(effect.get('value') or 0)
+               for effect in ((data or {}).get('health') or {}).get('effects') or []
+               if is_special_effect(effect) and effect.get('active', True) and effect.get('artifact_stat') == stat
+               and _number(effect.get('remaining_seconds', effect.get('remaining'))) > 0
+               and type(effect.get('value')) in (int, float) and math.isfinite(effect['value']))
 
 
 def _number(value):
@@ -175,9 +186,15 @@ def execute(actor, data, payload, user_id, combat=None):
             source = PREFIX + sha256(str(item['id']).encode()).hexdigest()[:24] + ':' + stat
             effects[:] = [effect for effect in effects if effect.get('source') != source]
             effects.append({'id': source, 'source': source, 'type': 'custom', 'name': f"{item['name']}: особое свойство",
-                            'note': f"{STAT_LABELS[stat]}{'' if stat.startswith('immune_') else f' {amount:+g}'} на {duration} сек.",
+                            'note': f"{STAT_LABELS[stat]}{'' if stat.startswith('immune_') or stat == 'breathless_immunity' else f' {amount:+g}'} на {duration} сек.",
                             'artifact_stat': stat, 'value': amount, 'active': True, 'tick': 'time_elapsed',
                             'time_unit': 'second', 'remaining': duration, 'remaining_seconds': duration})
+            if item['name'] == 'Сердце грозы' and stat == 'movement_penalty':
+                effects[-1]['activate_effects'] = [{'type': 'sleep', 'name': 'Сон после Сердца грозы',
+                    'source': source + ':sleep', 'remaining': 10, 'remaining_seconds': 600,
+                    'time_unit': 'minute', 'tick': 'time_elapsed'}]
+        if item['name'] == 'Огненная вена' and hasattr(actor, 'strenuous_movement_blocked_until_round'):
+            actor.strenuous_movement_blocked_until_round = 0
     sync_health_derived_statuses(health)
     ledger = data.setdefault(STATE_KEY, {})
     progress = ledger.setdefault('items', {}).setdefault(str(item['id']), {})

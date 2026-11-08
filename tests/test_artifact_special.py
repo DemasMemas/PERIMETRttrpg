@@ -348,3 +348,84 @@ def test_heat_heart_protects_real_burning_for_one_round_then_expires(grenade_gam
     CombatService.end_turn(actor.location_id, user, actor.id)
     CombatService.end_turn(actor.location_id, user, other.id)
     assert actor.character.data['health']['current'] == 650
+
+
+def test_fiery_vein_removes_existing_breathlessness_and_stops_new_block_for_three_rounds(grenade_game):
+    actor = grenade_game['actor_location']
+    actor.character.data = ready(name='Огненная вена')
+    actor.strenuous_movement_blocked_until_round = 100
+    db.session.commit()
+    result = CombatService.perform_action(actor.location_id, grenade_game['lobby'].gm_id, actor.id, 'artifact_special',
+        attribute_choice={'operation_id': 'vein-breath', 'item_id': 'reactive-artifact'})
+    assert result['narrative_action']['action_points'] == 1
+    assert actor.strenuous_movement_blocked_until_round == 0
+    data = actor.character.data
+    assert CombatService._consumable_stat_value_bonus(data, 'breathless_immunity') == 1
+    actor.strenuous_movement_blocked_until_round = 100
+    actor.movement_mode_this_turn = 'walk'
+    assert not CombatService._strenuous_movement_is_blocked(actor, 'sprint', 1)
+    health = data['health']
+    health['effects'] = advance_timed_effects(health, health['effects'], 17, character_data=data)
+    assert CombatService._consumable_stat_value_bonus(data, 'breathless_immunity') == 1
+    health['effects'] = advance_timed_effects(health, health['effects'], 1, character_data=data)
+    assert CombatService._consumable_stat_value_bonus(data, 'breathless_immunity') == 0
+    assert CombatService._strenuous_movement_is_blocked(actor, 'sprint', 1)
+
+
+def test_storm_heart_bonuses_end_in_one_ten_minute_sleep():
+    from app.services.artifact_effects import artifact_passive_profile
+    data = ready(name='Сердце грозы')
+    data['skills']['physical'] = {'strength': {'base': 10}}
+    baseline = artifact_passive_profile(data)['movement_penalty']
+    use(data)
+    assert artifact_passive_profile(data)['movement_penalty'] == baseline-20
+    assert CombatService._skill_value(data, 'skills.physical.strength') == 15
+    assert CombatService._consumable_stat_value_bonus(data, 'breathless_immunity') == 1
+    health = data['health']
+    health['effects'] = advance_timed_effects(health, health['effects'], 11, character_data=data)
+    assert not any(effect['type'] == 'sleep' for effect in health['effects'])
+    health['effects'] = advance_timed_effects(health, health['effects'], 1, character_data=data)
+    sleeps = [effect for effect in health['effects'] if effect['type'] == 'sleep']
+    assert len(sleeps) == 1 and sleeps[0]['remaining_seconds'] == 600
+    assert not CombatService._character_condition(data)['can_act']
+    assert artifact_passive_profile(data)['movement_penalty'] == baseline
+    assert CombatService._skill_value(data, 'skills.physical.strength') == 10
+    health['effects'] = advance_timed_effects(health, health['effects'], 599, character_data=data)
+    assert any(effect['type'] == 'sleep' for effect in health['effects'])
+    health['effects'] = advance_timed_effects(health, health['effects'], 1, character_data=data)
+    assert not any(effect['type'] == 'sleep' for effect in health['effects'])
+    assert CombatService._character_condition(data)['can_act']
+
+
+def test_storm_heart_sleep_uses_remaining_time_in_one_large_clock_step():
+    data = ready(name='Сердце грозы')
+    use(data)
+    health = data['health']
+    health['effects'] = advance_timed_effects(health, health['effects'], 612, character_data=data, advance_medication_turns=True)
+    assert not any(effect['type'] == 'sleep' for effect in health['effects'])
+    assert CombatService._consumable_stat_value_bonus(data, 'breathless_immunity') == 0
+
+
+def test_storm_heart_suppresses_existing_breathlessness_in_client_state(grenade_game):
+    actor = grenade_game['actor_location']
+    data = ready(name='Сердце грозы')
+    use(data)
+    actor.character.data = data
+    actor.strenuous_movement_blocked_until_round = 100
+    db.session.commit()
+    assert actor.strenuous_movement_blocked_until_round == 100
+    assert CombatService._serialize_character(actor)['strenuous_movement_blocked_until_round'] == 0
+
+
+def test_sniper_reposition_uses_same_breathlessness_immunity_as_actual_movement(grenade_game):
+    from app.services.sniper_position import status as sniper_status
+    actor = grenade_game['actor_location']
+    data = ready(name='Сердце грозы')
+    data['health']['combatMeta'] = {'sniperOldCover': {'id': -1, 'expires_after_round': 2}}
+    actor.character.data = data
+    actor.strenuous_movement_blocked_until_round = 100
+    actor.movement_mode_this_turn = 'walk'
+    db.session.commit()
+    assert sniper_status(actor)['mode'] == 'walk'
+    use(actor.character.data)
+    assert sniper_status(actor)['mode'] == 'run'
