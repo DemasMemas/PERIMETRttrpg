@@ -57,6 +57,13 @@ def test_unknown_class_price_is_not_invented():
         modification_quote('weapon', 2, 'неизвестный', 17)
 
 
+def test_identity_spoofing_and_narrative_voice_have_confirmed_complexity():
+    from app.services.pda_modifications import rule_by_id,GROUPS
+    identity=rule_by_id('pda-b21');voice=rule_by_id('pda-b22')
+    assert identity['difficulty_group']=='Очень высокая' and GROUPS[identity['difficulty_group']][0]==90
+    assert voice['difficulty_group']=='Высокая' and GROUPS[voice['difficulty_group']][0]==70
+
+
 def test_catalog_contains_all_variants_and_preserves_recipe_choices():
     data = catalog()
     weapon = [item for item in data['modifications'] if item['kind'] == 'weapon']

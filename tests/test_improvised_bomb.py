@@ -23,6 +23,14 @@ def equip_bomb(pair):
     character.data=data;db.session.commit()
 
 
+def test_improvised_bomb_uses_confirmed_noise_through_common_explosion(grenade_game,monkeypatch):
+    calls=[]
+    monkeypatch.setattr('app.services.noise.apply',lambda *args,**kwargs:calls.append(args[4]) or [])
+    profile=CombatService._explosive_profile({'name':'Кустарная бомба'})
+    result=CombatService.resolve_explosion(grenade_game['location'].id,11,11,profile)
+    assert not result.get('awaiting_gm') and calls==[20]
+
+
 @pytest.mark.parametrize('distance,fragment,penetration,blast',[(0,800,50,800),(1,760,45,700),
     (2,722,40,600),(3,685.9,35,500),(4,651.605,30,400)])
 def test_radial_table_matches_creation_book(distance,fragment,penetration,blast):

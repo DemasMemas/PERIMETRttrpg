@@ -13,7 +13,7 @@ def _clear_cleanup(session):
 
 PROFILE={'label':'Кустарная бомба','fragment':800,'radius':4,'penetration':50,
     'blast_base':800,'blast_falloff':100,'projectile_range':None,'fuse':'contact',
-    'contact_chance':50,'radial_first_distance':0,
+    'contact_chance':50,'noise':20,'radial_first_distance':0,
     'radial_damage':{'fragments':[800,760,722,685.9,651.605],
         'penetration':[50,45,40,35,30],'blast':[800,700,600,500,400]}}
 
@@ -22,7 +22,7 @@ def templates():
     from app.services.catalog_import import template
     return [template('Кустарная бомба','grenade',0,.5,1,
         'При контакте с поверхностью взрывается с шансом 50%. Иначе остаётся целой: можно подобрать. '
-        'Выстрел в корпус или воздействие другого взрыва вызывает подрыв. Радиус 4 м, в центре 800 осколочного урона и 800 урона волны.',
+        'Выстрел в корпус или воздействие другого взрыва вызывает подрыв. Радиус 4 м, в центре 800 осколочного урона и 800 урона волны. Шум 20.',
         'Ручные',{'not_for_sale':True,'craft_only':True,'source_recipe_id':'recipe-v20','fragile_explosive':True})]
 
 

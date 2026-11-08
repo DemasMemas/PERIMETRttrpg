@@ -2367,7 +2367,7 @@
       "name": "Кустарная Отвертка",
       "skill": "other.engineering",
       "group": "Инструменты",
-      "output_name": "Кустарная Отвертка",
+      "output_name": "Отвертка",
       "output_count": 1,
       "components": [
         {
@@ -2457,7 +2457,7 @@
       "name": "Кустарные Кусачки",
       "skill": "other.engineering",
       "group": "Инструменты",
-      "output_name": "Кустарные Кусачки",
+      "output_name": "Кусачки",
       "output_count": 1,
       "components": [
         {
@@ -6228,14 +6228,14 @@
     {
       "id": "pda-b21",
       "kind": "pda",
-      "difficulty_group": "Высокая",
+      "difficulty_group": "Очень высокая",
       "name": "Замена данных",
       "description": "Позволяет замаскировать свои реальные данные на любые другие, включая программное изменение голоса при передаче аудио"
     },
     {
       "id": "pda-b22",
       "kind": "pda",
-      "difficulty_group": "Очень высокая",
+      "difficulty_group": "Высокая",
       "name": "Подмена голоса",
       "description": "При наличии образцов голоса человека позволяет имитировать его речь в голосовых звонках"
     },

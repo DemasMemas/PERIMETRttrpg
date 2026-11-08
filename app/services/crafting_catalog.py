@@ -91,6 +91,9 @@ def parse_recipes(rows):
                 return
             value = recipe(f'{cell}{index}', *args, **kwargs)
             if value:
+                # Автор подтвердил обычные каталожные результаты этих двух рецептов.
+                value['output_name']={'recipe-m29':'Отвертка','recipe-m30':'Кусачки'}.get(value['id'],value['output_name'])
+                if value['id']=='recipe-m22':value['name']=value['output_name']='Мешок с песком'
                 result.append(value)
         add('F', row.get('F'), row.get('G'), row.get('H'), row.get('I'), '20 минут',
             'other.engineering', 'Электроника')
@@ -222,6 +225,9 @@ def parse_creation_catalog(workbook_path):
             'name': text(row.get('B')), 'description': text(row.get('C'))}
            for index, row in enumerate(pda_rows, 1) if text(row.get('A')) in {'Низкая', 'Средняя', 'Высокая', 'Очень высокая'}
            and row.get('B') and row.get('__row__', index) < 28]
+    for rule in pda:
+        if rule['id'] in {'pda-b21','pda-b22'}:
+            rule['difficulty_group']='Очень высокая' if rule['id']=='pda-b21' else 'Высокая'
     flame_recipes=[]
     for kind,weapon,tank,capacity,row in [('jet','Струйный огнемёт','Бак для струйного огнемета',8,37),('reactive','Реактивный огнемёт','Баллон для реактивного огнемета',16,46)]:
         flame_recipes.append(recipe(f'flame-{row}',weapon,'Металлические детали (15), Резина (6), Клей, Зажигалка, Датчик' if kind=='jet' else 'Металлические детали (25), Резина (10), Клей, Зажигалка, Датчик',65 if kind=='jet' else 70,'Станок Оружейника','1 час','engineering','Огнемёты'))

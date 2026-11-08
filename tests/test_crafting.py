@@ -32,6 +32,33 @@ def call(client,workshop,auth_headers,operation,**payload):
 def units(data,name):return sum(_available_uses(i) for i in data['inventory']['pockets'] if i['name']==name)
 
 
+@pytest.mark.parametrize('recipe_id,name,materials',[('recipe-m29','Отвертка',[('Металлические детали',3),('Веревка 10м',1)]),
+    ('recipe-m30','Кусачки',[('Металлические детали',4),('Резина',1)])])
+def test_handmade_recipe_creates_the_ordinary_catalog_tool(client,workshop,auth_headers,monkeypatch,recipe_id,name,materials):
+    from app.services.equipment_catalog import load_catalog
+    from app.services.crafting import normalized,quote
+    row=next(r for r in load_catalog() if normalized(r['name'])==normalized(name))
+    template=ItemTemplate(**row);db.session.add(template)
+    character=workshop['actor_character'];actor=workshop['actor_location'];data=deepcopy(character.data)
+    data['features']={'specialTraits':[{'name':'Мастер на все руки'}]}
+    data['inventory']['pockets']=[{'name':label,'category':'crafting_material','quantity':count} for label,count in materials]
+    character.data=data
+    db.session.add(LocationObject(location_id=workshop['location'].id,type='household_workbench',name='Печь',
+        tile_x=actor.pos_x,tile_y=actor.pos_y,properties={'craft_workbench':'Печь'}))
+    db.session.commit()
+    plan=quote(character,character.data,{'recipe_id':recipe_id})
+    assert not plan['missing'],plan['missing'];assert plan['output_id']==template.id
+    monkeypatch.setattr('app.services.crafting.resolve_creation',lambda quote:{'success':True,'roll':100,'automatic':False})
+    started=call(client,workshop,auth_headers,'start',recipe_id=recipe_id)
+    assert started.status_code==200,started.json
+    workshop['lobby'].game_time_minutes+=20;db.session.commit()
+    finished=call(client,workshop,auth_headers,'finish',job_id=started.json['result']['id'],chosen_loss=[0]*started.json['result']['quote']['failure_loss']['chosen'])
+    assert finished.status_code==200 and finished.json['result']['success'],finished.json
+    items=[item for item in finished.json['data']['inventory']['pockets'] if item.get('templateId')==template.id]
+    assert len(items)==1 and items[0]['name']==template.name
+    assert (items[0]['weight'],items[0]['volume'])==(template.weight,template.volume)
+
+
 def test_pda_modification_is_installed_on_selected_device(client,workshop,auth_headers,monkeypatch):
     character=workshop['actor_character'];data=deepcopy(character.data)
     data['features']={'specialTraits':[{'name':'Программист'}]}
