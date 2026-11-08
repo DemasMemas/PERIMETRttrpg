@@ -140,6 +140,24 @@ def test_shard_general_damage_can_kill_without_zone_damage_or_repeating_backlash
     assert all(zone['current']==zone['max'] for zone in target.character.data['health']['zones'].values())
 
 
+@pytest.mark.parametrize('kind,expected',[('physical',50),('thermal',55),('electric',50),('chemical',50)])
+def test_blood_flame_increases_only_incoming_thermal_damage(grenade_game,kind,expected):
+    target=grenade_game['target_location'];target.character.data=equipped('Пламень крови');db.session.commit()
+    result=CombatService._apply_general_damage(target,50,damage_type=kind)
+    assert result['damage']==expected
+    assert result['current_health']==700-expected
+
+
+def test_blood_flame_increases_thermal_zone_damage_once_and_stops_when_removed(grenade_game):
+    target=grenade_game['target_location'];target.character.data=equipped('Пламень крови');db.session.commit()
+    health=CombatService._apply_attack_damage(target,50,'chest',{'damage_type':'crushing'},damage_type='thermal',trauma_checks=0,allow_bleeding=False)
+    assert health['current']==645
+    assert health['zones']['chest']['current']==health['zones']['chest']['max']-55
+    data=deepcopy(target.character.data);data['equipment']={};target.character.data=data
+    result=CombatService._apply_general_damage(target,50,damage_type='thermal')
+    assert result['damage']==50 and result['current_health']==595
+
+
 @pytest.mark.parametrize('name,rounds,movement,physical,bleeding',[
     ('Пламень крови',3,-1,0,0),('Огненная вена',3,0,5,0),('Дар пламени',2,-1,0,3),
 ])

@@ -89,7 +89,7 @@ def artifact_passive_profile(character_data):
         'skill_all': 0, 'skill_physical': 0, 'skill_other': 0,
         'skill_strength': 0, 'skill_will': 0, 'skill_awareness': 0,
         'skill_stealth': 0, 'accuracy': 0, 'movement_penalty': 0,
-        'melee_damage_percent': 0, 'incoming_physical_percent': 0,
+        'melee_damage_percent': 0, 'incoming_physical_percent': 0, 'incoming_thermal_percent': 0,
         'armor_damage_reduction': 0, 'throw_range_bonus': 0,
         'strenuous_action_cost': 0, 'breath_duration_bonus': 0,
         'bleeding_severity': 0, 'radiation_per_movement': 0,
@@ -137,6 +137,7 @@ def artifact_passive_profile(character_data):
         )
         result['melee_damage_percent'] += _percent(text, r'Урон в ближнем бою')
         result['incoming_physical_percent'] += _percent(text, r'Входящий физический урон')
+        result['incoming_thermal_percent'] += _percent(text, r'Увеличен Термический урон')
         armor_reduction = re.search(
             r'Получаемый урон по броне снижен на\s*(\d+)', text, re.IGNORECASE,
         )
@@ -227,6 +228,11 @@ def healing_amount(character_data,amount):
     value=float(amount)
     if value<=0 or not character_data:return value
     return value*artifact_passive_profile(character_data)['healing_multiplier']
+
+
+def incoming_thermal_damage(character_data,amount,damage_type):
+    if damage_type!='thermal' or amount<=0:return amount
+    return amount*max(0,100+artifact_passive_profile(character_data)['incoming_thermal_percent'])/100
 
 
 def radiation_clock_removed(character_data,effect,amount,*,health):

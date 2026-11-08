@@ -14,7 +14,7 @@ from app.services.action_journal import journaled
 from app.models.templates import ItemTemplate
 from app.services.exceptions import NotFoundError, PermissionDenied, ValidationError
 from app.services.effects import health_blocks_new_stress, advance_timed_effects, apply_effect_to_health, apply_expired_effects_to_health, apply_periodic_effects_to_health, normalize_character_effects, normalize_effect_list, sync_health_derived_statuses, tick_effects
-from app.services.artifact_effects import artifact_passive_profile
+from app.services.artifact_effects import artifact_passive_profile,incoming_thermal_damage
 from app.services.magazine import validate_magazine_selection, install_magazine
 from app.services.deferred_action import (
     durable_combat_action, snapshot_action_arguments, remember_action,
@@ -6228,6 +6228,7 @@ class CombatService:
         for reaction in reactions:
             protection=CombatService._target_elemental_protection(data,reaction['damage_type'],target=target)
             applied=reaction['raw_damage']*max(0,100-protection)/100
+            applied=incoming_thermal_damage(data,applied,reaction['damage_type'])
             if CombatService._combat_background_active(target,'Стойкий'):applied*=.9
             applied=max(0,round(applied))
             reaction.update(damage=applied,protection=protection)
@@ -6274,6 +6275,7 @@ class CombatService:
             return health
         stoic_active=CombatService._combat_background_active(target,'Стойкий')
         if stoic_active:damage=max(0,damage*.9)
+        damage=incoming_thermal_damage(data,damage,damage_type)
         stop_layer=None
         if zone=='head' and damage>10:
             from app.services.equipment_modifications import stop_layer_candidate,consume_stop_layer
@@ -7143,6 +7145,7 @@ class CombatService:
         damage = max(0, round(CombatService._coerce_float(damage, 0)))
         data = dict(target.character.data or {})
         if CombatService._combat_background_active(target,'Стойкий'):damage*=.9
+        damage=incoming_thermal_damage(data,damage,damage_type)
         previous_condition = CombatService._character_condition(data)['state']
         health = apply_health_maximums(data)
         before_health=deepcopy(health)

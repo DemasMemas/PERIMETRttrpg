@@ -28,7 +28,7 @@ module.exports=async({page,request,token,lobby,base,safeSession})=>{
         await request(loc+'/combat/end_turn',{location_character_id:second.location_character_id},token);
     };
     await round();const hit=await get(),active=reactions(hit.data);assert.equal(active.length,1);assert.equal(active[0].value,-1);
-    assert.equal(before.data.health.current-hit.data.health.current,50);
+    assert.equal(before.data.health.current-hit.data.health.current,55);
     await page.until("document.getElementById('character-sheet-modal')?.innerText.includes('Пламень крови: реакция на термический урон')",'Реакция появилась в листе по игровому событию');
     assert.equal(hit.data._artifact_profile.movement_penalty,-1);
     let changed=await get();changed.data.health.effects=changed.data.health.effects.filter(e=>!e.source?.startsWith('artifact-reaction:'));
@@ -65,7 +65,7 @@ module.exports=async({page,request,token,lobby,base,safeSession})=>{
     assert.equal(prior.data.health.zones.chest.current-after.data.health.zones.chest.current,hitResult.damage);
     await request(loc+'/combat/end',{},token);
     fs.writeFileSync(path.join(safeSession.artifacts,'artifact-reactions.json'),JSON.stringify({scene:'Припять',artifact:rule.name,
-        damage:50,initialSeconds:active[0].remaining_seconds,nextSeconds:reactions(next.data)[0].remaining_seconds,
+        damage:55,initialSeconds:active[0].remaining_seconds,nextSeconds:reactions(next.data)[0].remaining_seconds,
         persistedAfterSave:true,expired:true,networkVisible:true,shard:{roll:50,damage:hitResult.damage,backlash:40,poolOnly:true}},null,2));
     console.log('Артефакты: настоящее горение, временный штраф, сохранение, сетевое обновление и истечение по раундам проверены в Припяти.');
     console.log('Пылающий осколок: настоящее попадание, 50% на границе, 50 термического до защиты/40 после, только общий пул ОЗ.');
