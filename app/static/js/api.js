@@ -193,6 +193,11 @@ export const Server = {
             method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
         });
     },
+    async operateAutoInjector(characterId,payload) {
+        return apiFetch(`/lobbies/characters/${characterId}/auto-injector`,{
+            method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload),
+        });
+    },
     async performSocialCheck(characterId,payload) {
         return apiFetch(`/lobbies/characters/${characterId}/social-check`, {
             method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload),

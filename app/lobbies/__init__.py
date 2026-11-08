@@ -3825,6 +3825,18 @@ def roll_lobby_time_plan(lobby_id,plan_id,lobby,participant):
     return jsonify(result),200
 
 
+@lobbies_bp.route('/characters/<int:character_id>/auto-injector', methods=['POST'])
+@jwt_required()
+def operate_auto_injector(character_id):
+    from app.services.auto_injector import operate
+    user_id=int(get_jwt_identity())
+    character,actor,result=operate(character_id,user_id,request.get_json(silent=True) or {})
+    emit_character_update({'character_id':character.id,'updates':{'data':character.data_snapshot()},'source':'auto_injector'},
+        snapshot_projector=_public_medical_character_snapshot)
+    if actor:socketio.emit('combat_state_updated',CombatService.get_state(actor.location_id,user_id),room=f'location_{actor.location_id}')
+    return jsonify({'data':_public_medical_character_snapshot(character.data_snapshot()),'operation':result}),200
+
+
 @lobbies_bp.route('/characters/<int:character_id>/medical-procedure', methods=['POST'])
 @jwt_required()
 def apply_medical_procedure(character_id):
@@ -3852,6 +3864,10 @@ def apply_medical_procedure(character_id):
         socketio.emit('location_character_posture_updated', posture_update,
                       room=f"location_{posture_update['location_id']}")
     location_id = payload.get('combat_location_id')
+    if payload.get('auto_injector_payment'):
+        placement=LocationCharacter.query.join(LocationCombatState,LocationCombatState.location_id==LocationCharacter.location_id).filter(
+            LocationCharacter.character_id==character_id,LocationCombatState.status=='active').first()
+        location_id=placement.location_id if placement else None
     if type(location_id) is int:
         state = CombatService.get_state(location_id, user_id)
         socketio.emit('combat_state_updated', state, room=f'location_{location_id}')

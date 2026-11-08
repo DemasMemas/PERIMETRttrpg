@@ -88,6 +88,11 @@ def preserve(current,incoming):
     for path,item in walk(incoming,True):
         if item.get('category') in {'armor','helmet','gas_mask'} and item.get('id'):
             old=previous.get(item['id'])
+            from app.services.auto_injector import loaded,SLOT
+            old_injections=[deepcopy(module) for _,module in loaded(old)]
+            if old_injections or loaded(item):
+                item['installedModules']=[module for module in item.get('installedModules') or []
+                    if not isinstance(module,dict) or module.get('slotType')!=SLOT]+old_injections
             if old and old.get('stage3DamageType') is not None:
                 item['stage3DamageType']=old['stage3DamageType']
             else:item.pop('stage3DamageType',None)

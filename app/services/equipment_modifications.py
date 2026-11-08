@@ -31,6 +31,7 @@ DIRECT_ARMOR={'armor-'+key for key in ('a5','a6','a7','a9','a10','a18','a19','a2
     'd5','d6','d9','d11','d15','d18','d19','d20','d31','g5','g7','g29','g30','g31','g41','g42','g50','g51','g52')}
 
 SPECIAL_ARMOR={
+ 'a15':({}, {'auto_injector':True}),'a31':({}, {'auto_injector':True}),
  'a24':({'physical':5,'durability':5},{'incoming_trauma_disadvantage':True}),
  'a14':({}, {'stealth_hiding_bonus':4}),
  'd23':({}, {'anomaly_escape_reduction':3}),'a34':({}, {'fixed_reload_extra':1}),
@@ -76,6 +77,10 @@ def supported(rule):
 def install(item,record,replacing=None):
     previous=next((r for r in installed(item) if r['ruleId']==replacing),None)
     proposed=[m for m in item.get('modifications') or [] if not isinstance(m,dict) or m.get('ruleId')!=replacing]+[record]
+    if previous and previous.get('ruleId') in {'armor-a15','armor-a31'} and not any(
+            mod.get('ruleId') in {'armor-a15','armor-a31'} for mod in proposed if isinstance(mod,dict)):
+        from app.services.auto_injector import loaded
+        if loaded(item):raise ValidationError('Сначала извлеките препарат из автоинъектора')
     if previous and (previous.get('rules') or {}).get('visor_light_mount') and not any(
             (mod.get('rules') or {}).get('visor_light_mount') for mod in proposed if isinstance(mod,dict)):
         if any(module.get('slotType')=='light' for module in item.get('installedModules') or [] if isinstance(module,dict)):

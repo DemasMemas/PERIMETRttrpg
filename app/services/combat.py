@@ -1715,6 +1715,8 @@ class CombatService:
         equipment = equipment if isinstance(equipment, dict) else {}
 
         carried_items = []
+        from app.services.auto_injector import loaded as injector_loaded
+        carried_items.extend(item for _,item in injector_loaded(equipment.get('armor')))
         carried_items.extend(entry['item'] for entry in ((character_data.get('crafting') or {}).get('current') or {}).get('escrow',[]))
         for key in ('backpack', 'pockets'):
             values = inventory.get(key)

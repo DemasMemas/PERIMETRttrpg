@@ -1105,8 +1105,18 @@ class MedicalProcedureService:
         if not actor or not target or actor.lobby_id != target.lobby_id:
             raise NotFoundError('Врач или пациент не найден')
         CharacterService.check_access(actor, user_id, edit=True)
+        injector_payment=payload.get('auto_injector_payment')
+        if injector_payment is not None:
+            from app.services.auto_injector import combat_actor,validate_source
+            if not isinstance(injector_payment,str) or injector_payment not in {'action','free'} or actor.id!=target.id or payload.get('deferred_action_id'):
+                raise ValidationError('Автоинъектор применяется только к себе за 1 ОД или 1 СД')
+            injector_actor=combat_actor(actor,user_id)
+            source=payload.get('source') or {}
+            validate_source(actor.data or {},source.get('path'),source.get('snapshot') or {},actor.lobby_id)
+            payload={**payload,'combat_location_id':injector_actor.location_id if injector_actor else None,
+                'actor_location_character_id':injector_actor.id if injector_actor else None}
         actor_model, _, _ = _combat_context(actor, target, user_id, payload)
-        if actor_model and not payload.get('deferred_action_id'):
+        if actor_model and not payload.get('deferred_action_id') and injector_payment is None:
             raise ValidationError('В бою медицинскую процедуру нужно сначала оплатить')
 
         source = payload.get('source')
@@ -1158,6 +1168,9 @@ class MedicalProcedureService:
         required_uses = requirements['required_uses']
         base_difficulty = requirements['base_difficulty']
         requires_roll = requirements['requires_roll']
+        if injector_payment is not None:
+            requires_roll=False
+            if application.get('fineWork'):raise ValidationError('Автоинъектор не требует Тонкой работы')
         if application.get('fineWork'):
             from app.services.character_traits import trait_count
             _minimum_treatment_cost(actor_data,direct,canonical_application,application)
@@ -1191,6 +1204,16 @@ class MedicalProcedureService:
             'application': application,
             'server_authoritative': True,
         }, actor.lobby_id)
+        if injector_payment is not None:
+            cost=1 if actor_model and injector_payment=='action' else 0
+            free=1 if actor_model and injector_payment=='free' else 0
+            if actor_model:
+                if actor_model.action_points_current<cost or actor_model.free_actions_current<free:
+                    raise ValidationError('Для автоинъектора нужен 1 ОД или 1 СД')
+                actor_model.action_points_current-=cost;actor_model.free_actions_current-=free
+                from app.services.combat import CombatService
+                CombatService._clear_aim(actor_model)
+            payment_details={'total_action_points':cost,'free_actions':free,'retrieval_action_points':0,'auto_injector':True}
         if completion:
             paid_action_points = completion.payload.get('paid_action_points')
             if (

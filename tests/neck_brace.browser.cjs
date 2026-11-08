@@ -53,4 +53,5 @@ module.exports=async({page,request,token,lobby,offered,loc,npc,shooter,gunner,sa
         if(width===1280)fs.writeFileSync(path.join(safeSession.artifacts,'neck-brace-1280x720.png'),Buffer.from((await page.call('Page.captureScreenshot',{format:'png'})).data,'base64'));
     }
     console.log('Фиксатор шеи: штатная установка, заблокированное непробитие, ожидание 10 игровых минут, выбор близкого инженера и успешная перезарядка через интерфейс; четыре настольных размера.');
+    await require('./auto_injector.browser.cjs')({page,request,token,lobby,offered,loc,npc,safeSession});
 };

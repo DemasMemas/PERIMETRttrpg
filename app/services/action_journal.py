@@ -114,7 +114,7 @@ def record(actor, values, before, result=None, error=None):
     label = next((item['label'] for item in ACTION_CATALOG if item['key'] == key),
                  {'move':'Перемещение','end_turn':'Конец хода','end_combat':'Конец боя',
                   'weapon_grip':'Смена хвата','consumable_use':'Применение предмета','medical_procedure':'Медицинская процедура',
-                  'equipment_care':'Обработка перчаток',
+                  'equipment_care':'Обработка перчаток','auto_injector':'Автоинъектор',
                   'spend_resources':'Расход ресурсов','portable_light':'Фонарь','body_transport':'Переноска'}.get(key, 'Действие'))
     if key=='portable_light':
         label={'pda_profile':'Переключение профиля КПК','pda_wipe':'Очистка КПК'}.get(payload.get('operation'),label)

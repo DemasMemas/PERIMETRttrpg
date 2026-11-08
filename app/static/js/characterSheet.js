@@ -2123,6 +2123,7 @@ function calculateCarriedWeight(data) {
     const inv = data?.inventory || {};
     const eq = data?.equipment || {};
     const items = [];
+    items.push(...(eq.armor?.installedModules||[]).filter(item=>item?.slotType==='auto_injector'));
     items.push(...(data?.crafting?.current?.escrow || []).map(entry=>entry.item));
     if (Array.isArray(inv.backpack)) items.push(...inv.backpack);
     if (Array.isArray(inv.pockets)) items.push(...inv.pockets);
@@ -4631,6 +4632,17 @@ async function renderEquipmentTab(data) {
                     </div>
                 </div>
             </div>
+            ${armor.modifications?.some(mod=>['armor-a15','armor-a31'].includes(mod?.ruleId))?`
+                <div class="auto-injector-controls" data-auto-injector>
+                    <strong>Автоинъектор:</strong>
+                    ${(()=>{const index=(armor.installedModules||[]).findIndex(item=>item?.slotType==='auto_injector');
+                        const combat=window.locationCombatState?.status==='active';
+                        return index<0?`<span>Пусто</span><button type="button" class="btn btn-sm" onclick="window.loadAutoInjector()">Загрузить препарат${combat?' · 5 ОД':''}</button>`
+                        :`<span>${escapeHtml(armor.installedModules[index].name)}</span>
+                            <button type="button" class="btn btn-sm" onclick="window.useAutoInjector('action')">Применить${combat?' · 1 ОД':''}</button>
+                            ${combat?`<button type="button" class="btn btn-sm" onclick="window.useAutoInjector('free')">Применить · 1 СД</button>`:''}
+                            <button type="button" class="btn btn-sm btn-secondary" onclick="window.unloadAutoInjector()">Извлечь${combat?' · 3 ОД':''}</button>`;})()}
+                </div>`:''}
             <!-- Слоты брони всегда занимают отдельную строку. -->
                 ${renderSlotsUniversal(armor, ['equipment', 'armor']) ? `
                     <div class="equipment-slots-row">
@@ -5595,6 +5607,47 @@ window.useSparePlates = async function() {
         medicalRemoteUpdate=null;medicalOperationInProgress=false;await refreshSavedSheet(characterId);
     }}
 };
+
+window.useAutoInjector = async function(payment) {
+    const index=(currentCharacterData?.equipment?.armor?.installedModules||[]).findIndex(item=>item?.slotType==='auto_injector');
+    if(index<0)return;
+    try {
+        if(await useCharacterInventoryItem(currentCharacterId,['equipment','armor','installedModules',index],{autoInjectorPayment:payment}))
+            await renderEquipmentTab(currentCharacterData);
+    } catch(error){showNotification(error.message||'Не удалось применить автоинъектор','system');}
+};
+window.loadAutoInjector = () => changeAutoInjector('load');
+window.unloadAutoInjector = () => changeAutoInjector('unload');
+async function changeAutoInjector(operation) {
+    if(medicalOperationInProgress||!currentCharacterCanEdit)return;
+    const characterId=currentCharacterId;let locked=false;
+    try {
+        await forceSyncCharacter();await Server.waitForCharacterSave(characterId);
+        if(currentCharacterId!==characterId||sheetSaveBlocked||medicalOperationInProgress)return;
+        medicalOperationInProgress=locked=true;medicalRemoteUpdate=null;
+        let source;
+        if(operation==='load'){
+            const choices=collectInventoryEntries(currentCharacterData,item=>
+                getInventoryItemTemplate(item)?.attributes?.consumable?.direct?.application_form==='injectable')
+                .map(entry=>({label:entry.item.name,source:{path:entry.path,snapshot:JSON.parse(JSON.stringify(entry.item))}}));
+            if(!choices.length){showNotification('В инвентаре нет инъекционных препаратов','system');return;}
+            const choice=await chooseConsumableApplication('Препарат для автоинъектора',choices,{alwaysShow:true});
+            if(!choice||currentCharacterId!==characterId)return;source=choice.source;
+        }
+        const response=await Server.operateAutoInjector(characterId,{operation,character_revision:currentCharacterData._revision,
+            armor_id:currentCharacterData.equipment.armor.id,...(source?{source}:{})});
+        if(currentCharacterId!==characterId)return;
+        currentCharacterData=response.data;
+        await renderEquipmentTab(currentCharacterData);renderInventoryTab(currentCharacterData);
+        showNotification(operation==='load'?'Препарат загружен':'Препарат извлечён в карманы','success');
+    }catch(error){showNotification(error.message||'Не удалось изменить автоинъектор','system');}
+    finally{if(locked){
+        if(currentCharacterId===characterId&&medicalRemoteUpdate?.character_id===Number(characterId)
+            &&Number(medicalRemoteUpdate.data?._revision)>Number(currentCharacterData?._revision))currentCharacterData=medicalRemoteUpdate.data;
+        medicalOperationInProgress=false;medicalRemoteUpdate=null;
+        if(currentCharacterId===characterId)await refreshSavedSheet(characterId);
+    }}
+}
 
 window.rechargeNeckBrace = () => window.rechargeLiquidCrystal('neck_brace');
 window.rechargeLiquidCrystal = async function(kind='liquid_crystal') {
@@ -11672,7 +11725,7 @@ async function useConsumable(item, itemPath, options = {}) {
         && !unsupportedGeneralFields.some(key => Boolean(direct[key]))
     );
     let medicalOperationId = options.deferredActionId || null;
-    if (serverMedicalProcedure && !options.skipCombatPayment && !application.fineWork
+    if (serverMedicalProcedure && !options.autoInjectorPayment && !options.skipCombatPayment && !application.fineWork
         && traitCount(currentCharacterData,'Тонкая работа') && Number(application.actionPoints)>=3) {
         const cost=Number(application.actionPoints),reduction=traitCount(currentCharacterData,'Тонкая работа')>=2?6:4;
         const choice=await chooseConsumableApplication('Способ лечения',[
@@ -11682,7 +11735,7 @@ async function useConsumable(item, itemPath, options = {}) {
         if (!choice) return false;
         if (choice.fineWork) { application.fineWork=true;application.actionPoints=cost*2; }
     }
-    if (isCombatActive && !options.skipCombatPayment) {
+    if (isCombatActive && !options.skipCombatPayment && !options.autoInjectorPayment) {
         let pendingActionId = null;
         try {
             // Persist the selection with payment before the server advances the turn.
@@ -11728,6 +11781,7 @@ async function useConsumable(item, itemPath, options = {}) {
                     ? Number(options.interactionContext?.actorLocationCharacterId || actor?.location_character_id)
                     : null,
                 interaction_request_id: options.treatmentRequestId || null,
+                ...(options.autoInjectorPayment?{auto_injector_payment:options.autoInjectorPayment}:{}),
             });
             options.serverMedicalResult = response;
             const result = response.medical_result || {};

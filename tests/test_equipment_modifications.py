@@ -182,7 +182,7 @@ def test_shattered_mount_preserves_and_switches_off_devices_without_free_reactiv
 
 
 @pytest.mark.parametrize('rule_id,family,previous',[('armor-d11','Аномальная',['armor-d9','armor-d10']),
-    ('armor-d31','Экзоскелет',[]),('armor-d14','Аномальная',[])])
+    ('armor-d31','Экзоскелет',[]),('armor-d14','Аномальная',[]),('armor-a15','Лёгкая',[]),('armor-a31','Средняя',[])])
 def test_existing_sealing_and_reanimation_effects_are_installable_at_specialist(workshop,rule_id,family,previous):
     from app.services.professional_modification import quote,perform
     from app.services.equipment_care import consume_reanimation
@@ -212,6 +212,9 @@ def test_existing_sealing_and_reanimation_effects_are_installable_at_specialist(
         assert armor['reanimationCharge'] is True and consume_reanimation(owner.data)
         assert owner.data['health']['painLevel']==0 and owner.data['health']['zones']['head']['current']==60
         assert not consume_reanimation(owner.data)
+    elif rule_id in {'armor-a15','armor-a31'}:
+        from app.services.auto_injector import available
+        assert available(armor)
     else:
         from app.services.electronics import electric_protection
         assert electric_protection(owner.data,{'name':'КПК'})
