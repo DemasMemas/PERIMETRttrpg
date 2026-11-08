@@ -36,6 +36,13 @@ const CASES=Object.freeze({
             'Настоящий луч опускается на высоту пояса; двуручное оружие доступно.',
             'ХИС продолжает гореть без перезапуска 30-минутного таймера.',
             'Кнопки и оба источника доступны на четырёх размерах настольного окна.']},
+    'belt-artifact':{version:1,profile:'equipment',title:'Пояс: открытый артефакт',
+        source:'Создание.xlsx · Пояс · Крепление для артефакта',card:'https://trello.com/c/zCVR4OYe',
+        rule:'На поясе действует один артефакт со своими положительными и отрицательными свойствами, без защиты специального контейнера.',
+        expected:['На крепление помещается один физический артефакт; масса учитывается.',
+            'Контрольный артефакт даёт +15% физической защиты и +2 штрафа перемещения, оба свойства участвуют в серверном профиле.',
+            'Крепление и снятие в бою стоят по 3 ОД. После снятия свойства перестают действовать.',
+            'Лист показывает полученный с сервера штраф перемещения.']},
 });
 
 function codeVersion(){
@@ -51,7 +58,7 @@ function codeVersion(){
     // Любая правка игрового кода требует пересмотра; ассеты и секреты не читаются.
     walk('app');walk('tests/helpers');
     names.push('tests/belt_attachments.browser.cjs','tests/belt_light.browser.cjs','tests/equipment_modifications.browser.cjs',
-        'tests/world_object_editor.browser.cjs','tests/water_component.browser.cjs','tests/pepper_playtest.browser.cjs','tmp/pripyat-regression.json');
+        'tests/world_object_editor.browser.cjs','tests/water_component.browser.cjs','tests/pepper_playtest.browser.cjs','tests/belt_artifact.browser.cjs','tmp/pripyat-regression.json');
     const hash=crypto.createHash('sha256');
     for(const name of [...new Set(names)].sort()){
         hash.update(name+'\0');hash.update(fs.readFileSync(path.join(root,name)));hash.update('\0');

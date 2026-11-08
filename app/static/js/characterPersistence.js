@@ -47,7 +47,7 @@ export function mergeLocalChanges(base, local, saved) {
     if (!record(base) || !record(local) || !record(saved)) return clone(local);
     const result = clone(saved);
     for (const key of new Set([...Object.keys(base), ...Object.keys(local)])) {
-        if (key === '_revision') continue;
+        if (key === '_revision' || key === '_artifact_profile') continue;
         if (!(key in local)) delete result[key];
         else if (!same(base[key], local[key])) {
             Object.defineProperty(result, key, {

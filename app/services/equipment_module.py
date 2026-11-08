@@ -86,7 +86,7 @@ def _validate_source_path(path):
     )
     from app.services.belt_attachments import tool_path
     if not direct_inventory and not equipped_pouch and not tool_path(path):
-        raise ValidationError("Фильтр нужно выбрать в инвентаре или подсумке")
+        raise ValidationError("Предмет нужно выбрать в инвентаре, подсумке или на поясе")
 
 
 def _validate_identity(item, expected, *, label):

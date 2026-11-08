@@ -21,5 +21,6 @@ module.exports=async({page,request,token,lobby,base,safeSession})=>{
     }
     await require('./belt_light.browser.cjs')({page,request,token,lobby,offered,loc,npc,safeSession});
     await require('./belt_attachments.browser.cjs')({page,request,token,lobby,offered,loc,npc,safeSession});
+    await require('./belt_artifact.browser.cjs')({page,request,token,lobby,offered,loc,npc,safeSession});
     await require('./review_screen.browser.cjs')({page,safeSession});
 };

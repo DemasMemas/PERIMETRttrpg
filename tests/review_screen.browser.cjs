@@ -3,7 +3,7 @@ const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('n
 module.exports=async({page,safeSession})=>{
     assert.equal(process.env.VTT_SAFE_SCENARIO,'equipment');assert.ok(safeSession.verified);
     const {createReview,safeFile}=require('./helpers/playtest_review.cjs'),review=createReview(),state=review.scan();
-    assert.equal(state.cases.filter(c=>c.run?.runId===path.basename(safeSession.artifacts)).length,2);
+    assert.equal(state.cases.filter(c=>c.run?.runId===path.basename(safeSession.artifacts)).length,3);
     await page.evaluate('window.closeCharacterSheet();true');
     const html=fs.readFileSync(path.join(__dirname,'helpers/playtest_review.html'),'utf8')
         .replace(/<link[^>]+>/g,'').replace(/<script[^>]+><\/script>/g,'');
@@ -20,7 +20,7 @@ module.exports=async({page,safeSession})=>{
         const images=${JSON.stringify(imageMap)},observer=new MutationObserver(()=>{document.querySelectorAll('img').forEach(img=>{const value=images[img.getAttribute('src')];if(value)img.src=value;});});
         observer.observe(document.documentElement,{childList:true,subtree:true});
         (0,eval)(${JSON.stringify(script)});return true})()`);
-    await page.until("document.querySelectorAll('#cases button').length===6",'Экран плейтеста построен');
+    await page.until("document.querySelectorAll('#cases button').length===7",'Экран плейтеста построен');
     await page.evaluate("[...document.querySelectorAll('#cases button')].find(b=>b.textContent.includes('Пояс: четыре инструмента')).click();true");
     await page.until("document.getElementById('title')?.textContent==='Пояс: четыре инструмента'",'Случай с инструментами');
     assert.equal(await page.evaluate("document.getElementById('accept').disabled"),true,'Текущий стенд ещё не закрыт, приёмка запрещена');

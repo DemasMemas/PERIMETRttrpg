@@ -8,6 +8,14 @@ const moduleUrl = 'data:text/javascript;base64,' + Buffer.from(fs.readFileSync(
 const load = () => import(moduleUrl);
 const clone = value => JSON.parse(JSON.stringify(value));
 
+test('сохранение набранного текста принимает новый профиль артефактов с сервера',async()=>{
+    const {mergeLocalChanges}=await load();
+    const result=mergeLocalChanges({notes:'',_artifact_profile:{movement_penalty:0}},
+        {notes:'текст',_artifact_profile:{movement_penalty:999}},
+        {notes:'',_artifact_profile:{movement_penalty:2}});
+    assert.equal(result.notes,'текст');assert.equal(result._artifact_profile.movement_penalty,2);
+});
+
 test('queued saves keep typing and server normalization without a stale token', async () => {
     const { createCharacterSaver } = await load();
     const sent = [];

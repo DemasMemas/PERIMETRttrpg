@@ -6,11 +6,14 @@ import re
 
 
 def equipped_artifacts(character_data):
-    equipment = character_data.get('equipment') if isinstance(character_data, dict) else {}
-    armor = equipment.get('armor') if isinstance(equipment, dict) else None
-    if not isinstance(armor, dict):
-        return []
+    equipment = (character_data.get('equipment') or {}) if isinstance(character_data, dict) else {}
+    if not isinstance(equipment,dict):return []
+    armor = equipment.get('armor')
+    armor = armor if isinstance(armor,dict) else {}
     found = []
+    from app.services.belt_attachments import available,loaded
+    belt=equipment.get('belt')
+    if available(belt,'artifact'):found.extend(item for _,item in loaded(belt,'artifact'))
     for slot in armor.get('containers') or []:
         item = slot.get('item') if isinstance(slot, dict) else None
         if not isinstance(item, dict):

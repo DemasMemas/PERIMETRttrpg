@@ -81,6 +81,9 @@ test('масса на поясе и карманы совпадают с пра�
     data.equipment.belt.modifications.push({ruleId:'armor-g61',rules:{belt_tool_mounts:4}});
     assert.equal(context.calculateCarriedWeight(data),9);
     data.equipment.belt.protectionDisabled=true;assert.equal(context.calculateCarriedWeight(data),19);
+    data.equipment.belt.installedModules.push({id:'artifact',slotType:'belt_artifact',weight:2});
+    assert.equal(context.calculateCarriedWeight(data),21);
+    data.equipment.belt.protectionDisabled=false;assert.equal(context.calculateCarriedWeight(data),10);
 });
 
 test('расширенный пояс переносит купленные подсумки без дублирования',async()=>{
@@ -116,6 +119,23 @@ test('расширенный пояс переносит купленные по
     assert.equal(context.beltPouchLimit(belt),2);
     context.window.mountPouchFromInventory('belt',['inventory','backpack',0],'owned-pouch');
     assert.equal(belt.pouches.length,2);
+});
+
+test('пересчёт инвентаря использует общую массу с креплениями и разгрузочным поясом',async()=>{
+    const api=await rules(),source=fs.readFileSync(path.join(__dirname,'../app/static/js/characterSheet.js'),'utf8');
+    const data={inventory:{pockets:[{weight:3}],backpack:[]},equipment:{belt:{pouches:[{contents:[{weight:10}]}],
+        installedModules:[{slotType:'belt_artifact',weight:2},{slotType:'belt_tool',weight:4}],
+        modifications:[{ruleId:'armor-g58',rules:{belt_weight_reduction:.5}},{ruleId:'armor-g61',rules:{belt_tool_mounts:4}}]}}};
+    const elements=new Map(),context=vm.createContext({currentCharacterData:data,modificationRule:api.modificationRule,
+        getTotalWeight:item=>item.weight||0,getTotalVolume:()=>0,migrateOldItemToNew:item=>item,pocketCapacity:()=>10,
+        getMovementPenaltyBreakdown:(_,weight)=>({total:0,weightPenalty:0,weightPerPenalty:5}),
+        document:{getElementById:id=>{if(!elements.has(id))elements.set(id,{style:{}});return elements.get(id);}}});
+    const begin=source.indexOf('function calculateCarriedWeight('),end=source.indexOf('function getMovementPenaltyBreakdown(',begin);
+    const recalc=source.indexOf('function recalculateInventoryTotals() {');
+    vm.runInContext(source.slice(begin,end)+source.slice(recalc,source.indexOf('window.selectPocketItem =',recalc)),context);
+    context.recalculateInventoryTotals();assert.equal(elements.get('total-weight-display').textContent,'9.0');
+    data.equipment.belt.protectionDisabled=true;context.recalculateInventoryTotals();
+    assert.equal(elements.get('total-weight-display').textContent,'19.0');
 });
 
 test('дополнительное крепление пояса сохраняет экземпляр шлема при снятии',async()=>{
@@ -156,6 +176,9 @@ test('система распределения веса экзоскелета 
     const data={equipment:{armor},inventory:{}};
     assert.equal(context.getMovementPenaltyBreakdown(data,5).weightPenalty,0);
     assert.equal(context.getMovementPenaltyBreakdown(data,5).unpoweredWeightUpgrade,true);
+    data._artifact_profile={movement_penalty:2};
+    assert.equal(context.getMovementPenaltyBreakdown(data,5).artifactPenalty,2);
+    assert.equal(context.getMovementPenaltyBreakdown(data,5).total,7);
     armor.installedModules=[];
     assert.equal(context.getMovementPenaltyBreakdown(data,5).weightPenalty,1);
     armor.installedModules=[{slotType:'exoskeleton_battery',attributes:{remaining_days:0}}];

@@ -8,6 +8,12 @@ const moduleUrl = 'data:text/javascript;base64,' + Buffer.from(fs.readFileSync(
 )).toString('base64');
 const load = () => import(moduleUrl);
 
+test('серверный профиль артефактов не считается редактированием листа',async()=>{
+    const {diffCharacterData}=await load();
+    assert.deepEqual(diffCharacterData({_artifact_profile:{movement_penalty:0}},{_artifact_profile:{movement_penalty:2}}),
+        {scalarPaths:[],structuralPaths:[]});
+});
+
 test('character sheet diff separates scalar fields from structural lists', async () => {
     const { diffCharacterData } = await load();
     const result = diffCharacterData(

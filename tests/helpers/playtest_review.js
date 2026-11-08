@@ -8,7 +8,8 @@
         radiation:'Радиация',exhaustion:'Истощение',stress:'Стресс',headHits:'Попаданий в голову',damage:'Контрольный урон',armor:'Броня',
         distanceMeters:'Дистанция, м',shock:'Болевой шок',shockRoll:'Бросок шока',skippedTurns:'Пропущенных ходов ожидается',
         rollPenalty:'Штраф к броскам',painPerTurn:'Боль за ход',effects:'Эффекты',timeUnit:'Единица времени',
-        painLevel:'Боль',turnSkipped:'Ход пропущен',currentActor:'Следующий ход',sameInstances:'Те же инструменты'};
+        painLevel:'Боль',turnSkipped:'Ход пропущен',currentActor:'Следующий ход',sameInstances:'Сохранены те же предметы',
+        artifact:'Артефакт',movementPenalty:'Штраф перемещения',physicalProtection:'Физическая защита, %',radiationPerMovement:'Радиация за переход'};
     let state=null,selected=null,step=0,poll=null,busy=false,lastKey='';
     const node=(tag,text,className)=>{const element=document.createElement(tag);if(text!=null)element.textContent=text;if(className)element.className=className;return element;};
     async function api(url,body){const response=await fetch(url,body?{method:'POST',headers:{'Content-Type':'application/json','X-Review-Token':state.token},body:JSON.stringify(body)}:{});

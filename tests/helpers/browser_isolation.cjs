@@ -129,7 +129,7 @@ ${scenario==='creation'?`        from character_creation_fixture import install
 `:''}${scenario==='locks'?`        from object_locks_fixture import install
         install(app, db, check_database, '${runId}')
 `:''}${['catalog','equipment','effects'].includes(scenario)?`        from catalog_picker_fixture import install
-        install(app, db, check_database, '${runId}', controlled_pepper=${scenario==='effects'?'True':'False'})
+        install(app, db, check_database, '${runId}', controlled_pepper=${scenario==='effects'?'True':'False'}, belt_artifact=${scenario==='equipment'?'True':'False'})
 `:''}${['jump','slippery'].includes(scenario)?`        from jump_fixture import install
         install(app, db, check_database, '${runId}')
 `:''}        try:

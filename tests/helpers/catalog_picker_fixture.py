@@ -4,7 +4,7 @@ import re
 from uuid import UUID
 
 
-def install(app,db,check_database,run_id,*,controlled_pepper=False):
+def install(app,db,check_database,run_id,*,controlled_pepper=False,belt_artifact=False):
     assert str(UUID(run_id))==run_id and app.testing and not app.debug
     check_database()
     from app.models.templates import ItemTemplate
@@ -30,6 +30,10 @@ def install(app,db,check_database,run_id,*,controlled_pepper=False):
         {'name':'Барьер','category':'container','price':1,'attributes':{'artifact_container_kind':'storage'}},
         {'name':'Контейнер для ношения Барьер','category':'container','price':1,'attributes':{}},
     ]))
+    if belt_artifact:
+        legacy.append(ItemTemplate(id=9600,name='Контрольный артефакт крепления',category='artifact',weight=2,volume=2,
+            attributes={'positive_effect':'Защита от физического урона +15%',
+                        'negative_effect':'Штраф перемещения +2 3 Радиации за перемещение'}))
     db.session.add_all(legacy);db.session.commit()
     # Для завершающего попадания в забрало: успешный к20 и известная лицевая зона.
     from types import SimpleNamespace

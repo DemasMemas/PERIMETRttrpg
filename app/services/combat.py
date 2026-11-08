@@ -1715,9 +1715,9 @@ class CombatService:
         equipment = equipment if isinstance(equipment, dict) else {}
 
         carried_items = []
-        from app.services.belt_attachments import loaded as belt_tools, available as tool_mounts
+        from app.services.belt_attachments import weight_items as belt_items
         belt=equipment.get('belt') or {}
-        if not tool_mounts(belt):carried_items.extend(item for _,item in belt_tools(belt))
+        carried_items.extend(belt_items(belt))
         from app.services.auto_injector import loaded as injector_loaded
         carried_items.extend(item for _,item in injector_loaded(equipment.get('armor')))
         carried_items.extend(entry['item'] for entry in ((character_data.get('crafting') or {}).get('current') or {}).get('escrow',[]))
@@ -1743,6 +1743,7 @@ class CombatService:
         belt=equipment.get('belt') or {}
         if isinstance(belt,dict) and not belt.get('protectionDisabled'):
             belt_weight=sum(CombatService._item_total_weight(item,character_data) for pouch in belt.get('pouches') or [] if isinstance(pouch,dict) for item in pouch.get('contents') or [])
+            belt_weight+=sum(CombatService._item_total_weight(item,character_data) for item in belt_items(belt))
             from app.services.portable_lights import belt_light_items
             belt_weight+=sum(CombatService._item_total_weight(item,character_data) for item in belt_light_items(character_data))
             total_weight-=belt_weight*min(1,max(0,modification_rule(belt,'belt_weight_reduction')))

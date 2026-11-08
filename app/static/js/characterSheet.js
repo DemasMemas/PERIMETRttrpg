@@ -2123,8 +2123,9 @@ function calculateCarriedWeight(data) {
     const inv = data?.inventory || {};
     const eq = data?.equipment || {};
     const items = [];
-    if(eq.belt?.protectionDisabled||!modificationRule(eq.belt,'belt_tool_mounts'))
-        items.push(...(eq.belt?.installedModules||[]).filter(item=>item?.slotType==='belt_tool'));
+    const beltItems=(eq.belt?.installedModules||[]).filter(item=>item?.slotType==='belt_artifact'
+        ||item?.slotType==='belt_tool'&&(eq.belt?.protectionDisabled||!modificationRule(eq.belt,'belt_tool_mounts')));
+    items.push(...beltItems);
     items.push(...(eq.armor?.installedModules||[]).filter(item=>item?.slotType==='auto_injector'));
     items.push(...(data?.crafting?.current?.escrow || []).map(entry=>entry.item));
     if (Array.isArray(inv.backpack)) items.push(...inv.backpack);
@@ -2139,6 +2140,7 @@ function calculateCarriedWeight(data) {
     for(const parts of Object.values(data?.health?.prostheses || {}))items.push(...Object.values(parts));
     const belt=eq.belt,discount=belt&&!belt.protectionDisabled?Math.min(1,Math.max(0,modificationRule(belt,'belt_weight_reduction'))):0;
     let beltWeight=(belt?.pouches||[]).reduce((sum,pouch)=>sum+(pouch?.contents||[]).reduce((total,item)=>total+getTotalWeight(item),0),0);
+    beltWeight+=beltItems.reduce((sum,item)=>sum+getTotalWeight(item),0);
     const mountedLights=new Set(!belt?.protectionDisabled&&modificationRule(belt,'belt_light_mount')
         ?(data.health?.combatMeta?.portableLights||[]).filter(binding=>binding.mount==='belt').map(binding=>binding.id):[]);
     if(mountedLights.size)beltWeight+=collectInventoryEntries(data,item=>mountedLights.has(item?.id))
@@ -2151,6 +2153,7 @@ function getMovementPenaltyBreakdown(data, suppliedWeight = null) {
     const eq = data?.equipment || {};
     const armor = eq.armor || {};
     const totalWeight = suppliedWeight ?? calculateCarriedWeight(data);
+    const artifactPenalty=Number(data?._artifact_profile?.movement_penalty)||0;
     const weightPerPenalty = getWeightPerMovementPenalty(data);
     const rawWeightPenalty = Math.floor(totalWeight / weightPerPenalty);
     const backpackReduction = Math.max(0, Number(eq.backpack?.attributes?.weight_reduction) || 0);
@@ -2209,7 +2212,7 @@ function getMovementPenaltyBreakdown(data, suppliedWeight = null) {
     }, fractureInjuries);
     const intoxicationPenalty = getIntoxicationProfile(data).movement;
     return {
-        total: armorPenalty + helmetPenalty + weightPenalty + temporary + injuries + intoxicationPenalty+passiveTraits(data).movementPenalty,
+        total: armorPenalty + helmetPenalty + weightPenalty + temporary + injuries + intoxicationPenalty+passiveTraits(data).movementPenalty+artifactPenalty,
         totalWeight,
         weightPerPenalty,
         rawWeightPenalty,
@@ -2217,6 +2220,7 @@ function getMovementPenaltyBreakdown(data, suppliedWeight = null) {
         weightPenalty,
         armorPenalty,
         helmetPenalty,
+        artifactPenalty,
         temporary,
         injuries,
         intoxicationPenalty,
@@ -5634,7 +5638,9 @@ window.loadAutoInjector = () => changeAutoInjector('load');
 window.unloadAutoInjector = () => changeAutoInjector('unload');
 window.mountBeltTool = () => changeBeltTool('mount');
 window.unmountBeltTool = index => changeBeltTool('unmount',index);
-async function changeBeltTool(operation,index) {
+window.mountBeltArtifact = () => changeBeltTool('mount',null,'artifact');
+window.unmountBeltArtifact = index => changeBeltTool('unmount',index,'artifact');
+async function changeBeltTool(operation,index,kind='tool') {
     if(medicalOperationInProgress||!currentCharacterCanEdit)return;
     const characterId=currentCharacterId;let locked=false;
     try {
@@ -5643,24 +5649,24 @@ async function changeBeltTool(operation,index) {
         medicalOperationInProgress=locked=true;medicalRemoteUpdate=null;
         let source;
         if(operation==='mount'){
-            const choices=collectInventoryEntries(currentCharacterData,item=>getInventoryItemCategory(item)==='tool')
+            const choices=collectInventoryEntries(currentCharacterData,item=>getInventoryItemCategory(item)===(kind==='artifact'?'artifact':'tool'))
                 .filter(entry=>!entry.path.includes('installedModules'))
                 .map(entry=>({label:entry.item.name,source:{path:entry.path,snapshot:structuredClone(entry.item)}}));
-            if(!choices.length){showNotification('В инвентаре нет инструментов','system');return;}
-            const choice=await chooseConsumableApplication('Инструмент для крепления на поясе',choices,{alwaysShow:true});
+            if(!choices.length){showNotification(kind==='artifact'?'В инвентаре нет артефактов':'В инвентаре нет инструментов','system');return;}
+            const choice=await chooseConsumableApplication(kind==='artifact'?'Артефакт для крепления на поясе':'Инструмент для крепления на поясе',choices,{alwaysShow:true});
             if(!choice||currentCharacterId!==characterId)return;source=choice.source;
         }else{
             const item=currentCharacterData.equipment?.belt?.installedModules?.[index];
-            if(item?.slotType!=='belt_tool')return;
+            if(item?.slotType!==(kind==='artifact'?'belt_artifact':'belt_tool'))return;
             source={path:['equipment','belt','installedModules',index],snapshot:structuredClone(item)};
         }
-        const response=await Server.operateBeltAttachment(characterId,{operation,source,
+        const response=await Server.operateBeltAttachment(characterId,{operation,source,kind,
             character_revision:currentCharacterData._revision,belt_id:currentCharacterData.equipment.belt.id});
         if(currentCharacterId!==characterId)return;
         currentCharacterData=response.data;
         await renderEquipmentTab(currentCharacterData);renderInventoryTab(currentCharacterData);
-        showNotification(operation==='mount'?'Инструмент закреплён':'Инструмент снят в карманы','success');
-    }catch(error){showNotification(error.message||'Не удалось изменить крепление инструмента','system');}
+        showNotification(operation==='mount'?'Предмет закреплён':'Предмет снят в карманы','success');
+    }catch(error){showNotification(error.message||'Не удалось изменить крепление пояса','system');}
     finally{if(locked){
         if(currentCharacterId===characterId&&medicalRemoteUpdate?.character_id===Number(characterId)
             &&Number(medicalRemoteUpdate.data?._revision)>Number(currentCharacterData?._revision))currentCharacterData=medicalRemoteUpdate.data;
@@ -14317,6 +14323,7 @@ async function renderInventoryTab(data) {
                     <span>Травмы ног</span><span id="injury-penalty-source">${movementPenalty.injuries}</span>
                     <span>Опьянение</span><span id="intoxication-penalty-source">${movementPenalty.intoxicationPenalty}</span>
                     <span>Временные модификаторы</span><span id="temporary-penalty-source">${movementPenalty.temporary}</span>
+                    <span>Артефакты</span><span id="artifact-penalty-source">${movementPenalty.artifactPenalty}</span>
                     <span id="exoskeleton-weight-rule" style="grid-column:span 2; opacity:.7; font-size:12px; display:${movementPenalty.poweredExoskeleton ? 'block' : 'none'};">
                         Запитанный экзоскелет: броня устанавливает штраф 5, перегруз не учитывается. Бег и спринт недоступны.
                     </span>
@@ -14396,6 +14403,21 @@ async function renderInventoryTab(data) {
                         <button type="button" class="btn btn-sm btn-secondary" onclick="unmountBeltTool(${index})">Снять${window.locationCombatState?.status==='active'?' · 3 ОД':''}</button>
                     </div>`:'').join('')}
                 </div>
+            </div>`:''}
+            ${(modificationRule(eq.belt,'belt_artifact_mount')||(eq.belt.installedModules||[]).some(item=>item?.slotType==='belt_artifact'))?`
+            <div data-belt-artifact style="margin-top:12px;">
+                <div style="display:flex;align-items:center;gap:10px;">
+                    <h5 style="margin:0;">Артефакт на поясе</h5>
+                    <button type="button" class="btn btn-sm btn-secondary" onclick="mountBeltArtifact()"
+                        ${eq.belt.protectionDisabled||!modificationRule(eq.belt,'belt_artifact_mount')||(eq.belt.installedModules||[]).some(item=>item?.slotType==='belt_artifact')?'disabled':''}>Закрепить${window.locationCombatState?.status==='active'?' · 3 ОД':''}</button>
+                </div>
+                <p class="text-muted" style="margin:4px 0;">Действуют свойства артефакта, включая отрицательные. Защиты контейнера нет.</p>
+                ${(eq.belt.installedModules||[]).map((item,index)=>item?.slotType==='belt_artifact'?`
+                    <div data-item-tooltip="true" data-item-template-id="${Number(item.templateId)||''}" data-path="equipment,belt,installedModules,${index}"
+                        style="border:1px solid #444;border-radius:4px;padding:6px;display:flex;align-items:center;gap:6px;">
+                        <span style="flex:1;overflow-wrap:anywhere;">${escapeHtml(item.name)}</span>
+                        <button type="button" class="btn btn-sm btn-secondary" onclick="unmountBeltArtifact(${index})">Снять${window.locationCombatState?.status==='active'?' · 3 ОД':''}</button>
+                    </div>`:'').join('')}
             </div>`:''}
             <div style="display: flex; align-items: center; margin-top: 15px;">
                 <h5 style="margin: 0;">Модификации пояса</h5>
@@ -16139,45 +16161,8 @@ function recalculateInventoryTotals() {
     const backpackItems = Array.isArray(inv.backpack) ? inv.backpack.map(item => migrateOldItemToNew(item)) : [];
     const equippedBackpack = eq.backpack || null;
     const backpackLimit = Number(equippedBackpack?.attributes?.limit || equippedBackpack?.attributes?.capacity || 0);
-    const backpackWeightReduction = Number(equippedBackpack?.attributes?.weight_reduction || 0);
-
-    let totalWeight = 0;
-    let totalVolume = 0;
-
-    // Вес и объём из рюкзака (с учётом вложенности)
-    backpackItems.forEach(item => {
-        totalWeight += getTotalWeight(item);
-        totalVolume += getTotalVolume(item);
-    });
-
-    // Карманы – отдельно, не прибавляем к рюкзаку
     const pockets = Array.isArray(inv.pockets) ? inv.pockets.map(item => migrateOldItemToNew(item)) : [];
-    pockets.forEach(item => {
-        totalWeight += getTotalWeight(item);
-        totalVolume += getTotalVolume(item);
-    });
-
-    // Подсумки пояса и разгрузки – их содержимое добавляем к общему весу/объёму,
-    const beltPouches = eq.belt?.pouches || [];
-    const vestPouches = eq.vest?.pouches || [];
-    [...beltPouches, ...vestPouches].forEach(pouch => {
-        if (pouch.contents) {
-            pouch.contents.forEach(item => {
-                totalWeight += getTotalWeight(item);
-                totalVolume += getTotalVolume(item);
-            });
-        }
-    });
-
-    // Экипированное оружие (огнестрельное и ближнего боя)
-    const weapons = currentCharacterData.weapons || [];
-    weapons.forEach(weapon => {
-        totalWeight += getTotalWeight(weapon);
-        totalVolume += getTotalVolume(weapon);
-    });
-    for(const parts of Object.values(currentCharacterData.health?.prostheses || {})) {
-        for(const item of Object.values(parts))totalWeight+=getTotalWeight(item);
-    }
+    const totalWeight = calculateCarriedWeight(currentCharacterData);
 
     // Обновляем отображение общего веса и объёма
     const totalWeightSpan = document.getElementById('total-weight-display');
@@ -16209,6 +16194,7 @@ function recalculateInventoryTotals() {
         'injury-penalty-source': movementPenalty.injuries,
         'intoxication-penalty-source': movementPenalty.intoxicationPenalty,
         'temporary-penalty-source': movementPenalty.temporary,
+        'artifact-penalty-source': movementPenalty.artifactPenalty,
     };
     Object.entries(sourceValues).forEach(([id, value]) => {
         const element = document.getElementById(id);

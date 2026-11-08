@@ -44,8 +44,8 @@ export function diffCharacterData(previous, next) {
 
     visit(previous || {}, next || {}, '');
     return {
-        scalarPaths: scalarPaths.filter(path => path && path !== '_revision'),
-        structuralPaths: structuralPaths.filter(path => path && path !== '_revision'),
+        scalarPaths: scalarPaths.filter(path => path && path !== '_revision' && !pathTouches(path,'_artifact_profile')),
+        structuralPaths: structuralPaths.filter(path => path && path !== '_revision' && !pathTouches(path,'_artifact_profile')),
     };
 }
 

@@ -111,6 +111,8 @@ def test_sheet_preserves_tools_with_same_belt_and_rejects_copies(client,pair,aut
     with pytest.raises(ValidationError,match='отдельным действием'):preserve(current,copied)
     forged=deepcopy(current);forged['equipment']['belt']['installedModules'][0]['uses']=50
     preserve(current,forged);assert loaded(forged['equipment']['belt'])[0][1]['uses']==17
+    renamed=deepcopy(current);renamed['equipment']['belt']['installedModules'][0]['slotType']='fake-slot'
+    preserve(current,renamed);assert renamed['equipment']['belt']['installedModules']==[tool]
     with pytest.raises(ValidationError,match='Сначала снимите инструменты'):
         install(current['equipment']['belt'],make_record('armor-g62'),replacing='armor-g61')
 
