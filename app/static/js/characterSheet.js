@@ -13129,7 +13129,14 @@ window.removeArmorModification = function(index) {
 function beltPouchLimit(belt) {
     const base = Number(belt?.maxPouches ?? getInventoryItemTemplate(belt)?.attributes?.max_pouches ?? 2);
     return Math.max(0, Math.floor(Number.isFinite(base) ? base : 2))
-        + (belt?.extraStoredItem ? 0 : Math.max(0, Math.floor(modificationRule(belt, 'extra_belt_pouches'))));
+        + (belt?.extraStoredItem ? 0 : Math.max(0, Math.floor(modificationRule(belt, 'extra_belt_pouches'))))
+        + Math.max(0,Math.floor(modificationRule(belt,'free_pouch_mounts')))
+        + Math.max(0,Math.floor(modificationRule(belt,'magazine_pouch_mounts')));
+}
+
+function isMagazinePouch(pouch) {
+    const allowed=getInventoryItemTemplate(pouch)?.attributes?.allowed_categories??pouch?.attributes?.allowed_categories??pouch?.allowed_categories;
+    return Array.isArray(allowed)&&allowed.length===1&&allowed[0]==='magazine';
 }
 
 function availablePouchesForMount() {
@@ -13143,6 +13150,13 @@ function canMountPouch(slot, pouch, notify = true) {
     if (slot === 'belt' && (holder.pouches || []).length >= beltPouchLimit(holder)) {
         if (notify) showNotification('На поясе больше нет мест для подсумков');
         return false;
+    }
+    if(slot==='belt'&&!isMagazinePouch(pouch)){
+        const generalLimit=beltPouchLimit(holder)-Math.max(0,Math.floor(modificationRule(holder,'magazine_pouch_mounts')));
+        if((holder.pouches||[]).filter(p=>!isMagazinePouch(p)).length>=generalLimit){
+            if(notify)showNotification('Остались крепления только для магазинных подсумков');
+            return false;
+        }
     }
     if (slot === 'vest') {
         const template = getInventoryItemTemplate(holder);
@@ -13190,12 +13204,12 @@ window.mountPouchFromInventory = function(slot, path, expectedId = null) {
 };
 
 function openPouchMountPicker(slot) {
-    const entries = availablePouchesForMount();
+    const available=availablePouchesForMount();
+    const entries = available.filter(entry=>canMountPouch(slot,entry.item,false));
     if (!entries.length) {
-        showNotification('Нет подсумков в инвентаре');
+        showNotification(available.length?'Нет подходящих свободных креплений для этих подсумков':'Нет подсумков в инвентаре');
         return;
     }
-    if (!canMountPouch(slot, entries[0].item) && slot === 'belt') return;
     document.getElementById('pouch-select-modal')?.remove();
     const modal = document.createElement('div');
     modal.id = 'pouch-select-modal';
@@ -14302,7 +14316,7 @@ async function renderInventoryTab(data) {
                 </div>
             </div>` : ''}
             <div style="display: flex; align-items: center;">
-                <h5 style="margin: 0;">Подсумки (${eq.belt.pouches?.length || 0} / ${beltPouchLimit(eq.belt)})</h5>
+                <h5 style="margin: 0;">Подсумки (${eq.belt.pouches?.length || 0} / ${beltPouchLimit(eq.belt)})${modificationRule(eq.belt,'magazine_pouch_mounts')?' · 2 дополнительных места только для магазинных':''}</h5>
                 <button type="button" class="btn btn-sm btn-secondary" onclick="addBeltPouch()" style="padding: 2px 8px;" ${(eq.belt.pouches?.length || 0) >= beltPouchLimit(eq.belt) ? 'disabled' : ''}>➕</button>
             </div>
             <div id="belt-pouches-container"></div>

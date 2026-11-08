@@ -67,4 +67,5 @@ module.exports=async({page,request,token,lobby,offered,loc,npc,safeSession})=>{
     }
     await request(loc+'/combat/end',{},token);
     console.log('Автоинъектор: штатная установка, загрузка 5 ОД, две ампулы из стопки, применение за СД и ОД, реальные эффекты и четыре настольных размера.');
+    await require('./belt_mounts.browser.cjs')({page,request,token,lobby,offered,loc,npc,safeSession});
 };

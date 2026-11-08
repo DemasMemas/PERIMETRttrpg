@@ -55,6 +55,7 @@ SPECIAL_ARMOR={
  'g46':({'accuracy_penalty':-2},{}),'g47':({'charisma_penalty':-3},{}),
  'g48':({'movement_penalty':-1},{'filter_wear_reduction':.5}),'g58':({}, {'belt_weight_reduction':.5}),
  'g57':({}, {'extra_belt_pouches':2}),
+ 'g56':({}, {'free_pouch_mounts':1}),'g76':({}, {'magazine_pouch_mounts':2}),
  'g66':({}, {'medical_pouch_capacity_multiplier':2}),
  'g77':({}, {'belt_reload_ap_reduction':1}),'g78':({}, {'large_weapon_ergonomics':10}),
  'd27':({}, {'unpowered_weight_penalty_suppression':True}),
@@ -70,7 +71,7 @@ SPECIAL_ARMOR={
 
 def supported(rule):
     if rule['kind']=='weapon':return True
-    if rule['kind']=='belt':return rule['id'] in {'armor-g57','armor-g58','armor-g66','armor-g77','armor-g78'}
+    if rule['kind']=='belt':return rule['id'] in {'armor-g56','armor-g57','armor-g58','armor-g66','armor-g76','armor-g77','armor-g78'}
     return rule['id'] in DIRECT_ARMOR or rule['id'].removeprefix('armor-') in SPECIAL_ARMOR
 
 
@@ -91,6 +92,11 @@ def install(item,record,replacing=None):
             raise ValidationError('Сначала снимите дополнительный шлем или противогаз с пояса')
         if len(item.get('pouches') or [])>belt_pouch_limit({**item,'modifications':proposed}):
             raise ValidationError('Сначала снимите дополнительные подсумки с пояса')
+    if previous and any(rule(item,key)>rule({**item,'modifications':proposed},key)
+            for key in ('extra_belt_pouches','free_pouch_mounts','magazine_pouch_mounts')):
+        after={**item,'modifications':proposed};pouches=item.get('pouches') or []
+        if len(pouches)>belt_pouch_limit(after) or sum(not magazine_pouch(p) for p in pouches)>belt_general_pouch_limit(after):
+            raise ValidationError('Сначала снимите дополнительные подсумки с креплений')
     if previous and (previous.get('rules') or {}).get('nvg_mount') and not any(
             (mod.get('rules') or {}).get('nvg_mount') for mod in proposed if isinstance(mod,dict)):
         from app.services.combat import CombatService
@@ -277,13 +283,26 @@ def rule(item,key,default=0):
     return max(values)
 
 
-def belt_pouch_limit(item,lobby_id=None):
+def belt_general_pouch_limit(item,lobby_id=None):
     from app.services.item_template_lookup import resolve_item_template
     template=resolve_item_template(item,lobby_id)
     attrs=(template.attributes or {}) if template else (item.get('attributes') or {})
     base=attrs.get('max_pouches',2)
     if type(base) is not int or not 0<=base<=20:base=2
-    return base+(0 if item.get('extraStoredItem') else int(rule(item,'extra_belt_pouches')))
+    return base+(0 if item.get('extraStoredItem') else int(rule(item,'extra_belt_pouches')))+int(rule(item,'free_pouch_mounts'))
+
+
+def belt_pouch_limit(item,lobby_id=None):
+    return belt_general_pouch_limit(item,lobby_id)+int(rule(item,'magazine_pouch_mounts'))
+
+
+def magazine_pouch(item,lobby_id=None):
+    from app.services.item_template_lookup import resolve_item_template
+    template=resolve_item_template(item,lobby_id)
+    attrs=(template.attributes or {}) if template else (item.get('attributes') or {})
+    if template and template.category!='pouch' or item.get('category') not in {None,'pouch'}:return False
+    allowed=attrs.get('allowed_categories',[]) if template else attrs.get('allowed_categories',item.get('allowed_categories',[]))
+    return isinstance(allowed,list) and len(allowed)==1 and allowed[0]=='magazine'
 
 
 def validate_belt_pouches(current,incoming,lobby_id):
@@ -308,12 +327,15 @@ def validate_belt_pouches(current,incoming,lobby_id):
             raise ValidationError('Для второго предмета на поясе нужна модификация «Расширенный пояс»')
         if len(pouches)>limit:
             raise ValidationError('Дополнительный предмет занимает места двух подсумков')
-    if len(pouches)<=limit:return
+    general_limit=belt_general_pouch_limit(belt,lobby_id)
+    general_count=sum(not magazine_pouch(p,lobby_id) for p in pouches)
+    if len(pouches)<=limit and general_count<=general_limit:return
     old_pouches=previous.get('pouches') or []
     same_belt=(belt.get('id') and belt.get('id')==previous.get('id')) or (
         not belt.get('id') and not previous.get('id') and belt.get('templateId')==previous.get('templateId'))
-    if not same_belt or len(pouches)>len(old_pouches):
-        raise ValidationError(f'На поясе доступно не больше {limit} подсумков')
+    if not same_belt or len(pouches)>len(old_pouches) or general_count>sum(not magazine_pouch(p,lobby_id) for p in old_pouches):
+        if len(pouches)>limit:raise ValidationError(f'На поясе доступно не больше {limit} подсумков')
+        raise ValidationError('Дополнительные магазинные крепления подходят только для магазинных подсумков')
 
 
 def preserve(current,incoming,*,is_gm=True):

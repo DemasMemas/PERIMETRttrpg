@@ -333,6 +333,36 @@ def test_expanded_belt_adds_two_pouch_places_and_protects_filled_places(app):
     assert belt_pouch_limit(belt)==2
 
 
+def test_additional_mount_and_magazine_mounts_validate_types_and_replacement(app):
+    from app.services.equipment_modifications import belt_pouch_limit,validate_belt_pouches,magazine_pouch,install
+    from app.services.exceptions import ValidationError
+    belt_template=ItemTemplate(name='Пояс креплений',category='belt',attributes={'max_pouches':2})
+    mag=ItemTemplate(name='Магазинный подсумок',category='pouch',attributes={'allowed_categories':['magazine']})
+    bag=ItemTemplate(name='Вещевой подсумок',category='pouch',attributes={'allowed_categories':[]})
+    db.session.add_all([belt_template,mag,bag]);db.session.flush()
+    general=lambda identity:{'id':identity,'templateId':bag.id,'name':bag.name,'category':'pouch'}
+    magazine=lambda identity:{'id':identity,'templateId':mag.id,'name':mag.name,'category':'pouch'}
+    belt={'id':'belt-mounts','templateId':belt_template.id,'category':'belt','pouches':[general('1'),general('2')]}
+    install(belt,make_record('armor-g56'));install(belt,make_record('armor-g76'))
+    assert belt_pouch_limit(belt)==5
+    old={'equipment':{'belt':deepcopy(belt)}}
+    belt['pouches'] += [general('3'),magazine('4'),magazine('5')]
+    validate_belt_pouches(old,{'equipment':{'belt':belt}},None)
+    wrong=deepcopy(belt);wrong['pouches'][-1]=general('forged');wrong['pouches'][-1]['allowed_categories']=['magazine']
+    assert not magazine_pouch(wrong['pouches'][-1])
+    with pytest.raises(ValidationError,match='только для магазинных'):
+        validate_belt_pouches(old,{'equipment':{'belt':wrong}},None)
+    for old_rule,new_rule in [('armor-g56','armor-g58'),('armor-g76','armor-g77')]:
+        with pytest.raises(ValidationError,match='Сначала снимите'):
+            install(deepcopy(belt),make_record(new_rule),old_rule)
+    still_four=deepcopy(belt);still_four['pouches']=still_four['pouches'][:4]
+    with pytest.raises(ValidationError,match='Сначала снимите'):
+        install(still_four,make_record('armor-g58'),'armor-g56')
+    legacy=deepcopy(wrong);validate_belt_pouches({'equipment':{'belt':legacy}},{'equipment':{'belt':legacy}},None)
+    belt['pouches']=belt['pouches'][:2];install(belt,make_record('armor-g58'),'armor-g56');install(belt,make_record('armor-g77'),'armor-g76')
+    assert belt_pouch_limit(belt)==2
+
+
 def test_existing_overfilled_belt_is_preserved_without_adding_more_pouches(app):
     from app.services.equipment_modifications import validate_belt_pouches
     from app.services.exceptions import ValidationError
