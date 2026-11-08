@@ -230,3 +230,67 @@ def test_world_clock_respects_character_activity_and_separate_carriers(grenade_g
     advance_global_minutes(client, pair, auth_headers, 1)
     assert snapshot(first.data)[0]['worn_seconds'] == 60
     assert snapshot(second.data)[0]['worn_seconds'] == 120
+
+
+@pytest.mark.parametrize('name,seconds,movement,strength,physical,chemical', [
+    ('Искровая жилка', 6, -3, 0, 0, 0), ('Нервный катализатор', 12, -5, 2, 0, 0),
+    ('Генератор', 600, -2, 0, 0, 0), ('Пылающий осколок', 18, -3, 0, 10, 0),
+    ('Гнилая железа', 60, 0, 0, 0, 20),
+])
+def test_timed_abilities_change_actual_profile_then_expire(name, seconds, movement, strength, physical, chemical):
+    from app.services.artifact_effects import artifact_passive_profile
+    from app.services.artifact_special import is_special_effect
+    data = ready(name=name)
+    data['skills']['physical'] = {'strength': {'base': 10}}
+    data['health']['radiation'] = 0
+    before = artifact_passive_profile(data)
+    use(data)
+    active = artifact_passive_profile(data)
+    assert active['movement_penalty']-before['movement_penalty'] == movement
+    assert active['skill_strength']-before['skill_strength'] == strength
+    assert active['protection']['physical']-before['protection']['physical'] == physical
+    assert active['protection']['chemical']-before['protection']['chemical'] == chemical
+    assert CombatService._skill_value(data, 'skills.physical.strength') == 10+strength
+    health = data['health']
+    # Изолируем срок способности от периодических пассивных свойств самого предмета.
+    effects = [effect for effect in health['effects'] if is_special_effect(effect)]
+    effects = advance_timed_effects(health, effects, seconds-1, character_data=data)
+    assert any(is_special_effect(effect) for effect in effects)
+    health['effects'] = advance_timed_effects(health, effects, 1, character_data=data)
+    assert not any(is_special_effect(effect) for effect in health['effects'])
+    expired = artifact_passive_profile(data)
+    assert expired['movement_penalty'] == before['movement_penalty']
+    assert expired['protection'] == before['protection']
+
+
+def test_repeated_buff_refreshes_without_stacking_and_save_cannot_extend_or_forge():
+    from app.services.artifact_special import is_special_effect
+    from app.services.artifact_effects import artifact_passive_profile
+    data = ready(name='Искровая жилка')
+    before = artifact_passive_profile(data)['movement_penalty']
+    use(data)
+    data['health']['effects'] = advance_timed_effects(data['health'], data['health']['effects'], 2, character_data=data)
+    use(data, 'second-buff')
+    effects = [effect for effect in data['health']['effects'] if is_special_effect(effect)]
+    assert len(effects) == 1 and effects[0]['remaining_seconds'] == 6
+    assert artifact_passive_profile(data)['movement_penalty'] == before-3
+    incoming = deepcopy(data)
+    incoming['health']['effects'][0].update(value=-1000, remaining_seconds=999999)
+    preserve(data, incoming)
+    assert incoming['health']['effects'] == data['health']['effects']
+    forged = deepcopy(data)
+    preserve({}, forged)
+    assert not any(is_special_effect(effect) for effect in forged['health']['effects'])
+
+
+def test_activated_buff_keeps_its_fixed_duration_after_item_is_removed():
+    from app.services.artifact_effects import artifact_passive_profile
+    data = ready(name='Генератор')
+    use(data)
+    equipment = data.pop('equipment')
+    assert artifact_passive_profile(data)['movement_penalty'] == -2
+    health = data['health']
+    health['effects'] = advance_timed_effects(health, health['effects'], 600, character_data=data)
+    assert artifact_passive_profile(data)['movement_penalty'] == 0
+    data['equipment'] = equipment
+    assert artifact_passive_profile(data)['movement_penalty'] == -1

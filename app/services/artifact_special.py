@@ -15,6 +15,20 @@ from app.services.transaction import atomic_operation
 STATE_KEY = 'artifactSpecial'
 DAY = 86400
 HEALING = {'Ядро твари': (50, 10), 'Звезда гнили': (100, 5)}
+PREFIX = 'artifact-special:'
+BUFFS = {
+    'Искровая жилка': (6, {'movement_penalty': -3}),
+    'Нервный катализатор': (12, {'movement_penalty': -5, 'skill_strength': 2}),
+    'Генератор': (600, {'movement_penalty': -2}),
+    'Пылающий осколок': (18, {'movement_penalty': -3, 'physical_protection': 10}),
+    'Гнилая железа': (60, {'chemical_protection': 20}),
+}
+STAT_LABELS = {'movement_penalty': 'Штраф перемещения', 'skill_strength': 'Сила',
+               'physical_protection': 'Защита от физического урона', 'chemical_protection': 'Защита от химического урона'}
+
+
+def is_special_effect(effect):
+    return isinstance(effect, dict) and str(effect.get('source') or '').startswith(PREFIX)
 
 
 def _number(value):
@@ -37,6 +51,11 @@ def preserve(current, incoming):
         incoming[STATE_KEY] = deepcopy(current[STATE_KEY])
     else:
         incoming.pop(STATE_KEY, None)
+    previous = ((current or {}).get('health') or {}).get('effects') or []
+    effects = (incoming.get('health') or {}).get('effects') or []
+    if any(is_special_effect(effect) for effect in [*previous, *effects]):
+        incoming.setdefault('health', {})['effects'] = [effect for effect in effects if not is_special_effect(effect)] + [
+            deepcopy(effect) for effect in previous if is_special_effect(effect)]
 
 
 def advance(data, seconds):
@@ -67,7 +86,7 @@ def status(data, item):
     worn = _number(state.get('worn_seconds'))
     used = _number(state.get('used'))
     cooldown = _number(state.get('cooldown_seconds'))
-    supported = item.get('name') in HEALING
+    supported = item.get('name') in HEALING or item.get('name') in BUFFS
     reason = None
     if not capacity:
         reason = 'Нужно Выживание не ниже 9'
@@ -77,7 +96,7 @@ def status(data, item):
         reason = f'Перезарядка: осталось {math.ceil(cooldown / 3600)} ч'
     elif not supported:
         reason = 'Применение этого свойства ещё не реализовано'
-    elif _number((data.get('health') or {}).get('radiation')) <= 0:
+    elif item.get('name') in HEALING and _number((data.get('health') or {}).get('radiation')) <= 0:
         reason = 'Нет радиации для восстановления здоровья'
     return {'item_id': item.get('id'), 'name': item.get('name'), 'supported': supported,
             'worn_seconds': worn, 'required_seconds': required, 'cooldown_seconds': cooldown,
@@ -113,7 +132,7 @@ def prepare(actor, data, payload, user_id):
     state = status(data, item)
     if not state['available']:
         raise ValidationError(state['reason'])
-    if _number((data.get('health') or {}).get('radiation')) <= 0:
+    if item.get('name') in HEALING and _number((data.get('health') or {}).get('radiation')) <= 0:
         raise ValidationError('Нет радиации для восстановления здоровья')
     return {'item': item, 'state': state, 'action_points': state['action_points']}
 
@@ -125,12 +144,24 @@ def execute(actor, data, payload, user_id, combat=None):
     from app.services.artifact_effects import healing_amount
     from app.services.effects import sync_health_derived_statuses
     item = plan['item']
-    limit, rate = HEALING[item['name']]
     health = data.setdefault('health', {})
-    radiation = min(limit, _number(health.get('radiation')))
     before = _number(health.get('current'))
-    health['radiation'] = _number(health.get('radiation')) - radiation
-    health['current'] = min(_number(health.get('max', 700)), before + healing_amount(data, radiation * rate))
+    radiation = 0
+    if item['name'] in HEALING:
+        limit, rate = HEALING[item['name']]
+        radiation = min(limit, _number(health.get('radiation')))
+        health['radiation'] = _number(health.get('radiation')) - radiation
+        health['current'] = min(_number(health.get('max', 700)), before + healing_amount(data, radiation * rate))
+    else:
+        duration, modifiers = BUFFS[item['name']]
+        effects = health.setdefault('effects', [])
+        for stat, amount in modifiers.items():
+            source = PREFIX + sha256(str(item['id']).encode()).hexdigest()[:24] + ':' + stat
+            effects[:] = [effect for effect in effects if effect.get('source') != source]
+            effects.append({'id': source, 'source': source, 'type': 'custom', 'name': f"{item['name']}: особое свойство",
+                            'note': f'{STAT_LABELS[stat]} {amount:+g} на {duration} сек.',
+                            'artifact_stat': stat, 'value': amount, 'active': True, 'tick': 'time_elapsed',
+                            'time_unit': 'second', 'remaining': duration, 'remaining_seconds': duration})
     sync_health_derived_statuses(health)
     ledger = data.setdefault(STATE_KEY, {})
     progress = ledger.setdefault('items', {}).setdefault(str(item['id']), {})

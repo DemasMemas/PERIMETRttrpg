@@ -216,16 +216,18 @@ def artifact_passive_profile(character_data):
                 text, rf'Защита от {label}(?: урона)?',
             )
     owners={_clock_source(item,REACTION_PREFIX) for item in equipped_artifacts(character_data)}
+    from app.services.artifact_special import is_special_effect
     for effect in (health or {}).get('effects') or []:
-        if not is_reaction(effect) or effect.get('active',True) is False:continue
-        if str(effect.get('source')).rsplit(':',1)[0] not in owners:continue
+        special=is_special_effect(effect)
+        if not (is_reaction(effect) or special) or effect.get('active',True) is False:continue
+        if not special and str(effect.get('source')).rsplit(':',1)[0] not in owners:continue
         try:remaining=float(effect.get('remaining_seconds',effect.get('remaining',0)))
         except (TypeError,ValueError):continue
         if remaining<=0:continue
         stat=effect.get('artifact_stat');value=effect.get('value')
         if type(value) not in (int,float) or not math.isfinite(value):continue
-        if stat=='physical_protection':result['protection']['physical']+=value
-        elif stat in {'movement_penalty','bleeding_severity'}:result[stat]+=value
+        if stat in {'physical_protection','chemical_protection'}:result['protection'][stat.removesuffix('_protection')]+=value
+        elif stat in {'movement_penalty','bleeding_severity','skill_strength'}:result[stat]+=value
     return result
 
 
