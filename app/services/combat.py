@@ -6241,6 +6241,7 @@ class CombatService:
         limb_hit=None,
         stop_layer_context=None,
         neck_brace_context=None,
+        damage_type='physical',
     ):
         character = target.character
         data = dict(character.data or {})
@@ -6544,6 +6545,8 @@ class CombatService:
                     enqueue(precision_attacker,target,trauma,damage,zone,armor_penetrated,allow_bleeding)
                 else:
                     created_bleedings.extend(apply_trauma(target,data,trauma,trauma_rules,damage,impact,armor_penetrated,allow_bleeding))
+        from app.services.artifact_effects import damage_reactions
+        damage_reactions(data,damage,damage_type)
         sync_health_derived_statuses(health)
         resulting_condition = CombatService._character_condition(data)
         tough_nut=None
@@ -7118,7 +7121,7 @@ class CombatService:
         return {'difficulty': difficulty, 'posture': posture, 'obstacle': obstacle}
 
     @staticmethod
-    def _apply_general_damage(target, damage, *, round_number=0, source='explosion',cause_stress=True):
+    def _apply_general_damage(target, damage, *, round_number=0, source='explosion',cause_stress=True,damage_type='physical'):
         damage = max(0, round(CombatService._coerce_float(damage, 0)))
         data = dict(target.character.data or {})
         if CombatService._combat_background_active(target,'Стойкий'):damage*=.9
@@ -7138,6 +7141,8 @@ class CombatService:
                 meta['damageStressRound'] = current_round
                 meta['pendingExplosionStress'] = True
             CombatService._apply_damage_pain(data, damage, current_round, source)
+        from app.services.artifact_effects import damage_reactions
+        damage_reactions(data,damage,damage_type)
         sync_health_derived_statuses(health)
         resulting_condition = CombatService._character_condition(data)
         survival=None
@@ -7648,6 +7653,7 @@ class CombatService:
                     target, chemical_damage,
                     round_number=round_number,
                     source='chemical_cloud',
+                    damage_type='chemical',
                 )
                 data = dict(target.character.data or {})
                 health = data.setdefault('health', {})
@@ -10665,6 +10671,7 @@ class CombatService:
                     allow_bleeding=False,
                     trauma_checks=0,
                     stress_trigger='anomaly',
+                    damage_type=protection_type or 'physical',
                 )
                 result['damage'] = (zone_health.get('_attackOutcome') or {}).get('applied_damage',raw_damage)
                 result['zone'] = profile['zone']
@@ -10672,7 +10679,7 @@ class CombatService:
             else:
                 damage_after_protection = damage * fraction * max(0, 100 - protection) / 100
                 result['damage_result'] = CombatService._apply_general_damage(
-                    loc_char, damage_after_protection, round_number=round_number, source='anomaly',
+                    loc_char, damage_after_protection, round_number=round_number, source='anomaly',damage_type=protection_type or 'physical',
                 )
                 result['damage'] = result['damage_result']['damage']
                 result['protection'] = protection

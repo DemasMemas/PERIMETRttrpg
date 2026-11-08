@@ -293,7 +293,7 @@ def tick(target,round_number):
         was_alive=CombatService._character_condition(data)['state']!='dead'
         body_damage=max(e.get('damage_per_round') or 50 for e in harmful)
         CombatService._apply_general_damage(target,body_damage,round_number=round_number,
-            source='burning',cause_stress=False)
+            source='burning',cause_stress=False,damage_type='thermal')
         apply_effect_to_health(target.character.data['health'],{'type':'pain','value':2,'source':'burning'},character_data=target.character.data)
         CombatService.apply_stress_trigger(target,1,trigger='burning')
         source=next((e.get('source_character_id') for e in harmful if e.get('source_character_id') and e.get('damage_per_round',50)==body_damage),None)

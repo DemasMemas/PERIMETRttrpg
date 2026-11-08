@@ -9,7 +9,13 @@ from hashlib import sha256
 
 CLOCK_PREFIX='artifact-radiation-clear:'
 PERIODIC_PREFIX='artifact-ten-minute:'
+REACTION_PREFIX='artifact-reaction:'
 CLEAR_RADIATION=re.compile(r'Выводит всю радиацию каждую минуту',re.IGNORECASE)
+THERMAL_REACTION=re.compile(r'При получении\s+Термического урона\s+'
+    r'(Штраф перемещения|Защита от физического урона|Тяжесть кровотечений)\s*([+-]\d+)%?\s+'
+    r'на\s+(\d+)\s+раунд\w*',re.IGNORECASE)
+REACTION_STATS={'штраф перемещения':'movement_penalty','защита от физического урона':'physical_protection',
+                'тяжесть кровотечений':'bleeding_severity'}
 
 
 def equipped_artifacts(character_data):
@@ -95,7 +101,7 @@ def artifact_passive_profile(character_data):
         attrs = artifact.get('attributes') if isinstance(artifact.get('attributes'), dict) else {}
         positive = str(attrs.get('positive_effect') or '')
         negative = str(attrs.get('negative_effect') or '')
-        text = f'{positive} {negative}'
+        text = THERMAL_REACTION.sub('',f'{positive} {negative}')
         conditional_movement, text = _conditional_value(
             text, r'Штраф перемещения', radiation_level,
         )
@@ -163,7 +169,38 @@ def artifact_passive_profile(character_data):
             result['protection'][key] += _percent(
                 text, rf'Защита от {label}(?: урона)?',
             )
+    owners={_clock_source(item,REACTION_PREFIX) for item in equipped_artifacts(character_data)}
+    for effect in (health or {}).get('effects') or []:
+        if not is_reaction(effect) or effect.get('active',True) is False:continue
+        if str(effect.get('source')).rsplit(':',1)[0] not in owners:continue
+        try:remaining=float(effect.get('remaining_seconds',effect.get('remaining',0)))
+        except (TypeError,ValueError):continue
+        if remaining<=0:continue
+        stat=effect.get('artifact_stat');value=effect.get('value')
+        if type(value) not in (int,float) or not math.isfinite(value):continue
+        if stat=='physical_protection':result['protection']['physical']+=value
+        elif stat in {'movement_penalty','bleeding_severity'}:result[stat]+=value
     return result
+
+
+def is_reaction(effect):
+    return isinstance(effect,dict) and str(effect.get('source') or '').startswith(REACTION_PREFIX)
+
+
+def damage_reactions(data,damage,damage_type):
+    """Запустить известные временные свойства только после фактического урона."""
+    if damage<=0 or damage_type!='thermal':return []
+    health=data.setdefault('health',{});effects=health.setdefault('effects',[]);created=[]
+    for item in equipped_artifacts(data):
+        attrs=item.get('attributes') or {};text=f"{attrs.get('positive_effect','')} {attrs.get('negative_effect','')}"
+        for match in THERMAL_REACTION.finditer(text):
+            stat=REACTION_STATS[match.group(1).casefold()];value=int(match.group(2));rounds=int(match.group(3))
+            source=_clock_source(item,REACTION_PREFIX)+':'+stat
+            effect={'id':source,'source':source,'type':'custom','name':f"{item.get('name')}: реакция на термический урон",
+                'note':f'{match.group(1)} {value:+g} на {rounds} раунда','artifact_stat':stat,'value':value,
+                'active':True,'tick':'time_elapsed','time_unit':'second','remaining':rounds*6,'remaining_seconds':rounds*6}
+            effects[:]=[old for old in effects if old.get('source')!=source];effects.append(effect);created.append(effect)
+    return created
 
 
 def healing_amount(character_data,amount):
@@ -260,9 +297,14 @@ def apply_periodic_clock(data,effect,*,health):
 
 
 def preserve(current,incoming):
-    if not needs_clocks(incoming):return
+    canonical=((current or {}).get('health') or {}).get('effects') or []
+    incoming_effects=((incoming or {}).get('health') or {}).get('effects') or []
+    if not needs_clocks(incoming) and not any(is_reaction(e) for e in [*canonical,*incoming_effects]):return
     health=incoming.setdefault('health',{})
     health['effects']=sync_clocks(incoming,canonical=current or {})
+    owners={_clock_source(item,REACTION_PREFIX) for item in equipped_artifacts(incoming)}
+    health['effects']=[e for e in health['effects'] if not is_reaction(e)]+[
+        deepcopy(e) for e in canonical if is_reaction(e) and str(e['source']).rsplit(':',1)[0] in owners]
 
 
 def apply_artifact_world_movement(character_data,*,artifact=None,health=None):

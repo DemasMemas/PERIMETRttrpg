@@ -322,6 +322,10 @@ if(typeof renderFacingPreview==='function'){const original=renderFacingPreview;r
             await require('./object_locks.browser.cjs')({page,request,token,lobby,base,connect,debugPort,safeSession});
             return;
         }
+        if (safeSession && process.env.VTT_SAFE_SCENARIO === 'artifacts') {
+            await require('./artifact_reactions.browser.cjs')({page,request,token,lobby,base,safeSession});
+            return;
+        }
         if (safeSession && process.env.VTT_SAFE_SCENARIO === 'sideview') {
             await require('./sideview_performance.browser.cjs')({page,request,token,lobby,base,safeSession});
             return;
