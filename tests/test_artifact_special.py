@@ -582,3 +582,49 @@ def test_mind_shield_blocks_new_stress_in_both_paths_but_allows_reduction_and_ex
     assert not health_blocks_new_stress(health)
     CombatService.apply_stress_trigger(actor, 1, check_manifestation=False)
     assert health['stress'] == 4
+
+
+def test_fire_gift_protection_expires_with_exact_health_cost_and_no_repeat():
+    from app.services.artifact_effects import artifact_passive_profile
+    data = ready(name='Дар пламени')
+    data['health']['current'] = 700
+    baseline = artifact_passive_profile(data)['protection']['physical']
+    use(data)
+    assert artifact_passive_profile(data)['protection']['physical'] == baseline+30
+    health = data['health']
+    health['effects'] = advance_timed_effects(health, health['effects'], 17, character_data=data)
+    assert health['current'] == 700
+    health['effects'] = advance_timed_effects(health, health['effects'], 1, character_data=data)
+    assert health['current'] == 450
+    assert artifact_passive_profile(data)['protection']['physical'] == baseline
+    health['effects'] = advance_timed_effects(health, health['effects'], 1, character_data=data)
+    assert health['current'] == 450
+
+
+def test_second_fire_gift_refreshes_bonus_but_does_not_erase_first_health_cost():
+    data = ready(name='Дар пламени')
+    data['health']['current'] = 700
+    use(data)
+    health = data['health']
+    health['effects'] = advance_timed_effects(health, health['effects'], 6, character_data=data)
+    use(data, 'use-two')
+    assert use(data, 'use-two')['replayed']
+    health['effects'] = advance_timed_effects(health, health['effects'], 12, character_data=data)
+    assert health['current'] == 450
+    health['effects'] = advance_timed_effects(health, health['effects'], 6, character_data=data)
+    assert health['current'] == 200
+
+
+def test_fire_gift_cost_survives_removal_and_cannot_be_forged_removed_or_reduced_by_healing_modifier():
+    data = ready(name='Дар пламени')
+    use(data)
+    cost = next(e for e in data['health']['effects'] if e['type'] == 'delayed_adjustment')
+    forged = deepcopy(data)
+    forged['health']['effects'] = []
+    preserve(data, forged)
+    assert cost in forged['health']['effects']
+    data['equipment'] = equipped('Чернобыльская губка')['equipment']
+    health = data['health']
+    health['effects'] = advance_timed_effects(health, health['effects'], 18, character_data=data)
+    assert health['current'] == 0
+    assert CombatService._character_condition(data)['state'] == 'dead'

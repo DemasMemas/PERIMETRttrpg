@@ -243,6 +243,33 @@ module.exports=async({page,request,token,lobby,loc,locationId,rules,safeSession}
     const psiResponses=await page.evaluate('window.__artifactHttp');
     assert.deepEqual(psiResponses.map(row=>row.status),Array(9).fill(200),JSON.stringify(psiResponses));
     actionResponses.push(...psiResponses.slice(7));
+    const gift=rules.find(row=>row.name==='Дар пламени'),giftData=await get();assert.ok(gift);
+    giftData.data.equipment.armor.containers=[{item:{id:'native-fire-gift',name:gift.name,category:'artifact',quantity:1,attributes:gift}}];
+    giftData.data.health.current=700;
+    await request(url,{data:giftData.data},token,'PUT');
+    await request('/__testing/artifact-preparation/'+safeSession.runId,{character_id:character.id},token);
+    await request(loc+'/combat/start',{location_character_ids:[placed.location_character_id],
+        initiator_location_character_id:placed.location_character_id,initiator_first:true},token);
+    await request(loc+'/combat/end_turn',{location_character_id:placed.location_character_id},token);
+    await page.evaluate(`window.openCharacterSheet(${character.id},'equipment').then(()=>true)`);
+    await page.until("document.querySelector('.equipment-panel-tab[data-panel=armor]')",'Броня с Даром пламени');
+    await page.evaluate("document.querySelector('.equipment-panel-tab[data-panel=armor]').click();true");
+    await page.until("document.querySelector('[data-artifact-special=\"native-fire-gift\"]')&&!document.querySelector('[data-artifact-special=\"native-fire-gift\"]').disabled",'Дар пламени готов');
+    await page.evaluate("document.querySelector('[data-artifact-special=\"native-fire-gift\"]').click();true");
+    await page.evaluate('window.__artifactUsePromise.then(()=>true)');
+    assert.equal((await get()).data._artifact_profile.protection.physical,30);
+    for(let round=0;round<2;round++)await request(loc+'/combat/end_turn',{location_character_id:placed.location_character_id},token);
+    const giftSecondRound=await get();assert.equal(giftSecondRound.data.health.current,700);
+    assert.equal(giftSecondRound.data._artifact_profile.protection.physical,30);
+    await request(loc+'/combat/end_turn',{location_character_id:placed.location_character_id},token);
+    const giftExpired=await get();assert.equal(giftExpired.data.health.current,450);
+    assert.equal(giftExpired.data._artifact_profile.protection.physical,0);
+    await request(loc+'/combat/end_turn',{location_character_id:placed.location_character_id},token);
+    assert.equal((await get()).data.health.current,450,'Цена не применяется повторно');
+    await request(loc+'/combat/end',{},token);
+    const giftResponses=await page.evaluate('window.__artifactHttp');
+    assert.deepEqual(giftResponses.map(row=>row.status),Array(10).fill(200),JSON.stringify(giftResponses));
+    actionResponses.push(...giftResponses.slice(9));
     fs.writeFileSync(path.join(safeSession.artifacts,'artifact-special.json'),JSON.stringify({scene:'Припять',artifact:rule.name,
         preparedWornSeconds:86394,realRoundSeconds:6,readyAfterRealRound:true,realButtonActivations:2,apPerUse:1,
         first:{radiation:0,hp:200,cooldown:86400},second:{radiation:0,hp:300,cooldown:86394},reopened:true,
@@ -251,7 +278,8 @@ module.exports=async({page,request,token,lobby,loc,locationId,rules,safeSession}
         fieryVein:{buttonActivated:true,preparedBreathlessness:1000,clearedBreathlessness:0,effectSeconds:18,expiredAfterThreeRounds:true},
         stormHeart:{buttonActivated:true,movement:-20,strength:5,effectiveBreathlessness:0,sleepAfterFirstMinute:552,sleepExpired:true},
         shell:{buttonActivated:true,protectedRounds:10,stageDurabilityBefore:1000,stageDurabilityProtected:1000,stageDurabilityAfterExpiry:950},
-        psiImmunities:psiResults},null,2));
+        psiImmunities:psiResults,fireGift:{realButton:true,physicalProtection:30,seconds:18,
+            healthBefore:700,healthAfterTwoRounds:700,healthAfterThreeRounds:450,noRepeatedCost:true}},null,2));
     console.log('Особые свойства: подготовленное ношение+реальный раунд, две кнопки Ядра твари по1ОД без рук, радиация→ОЗ; общий срок после первого, переоткрытие.');
     console.log('Генератор: кнопка без радиации, фактический штраф перемещения−1→−3,600→594секунд за раунд; истечение по игровому времени возвращает−1.');
     console.log('Сердце жара: настоящая кнопка и настоящее горение; первый раунд0урона, после истечения50.');
@@ -259,4 +287,5 @@ module.exports=async({page,request,token,lobby,loc,locationId,rules,safeSession}
     console.log('Сердце грозы: настоящая кнопка,−20/+5,оды́шка подавлена в клиентском состоянии; после12сек один сон600сек, перевод времени учитывает остаток/пробуждение.');
     console.log('Панцирь: настоящая кнопка,10 реальных раундов горения без износа брони; следующий раунд после минуты снимает50прочности.');
     console.log('Ментальный бастион и Щит сознания: настоящие кнопки, реальные Пси-удары не воздействуют, атакующий тратит3ОД; стресс блокируется Щитом и возвращается после истечения.');
+    console.log('Дар пламени: настоящая кнопка, +30% физической защиты3раунда, затем ровно−250ОЗ, следующего списания нет.');
 };

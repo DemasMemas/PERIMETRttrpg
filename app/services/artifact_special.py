@@ -31,6 +31,7 @@ BUFFS = {
     'Панцирь': (60, {'armor_wear_immunity': 1}),
     'Ментальный бастион': (30, {'directed_psi_immunity': 1}),
     'Щит сознания': (60, {'directed_psi_immunity': 1, 'stress_immunity': 1}),
+    'Дар пламени': (18, {'physical_protection': 30}),
 }
 STAT_LABELS = {'movement_penalty': 'Штраф перемещения', 'skill_strength': 'Сила',
                'physical_protection': 'Защита от физического урона', 'chemical_protection': 'Защита от химического урона',
@@ -201,6 +202,13 @@ def execute(actor, data, payload, user_id, combat=None):
                     'time_unit': 'minute', 'tick': 'time_elapsed'}]
         if item['name'] == 'Огненная вена' and hasattr(actor, 'strenuous_movement_blocked_until_round'):
             actor.strenuous_movement_blocked_until_round = 0
+        if item['name'] == 'Дар пламени':
+            # Каждое применение оплачивается отдельно, даже при обновлении самого бонуса.
+            source = PREFIX + sha256(f"{item['id']}\0{payload['operation_id']}".encode()).hexdigest()[:24] + ':health-cost'
+            effects.append({'id': source, 'source': source, 'type': 'delayed_adjustment',
+                'name': 'Цена Дара пламени', 'note': 'Потеря 250 ОЗ через 18 сек.',
+                'active': True, 'tick': 'time_elapsed', 'time_unit': 'second', 'remaining': 18, 'remaining_seconds': 18,
+                'adjustments': [{'field': 'current', 'delta': -250, 'min': 0}]})
     sync_health_derived_statuses(health)
     ledger = data.setdefault(STATE_KEY, {})
     progress = ledger.setdefault('items', {}).setdefault(str(item['id']), {})
