@@ -294,3 +294,57 @@ def test_activated_buff_keeps_its_fixed_duration_after_item_is_removed():
     assert artifact_passive_profile(data)['movement_penalty'] == 0
     data['equipment'] = equipment
     assert artifact_passive_profile(data)['movement_penalty'] == -1
+
+
+@pytest.mark.parametrize('name,kind,seconds', [('Сердце жара', 'thermal', 6), ('Ядро пепелища', 'thermal', 18),
+                                            ('Печенка', 'chemical', 6), ('Сердце притяжения', 'physical', 6)])
+def test_temporary_immunity_blocks_only_named_damage_and_expires(grenade_game, name, kind, seconds):
+    target = grenade_game['actor_location']
+    data = ready(name=name)
+    data['health'].update(current=700, radiation=0)
+    use(data)
+    target.character.data = data
+    db.session.commit()
+    assert CombatService._target_elemental_protection(data, kind) == 100
+    immune = CombatService._apply_general_damage(target, 100, damage_type=kind)
+    assert immune['damage'] == 0 and immune['current_health'] == 700
+    assert not immune.get('artifact_reactions')
+    other = CombatService._apply_general_damage(target, 10, damage_type='electric')
+    assert other['damage'] == 10 and other['current_health'] == 690
+    health = target.character.data['health']
+    health['effects'] = advance_timed_effects(health, health['effects'], seconds, character_data=target.character.data)
+    expired = CombatService._apply_general_damage(target, 10, damage_type=kind)
+    assert expired['damage'] == 10 and expired['current_health'] == 680
+
+
+def test_physical_immunity_blocks_zone_damage_and_forced_trauma(grenade_game):
+    target = grenade_game['actor_location']
+    data = ready(name='Сердце притяжения')
+    data['health'].update(current=700, radiation=0)
+    use(data)
+    target.character.data = data
+    db.session.commit()
+    health = CombatService._apply_attack_damage(target, 500, 'chest', {'damage_type': 'crushing'},
+                                               force_trauma=True, trauma_checks=2)
+    assert health['current'] == 700
+    assert health['zones']['chest']['current'] == health['zones']['chest']['max']
+    assert health['_attackOutcome']['additional_traumas'] == []
+
+
+def test_heat_heart_protects_real_burning_for_one_round_then_expires(grenade_game):
+    from app.services.burning import ignite
+    pair = grenade_game
+    actor, other = pair['actor_location'], pair['target_location']
+    data = ready(name='Сердце жара')
+    data['health'].update(current=700, radiation=0)
+    use(data)
+    actor.character.data = data
+    ignite(actor, 3, source='Проверка Сердца жара')
+    db.session.commit()
+    user = pair['lobby'].gm_id
+    CombatService.end_turn(actor.location_id, user, actor.id)
+    CombatService.end_turn(actor.location_id, user, other.id)
+    assert actor.character.data['health']['current'] == 700
+    CombatService.end_turn(actor.location_id, user, actor.id)
+    CombatService.end_turn(actor.location_id, user, other.id)
+    assert actor.character.data['health']['current'] == 650

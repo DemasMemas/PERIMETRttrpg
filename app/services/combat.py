@@ -5433,6 +5433,8 @@ class CombatService:
 
     @staticmethod
     def _target_elemental_protection(target_data, damage_type, zone='chest',*,target=None):
+        from app.services.artifact_special import damage_immunity
+        if damage_immunity(target_data,damage_type):return 100
         equipment = target_data.get('equipment') if isinstance(target_data, dict) else {}
         equipment = equipment if isinstance(equipment, dict) else {}
         best = 0.0
@@ -6264,6 +6266,8 @@ class CombatService:
     ):
         character = target.character
         data = dict(character.data or {})
+        from app.services.artifact_special import damage_immunity
+        if damage_immunity(data,damage_type):damage=0
         from app.services.prostheses import hit_part,damage_part
         limb_hit=hit_part(data,zone) if limb_hit is None else limb_hit
         if limb_hit and limb_hit.get('mechanical'):

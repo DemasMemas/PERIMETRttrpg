@@ -86,10 +86,37 @@ module.exports=async({page,request,token,lobby,loc,locationId,rules,safeSession}
     await request('/lobbies/'+lobby.id+'/time',{game_day:Math.floor(absolute/1440),game_time_minutes:absolute%1440},token,'PATCH');
     const generatorExpired=await get();assert.equal(generatorExpired.data._artifact_profile.movement_penalty,-1);
     assert.ok(!special(generatorExpired.data));
+    const heat=rules.find(row=>row.name==='Сердце жара'),heatData=await get();assert.ok(heat);
+    heatData.data.equipment.armor.containers=[{item:{id:'native-heat-heart',name:heat.name,category:'artifact',quantity:1,attributes:heat}}];
+    await request(url,{data:heatData.data},token,'PUT');
+    await request('/__testing/artifact-preparation/'+safeSession.runId,{character_id:character.id},token);
+    await request(loc+'/combat/start',{location_character_ids:[placed.location_character_id],
+        initiator_location_character_id:placed.location_character_id,initiator_first:true},token);
+    await request(loc+'/combat/end_turn',{location_character_id:placed.location_character_id},token);
+    const burning=await get();burning.data.health.effects.push({type:'burning',name:'Горение',remaining:3,
+        tick:'round_end',source:'native-heat-immunity',damage_per_round:50});
+    await request(url,{data:burning.data},token,'PUT');
+    await page.evaluate(`window.openCharacterSheet(${character.id},'equipment').then(()=>true)`);
+    await page.until("document.querySelector('.equipment-panel-tab[data-panel=armor]')",'Броня с Сердцем жара');
+    await page.evaluate("document.querySelector('.equipment-panel-tab[data-panel=armor]').click();true");
+    await page.until("document.querySelector('[data-artifact-special=\"native-heat-heart\"]')&&!document.querySelector('[data-artifact-special=\"native-heat-heart\"]').disabled",'Сердце жара готово');
+    const heatBefore=(await get()).data.health.current;
+    await page.evaluate("document.querySelector('[data-artifact-special=\"native-heat-heart\"]').click();true");
+    await page.evaluate('window.__artifactUsePromise.then(()=>true)');
+    const heatResponses=await page.evaluate('window.__artifactHttp');
+    assert.deepEqual(heatResponses.map(row=>row.status),[200,200,200,200],JSON.stringify(heatResponses));
+    actionResponses.push(...heatResponses.slice(3));
+    await request(loc+'/combat/end_turn',{location_character_id:placed.location_character_id},token);
+    const immuneRound=await get();assert.equal(immuneRound.data.health.current,heatBefore,'Первый раунд горения не повредил носителя');
+    await request(loc+'/combat/end_turn',{location_character_id:placed.location_character_id},token);
+    const expiredHeat=await get();assert.equal(expiredHeat.data.health.current,heatBefore-50,'После истечения вернулся обычный урон горения');
+    await request(loc+'/combat/end',{},token);
     fs.writeFileSync(path.join(safeSession.artifacts,'artifact-special.json'),JSON.stringify({scene:'Припять',artifact:rule.name,
         preparedWornSeconds:86394,realRoundSeconds:6,readyAfterRealRound:true,realButtonActivations:2,apPerUse:1,
         first:{radiation:0,hp:200,cooldown:86400},second:{radiation:0,hp:300,cooldown:86394},reopened:true,
-        actionResponses,generator:{buttonActivated:true,movementBefore:-1,movementActive:-3,initialSeconds:600,afterRound:594,expired:true}},null,2));
+        actionResponses,generator:{buttonActivated:true,movementBefore:-1,movementActive:-3,initialSeconds:600,afterRound:594,expired:true},
+        heatHeart:{buttonActivated:true,protectedRoundDamage:0,expiredRoundDamage:50}},null,2));
     console.log('Особые свойства: подготовленное ношение+реальный раунд, две кнопки Ядра твари по1ОД без рук, радиация→ОЗ; общий срок после первого, переоткрытие.');
     console.log('Генератор: кнопка без радиации, фактический штраф перемещения−1→−3,600→594секунд за раунд; истечение по игровому времени возвращает−1.');
+    console.log('Сердце жара: настоящая кнопка и настоящее горение; первый раунд0урона, после истечения50.');
 };

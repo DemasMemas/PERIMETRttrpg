@@ -22,13 +22,29 @@ BUFFS = {
     'Генератор': (600, {'movement_penalty': -2}),
     'Пылающий осколок': (18, {'movement_penalty': -3, 'physical_protection': 10}),
     'Гнилая железа': (60, {'chemical_protection': 20}),
+    'Сердце жара': (6, {'immune_thermal': 1}),
+    'Ядро пепелища': (18, {'immune_thermal': 1, 'movement_penalty': -4}),
+    'Печенка': (6, {'immune_chemical': 1}),
+    'Сердце притяжения': (6, {'immune_physical': 1}),
 }
 STAT_LABELS = {'movement_penalty': 'Штраф перемещения', 'skill_strength': 'Сила',
-               'physical_protection': 'Защита от физического урона', 'chemical_protection': 'Защита от химического урона'}
+               'physical_protection': 'Защита от физического урона', 'chemical_protection': 'Защита от химического урона',
+               'immune_thermal': 'Игнорирование термического урона', 'immune_chemical': 'Игнорирование химического урона',
+               'immune_physical': 'Игнорирование физического урона'}
 
 
 def is_special_effect(effect):
     return isinstance(effect, dict) and str(effect.get('source') or '').startswith(PREFIX)
+
+
+def damage_immunity(data, damage_type):
+    if not isinstance(damage_type, str) or damage_type not in {'physical', 'thermal', 'chemical'}:
+        return False
+    return any(is_special_effect(effect) and effect.get('active', True)
+               and effect.get('artifact_stat') == 'immune_' + damage_type
+               and _number(effect.get('value')) > 0
+               and _number(effect.get('remaining_seconds', effect.get('remaining'))) > 0
+               for effect in ((data or {}).get('health') or {}).get('effects') or [])
 
 
 def _number(value):
@@ -159,7 +175,7 @@ def execute(actor, data, payload, user_id, combat=None):
             source = PREFIX + sha256(str(item['id']).encode()).hexdigest()[:24] + ':' + stat
             effects[:] = [effect for effect in effects if effect.get('source') != source]
             effects.append({'id': source, 'source': source, 'type': 'custom', 'name': f"{item['name']}: особое свойство",
-                            'note': f'{STAT_LABELS[stat]} {amount:+g} на {duration} сек.',
+                            'note': f"{STAT_LABELS[stat]}{'' if stat.startswith('immune_') else f' {amount:+g}'} на {duration} сек.",
                             'artifact_stat': stat, 'value': amount, 'active': True, 'tick': 'time_elapsed',
                             'time_unit': 'second', 'remaining': duration, 'remaining_seconds': duration})
     sync_health_derived_statuses(health)

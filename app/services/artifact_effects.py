@@ -280,6 +280,8 @@ def healing_amount(character_data,amount):
 
 
 def incoming_thermal_damage(character_data,amount,damage_type):
+    from app.services.artifact_special import damage_immunity
+    if damage_immunity(character_data,damage_type):return 0
     if damage_type!='thermal' or amount<=0:return amount
     return amount*max(0,100+artifact_passive_profile(character_data)['incoming_thermal_percent'])/100
 
