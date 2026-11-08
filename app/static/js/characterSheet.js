@@ -3740,7 +3740,8 @@ function renderHealthTab(data, container = null) {
         const isBleedingEffect = String(effect.type || '').startsWith('bleeding');
         const hasRemaining = !isBleedingEffect && selectedType !== 'organ_loss' && !INSTANT_HEALTH_EFFECTS.has(selectedType);
         const remaining = effect.remaining ?? '';
-        const isManagedEffect = ['addiction_withdrawal', 'withdrawal_support', 'withdrawal_support_pending'].includes(selectedType) || effect.source === 'deadly_intoxication';
+        const isManagedEffect = ['addiction_withdrawal', 'withdrawal_support', 'withdrawal_support_pending'].includes(selectedType)
+            || effect.source === 'deadly_intoxication' || String(effect.source||'').startsWith('artifact-radiation-clear:');
         const managedDisabled = isManagedEffect ? 'disabled' : '';
         const fractureStatus = getFractureStatusText(effect, effects);
         const isCustomOrUnknown = ['custom', 'generic'].includes(selectedType);

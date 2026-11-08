@@ -1141,6 +1141,7 @@ def apply_expired_effects_to_health(health: Dict[str, Any], effects: Iterable[An
         if effect.get("remaining") is None or _to_int(effect.get("remaining"), 0) > 1:
             continue
         _activate_timed_modifiers(health, effect)
+        radiation_before_expiry = _to_float(health.get("radiation"), 0)
         for adjustment in effect.get("onExpire") or effect.get("on_expire") or []:
             if not isinstance(adjustment, dict):
                 continue
@@ -1154,6 +1155,10 @@ def apply_expired_effects_to_health(health: Dict[str, Any], effects: Iterable[An
                 field = str(adjustment.get("field") or "").strip()
                 if field:
                     _adjust_field(health, field, _to_float(adjustment.get("delta", 0), 0), adjustment.get("min", 0), adjustment.get("max"),character_data=character_data)
+        if character_data:
+            from app.services.artifact_effects import is_radiation_clock,radiation_clock_removed
+            if is_radiation_clock(effect):
+                radiation_clock_removed(character_data,effect,max(0,radiation_before_expiry-_to_float(health.get('radiation'),0)),health=health)
         activated.extend(_child_effects(effect))
         if effect.get("death_on_expire"):
             activated.append({
@@ -1235,13 +1240,22 @@ def advance_timed_effects(
     advance_event_modifiers: bool = True,
     recover_pain: bool = False,
     character_data=None,
+    _in_time_segments=False,
 ) -> List[Dict[str, Any]]:
     """Продвинуть игровые сроки; ходовые препараты — только при явном переводе времени."""
-    if advance_medication_turns:
+    effects=list(effects or [])
+    artifact_clock=False
+    if character_data:
+        from app.services.artifact_effects import needs_radiation_clocks,sync_radiation_clocks,is_radiation_clock
+        if needs_radiation_clocks(character_data):
+            effects=sync_radiation_clocks(character_data,effects)
+            artifact_clock=any(is_radiation_clock(e) for e in effects)
+    if not _in_time_segments and (advance_medication_turns or artifact_clock):
         return _advance_medication_time(health, effects, elapsed_seconds,
                                         include_turn_effects=include_turn_effects,
                                         recover_pain=recover_pain,
-                                        character_data=character_data)
+                                        character_data=character_data,simulate_medications=advance_medication_turns,
+                                        advance_event_modifiers=advance_event_modifiers)
     unit_seconds = {"second": 1, "minute": 60, "movement": 600, "hour": 3600}
     survivors = []
     activated = []
@@ -1325,6 +1339,7 @@ def advance_timed_effects(
             continue
 
         _activate_timed_modifiers(health, effect)
+        radiation_before_expiry = _to_float(health.get("radiation"), 0)
         for adjustment in effect.get("onExpire") or effect.get("on_expire") or []:
             if isinstance(adjustment, dict) and adjustment.get("field"):
                 _adjust_field(
@@ -1340,6 +1355,10 @@ def advance_timed_effects(
                         _to_float(adjustment.get("delta", 0), 0),
                         adjustment.get("min", 0), adjustment.get("max"),character_data=character_data,
                     )
+        if character_data:
+            from app.services.artifact_effects import is_radiation_clock,radiation_clock_removed
+            if is_radiation_clock(effect):
+                radiation_clock_removed(character_data,effect,max(0,radiation_before_expiry-_to_float(health.get('radiation'),0)),health=health)
         activated.extend(_child_effects(effect))
         if effect.get("death_on_expire"):
             activated.append({
@@ -1423,6 +1442,9 @@ def advance_timed_effects(
     health["effects"] = survivors
     for effect in activated:
         apply_effect_to_health(health, effect,character_data=character_data)
+    if character_data:
+        from app.services.artifact_effects import needs_radiation_clocks,sync_radiation_clocks
+        if needs_radiation_clocks(character_data):health['effects']=sync_radiation_clocks(character_data,health['effects'])
     sync_health_derived_statuses(health)
     return normalize_effect_list(health.get("effects") or [])
 
@@ -1436,7 +1458,8 @@ def minimum_pain(health, character_data=None):
     return min(10,floor)
 
 
-def _advance_medication_time(health, effects, elapsed_seconds, *, include_turn_effects=False, recover_pain=False, character_data=None):
+def _advance_medication_time(health, effects, elapsed_seconds, *, include_turn_effects=False, recover_pain=False, character_data=None,
+                             simulate_medications=True,advance_event_modifiers=True):
     """Использует те же срабатывания и последствия, что боевые ходы, сохраняя дробный остаток."""
     units = {"second": 1, "minute": 60, "movement": 600, "hour": 3600}
     periods = {"turn_start": 6, "turn_end": 6, "round_end": 6,
@@ -1459,7 +1482,7 @@ def _advance_medication_time(health, effects, elapsed_seconds, *, include_turn_e
                 continue
             tick = effect.get("tick")
             medication = str(effect.get("source") or "").startswith("consumable-template:") or effect.get("medication_clock")
-            if medication and tick in periods and (tick in {"turn_start", "turn_end", "round_end"} or effect["type"] in periodic):
+            if simulate_medications and medication and tick in periods and (tick in {"turn_start", "turn_end", "round_end"} or effect["type"] in periodic):
                 interval = units.get(effect.get("time_unit"), periods[tick])
                 progress = max(0, _to_float(effect.get("world_tick_elapsed"), 0)) % interval
                 simulated.append((effect, interval, progress))
@@ -1477,7 +1500,8 @@ def _advance_medication_time(health, effects, elapsed_seconds, *, include_turn_e
         # До срабатываний сохраняем активные блоки боли/стресса в health.
         # Отфильтрованный список нужен только для продвижения их отдельных таймеров.
         ordinary = advance_timed_effects(health, ordinary, step, include_turn_effects=include_turn_effects,
-                                        character_data=character_data)
+                                        character_data=character_data,advance_event_modifiers=advance_event_modifiers,
+                                        _in_time_segments=True)
         health["effects"] = ordinary + [effect for effect, _, _ in simulated]
         due = {}
         for effect, interval, progress in simulated:

@@ -151,5 +151,7 @@ def operate(character_id, user_id, payload):
         actor.action_points_current -= cost
         CombatService._clear_aim(actor)
     character.data = data
+    from app.services.artifact_effects import needs_radiation_clocks,sync_radiation_clocks
+    if needs_radiation_clocks(data):data.setdefault('health',{})['effects']=sync_radiation_clocks(data)
     flag_modified(character, 'data')
     return character, actor, {'operation': operation, 'kind':kind, 'action_points': cost}

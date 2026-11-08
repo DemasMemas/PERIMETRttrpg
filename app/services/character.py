@@ -46,6 +46,8 @@ def _preserve_intoxication_status(current_data, incoming_data, *, is_gm=True):
     preserve_prostheses(current_data,incoming_data)
     from app.services.portable_lights import preserve as preserve_lights
     preserve_lights(current_data, incoming_data)
+    from app.services.artifact_effects import preserve as preserve_artifact_clocks
+    preserve_artifact_clocks(current_data,incoming_data)
     from app.services.action_journal import preserve as preserve_journal
     preserve_journal(current_data, incoming_data)
     from app.services.body_transport import preserve

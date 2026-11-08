@@ -3,6 +3,12 @@
 from __future__ import annotations
 
 import re
+import math
+from copy import deepcopy
+from hashlib import sha256
+
+CLOCK_PREFIX='artifact-radiation-clear:'
+CLEAR_RADIATION=re.compile(r'Выводит всю радиацию каждую минуту',re.IGNORECASE)
 
 
 def equipped_artifacts(character_data):
@@ -157,6 +163,68 @@ def artifact_passive_profile(character_data):
                 text, rf'Защита от {label}(?: урона)?',
             )
     return result
+
+
+def radiation_clock_removed(character_data,effect,amount,*,health):
+    """Цена только радиации, выведенной этим физическим артефактом."""
+    if amount<=0:return 0
+    item=next((item for item in _clearing_artifacts(character_data)
+        if _clock_source(item)==effect.get('source')),None)
+    if not item:return 0
+    negative=str((item.get('attributes') or {}).get('negative_effect') or '')
+    rate=sum(map(int,re.findall(
+        r'За каждую выведенную единицу радиации снижает Общее здоровье на\s*(\d+)',negative,re.IGNORECASE)))
+    cost=rate*amount
+    health['current']=max(0,float(health.get('current',health.get('max',700)) or 0)-cost)
+    return cost
+
+
+def _clock_source(item):
+    identity=item.get('id') or f"{item.get('templateId')}:{item.get('name')}"
+    return CLOCK_PREFIX+sha256(str(identity).encode('utf-8')).hexdigest()[:24]
+
+
+def is_radiation_clock(effect):
+    return isinstance(effect,dict) and str(effect.get('source') or '').startswith(CLOCK_PREFIX)
+
+
+def _clearing_artifacts(data):
+    return [item for item in equipped_artifacts(data) if CLEAR_RADIATION.search(
+        str((item.get('attributes') or {}).get('positive_effect') or ''))]
+
+
+def needs_radiation_clocks(data):
+    return bool(_clearing_artifacts(data) or any(is_radiation_clock(e)
+        for e in ((data.get('health') or {}).get('effects') or [])))
+
+
+def sync_radiation_clocks(data,effects=None,*,canonical=None):
+    """Обычный истекающий эффект: существующие игровые часы исполняют его по минутам."""
+    effects=list(effects if effects is not None else (data.get('health') or {}).get('effects') or [])
+    previous=((canonical.get('health') or {}).get('effects') or []) if canonical is not None else effects
+    old={e['source']:e for e in previous if is_radiation_clock(e)}
+    result=[deepcopy(e) for e in effects if not is_radiation_clock(e)]
+    seen=set()
+    for item in _clearing_artifacts(data):
+        source=_clock_source(item)
+        if source in seen:continue
+        seen.add(source)
+        state=old.get(source) or {}
+        try:seconds=float(state.get('remaining_seconds',float(state.get('remaining',1))*60))
+        except (TypeError,ValueError):seconds=60
+        seconds=max(.001,min(60,seconds)) if math.isfinite(seconds) else 60
+        result.append({'id':source,'source':source,'type':'delayed_adjustment',
+            'name':(item.get('name') or 'Артефакт')+': вывод радиации каждую минуту',
+            'note':'Пока артефакт надет, раз в минуту выводит всю радиацию. Потеря общих ОЗ начисляется только за радиацию, выведенную этим артефактом.',
+            'active':True,'time_unit':'minute','tick':'time_elapsed','remaining':1,'remaining_seconds':seconds,
+            'onExpire':[{'field':'radiation','delta':0,'min':0,'max':0}]})
+    return result
+
+
+def preserve(current,incoming):
+    if not needs_radiation_clocks(incoming):return
+    health=incoming.setdefault('health',{})
+    health['effects']=sync_radiation_clocks(incoming,canonical=current or {})
 
 
 def apply_artifact_world_movement(character_data):
