@@ -1740,6 +1740,8 @@ class CombatService:
         belt=equipment.get('belt') or {}
         if isinstance(belt,dict) and not belt.get('protectionDisabled'):
             belt_weight=sum(CombatService._item_total_weight(item,character_data) for pouch in belt.get('pouches') or [] if isinstance(pouch,dict) for item in pouch.get('contents') or [])
+            from app.services.portable_lights import belt_light_items
+            belt_weight+=sum(CombatService._item_total_weight(item,character_data) for item in belt_light_items(character_data))
             total_weight-=belt_weight*min(1,max(0,modification_rule(belt,'belt_weight_reduction')))
         strength = ((character_data.get('skills') or {}).get('physical') or {}).get('strength')
         effective_strength = (

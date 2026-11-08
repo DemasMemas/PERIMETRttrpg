@@ -2136,7 +2136,12 @@ function calculateCarriedWeight(data) {
     if (Array.isArray(data?.weapons)) items.push(...data.weapons);
     for(const parts of Object.values(data?.health?.prostheses || {}))items.push(...Object.values(parts));
     const belt=eq.belt,discount=belt&&!belt.protectionDisabled?Math.min(1,Math.max(0,modificationRule(belt,'belt_weight_reduction'))):0;
-    const beltWeight=(belt?.pouches||[]).reduce((sum,pouch)=>sum+(pouch?.contents||[]).reduce((total,item)=>total+getTotalWeight(item),0),0);
+    let beltWeight=(belt?.pouches||[]).reduce((sum,pouch)=>sum+(pouch?.contents||[]).reduce((total,item)=>total+getTotalWeight(item),0),0);
+    const mountedLights=new Set(!belt?.protectionDisabled&&modificationRule(belt,'belt_light_mount')
+        ?(data.health?.combatMeta?.portableLights||[]).filter(binding=>binding.mount==='belt').map(binding=>binding.id):[]);
+    if(mountedLights.size)beltWeight+=collectInventoryEntries(data,item=>mountedLights.has(item?.id))
+        .filter(entry=>!(entry.path[0]==='equipment'&&entry.path[1]==='belt'&&entry.path[2]==='pouches'))
+        .reduce((sum,entry)=>sum+getTotalWeight(entry.item),0);
     return items.reduce((sum, item) => sum + getTotalWeight(item), 0)-beltWeight*discount;
 }
 

@@ -21,7 +21,7 @@ export async function renderPortableLights(container,characterId,data,operate,is
         const row=document.createElement('div');row.className='portable-light-row';
         row.dataset.lightId=light.id || JSON.stringify(light.path);
         const caption=document.createElement('strong');
-        const mount=light.mount_available===false?'крепление недоступно':{hand:'в руке',head:'на голове',taped:'на оружии',weapon:'модуль оружия'}[light.binding?.mount];
+        const mount=light.mount_available===false?'крепление недоступно':{hand:'в руке',head:'на голове',belt:'на поясе',taped:'на оружии',weapon:'модуль оружия'}[light.binding?.mount];
         caption.textContent=light.kind==='pda'
             ? `${light.name} · ${Number(light.pda_state?.charge_percent??100).toFixed(1)}% · ${light.pda_state?.on?'включён':'выключен'}`
             : light.kind==='glow'
@@ -56,15 +56,18 @@ export async function renderPortableLights(container,characterId,data,operate,is
         if (light.binding) {
             if(light.kind!=='glow')button(`${light.binding.on?'Выключить':'Включить'}${active?' · 1 ОД':''}`,'toggle',{},!light.binding.on && (light.uses_left<=0||light.mount_available===false));
             if (!['weapon','nvg'].includes(light.binding.mount)) button(`Убрать${active?' · 1 ОД':''}`,'stow');
+            if(light.binding.mount==='hand'&&light.belt_mount)button(`На пояс${active?' · 3 ОД':''}`,'prepare',{mount:'belt'});
         } else {
             if(light.kind==='glow'){
                 if(!light.activated)button(`Активировать${active?' · 1 ОД + достать':''}`,'ignite');
                 else if(light.remaining_seconds>0)button('Взять горящий источник','prepare',{mount:'hand'});
+                if(light.belt_mount&&light.activated&&light.remaining_seconds>0)button(`На пояс${active?' · 3 ОД':''}`,'prepare',{mount:'belt'});
                 root.append(row);continue;
             }
             const mount=light.kind==='head'||light.visor_mount?'head':light.kind==='module'?'weapon':'hand';
             button(mount==='head'?'Надеть':mount==='weapon'?'Подготовить модуль':'Взять в руку','prepare',
                 {mount,...(mount==='weapon'?{weapon_index:light.path[1]}:{})});
+            if(light.belt_mount)button(`На пояс${active?' · 3 ОД':''}`,'prepare',{mount:'belt'});
             if (!light.visor_mount && !['head','module'].includes(light.kind) && (data.weapons || []).length) {
                 const weapons=document.createElement('select');weapons.className='form-control';weapons.setAttribute('aria-label','Оружие для фонаря');
                 (data.weapons || []).forEach((weapon,index)=>{
@@ -120,13 +123,15 @@ export function createPortableLightRenderer(THREE,scene) {
                     entry={light,source};lights.set(source.id,entry);
                 }
                 if(source.radial){
-                    const x=model?model.position.x:source.x,y=model?model.position.y+1.1:source.y,z=model?model.position.z:source.z;
+                    const height=source.mount==='belt'?({standing:1,sitting:.65,prone:.22}[character?.posture]??1):1.1;
+                    const x=model?model.position.x:source.x,y=model?model.position.y+height:source.y,z=model?model.position.z:source.z;
                     const signature=[x,y,z].join(':');
                     if(entry.signature!==signature){entry.signature=signature;entry.light.position.set(x,y,z);entry.light.shadow.needsUpdate=true;}
                     continue;
                 }
                 const fx=Number(modelEntry.facingX??character.facing_x)||0,fz=Number(modelEntry.facingY??character.facing_y)||0,length=Math.hypot(fx,fz)||1;
-                const y=model.position.y+({standing:1.4,sitting:.95,prone:.3}[character.posture]||1.4);
+                const y=model.position.y+(source.mount==='belt'?({standing:1,sitting:.65,prone:.22}[character.posture]??1)
+                    :({standing:1.4,sitting:.95,prone:.3}[character.posture]||1.4));
                 const signature=[model.position.x,y,model.position.z,fx,fz].join(':');
                 if (entry.signature===signature) continue;
                 entry.signature=signature;

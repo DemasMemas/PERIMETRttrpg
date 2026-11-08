@@ -72,6 +72,11 @@ test('масса на поясе и карманы совпадают с пра�
     const traits=await import('data:text/javascript;base64,'+Buffer.from(traitsSource).toString('base64'));
     assert.equal(traits.pocketCapacity(data),25);
     data.equipment.armor.protectionDisabled=true;assert.equal(traits.pocketCapacity(data),10);
+    data.inventory.pockets.push({id:'belt-light',weight:2});
+    data.equipment.belt.modifications.push({ruleId:'armor-g62',rules:{belt_light_mount:true}});
+    data.health={combatMeta:{portableLights:[{id:'belt-light',mount:'belt',on:false}]}};
+    context.collectInventoryEntries=()=>[{item:data.inventory.pockets[1],path:['inventory','pockets',1]}];
+    assert.equal(context.calculateCarriedWeight(data),9);
 });
 
 test('расширенный пояс переносит купленные подсумки без дублирования',async()=>{

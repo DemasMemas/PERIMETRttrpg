@@ -137,6 +137,23 @@ def held_hand(data):
     return bool(held_pda(data) or dynamo_device(data)) or any(binding.get('mount')=='hand' and binding.get('id') in ids for binding in bindings(data))
 
 
+def belt_light_mount(data,path,item=None):
+    from app.services.equipment_modifications import rule
+    belt=(data.get('equipment') or {}).get('belt') or {}
+    if not rule(belt,'belt_light_mount') or belt.get('protectionDisabled'):return False
+    if not isinstance(path,list) or not (path[:2] in (['inventory','pockets'],['inventory','backpack'])
+            or path[:3] in (['equipment','belt','pouches'],['equipment','vest','pouches'])):return False
+    if item is None:item=next((entry for entry_path,entry in walk(data) if entry_path==path),None)
+    return definition(item) in {'hand','improved','head','glow'}
+
+
+def belt_light_items(data):
+    """Масса закреплённых источников, ещё не учтённая как содержимое подсумков пояса."""
+    ids={binding.get('id') for binding in bindings(data) if binding.get('mount')=='belt'}
+    return [item for path,item in walk(data) if item.get('id') in ids and belt_light_mount(data,path,item)
+        and path[:3]!=['equipment','belt','pouches']]
+
+
 def held_pda(data):
     identity=(((data.get('health') or {}).get('combatMeta') or {}).get('heldPda') or {}).get('id')
     return next((item for _,item in walk(data) if identity and item.get('id')==identity and definition(item)=='pda'),None)
@@ -248,6 +265,9 @@ def advance(data,seconds=0,*,battle_end=False):
     for binding in bindings(data):
         item=items.get(binding.get('id'))
         if not item:continue
+        if binding.get('mount')=='belt' and binding.get('on'):
+            path=next((path for path,entry in walk(data) if entry.get('id')==binding.get('id')),None)
+            if not belt_light_mount(data,path,item):binding['on']=False;changed=True
         if glow(item) or definition(item)=='pda':continue
         state=power(item);before=deepcopy((state,binding))
         _advance_power(state,binding,seconds,battle_end)
@@ -275,6 +295,9 @@ def advance(data,seconds=0,*,battle_end=False):
 def start_battle(data):
     changed=(data.get('health',{}).get('combatMeta',{}).pop('pdaDynamo',None) is not None)
     for binding in bindings(data):
+        if binding.get('mount')=='belt' and binding.get('on'):
+            path,item=next(((path,item) for path,item in walk(data) if item.get('id')==binding.get('id')),(None,None))
+            if not belt_light_mount(data,path,item):binding['on']=False;changed=True
         if binding.get('on'):
             binding['battle_used']=binding['period_used']=True;changed=True
     for path,item in nvg_items(data):
@@ -328,6 +351,7 @@ def ready_sources(actor,*,objects=None):
             if (item.get('glowState') or {}).get('remaining_seconds',0)<=0:continue
         elif (item.get('lightPower') or {}).get('uses_left',10)<=0:continue
         mount=binding.get('mount')
+        if mount=='belt' and not belt_light_mount(data,paths[binding['id']],item):continue
         if mount=='head' and item.get('slotType')=='light':
             from app.services.equipment_modifications import visor_light_mount
             if not visor_light_mount(data,paths[binding['id']]):continue
@@ -339,7 +363,8 @@ def ready_sources(actor,*,objects=None):
             'radial':radial,'range':glow_range(item) if radial else 35,'end_width':5,
             'x':actor.pos_x+.5+(.35*(actor.facing_x or 0)/facing if not radial else 0),
             'z':actor.pos_y+.5+(.35*(actor.facing_y or 0)/facing if not radial else 0),
-            'y':CombatService.physical_position(actor,objects=objects)['height']+1.4,
+            'y':CombatService.physical_position(actor,objects=objects)['height']+
+                ({'standing':1.0,'sitting':.65,'prone':.22}.get(actor.posture,1.0) if mount=='belt' else 1.4),
             'facing_x':actor.facing_x,'facing_y':actor.facing_y,'floor_level':actor.floor_level or 0})
     return result
 
@@ -659,17 +684,27 @@ def operate(character_id,user_id,payload):
         cost=(1+int(calculate_inventory_access(data,path,parent[index])['retrieval_action_points'])) if actor else 0
     if operation=='prepare':
         mount=payload.get('mount') or ('head' if definition(selected)=='head' else 'weapon' if definition(selected)=='module' else 'hand')
-        if binding:raise ValidationError('Фонарь уже подготовлен')
-        if mount not in {'hand','head','weapon','taped'}:raise ValidationError('Выберите крепление фонаря')
+        previous=binding
+        remount=bool(previous and previous.get('mount')=='hand' and mount=='belt')
+        if binding and not remount:raise ValidationError('Фонарь уже подготовлен')
+        if mount not in {'hand','head','weapon','taped','belt'}:raise ValidationError('Выберите крепление фонаря')
+        if mount=='belt':
+            if not belt_light_mount(data,path,selected):raise ValidationError('Наденьте пояс с креплением для освещения')
+            if any(entry.get('mount')=='belt' and entry.get('id')!=selected['id'] for entry in states):
+                raise ValidationError('Сначала снимите другой источник света с пояса')
+            if actor:
+                if not remount and not CombatService._has_usable_free_hand(actor):raise ValidationError('Для крепления нужна свободная действующая рука')
+                cost=3
         if actor and mount in {'head','taped'}:
             if not CombatService._has_usable_free_hand(actor):raise ValidationError('Для крепления нужна свободная действующая рука')
             cost=1+int(calculate_inventory_access(data,path,selected)['retrieval_action_points'])
         from app.services.equipment_modifications import visor_light_mount
         if mount=='head' and definition(selected)!='head' and not visor_light_mount(data,path):raise ValidationError('Для головы нужен налобный фонарь или крепление на забрале')
         if definition(selected)=='module' and mount!='weapon':raise ValidationError('Оружейный модуль крепится к оружию')
-        if glow(selected) and (mount!='hand' or (selected.get('glowState') or {}).get('remaining_seconds',0)<=0):
+        if glow(selected) and (mount not in {'hand','belt'} or (selected.get('glowState') or {}).get('remaining_seconds',0)<=0):
             raise ValidationError('Этот источник света нельзя снова активировать')
-        binding={'id':selected['id'],'mount':mount,'on':bool(glow(selected) or (selected.get('lightPower') or {}).get('scheduled_on'))}
+        binding={'id':selected['id'],'mount':mount,'on':bool(glow(selected) or (previous or {}).get('on') or (selected.get('lightPower') or {}).get('scheduled_on')),
+            **{key:previous[key] for key in ('battle_used','period_used') if previous and key in previous}}
         if mount in {'weapon','taped'}:
             index=payload.get('weapon_index')
             weapons=data.get('weapons') or []
@@ -687,10 +722,13 @@ def operate(character_id,user_id,payload):
                 raise ValidationError('Для ручного фонаря нужна свободная действующая рука')
             if armed and meta.get('heldWaterItem'):raise ValidationError('Руки заняты оружием и водой')
             if actor:cost=max(1,int(calculate_inventory_access(data,path,selected)['retrieval_action_points']))
+        if remount:states[:]=[entry for entry in states if entry.get('id')!=selected['id']]
         states.append(binding)
         if not glow(selected):power(selected)
     elif operation=='toggle':
         if not binding:raise ValidationError('Сначала подготовьте фонарь')
+        if not binding.get('on') and binding.get('mount')=='belt' and not belt_light_mount(data,path,selected):
+            raise ValidationError('Крепление на поясе недоступно')
         from app.services.equipment_modifications import visor_light_mount
         if not binding.get('on') and binding.get('mount')=='head' and selected.get('slotType')=='light' and not visor_light_mount(data,path):
             raise ValidationError('Сначала снимите фонарь с разрушенного или снятого крепления')

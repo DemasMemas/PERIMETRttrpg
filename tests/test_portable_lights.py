@@ -11,6 +11,69 @@ from app.services.portable_lights import advance,advance_ground,bindings,covers,
 from test_grenade_rules import grenade_game
 
 
+def belt_mount(actor):
+    from app.services.equipment_modifications import make_record
+    data=deepcopy(actor.character.data);data.setdefault('equipment',{})['belt']={'id':'light-belt','category':'belt',
+        'modifications':[make_record('armor-g62')],'pouches':[]}
+    actor.character.data=data;db.session.commit()
+
+
+def test_belt_mount_frees_hand_keeps_power_and_stops_after_belt_is_removed(client,grenade_game,auth_headers):
+    from app.services.portable_lights import held_hand
+    actor=install(grenade_game['actor_location']);belt_mount(actor);before=actor.action_points_current
+    assert operate(client,grenade_game,auth_headers,'prepare',mount='hand').status_code==200
+    assert operate(client,grenade_game,auth_headers,'toggle').status_code==200
+    assert held_hand(actor.character.data)
+    response=operate(client,grenade_game,auth_headers,'prepare',mount='belt');assert response.status_code==200,response.json
+    assert response.json['light_operation']['action_points']==3 and actor.action_points_current==before-5
+    assert len(bindings(actor.character.data))==1 and bindings(actor.character.data)[0]['on']
+    assert not held_hand(actor.character.data)
+    source=ready_sources(actor)[0];assert source['mount']=='belt' and source['y']==CombatService.physical_position(actor)['height']+1
+    data=deepcopy(actor.character.data);data['equipment'].pop('belt');actor.character.data=data;db.session.commit()
+    assert not ready_sources(actor)
+    advance(data,600);assert not bindings(data)[0]['on']
+    assert data['inventory']['pockets'][0]['lightPower']['uses_left']==10
+    actor.character.data=data;db.session.commit()
+    status=client.get(f'/lobbies/characters/{actor.character_id}/portable-lights',headers=auth_headers(grenade_game['actor_user'])).json
+    assert status['lights'][0]['mount_available'] is False
+    assert operate(client,grenade_game,auth_headers,'toggle').status_code==400
+
+
+def test_belt_mount_requires_upgrade_and_allows_only_one_light(client,grenade_game,auth_headers):
+    actor=install(grenade_game['actor_location']);before=actor.action_points_current
+    assert operate(client,grenade_game,auth_headers,'prepare',mount='belt').status_code==400
+    assert actor.action_points_current==before
+    belt_mount(actor);assert operate(client,grenade_game,auth_headers,'prepare',mount='belt').status_code==200
+    data=deepcopy(actor.character.data);data['inventory']['pockets'].append({'id':'second-light','name':'Фонарик','category':'misc','quantity':1})
+    actor.character.data=data;db.session.commit()
+    response=client.post(f'/lobbies/characters/{actor.character_id}/portable-lights',headers=auth_headers(grenade_game['actor_user']),
+        json={'operation':'prepare','mount':'belt','path':['inventory','pockets',1],'source_id':'second-light','character_revision':actor.character.revision})
+    assert response.status_code==400 and len(bindings(actor.character.data))==1
+
+
+def test_active_glow_can_move_to_belt_without_restarting_timer(client,grenade_game,auth_headers):
+    from app.services.portable_lights import held_hand
+    actor=grenade_game['actor_location'];data=deepcopy(actor.character.data)
+    data['inventory']={'pockets':[{'id':f'light-{actor.id}','name':'ХИС','category':'misc','quantity':1}], 'backpack':[]}
+    actor.character.data=data;db.session.commit();belt_mount(actor)
+    assert operate(client,grenade_game,auth_headers,'ignite').status_code==200
+    data=deepcopy(actor.character.data);advance(data,60);actor.character.data=data;db.session.commit()
+    response=operate(client,grenade_game,auth_headers,'prepare',mount='belt');assert response.status_code==200,response.json
+    assert not held_hand(actor.character.data) and ready_sources(actor)[0]['radial']
+    assert actor.character.data['inventory']['pockets'][0]['glowState']['remaining_seconds']==1740
+
+
+def test_unloading_belt_discount_includes_attached_light_once(grenade_game):
+    from app.services.equipment_modifications import make_record
+    actor=install(grenade_game['actor_location']);belt_mount(actor);data=deepcopy(actor.character.data)
+    data['inventory']['pockets'][0]['weight']=2
+    data['equipment']['belt']['modifications'].append(make_record('armor-g58'))
+    data['health'].setdefault('combatMeta',{})['portableLights']=[{'id':f'light-{actor.id}','mount':'belt','on':False}]
+    assert CombatService._inventory_weight_details(data)['total_weight']==1
+    item=data['inventory']['pockets'].pop();data['equipment']['belt']['pouches']=[{'contents':[item]}]
+    assert CombatService._inventory_weight_details(data)['total_weight']==1
+
+
 def install(actor,*,kind='hand',on=False):
     data=deepcopy(actor.character.data)
     data['inventory']={'pockets':[{'id':f'light-{actor.id}','name':'Улучшенный фонарик' if kind=='improved' else 'Фонарик',

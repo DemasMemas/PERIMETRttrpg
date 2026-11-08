@@ -2468,6 +2468,12 @@ input[type="number"] {
   .equipment-workspace .loadout-cosmetics { margin-top: 6px; padding-top: 5px; }
   .equipment-workspace .equipment-loadout > .portable-lights,
   .equipment-workspace .equipment-loadout > .prostheses { margin-top: 6px; padding-top: 5px; }
+  .equipment-workspace .equipment-loadout > .portable-lights { margin-top:4px; padding-top:3px; }
+  .equipment-workspace .portable-lights > h4 { font-size:12px; margin-bottom:3px; }
+  .equipment-workspace .portable-light-row { padding:1px 0; gap:3px; }
+  .equipment-workspace .portable-light-row strong { font-size:11px; flex-basis:150px; }
+  .equipment-workspace .portable-light-row .btn { padding:3px 6px; font-size:11px; }
+  .equipment-workspace .portable-light-row .form-control { max-width:190px; height:24px; min-height:0; margin:0; padding:3px 6px; font-size:11px; }
 }
 @media (max-width: 1350px) {
   .equipment-workspace { grid-template-columns: minmax(480px, 520px) minmax(0, 1fr); gap: 8px; }

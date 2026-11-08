@@ -56,6 +56,7 @@ SPECIAL_ARMOR={
  'g48':({'movement_penalty':-1},{'filter_wear_reduction':.5}),'g58':({}, {'belt_weight_reduction':.5}),
  'g57':({}, {'extra_belt_pouches':2}),
  'g56':({}, {'free_pouch_mounts':1}),'g76':({}, {'magazine_pouch_mounts':2}),
+ 'g62':({}, {'belt_light_mount':True}),
  'g66':({}, {'medical_pouch_capacity_multiplier':2}),
  'g77':({}, {'belt_reload_ap_reduction':1}),'g78':({}, {'large_weapon_ergonomics':10}),
  'd27':({}, {'unpowered_weight_penalty_suppression':True}),
@@ -71,7 +72,7 @@ SPECIAL_ARMOR={
 
 def supported(rule):
     if rule['kind']=='weapon':return True
-    if rule['kind']=='belt':return rule['id'] in {'armor-g56','armor-g57','armor-g58','armor-g66','armor-g76','armor-g77','armor-g78'}
+    if rule['kind']=='belt':return rule['id'] in {'armor-g56','armor-g57','armor-g58','armor-g62','armor-g66','armor-g76','armor-g77','armor-g78'}
     return rule['id'] in DIRECT_ARMOR or rule['id'].removeprefix('armor-') in SPECIAL_ARMOR
 
 

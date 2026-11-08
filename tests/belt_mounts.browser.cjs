@@ -39,4 +39,5 @@ module.exports=async({page,request,token,lobby,offered,loc,npc,safeSession})=>{
     assert.ok(saved.data.inventory.pockets.some(p=>p.id==='belt-unused'));
     assert.ok(!saved.data.inventory.pockets.some(p=>p.id==='belt-third'||p.id==='belt-mag-stack'));
     console.log('Крепления пояса: куплены g56/g76 и слот, физически установлены 3 обычных и 2 магазинных подсумка, неподходящий подсумок исключён из выбора, сохранены ID и остаток инвентаря.');
+    await require('./belt_light.browser.cjs')({page,request,token,lobby,offered,loc,npc,safeSession});
 };
