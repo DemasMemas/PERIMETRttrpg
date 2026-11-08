@@ -10,6 +10,76 @@ from test_grenade_rules import grenade_game
 from test_quick_skill_checks import checks
 
 
+FORBIDDEN_GRENADES = (
+    'Подствольная граната Вог-25', 'Подствольная граната N-101-2',
+    'Подствольный газовый', 'Подствольный дымовой', 'Подствольный светошумовой',
+    'Граната ОГ-12', 'Коктейль Молотова', 'Кустарная бомба',
+)
+
+
+@pytest.mark.parametrize('name', FORBIDDEN_GRENADES)
+@pytest.mark.parametrize('recipe_id', ['recipe-m8', 'recipe-m9'])
+@pytest.mark.parametrize('explicit', [False, True])
+def test_forbidden_grenades_cannot_be_reserved_for_tripwire(workshop, client, auth_headers, name, recipe_id, explicit):
+    character = workshop['actor_character']
+    data = deepcopy(character.data)
+    data['skills']['other'].update(engineering={'base':20}, survival={'base':20})
+    data['inventory']['pockets'] = [
+        {'id':'forbidden', 'name':name, 'category':'grenade', 'quantity':2},
+        {'name':'Электронные материалы', 'category':'crafting_material', 'quantity':2},
+    ]
+    # При явном выборе запрещённого предмета нельзя молча подменять его разрешённым.
+    if explicit:
+        data['inventory']['pockets'].append({'id':'allowed', 'name':'Граната Ф-1', 'category':'grenade', 'quantity':2})
+    character.data = data
+    db.session.add_all(ItemTemplate(**row) for row in templates())
+    db.session.commit()
+    before = deepcopy(character.data)
+    revision = character.revision
+    payload = {'grenade_paths':[['inventory','pockets',0]] * (2 if recipe_id == 'recipe-m9' else 1)} if explicit else {}
+    response = call(client, workshop, auth_headers, 'start', recipe_id=recipe_id, **payload)
+    assert response.status_code == 400, response.json
+    db.session.refresh(character)
+    assert character.data == before, 'Отказ не расходует материалы и не создаёт работу'
+    assert character.revision == revision
+
+
+def test_tripwire_choices_follow_server_rules_and_preserve_hand_grenades(workshop):
+    from app.services.crafting import snapshot
+    from app.services.trap_catalog import tripwire_grenade_allowed
+    allowed = ['Граната РГД-5', 'Граната Ф-1', 'Химическая граната Черемуха', 'Светошумовая граната Flash-M2']
+    character = workshop['actor_character']
+    data = deepcopy(character.data)
+    data['inventory']['pockets'] = [{'name':name, 'category':'grenade', 'quantity':1} for name in (*FORBIDDEN_GRENADES, *allowed)]
+    character.data = data
+    db.session.commit()
+    choices = snapshot(character, workshop['actor_user']['id'])['inventory']
+    assert [entry['item']['name'] for entry in choices if entry['tripwire_compatible']] == allowed
+    # Настраиваемая дальность ручной гранаты не превращает её в подствольную.
+    assert tripwire_grenade_allowed({'name':'Граната Ф-1', 'category':'grenade', 'attributes':{'range':100}})
+    assert not tripwire_grenade_allowed({'name':'Граната Ф-1', 'category':'grenade', 'subcategory':'Подствольные гранаты'})
+
+
+def test_renamed_launcher_grenade_is_still_forbidden(workshop):
+    from app.services.trap_catalog import tripwire_grenade_allowed
+    template = ItemTemplate(name='Граната ОГ-12', category='grenade', subcategory='Подствольные')
+    db.session.add(template)
+    db.session.flush()
+    renamed = {'name':'Граната Ф-1', 'category':'grenade', 'templateId':template.id}
+    assert not tripwire_grenade_allowed(renamed, workshop['lobby'].id)
+
+
+@pytest.mark.parametrize('recipe_id', ['recipe-m8', 'recipe-m9'])
+def test_old_forbidden_escrow_cannot_finish_as_new_tripwire(workshop, recipe_id):
+    from app.services.exceptions import ConflictError
+    from app.services.trap_catalog import bind_crafted_output
+    output = {'name':'Растяжка'}
+    with pytest.raises(ConflictError, match='не подходит'):
+        bind_crafted_output(output, recipe_id, [{'component':0, 'amount':2 if recipe_id == 'recipe-m9' else 1,
+            'item':{'name':'Кустарная бомба', 'category':'grenade'}}], workshop['lobby'].id)
+    assert 'trapGrenades' not in output
+
+
 def test_all_trap_recipe_outputs_resolve_without_confusing_artifact_snare(workshop):
     from app.services.crafting import _template,recipe_by_id
     from app.services.equipment_catalog import load_catalog

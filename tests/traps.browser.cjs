@@ -61,5 +61,38 @@ module.exports=async({page,request,token,lobby,base,safeSession})=>{
     assert.ok(!(await request('/lobbies/characters/'+actor.id,null,token,'GET')).data.health.combatMeta?.trappedNet);
     await project(42.5,48.5);const screenshot=await page.call('Page.captureScreenshot',{format:'png'});
     fs.writeFileSync(path.join(safeSession.artifacts,'traps-scene.png'),Buffer.from(screenshot.data,'base64'));
+    await checkTripwireChoices({page,request,token,api,safeSession});
     console.log('Ловушки в Припяти: модели, установка мышью, сетевое появление, маскировка, reload, срабатывание и освобождение из сети проверены.');
 };
+
+async function checkTripwireChoices({page,request,token,api,safeSession}){
+    const catalog=JSON.parse(fs.readFileSync(path.join(__dirname,'../app/data/equipment_catalog.json'),'utf8')).templates;
+    const forbidden=['Подствольная граната Вог-25','Подствольная граната N-101-2','Граната ОГ-12',
+        'Подствольный газовый','Подствольный дымовой','Подствольный светошумовой','Коктейль Молотова','Кустарная бомба'];
+    const allowed=['Граната РГД-5','Граната Ф-1'];
+    const pockets=[...forbidden,...allowed].map((name,index)=>{
+        const template=name==='Кустарная бомба'?{category:'grenade',subcategory:'Ручные',weight:.5,volume:1,
+            attributes:{fragile_explosive:true}}:catalog.find(t=>t.name===name);
+        assert.ok(template,'Шаблон для проверки растяжек: '+name);
+        return {id:'tripwire-choice-'+index,name,category:template.category,subcategory:template.subcategory,
+            attributes:template.attributes,quantity:2,weight:template.weight,volume:template.volume};
+    });
+    pockets.push({name:'Электронные материалы',category:'crafting_material',quantity:2});
+    const character=await request(api+'/characters',{name:'Проверка совместимости растяжек',data:{
+        skills:{other:{engineering:{base:20},survival:{base:20}}},inventory:{pockets,backpack:[]}}},token);
+    await page.evaluate(`window.openCharacterSheet(${character.id},'equipment').then(()=>true)`);
+    await page.evaluate("document.querySelector('#character-crafting-open').click();true");
+    await page.until("document.querySelector('#crafting-modal select[aria-label=Рецепт]')",'Рецепты для проверки гранат');
+    const results=[];
+    for(const [recipe,count] of [['recipe-m8',1],['recipe-m9',2]]){
+        await page.evaluate(`(()=>{const s=document.querySelector('#crafting-modal select[aria-label=Рецепт]');s.value=${JSON.stringify(recipe)};s.dispatchEvent(new Event('change'));return true})()`);
+        await page.until(`document.querySelectorAll('#crafting-modal select[aria-label^="Граната "]').length===${count}`,'Выбор гранат '+recipe);
+        const options=await page.evaluate("[...document.querySelectorAll('#crafting-modal select[aria-label^=\"Граната \"]')].map(s=>[...s.options].map(o=>o.textContent))");
+        for(const names of options){
+            assert.deepEqual(names,allowed.map(name=>name+' × 2'),'В каждом списке доступны только разрешённые гранаты');
+        }
+        results.push({recipe,options});
+    }
+    fs.writeFileSync(path.join(safeSession.artifacts,'tripwire-choices.json'),JSON.stringify(results,null,2));
+    await page.evaluate("document.querySelector('#crafting-modal .block-header button').click();window.closeCharacterSheet?.();true");
+}

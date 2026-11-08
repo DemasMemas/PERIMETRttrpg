@@ -17,6 +17,25 @@ PROFILES={
 }
 
 
+def tripwire_grenade_allowed(item, lobby_id=None):
+    """Проверить и сам предмет, и его исходный шаблон, если он сохранён."""
+    from app.services.combat import CombatService
+    from app.services.item_template_lookup import resolve_item_template
+    if not isinstance(item,dict) or item.get('category') not in {'grenade','ammo'}:
+        return False
+    profile=CombatService._explosive_profile(item)
+    if not profile:return False
+    keys={profile['key']}
+    labels=[item.get('name'),item.get('subcategory')]
+    template=resolve_item_template(item,lobby_id)
+    if template:
+        keys.add(CombatService._explosive_key(template.name) or '')
+        labels.extend([template.name,template.subcategory])
+    return not (keys & {'vog25','n1012','og12','molotov','improvised_bomb'}
+        or any(key.startswith('underbarrel_') for key in keys)
+        or any('подствольн' in str(label or '').casefold() for label in labels))
+
+
 def radial_damage(profile,distance):
     table=profile.get('radial_damage')
     if not table:return None
@@ -43,13 +62,12 @@ def templates():
 def bind_crafted_output(produced,recipe_id,escrow,lobby_id):
     profile=PROFILES.get(recipe_id)
     if not profile or profile['kind']!='tripwire':return
-    from app.services.combat import CombatService
     from app.services.item_template_lookup import resolve_item_template
     grenades=[]
     for entry in escrow:
         if entry['component']!=0:continue
         original=entry['item'];count=entry['amount']
-        if not CombatService._explosive_profile(original):raise ConflictError('Вид гранаты растяжки больше не поддерживается')
+        if not tripwire_grenade_allowed(original,lobby_id):raise ConflictError('Эта граната не подходит для создания растяжки')
         for _ in range(int(count)):
             grenade=deepcopy(original);grenade.update(id=str(uuid4()),quantity=1);grenades.append(grenade)
     if len(grenades)!=profile['grenades']:raise ConflictError('Изменился состав гранат растяжки')

@@ -125,9 +125,10 @@ export async function showCrafting({characterId,lobbyId,onSaved,recipeId=''}){
                 if([...ammoVariant.options].some(option=>option.value===previous))ammoVariant.value=previous;
             };
             if(ammo){detail.append(el('label','Калибр'),ammo,el('label','Вид патронов'),ammoVariant);fillAmmoVariants();}
-            const grenades=snapshot.inventory.filter(e=>e.item.category==='grenade');
+            const grenades=snapshot.inventory.filter(e=>e.item.category==='grenade'&&e.tripwire_compatible);
             const grenadeChoices=[];
             if(['recipe-m8','recipe-m9'].includes(recipe.id)){
+                detail.append(el('p','Подствольные гранаты, ОГ-12, коктейль Молотова и кустарная бомба не подходят для растяжки.'));
                 for(let i=0;i<(recipe.id==='recipe-m9'?2:1);i++){
                     const choice=select(`Граната ${i+1}`,grenades.map((entry,index)=>[index,`${entry.item.name} × ${entry.item.quantity||1}`]));
                     if(grenades[i])choice.value=String(i);

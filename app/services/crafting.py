@@ -180,7 +180,7 @@ def _craft_filter_charges(item):
     return int(filter_charges(item))*quantity
 
 
-def _allocate(data,recipe,*,with_status=False,grenade_paths=None):
+def _allocate(data,recipe,*,with_status=False,grenade_paths=None,lobby_id=None):
     from app.services.trade import _contains_individual_items
     candidates=entries(data);spent={};allocations=[];missing=[];statuses=[]
     grenade_counts=None
@@ -218,8 +218,12 @@ def _allocate(data,recipe,*,with_status=False,grenade_paths=None):
                     from app.services.cooked_meat import ingredient_matches
                     matches=ingredient_matches(recipe['id'],item)
                 elif names=={'граната'}:
-                    from app.services.combat import CombatService
-                    matches=item.get('category') in {'grenade','ammo'} and bool(CombatService._explosive_profile(item))
+                    if recipe['id'] in {'recipe-m8','recipe-m9'}:
+                        from app.services.trap_catalog import tripwire_grenade_allowed
+                        matches=tripwire_grenade_allowed(item,lobby_id)
+                    else:
+                        from app.services.combat import CombatService
+                        matches=item.get('category') in {'grenade','ammo'} and bool(CombatService._explosive_profile(item))
                 else:matches=(attrs.get('flamethrower_tank')==component.get('whole_tank') and charges(item)==0 if component.get('whole_tank')
                     else bool(attrs.get('flamethrower_air')) if component.get('whole_air') else matches_box or bool(item_names(item)&names))
                 if not matches or _contains_individual_items(item):continue
@@ -319,7 +323,8 @@ def quote(character,data,payload):
         from app.services.character_traits import trait_count,background_is
         if not trait_count(data,'Мастер на все руки') and not background_is(data,'Полевой ученый'):raise ValidationError('Изготовление инструментов требует «Мастера на все руки» или предыстории «Полевой учёный»')
     missing_tools=_tools(character,data,recipe,option)
-    allocations,missing,component_status=_allocate(data,recipe,with_status=True,grenade_paths=payload.get('grenade_paths'))
+    allocations,missing,component_status=_allocate(data,recipe,with_status=True,
+        grenade_paths=payload.get('grenade_paths'),lobby_id=character.lobby_id)
     component_missing_count=len(missing)
     state=data.get('crafting') or {};approval=next((r for r in state.get('tool_requests',[]) if r['id']==payload.get('approval_id')
         and r['recipe_id']==recipe['id'] and r['status']=='approved' and r.get('environment') and not r.get('used')),None)
@@ -462,6 +467,7 @@ def snapshot(character,user_id):
     from app.services.flamethrower import resources
     from app.services.salvage import kind_of,tool_bonus
     from app.services.portable_stations import nearby,ready
+    from app.services.trap_catalog import tripwire_grenade_allowed
     CharacterService.check_access(character,user_id)
     data=character.data or {};state=deepcopy(data.get('crafting') or {})
     current=state.get('current')
@@ -469,7 +475,7 @@ def snapshot(character,user_id):
     rules=catalog()
     placement=LocationCharacter.query.filter_by(character_id=character.id).order_by(LocationCharacter.last_action.desc().nullslast(),LocationCharacter.id.desc()).first()
     for entry in rules['modifications']:entry['automatic_installation']=supported(entry)
-    return {'catalog':rules,'ammo_options':available_ammo(),'state':state,'inventory':[{'path':path,'item':item,'uses':_available_uses(item),'salvage_kind':kind_of(item),'salvage_tool_bonus':tool_bonus(item)} for path,item in entries(data)],
+    return {'catalog':rules,'ammo_options':available_ammo(),'state':state,'inventory':[{'path':path,'item':item,'uses':_available_uses(item),'salvage_kind':kind_of(item),'salvage_tool_bonus':tool_bonus(item),'tripwire_compatible':tripwire_grenade_allowed(item,character.lobby_id)} for path,item in entries(data)],
         'targets':modification_targets(data),'is_gm':character.lobby.gm_id==user_id,'revision':character.revision,
         'stations':[{'id':obj.id,'name':obj.name,'kind':obj.properties['portable_station']} for obj in nearby(character)
             if (obj.properties or {}).get('portable_station') in {'recipe-m42','recipe-m43'} and ready(obj)],
