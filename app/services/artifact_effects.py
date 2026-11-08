@@ -18,6 +18,7 @@ THERMAL_REACTION=re.compile(r'При получении\s+Термическог
 REACTION_STATS={'штраф перемещения':'movement_penalty','защита от физического урона':'physical_protection',
                 'тяжесть кровотечений':'bleeding_severity'}
 PHYSICAL_BACKLASH=re.compile(r'При получении Физического урона шанс\s+(\d+)%\s+получить\s+(\d+)\s+Термического урона',re.IGNORECASE)
+ELECTRIC_BACKLASH=re.compile(r'При получении урона дополнительно наносит\s+(\d+)\s+Электрического урона',re.IGNORECASE)
 ROUND_PAIN_RELIEF=re.compile(r'Облегчает боль на\s*(\d+)(?:\s*уров\w*)?\s+каждый раунд',re.IGNORECASE)
 
 
@@ -249,14 +250,18 @@ def damage_reactions(data,damage,damage_type):
 
 
 def damage_backlash(data,damage,damage_type):
-    """Один бросок на физический артефакт и исходное попадание; без рекурсии."""
-    if damage<=0 or damage_type!='physical':return []
+    """Реакции на исходное внешнее повреждение; периодический расход ОЗ сюда не поступает."""
+    if damage<=0:return []
     result=[];seen=set()
     for item in equipped_artifacts(data):
         source=_clock_source(item,REACTION_PREFIX)
         if source in seen:continue
         seen.add(source)
-        match=PHYSICAL_BACKLASH.search(str((item.get('attributes') or {}).get('negative_effect') or ''))
+        text=str((item.get('attributes') or {}).get('negative_effect') or '')
+        electric=ELECTRIC_BACKLASH.search(text)
+        if electric:
+            result.append({'artifact':item.get('name'),'source':source,'damage_type':'electric','raw_damage':int(electric.group(1))})
+        match=PHYSICAL_BACKLASH.search(text) if damage_type=='physical' else None
         if not match:continue
         roll=random.randint(1,100)
         if roll<=int(match.group(1)):

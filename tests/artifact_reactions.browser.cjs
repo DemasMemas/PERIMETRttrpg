@@ -77,6 +77,30 @@ module.exports=async({page,request,token,lobby,base,safeSession})=>{
     assert.equal(prior.data.health.current-after.data.health.current,hitResult.damage+40);
     assert.equal(prior.data.health.zones.chest.current-after.data.health.zones.chest.current,hitResult.damage);
     await request(loc+'/combat/end',{},token);
+    const storm=rules.find(a=>a.name==='Штормовой камень');assert.ok(storm);
+    const stormTarget=await request('/lobbies/characters/'+dummy.id,null,token,'GET');
+    stormTarget.data.equipment={armor:{containers:[{item:{id:'storm-artifact',category:'artifact',name:storm.name,attributes:storm}}]}};
+    await request('/lobbies/characters/'+dummy.id,{data:stormTarget.data},token,'PUT');
+    await request(loc+'/combat/start',{location_character_ids:[first.location_character_id,second.location_character_id],
+        initiator_location_character_id:first.location_character_id,initiator_first:true},token);
+    await request(loc+'/combat/action',{...command,action_key:'aim'},token);
+    const stormBefore=await request('/lobbies/characters/'+dummy.id,null,token,'GET');
+    const stormShot=await request(loc+'/combat/action',{...command,action_key:'attack',fire_mode:'aimed',target_zone:'chest',shot_count:1,volley_count:1,action_points:cost},token);
+    const stormHit=stormShot.attack.results[0];assert.ok(stormHit.hit);
+    assert.equal(stormHit.artifact_reactions.length,1);assert.equal(stormHit.artifact_reactions[0].damage_type,'electric');
+    assert.equal(stormHit.artifact_reactions[0].raw_damage,50);assert.equal(stormHit.artifact_reactions[0].damage,40);
+    const stormAfter=await request('/lobbies/characters/'+dummy.id,null,token,'GET');
+    assert.equal(stormBefore.data.health.current-stormAfter.data.health.current,stormHit.damage+40);
+    assert.equal(stormBefore.data.health.zones.chest.current-stormAfter.data.health.zones.chest.current,stormHit.damage);
+    await page.until(`Number(document.querySelector('[name="health.current"]')?.value)===${stormAfter.data.health.current}`,'Электрический ответ Штормового камня обновил общий пул в листе');
+    await request(loc+'/combat/end',{},token);
+    const stormClock=await request(api,null,token,'GET'),stormAbsolute=stormClock.game_day*1440+stormClock.game_time_minutes+10;
+    await request(api+'/time',{game_day:Math.floor(stormAbsolute/1440),game_time_minutes:stormAbsolute%1440},token,'PATCH');
+    const stormPeriodic=await request('/lobbies/characters/'+dummy.id,null,token,'GET');
+    assert.equal(stormAfter.data.health.current-stormPeriodic.data.health.current,50,'Периодические −50 ОЗ не вызывают электрической реакции');
+    fs.writeFileSync(path.join(safeSession.artifacts,'storm-stone.json'),JSON.stringify({scene:'Припять',realShot:true,
+        rawElectric:50,protectedElectric:40,poolOnly:true,networkVisible:true,periodicHealthCost:50,noPeriodicBacklash:true},null,2));
+    console.log('Штормовой камень: реальный выстрел, 50 электрического/40 после защиты только в общий пул, обновление листа; −50 за10минут без ответного электричества.');
     fs.writeFileSync(path.join(safeSession.artifacts,'artifact-reactions.json'),JSON.stringify({scene:'Припять',artifact:rule.name,
         damage:55,initialSeconds:active[0].remaining_seconds,nextSeconds:reactions(next.data)[0].remaining_seconds,
         persistedAfterSave:true,expired:true,networkVisible:true,shard:{roll:50,damage:hitResult.damage,backlash:40,poolOnly:true},skin:{before:7,afterRound:5}},null,2));

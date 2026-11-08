@@ -140,6 +140,69 @@ def test_shard_general_damage_can_kill_without_zone_damage_or_repeating_backlash
     assert all(zone['current']==zone['max'] for zone in target.character.data['health']['zones'].values())
 
 
+@pytest.mark.parametrize('kind,source', [('physical','explosion'),('electric','anomaly'),('chemical','anomaly'),
+                                        ('thermal','burning'),('physical','fall')])
+def test_storm_stone_external_damage_adds_protected_electric_damage_only_to_pool(grenade_game,kind,source):
+    target=grenade_game['target_location'];target.character.data=equipped('Штормовой камень');db.session.commit()
+    result=CombatService._apply_general_damage(target,10,damage_type=kind,source=source)
+    assert result['current_health']==650
+    assert result['artifact_reactions']==[{'artifact':'Штормовой камень','source':result['artifact_reactions'][0]['source'],
+        'damage_type':'electric','raw_damage':50,'protection':20,'damage':40}]
+    assert all(zone['current']==zone['max'] for zone in target.character.data['health']['zones'].values())
+
+
+def test_storm_stone_hit_has_no_random_roll_or_second_zone_damage(grenade_game,monkeypatch):
+    target=grenade_game['target_location'];target.character.data=equipped('Штормовой камень');db.session.commit()
+    def forbidden(*args):raise AssertionError('Электрическая реакция не требует броска шанса')
+    monkeypatch.setattr('app.services.artifact_effects.random',SimpleNamespace(randint=forbidden))
+    health=CombatService._apply_attack_damage(target,10,'chest',{'damage_type':'crushing'},trauma_checks=0,allow_bleeding=False)
+    assert health['current']==650
+    assert health['zones']['chest']['current']==health['zones']['chest']['max']-10
+    assert len(health['_attackOutcome']['artifact_reactions'])==1
+
+
+def test_storm_stone_full_protection_zero_damage_and_removal(grenade_game):
+    target=grenade_game['target_location'];data=equipped('Штормовой камень')
+    data['equipment']['armor']['protection']={'electric':100};target.character.data=data;db.session.commit()
+    result=CombatService._apply_general_damage(target,10)
+    assert result['current_health']==690 and result['artifact_reactions'][0]['damage']==0
+    result=CombatService._apply_general_damage(target,0)
+    assert result['current_health']==690 and not result.get('artifact_reactions')
+    data=deepcopy(target.character.data);data['equipment']={};target.character.data=data
+    result=CombatService._apply_general_damage(target,10)
+    assert result['current_health']==680 and not result.get('artifact_reactions')
+
+
+def test_storm_stone_periodic_health_cost_has_no_electric_backlash():
+    data=equipped('Штормовой камень');health=data['health']
+    health['effects']=advance_timed_effects(health,health['effects'],599,character_data=data)
+    assert health['current']==700
+    health['effects']=advance_timed_effects(health,health['effects'],1,character_data=data)
+    assert health['current']==650
+    health['effects']=advance_timed_effects(health,health['effects'],600,character_data=data)
+    assert health['current']==600
+
+
+def test_storm_and_shard_react_once_to_original_hit_without_chaining(grenade_game,monkeypatch):
+    target=grenade_game['target_location'];data=equipped('Штормовой камень')
+    shard=equipped('Пылающий осколок')['equipment']['armor']['containers'][0]
+    shard['item']['id']='separate-shard';data['equipment']['armor']['containers'].append(shard)
+    target.character.data=data;db.session.commit()
+    monkeypatch.setattr('app.services.artifact_effects.random',SimpleNamespace(randint=lambda a,b:50))
+    result=CombatService._apply_general_damage(target,10)
+    assert len(result['artifact_reactions'])==2
+    assert [reaction['damage'] for reaction in result['artifact_reactions']]==[40,40]
+    assert result['current_health']==610
+
+
+def test_storm_stone_backlash_can_kill_and_duplicated_reference_does_not_double_it(grenade_game):
+    target=grenade_game['target_location'];data=equipped('Штормовой камень');data['health']['current']=35
+    data['equipment']['armor']['containers']*=2;target.character.data=data;db.session.commit()
+    result=CombatService._apply_general_damage(target,10)
+    assert len(result['artifact_reactions'])==1
+    assert result['current_health']==0 and result['health_state']=='dead'
+
+
 @pytest.mark.parametrize('kind,expected',[('physical',50),('thermal',55),('electric',50),('chemical',50)])
 def test_blood_flame_increases_only_incoming_thermal_damage(grenade_game,kind,expected):
     target=grenade_game['target_location'];target.character.data=equipped('Пламень крови');db.session.commit()
