@@ -88,4 +88,5 @@ module.exports=async({page,request,token,lobby,offered,loc,safeSession})=>{
         if(width===1280)fs.writeFileSync(path.join(safeSession.artifacts,'visor-stop-layer-1280x720.png'),Buffer.from((await page.call('Page.captureScreenshot',{format:'png'})).data,'base64'));
     }
     console.log('Стоп-слой: слот куплен у механика, g21 установлен, настоящее попадание в лицо поглощено, разрушение пришло в лист по сети, вложенные приборы сохранены.');
+    await require('./neck_brace.browser.cjs')({page,request,token,lobby,offered,loc,npc,shooter,gunner,safeSession});
 };

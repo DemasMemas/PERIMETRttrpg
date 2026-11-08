@@ -13,6 +13,93 @@ from test_flamethrower import flame_game
 from test_movement_shooting_balance import arena,shoot
 
 
+def brace_helmet():
+    return {'id':'brace-helmet','name':'Шлем с забралом','category':'helmet','durability':100,'maxDurability':100,
+        'stage':1,'stageDurability':1000,'currentStageDurability':1000,'protection':{'physical':30},
+        'modifications':[make_record('armor-g37')],'neckBraceState':{'charged':True,'remaining_seconds':0}}
+
+
+@pytest.mark.parametrize('penetration,blocked,helmet_protection',[(0,True,30),(30,False,30),(0,False,0)])
+def test_neck_brace_blocks_one_actual_nonpenetrating_head_hit(arena,monkeypatch,penetration,blocked,helmet_protection):
+    _,location,shooter,target=arena
+    data=deepcopy(target.character.data);data['equipment']={'helmet':brace_helmet()}
+    data['equipment']['helmet']['protection']['physical']=helmet_protection
+    if not helmet_protection:data['equipment']['armor']={'category':'armor','protection':{'physical':80},'attributes':{'protection_zones':['head']}}
+    target.character.data=data
+    attack=deepcopy(shooter.character.data);attack['weapons'][0].update(damage=100,armor_piercing=penetration)
+    shooter.character.data=attack;db.session.commit()
+    monkeypatch.setattr('app.services.combat.random.randint',lambda low,high:20 if high==20 else high)
+    head=CombatService._head_impact_profile
+    monkeypatch.setattr(CombatService,'_head_impact_profile',lambda _,attacker,target:head(3,attacker,target))
+    def fire():
+        CombatService.perform_action(location.id,arena[0].id,shooter.id,'aim',weapon_index=0,target_character_id=target.character_id)
+        return shoot(arena,fire_mode='aimed',target_character_id=target.character_id,target_zone='head',action_points=4)['attack']['results'][0]
+    hit=fire();assert bool(hit.get('neck_brace')) is blocked
+    state=target.character.data['equipment']['helmet']['neckBraceState']
+    assert state['charged'] is (not blocked)
+    if blocked:
+        assert hit['damage']==0 and target.character.data['health']['current']==700
+        assert state['remaining_seconds']==600
+        again=fire();assert not again.get('neck_brace') and again['damage']>0
+
+
+def test_stop_layer_does_not_spend_neck_brace_on_same_hit(grenade_game):
+    actor=grenade_game['actor_location'];data=deepcopy(actor.character.data);helmet=brace_helmet()
+    helmet['installedModules']=[stop_visor()];data['equipment']={'helmet':helmet};actor.character.data=data;db.session.commit()
+    result=CombatService._apply_attack_damage(actor,30,'head',{},head_impact={'armor_zone':'face','damage_head':True},
+        armor_penetrated=False,neck_brace_context=helmet)
+    assert result['_attackOutcome']['stop_layer'] and not result['_attackOutcome'].get('neck_brace')
+    assert actor.character.data['equipment']['helmet']['neckBraceState']['charged']
+
+
+def test_neck_brace_cooldown_failed_check_repeat_and_success(client,workshop,auth_headers,monkeypatch):
+    from app.services.equipment_care import consume_neck_brace,advance,neck_brace_ready,preserve
+    owner=workshop['actor_character'];data=deepcopy(owner.data);helmet=brace_helmet();consume_neck_brace(helmet)
+    data.setdefault('equipment',{})['helmet']=helmet;owner.data=data;db.session.commit()
+    def attempt(identity):
+        return client.post(f'/lobbies/characters/{owner.id}/neck-brace-recharge',headers=auth_headers(workshop['actor_user']),
+            json={'character_revision':owner.revision,'engineer_revision':owner.revision,'engineer_id':owner.id,
+                'item_id':'brace-helmet','operation_id':identity})
+    assert attempt('too-early').status_code==400
+    advance(data,600);owner.data=deepcopy(data);db.session.commit()
+    monkeypatch.setattr('app.services.combat.random.randint',lambda *args:1)
+    failed=attempt('brace-failed');assert failed.status_code==200,failed.json
+    assert not failed.json['operation']['success'] and failed.json['operation']['remaining_seconds']==600
+    assert attempt('brace-failed').json['operation']['duplicate']
+    forged=deepcopy(owner.data);forged['equipment']['helmet']['neckBraceState']['charged']=True
+    preserve(owner.data,forged);assert forged['equipment']['helmet']['neckBraceState']['charged'] is False
+    next_data=deepcopy(owner.data);advance(next_data,600);owner.data=next_data;db.session.commit()
+    monkeypatch.setattr('app.services.combat.random.randint',lambda *args:20)
+    success=attempt('brace-success');assert success.status_code==200,success.json
+    assert success.json['operation']['success'] and neck_brace_ready(owner.data['equipment']['helmet'])
+
+
+def test_neck_brace_recharge_in_combat_costs_three_once_and_requires_own_turn(client,grenade_game,auth_headers,monkeypatch):
+    actor=grenade_game['actor_location'];data=deepcopy(actor.character.data);helmet=brace_helmet()
+    helmet['neckBraceState']={'charged':False,'remaining_seconds':0};data['equipment']={'helmet':helmet}
+    actor.character.data=data;db.session.commit();before=actor.action_points_current
+    monkeypatch.setattr('app.services.combat.random.randint',lambda *args:20)
+    payload={'character_revision':actor.character.revision,'engineer_revision':actor.character.revision,'engineer_id':actor.character_id,
+        'item_id':'brace-helmet','operation_id':'combat-brace'}
+    url=f'/lobbies/characters/{actor.character_id}/neck-brace-recharge'
+    response=client.post(url,headers=auth_headers(grenade_game['actor_user']),json=payload)
+    assert response.status_code==200,response.json
+    assert response.json['operation']['action_points']==3 and actor.action_points_current==before-3
+    assert client.post(url,headers=auth_headers(grenade_game['actor_user']),json=payload).json['operation']['duplicate']
+    assert actor.action_points_current==before-3
+    data=deepcopy(actor.character.data);data['equipment']['helmet']['neckBraceState']={'charged':False,'remaining_seconds':0}
+    actor.character.data=data;actor.action_points_current=1;db.session.commit()
+    payload.update(character_revision=actor.character.revision,engineer_revision=actor.character.revision,operation_id='brace-no-ap')
+    assert client.post(url,headers=auth_headers(grenade_game['actor_user']),json=payload).status_code==400
+    actor.action_points_current=20
+    from app.models import LocationCombatState
+    state=LocationCombatState.query.filter_by(location_id=actor.location_id).one()
+    state.current_location_character_id=grenade_game['target_location'].id;db.session.commit()
+    payload.update(character_revision=actor.character.revision,engineer_revision=actor.character.revision,operation_id='brace-wrong-turn')
+    assert client.post(url,headers=auth_headers(grenade_game['actor_user']),json=payload).status_code==400
+    assert actor.action_points_current==20
+
+
 def stop_visor():
     return {'id':'stop-visor','name':'Забрало','slotType':'visor','category':'helmet_module',
         'durability':100,'maxDurability':100,'modifications':[make_record('armor-g21')],
@@ -404,6 +491,7 @@ def test_nearby_engineer_can_recharge_another_characters_armor(client,workshop,a
     response=recharge('shared-crystal-near')
     assert response.status_code==200,response.json
     assert response.json['operation']['success']
+    assert response.json['data'] is None
     assert owner.data['equipment']['armor']['liquidCrystalState']['charged']
     data=deepcopy(owner.data)
     data['equipment']['armor']['liquidCrystalState']={'charged':False,'remaining_seconds':0}

@@ -3189,6 +3189,9 @@ body.light-theme #sheet-tab-equipment .loadout-weapon-details[open] > summary { 
   #sheet-tab-equipment .equipment-slot-list .item-slots-container > div > span:first-child { width:74px !important; flex:0 0 74px; }
   #sheet-tab-equipment .equipment-slot-list .btn { font-size:11px; padding:4px 8px; }
   #sheet-tab-equipment .helmet-main-block .form-control { font-size:12px !important; }
+  #sheet-tab-equipment .modifications-block { margin-top:6px !important; padding-top:6px !important; }
+  #sheet-tab-equipment .modifications-block h5 { margin:6px 0 4px !important; font-size:12px !important; }
+  #sheet-tab-equipment .installed-rule-modification { font-size:12px; line-height:1.25; margin:4px 0; }
 }
 .equipment-main-block .field-number input,
 .equipment-main-block .field-select select,

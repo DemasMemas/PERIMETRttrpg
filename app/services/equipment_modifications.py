@@ -63,6 +63,7 @@ SPECIAL_ARMOR={
  'g25':({}, {'nvg_mount':True}),
  'g18':({}, {'nvg_mount':True,'visor_light_mount':True}),
  'g21':({}, {'stop_layer':True}),
+ 'g37':({}, {'neck_brace':True}),
  'd32':({}, {'exoskeleton_run':True})}
 
 
@@ -108,6 +109,8 @@ def install(item,record,replacing=None):
     if record['ruleId']=='armor-d31':item['reanimationCharge']=True
     if record['ruleId']=='armor-a39':item['liquidCrystalState']={'charged':True,'remaining_seconds':0}
     elif previous and previous['ruleId']=='armor-a39':item.pop('liquidCrystalState',None)
+    if record['ruleId']=='armor-g37':item['neckBraceState']={'charged':True,'remaining_seconds':0}
+    elif previous and previous['ruleId']=='armor-g37':item.pop('neckBraceState',None)
     if container_delta:item['containers']=containers
 
 

@@ -4433,6 +4433,10 @@ async function renderEquipmentTab(data) {
                 <div class="equipment-main-block helmet-main-block">
                     <div class="block-header">
                         <h4>Шлем ${renderCreatedByPlayerBadge(helmet)}</h4>
+                        ${helmet.modifications?.some(mod=>mod?.ruleId==='armor-g37') ? `<div class="equipment-care-status" data-neck-brace-status>
+                            ${helmet.neckBraceState?.charged!==false?'Фиксатор готов':helmet.neckBraceState?.remaining_seconds>0
+                                ? `Фиксатор: ${Math.ceil(helmet.neckBraceState.remaining_seconds/60)} мин`
+                                : `<button type="button" class="btn btn-sm btn-secondary" data-sheet-control onclick="window.rechargeNeckBrace()">Фиксатор · СЛ 12${window.locationCombatState?.status==='active'?' · 3 ОД':''}</button>`}</div>`:''}
                         <div style="display: flex; gap: 10px;">
                             ${window.isGM ? `<button type="button" class="btn btn-sm btn-secondary" onclick="openCreateHelmetTemplateModal()">➕ Создать кастом</button>` : ''}
                             ${helmet.templateId && !helmet.integratedWithArmor ? `<button type="button" class="btn btn-sm btn-danger" onclick="unequipHelmet()">Снять</button>` : ''}
@@ -5592,7 +5596,8 @@ window.useSparePlates = async function() {
     }}
 };
 
-window.rechargeLiquidCrystal = async function() {
+window.rechargeNeckBrace = () => window.rechargeLiquidCrystal('neck_brace');
+window.rechargeLiquidCrystal = async function(kind='liquid_crystal') {
     if (medicalOperationInProgress) return;
     const characterId=currentCharacterId;
     let locked=false;
@@ -5601,21 +5606,31 @@ window.rechargeLiquidCrystal = async function() {
         await Server.waitForCharacterSave(characterId);
         if (currentCharacterId!==characterId || medicalOperationInProgress) return;
         if (sheetSaveBlocked) throw new Error('Переоткройте лист перед перезарядкой');
-        const armor=currentCharacterData?.equipment?.armor;
-        if (!armor?.id) throw new Error('У брони нет ID. Снимите и наденьте её заново.');
-        const characters=await Server.getLobbyCharacters(currentLobbyId);
-        const choices=characters.map(character=>({label:character.name,engineer_id:character.id}));
+        const armor=currentCharacterData?.equipment?.[kind==='neck_brace'?'helmet':'armor'];
+        if (!armor?.id) throw new Error('У снаряжения нет ID. Снимите и наденьте его заново.');
+        let choices=[{label:'Самостоятельно',engineer_id:characterId}];
+        if(window.isLocationActive&&window.currentLocationId){
+            const state=await Server.getLocationCombatState(currentLobbyId,window.currentLocationId);
+            const owner=state.characters.find(character=>Number(character.character_id)===Number(characterId));
+            const userId=Number(localStorage.getItem('user_id'));
+            if(owner)choices=state.characters.filter(character=>
+                (window.isGM||Number(character.owner_id)===userId||Number(character.controlled_by)===userId)
+                && Number(character.floor_level||0)===Number(owner.floor_level||0)
+                && Math.max(Math.abs(character.x-owner.x),Math.abs(character.y-owner.y))<=1)
+                .sort((a,b)=>Number(b.character_id===characterId)-Number(a.character_id===characterId))
+                .map(character=>({label:character.character_id===characterId?'Самостоятельно':character.name,engineer_id:character.character_id}));
+        }
         const choice=await chooseConsumableApplication('Кто проверяет Инженерию',choices,{alwaysShow:true});
-        if (!choice) return;
+        if (!choice||currentCharacterId!==characterId) return;
         const engineerId=Number(choice.engineer_id);
         const engineerRevision=engineerId===characterId ? currentCharacterData._revision
             : (await Server.getCharacter(engineerId)).data._revision;
         medicalOperationInProgress=locked=true;medicalRemoteUpdate=null;
-        const response=await Server.rechargeLiquidCrystal(characterId,{
+        const response=await Server[kind==='neck_brace'?'rechargeNeckBrace':'rechargeLiquidCrystal'](characterId,{
             character_revision:currentCharacterData._revision,engineer_revision:engineerRevision,
             engineer_id:engineerId,item_id:armor.id,operation_id:crypto.randomUUID()});
         currentCharacterData=response.data;
-        showNotification(response.operation.success?'Слой заряжен':'Проверка не удалась: ожидание 10 минут началось заново',
+        showNotification(response.operation.success?(kind==='neck_brace'?'Фиксатор шеи готов':'Слой заряжен'):'Проверка не удалась: ожидание 10 минут началось заново',
             response.operation.success?'success':'system');
     } catch(error) { showNotification(error.message||'Не удалось проверить перезарядку','system'); }
     finally { if(locked) {

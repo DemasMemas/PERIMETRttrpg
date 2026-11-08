@@ -5231,6 +5231,16 @@ def activate_spare_plates(character_id):
     return jsonify({'operation':result,'data':character.data_snapshot()}),200
 
 
+def _equipment_care_response(character,user_id,result):
+    # Помощь соседу не открывает инженеру его закрытый лист.
+    try:
+        CharacterService.check_access(character,user_id)
+        data=character.data_snapshot()
+    except PermissionDenied:
+        data=None
+    return jsonify({'operation':result,'data':data}),200
+
+
 @lobbies_bp.route('/characters/<int:character_id>/liquid-crystal-recharge',methods=['POST'])
 @jwt_required()
 def recharge_liquid_crystal_armor(character_id):
@@ -5240,7 +5250,21 @@ def recharge_liquid_crystal_armor(character_id):
     if not result['duplicate']:
         for changed in {character.id:character,engineer.id:engineer}.values():
             emit_character_update({'character_id':changed.id,'updates':{'data':changed.data_snapshot()},'source':'equipment_care'})
-    return jsonify({'operation':result,'data':character.data_snapshot()}),200
+    return _equipment_care_response(character,user_id,result)
+
+
+@lobbies_bp.route('/characters/<int:character_id>/neck-brace-recharge',methods=['POST'])
+@jwt_required()
+def recharge_neck_brace(character_id):
+    from app.services.equipment_care import recharge_liquid_crystal
+    user_id=int(get_jwt_identity())
+    character,engineer,result=recharge_liquid_crystal(character_id,user_id,request.get_json(silent=True) or {},kind='neck_brace')
+    if not result['duplicate']:
+        for changed in {character.id:character,engineer.id:engineer}.values():
+            emit_character_update({'character_id':changed.id,'updates':{'data':changed.data_snapshot()},'source':'equipment_care'})
+        placement=LocationCharacter.query.filter_by(character_id=engineer.id).first()
+        if placement and result.get('action_points'):socketio.emit('combat_state_updated',CombatService.get_state(placement.location_id,user_id),room=f'location_{placement.location_id}')
+    return _equipment_care_response(character,user_id,result)
 
 
 @lobbies_bp.route('/characters/<int:character_id>/crafting',methods=['GET','POST'])
