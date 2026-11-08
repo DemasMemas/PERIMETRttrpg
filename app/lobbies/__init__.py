@@ -28,7 +28,6 @@ from app.services.exceptions import ConflictError, PermissionDenied, ValidationE
 from app.services.character_events import emit_character_update, publish_character_save
 from app.services.combat import CombatService
 from app.services.world_travel_events import roll_travel_event, travel_scenario
-from app.services.artifact_effects import apply_artifact_world_movement
 from app.services.character_interaction import CharacterInteractionService
 from app.services.health import apply_health_maximums, heal_character_fully, health_zones_to_location
 from app.services.location_lighting import normalize_location_lighting
@@ -1072,11 +1071,8 @@ def move_world_group(lobby_id, group_id, lobby, participant):
             lobby=lobby,
         )
         pain_recovery = CombatService._recover_world_travel_pain(character_data)
-        artifact_result = apply_artifact_world_movement(character_data)
-        if artifact_result['changed']:
-            health = character_data.setdefault('health', {})
-            CombatService._apply_radiation_threshold_states(health)
-            sync_health_derived_statuses(health)
+        # Переход не вызывает свойства артефактов: они тикают с общим игровым временем.
+        artifact_result = {'changed':False,'interval_seconds':600}
         radiation_consequences.append({
             "character_id": character.id,
             "character_name": character.name,

@@ -1156,9 +1156,10 @@ def apply_expired_effects_to_health(health: Dict[str, Any], effects: Iterable[An
                 if field:
                     _adjust_field(health, field, _to_float(adjustment.get("delta", 0), 0), adjustment.get("min", 0), adjustment.get("max"),character_data=character_data)
         if character_data:
-            from app.services.artifact_effects import is_radiation_clock,radiation_clock_removed
+            from app.services.artifact_effects import is_radiation_clock,radiation_clock_removed,is_periodic_clock,apply_periodic_clock
             if is_radiation_clock(effect):
                 radiation_clock_removed(character_data,effect,max(0,radiation_before_expiry-_to_float(health.get('radiation'),0)),health=health)
+            elif is_periodic_clock(effect):apply_periodic_clock(character_data,effect,health=health)
         activated.extend(_child_effects(effect))
         if effect.get("death_on_expire"):
             activated.append({
@@ -1246,10 +1247,10 @@ def advance_timed_effects(
     effects=list(effects or [])
     artifact_clock=False
     if character_data:
-        from app.services.artifact_effects import needs_radiation_clocks,sync_radiation_clocks,is_radiation_clock
-        if needs_radiation_clocks(character_data):
-            effects=sync_radiation_clocks(character_data,effects)
-            artifact_clock=any(is_radiation_clock(e) for e in effects)
+        from app.services.artifact_effects import needs_clocks,sync_clocks,is_artifact_clock
+        if needs_clocks(character_data):
+            effects=sync_clocks(character_data,effects)
+            artifact_clock=any(is_artifact_clock(e) for e in effects)
     if not _in_time_segments and (advance_medication_turns or artifact_clock):
         return _advance_medication_time(health, effects, elapsed_seconds,
                                         include_turn_effects=include_turn_effects,
@@ -1356,9 +1357,10 @@ def advance_timed_effects(
                         adjustment.get("min", 0), adjustment.get("max"),character_data=character_data,
                     )
         if character_data:
-            from app.services.artifact_effects import is_radiation_clock,radiation_clock_removed
+            from app.services.artifact_effects import is_radiation_clock,radiation_clock_removed,is_periodic_clock,apply_periodic_clock
             if is_radiation_clock(effect):
                 radiation_clock_removed(character_data,effect,max(0,radiation_before_expiry-_to_float(health.get('radiation'),0)),health=health)
+            elif is_periodic_clock(effect):apply_periodic_clock(character_data,effect,health=health)
         activated.extend(_child_effects(effect))
         if effect.get("death_on_expire"):
             activated.append({
@@ -1443,19 +1445,18 @@ def advance_timed_effects(
     for effect in activated:
         apply_effect_to_health(health, effect,character_data=character_data)
     if character_data:
-        from app.services.artifact_effects import needs_radiation_clocks,sync_radiation_clocks
-        if needs_radiation_clocks(character_data):health['effects']=sync_radiation_clocks(character_data,health['effects'])
+        from app.services.artifact_effects import needs_clocks,sync_clocks
+        if needs_clocks(character_data):
+            health['effects']=sync_clocks(character_data,health['effects'])
+            from app.services.combat import CombatService
+            CombatService._apply_radiation_threshold_states(health)
     sync_health_derived_statuses(health)
     return normalize_effect_list(health.get("effects") or [])
 
 
 def minimum_pain(health, character_data=None):
-    """Неустранимый минимум: последствия спасения и постоянно надетые артефакты."""
-    floor=min(5,max(0,_to_float(((health.get('combatMeta') or {}).get('toughNut') or {}).get('minimumPain'),0)))
-    if character_data:
-        from app.services.artifact_effects import artifact_passive_profile
-        floor+=max(0,artifact_passive_profile(character_data)['pain_per_movement'])
-    return min(10,floor)
+    """Неустранимый минимум после спасения; периодическая боль артефакта не является минимумом."""
+    return min(5,max(0,_to_float(((health.get('combatMeta') or {}).get('toughNut') or {}).get('minimumPain'),0)))
 
 
 def _advance_medication_time(health, effects, elapsed_seconds, *, include_turn_effects=False, recover_pain=False, character_data=None,
@@ -1493,6 +1494,10 @@ def _advance_medication_time(health, effects, elapsed_seconds, *, include_turn_e
                     deadline = _to_float(effect.get("remaining_seconds"), _to_float(effect["remaining"], 0) * interval)
                     if deadline > 0:
                         deadlines.append(deadline)
+                        # Отделяем последнюю шестисекундную долю: новая боль в конце
+                        # десятиминутного интервала не лечится задним числом за весь интервал.
+                        if recover_pain and str(effect.get('source') or '').startswith('artifact-ten-minute:') and deadline>6:
+                            deadlines.append(deadline-6)
         step = min(deadlines)
         pain_before=_to_float(health.get('painLevel'),0)
         simulated_ids = {effect["id"] for effect, _, _ in simulated}

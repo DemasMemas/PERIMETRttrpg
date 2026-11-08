@@ -8,7 +8,7 @@ module.exports=async({page,request,token,lobby,offered,loc,npc,safeSession})=>{
     const belt=make(offered.global.find(t=>t.category==='belt'),'artifact-browser-belt');
     const artifact=make(offered.global.find(t=>t.id===9600),'artifact-browser-item');
     const owner=await request(`/lobbies/${lobby.id}/characters`,{name:'Испытатель артефакта на поясе',data:{
-        equipment:{belt},inventory:{money:100000,pockets:[artifact],backpack:[]}}},token);
+        equipment:{belt},health:{radiation:0},inventory:{money:100000,pockets:[artifact],backpack:[]}}},token);
     const placed=await request(loc+'/spawn_character',{character_id:owner.id,tile_x:46,tile_y:48},token);
     const master=await request('/lobbies/characters/'+npc.id,null,token,'GET');
     await request(loc+'/professional-modification',{actor_location_character_id:placed.location_character_id,specialist_character_id:npc.id,
@@ -42,6 +42,24 @@ module.exports=async({page,request,token,lobby,offered,loc,npc,safeSession})=>{
         if(width===1280)fs.writeFileSync(path.join(safeSession.artifacts,'belt-artifact-1280x720.png'),Buffer.from((await page.call('Page.captureScreenshot',{format:'png'})).data,'base64'));
     }
     await request(loc+'/combat/end_turn',{location_character_id:placed.location_character_id},token);
+    const sheet=()=>request('/lobbies/characters/'+owner.id,null,token,'GET');
+    assert.equal((await sheet()).data.health.radiation,0);
+    await request(loc+'/combat/action',{location_character_id:placed.location_character_id,action_key:'convert_free_action_to_movement'},token);
+    await page.evaluate("window.artifactMoves=[];socket.on('character_moved',event=>artifactMoves.push(event));true");
+    for(const [index,x] of [46.1,46].entries()){
+        await page.evaluate(`socket.emit('move_in_location',{token:localStorage.getItem('access_token'),location_id:${loc.split('/').pop()},character_id:${owner.id},x:${x},y:48,floor_level:0,movement_mode:'walk'});true`);
+        await page.until(`artifactMoves.length===${index+1}`,'Настоящий боевой шаг');
+        assert.equal((await sheet()).data.health.radiation,0,'Шаг не вызывает радиацию артефакта');
+    }
+    for(let round=0;round<98;round++)await request(loc+'/combat/end_turn',{location_character_id:placed.location_character_id},token);
+    const at594=await sheet();assert.equal(at594.data.health.radiation,0);
+    assert.equal(at594.data.health.effects.find(e=>e.source?.startsWith('artifact-ten-minute:')).remaining_seconds,6);
+    await request(loc+'/combat/end_turn',{location_character_id:placed.location_character_id},token);
+    const at600=await sheet();assert.equal(at600.data.health.radiation,3);
+    assert.equal(at600.data.health.effects.find(e=>e.source?.startsWith('artifact-ten-minute:')).remaining_seconds,600);
+    evidence.step('Боевые шаги и десять минут игровых раундов',
+        {radiation:0,elapsedSeconds:594,movementEvents:2},
+        {radiation:at600.data.health.radiation,elapsedSeconds:600,movementEvents:2});
     const beforeUnmount=await request(loc+'/combat',null,token,'GET');
     await page.evaluate(`window.openCharacterSheet(${owner.id},'inventory').then(()=>true)`);
     await page.evaluate('window.unmountBeltArtifact(0);true');
@@ -55,8 +73,8 @@ module.exports=async({page,request,token,lobby,offered,loc,npc,safeSession})=>{
         {movementPenalty:ended.current_character.movement_penalty,physicalProtection:returned.data._artifact_profile.protection.physical,
             sameInstances:returned.data.inventory.pockets[0].id===artifact.id,actionPoints:ended.current_character.action_points_current});
     await request(loc+'/combat/end',{},token);
-    evidence.publish({images:['belt-artifact-1280x720.png'],controls:{random:'Бросков нет',time:'Крепление в одном ходу, снятие в следующем; время идёт штатно'},
+    evidence.publish({images:['belt-artifact-1280x720.png'],controls:{random:'Бросков нет',time:'100 настоящих шестисекундных раундов, два боевых шага; снятие после десятиминутного интервала'},
         limitations:['Контрольный шаблон артефакта, не проверка всех артефактов каталога. Физическая защита проверяется серверным профилем и профильным тестом, попадание в этом сценарии не выполняется.',
-            'Радиация за переход проверена серверным тестом; глобальный переход в браузере не выполняется. Один клиент ГМа.']});
+            'Десять минут проверены сотней настоящих боевых раундов; два движения не вызывают отдельный эффект. Глобальный переход проверен серверным API-тестом, один клиент ГМа.']});
     console.log('Артефакт на поясе: платная установка g70, физический экземпляр без контейнера, масса/два свойства/штраф боя, 3 ОД туда и обратно, четыре настольных размера.');
 };

@@ -8,6 +8,7 @@ from copy import deepcopy
 from hashlib import sha256
 
 CLOCK_PREFIX='artifact-radiation-clear:'
+PERIODIC_PREFIX='artifact-ten-minute:'
 CLEAR_RADIATION=re.compile(r'Выводит всю радиацию каждую минуту',re.IGNORECASE)
 
 
@@ -179,9 +180,9 @@ def radiation_clock_removed(character_data,effect,amount,*,health):
     return cost
 
 
-def _clock_source(item):
+def _clock_source(item,prefix=CLOCK_PREFIX):
     identity=item.get('id') or f"{item.get('templateId')}:{item.get('name')}"
-    return CLOCK_PREFIX+sha256(str(identity).encode('utf-8')).hexdigest()[:24]
+    return prefix+sha256(str(identity).encode('utf-8')).hexdigest()[:24]
 
 
 def is_radiation_clock(effect):
@@ -193,44 +194,74 @@ def _clearing_artifacts(data):
         str((item.get('attributes') or {}).get('positive_effect') or ''))]
 
 
-def needs_radiation_clocks(data):
-    return bool(_clearing_artifacts(data) or any(is_radiation_clock(e)
+def is_periodic_clock(effect):
+    return isinstance(effect,dict) and str(effect.get('source') or '').startswith(PERIODIC_PREFIX)
+
+
+def is_artifact_clock(effect):
+    return is_radiation_clock(effect) or is_periodic_clock(effect)
+
+
+def _item_profile(data,item):
+    return artifact_passive_profile({'health':data.get('health') or {},'equipment':{'armor':{
+        'containers':[{'item':{**item,'category':'artifact'}}]}}})
+
+
+def _clock_rules(data):
+    for item in equipped_artifacts(data):
+        if CLEAR_RADIATION.search(str((item.get('attributes') or {}).get('positive_effect') or '')):
+            yield item,CLOCK_PREFIX,60
+        profile=_item_profile(data,item)
+        if any(profile[key] for key in ('health_per_movement','radiation_per_movement','pain_per_movement')):
+            yield item,PERIODIC_PREFIX,600
+
+
+def needs_clocks(data):
+    return bool(next(_clock_rules(data),None) or any(is_artifact_clock(e)
         for e in ((data.get('health') or {}).get('effects') or [])))
 
 
-def sync_radiation_clocks(data,effects=None,*,canonical=None):
-    """Обычный истекающий эффект: существующие игровые часы исполняют его по минутам."""
+def sync_clocks(data,effects=None,*,canonical=None):
+    """Артефакты используют существующие игровые часы, независимо от движения."""
     effects=list(effects if effects is not None else (data.get('health') or {}).get('effects') or [])
     previous=((canonical.get('health') or {}).get('effects') or []) if canonical is not None else effects
-    old={e['source']:e for e in previous if is_radiation_clock(e)}
-    result=[deepcopy(e) for e in effects if not is_radiation_clock(e)]
+    old={e['source']:e for e in previous if is_artifact_clock(e)}
+    result=[deepcopy(e) for e in effects if not is_artifact_clock(e)]
     seen=set()
-    for item in _clearing_artifacts(data):
-        source=_clock_source(item)
+    for item,prefix,interval in _clock_rules(data):
+        source=_clock_source(item,prefix)
         if source in seen:continue
         seen.add(source)
         state=old.get(source) or {}
-        try:seconds=float(state.get('remaining_seconds',float(state.get('remaining',1))*60))
-        except (TypeError,ValueError):seconds=60
-        seconds=max(.001,min(60,seconds)) if math.isfinite(seconds) else 60
+        try:seconds=float(state.get('remaining_seconds',float(state.get('remaining',interval/60))*60))
+        except (TypeError,ValueError):seconds=interval
+        seconds=max(.001,min(interval,seconds)) if math.isfinite(seconds) else interval
+        minute=prefix==CLOCK_PREFIX
         result.append({'id':source,'source':source,'type':'delayed_adjustment',
-            'name':(item.get('name') or 'Артефакт')+': вывод радиации каждую минуту',
-            'note':'Пока артефакт надет, раз в минуту выводит всю радиацию. Потеря общих ОЗ начисляется только за радиацию, выведенную этим артефактом.',
-            'active':True,'time_unit':'minute','tick':'time_elapsed','remaining':1,'remaining_seconds':seconds,
-            'onExpire':[{'field':'radiation','delta':0,'min':0,'max':0}]})
+            'name':(item.get('name') or 'Артефакт')+(': вывод радиации каждую минуту' if minute else ': свойства каждые 10 минут'),
+            'note':('Пока артефакт надет, раз в минуту выводит всю радиацию. Потеря общих ОЗ начисляется только за радиацию, выведенную этим артефактом.'
+                if minute else 'Свойства «за перемещение» срабатывают раз в 10 минут игрового времени. Отдельные шаги не вызывают срабатывания.'),
+            'active':True,'time_unit':'minute','tick':'time_elapsed','remaining':interval//60,'remaining_seconds':seconds,
+            'onExpire':[{'field':'radiation','delta':0,'min':0,'max':0}] if minute else []})
     return result
 
 
+def apply_periodic_clock(data,effect,*,health):
+    item=next((item for item in equipped_artifacts(data)
+        if _clock_source(item,PERIODIC_PREFIX)==effect.get('source')),None)
+    if item:apply_artifact_world_movement(data,artifact=item,health=health)
+
+
 def preserve(current,incoming):
-    if not needs_radiation_clocks(incoming):return
+    if not needs_clocks(incoming):return
     health=incoming.setdefault('health',{})
-    health['effects']=sync_radiation_clocks(incoming,canonical=current or {})
+    health['effects']=sync_clocks(incoming,canonical=current or {})
 
 
-def apply_artifact_world_movement(character_data):
-    """Apply effects explicitly defined as occurring once per world movement."""
-    profile = artifact_passive_profile(character_data)
-    health = character_data.setdefault('health', {})
+def apply_artifact_world_movement(character_data,*,artifact=None,health=None):
+    """Одно срабатывание свойств «за перемещение»: каждые десять игровых минут."""
+    profile = _item_profile(character_data,artifact) if artifact is not None else artifact_passive_profile(character_data)
+    health = health if health is not None else character_data.setdefault('health', {})
     before = {
         key: health.get(key)
         for key in ('current', 'radiation', 'painLevel')

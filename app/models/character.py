@@ -32,9 +32,9 @@ class LobbyCharacter(db.Model):
         remove_stale_movement_modifiers(data,self.lobby_id)
         from app.services.character_traits import sync_pocket_capacity
         sync_pocket_capacity(self.data,data)
-        from app.services.artifact_effects import artifact_passive_profile,needs_radiation_clocks,sync_radiation_clocks
-        if needs_radiation_clocks(data):
-            data.setdefault('health',{})['effects']=sync_radiation_clocks(data)
+        from app.services.artifact_effects import artifact_passive_profile,needs_clocks,sync_clocks
+        if needs_clocks(data):
+            data.setdefault('health',{})['effects']=sync_clocks(data)
         data['_artifact_profile'] = artifact_passive_profile(data)
         data['_revision'] = self.revision
         data['_character_id'] = self.id

@@ -28,12 +28,15 @@ def test_global_pain_recovers_per_six_seconds_and_preserves_fractional_time():
     tick(600);assert health['painLevel']==0
 
 
-def test_global_pain_recovery_respects_tough_nut_and_equipped_artifact_minimum():
+def test_global_pain_recovery_respects_tough_nut_before_periodic_artifact_pulse():
     data={'health':{'painLevel':8,'effects':[],'combatMeta':{'toughNut':{'minimumPain':2}}},
         'equipment':{'armor':{'containers':[{'item':{'name':'Болевой артефакт','category':'artifact',
-            'attributes':{'negative_effect':'Усиливает боль на 1 уровень'}}}]}}}
+            'attributes':{'negative_effect':'Усиливает боль на 1 уровень за перемещение'}}}]}}}
     health=data['health']
-    health['effects']=advance_timed_effects(health,health['effects'],600,advance_medication_turns=True,
+    health['effects']=advance_timed_effects(health,health['effects'],599,advance_medication_turns=True,
+        recover_pain=True,character_data=data)
+    assert health['painLevel']==2
+    health['effects']=advance_timed_effects(health,health['effects'],1,advance_medication_turns=True,
         recover_pain=True,character_data=data)
     assert health['painLevel']==3
 
