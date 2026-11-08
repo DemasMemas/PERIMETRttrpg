@@ -2285,6 +2285,9 @@ input[type="number"] {
 .pda-network form label { display:grid; gap:5px; }
 .pda-network textarea { resize:vertical; min-height:72px; }
 .pda-radio-messages { min-height:100px; max-height:260px; overflow:auto; }
+.pda-network [data-radio-spam]:not([hidden]) { display:flex; align-items:center; flex-wrap:wrap; gap:8px 12px; }
+.pda-network [data-radio-spam-start] { width:auto; }
+.pda-network [data-radio-spam-status] { font-size:12px; }
 .pda-radio-message { padding:7px 0; border-bottom:1px solid #8eb87833; white-space:pre-wrap; overflow-wrap:anywhere; }
 .pda-radio-contact { display:flex; flex-wrap:wrap; align-items:center; gap:8px; margin:8px 0; }
 .pda-radio-contact small { flex-basis:100%; }

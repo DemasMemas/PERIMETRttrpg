@@ -2,13 +2,13 @@ import {Server} from './api.js';
 import {showNotification} from './utils.js';
 
 let audio=null,pendingSound=false,lastTone=0,activeWatcher=null;
-export async function testPdaSignal(shouldPlay=()=>true){
+export async function testPdaSignal(shouldPlay=()=>true,{force=false}={}){
     const Context=window.AudioContext||window.webkitAudioContext;
     if(!Context)return false;
     audio ||= new Context();
     try{
         await audio.resume();if(audio.state!=='running'||!shouldPlay())return false;
-        if(Date.now()-lastTone<350)return true;
+        if(!force&&Date.now()-lastTone<350)return true;
         const oscillator=audio.createOscillator(),gain=audio.createGain(),now=audio.currentTime;
         oscillator.type='sine';oscillator.frequency.setValueAtTime(1250,now);
         gain.gain.setValueAtTime(0,now);gain.gain.linearRampToValueAtTime(.035,now+.015);gain.gain.linearRampToValueAtTime(0,now+.15);
@@ -29,6 +29,9 @@ export function proximityDelta(previous,snapshot){
 export function initPdaProximity(lobbyId,socket){
     activeWatcher?.close();
     let busy=false,closed=false,currentKey='',seen=new Set(),timer=null,queued=null,lastRefresh=0;
+    let spamQueue=[],spamBusy=false,spamTimer=null;
+    const spamKey=`pda-spam:${localStorage.getItem('user_id')}:${lobbyId}`,heardSpam=new Set();
+    try{for(const id of JSON.parse(sessionStorage.getItem(spamKey)||'[]'))if(typeof id==='string')heardSpam.add(id);}catch{}
     const subject=()=>({characterId:window.isLocationActive?(window.currentLocationCharacterId||window.currentCharacterId):window.currentCharacterId,
         locationId:window.isLocationActive?window.currentLocationId:null});
     const keyFor=s=>`pda-proximity:${localStorage.getItem('user_id')}:${lobbyId}:${s.characterId}`;
@@ -61,17 +64,36 @@ export function initPdaProximity(lobbyId,socket){
         const delay=Math.max(0,1000-(Date.now()-lastRefresh));
         if(delay){queued ||= setTimeout(()=>{queued=null;void refresh();},delay);}else void refresh();
     };
-    const unlock=()=>{if(pendingSound)void testPdaSignal(()=>pendingSound).then(played=>{if(played)pendingSound=false;});};
+    async function playSpam(){
+        if(closed||spamBusy||spamTimer||!spamQueue.length)return;
+        spamBusy=true;
+        const played=await testPdaSignal(()=>!closed&&spamQueue.length>0,{force:true});
+        if(played&&!closed){const packet=spamQueue.shift();window.dispatchEvent(new CustomEvent('pda-spam-sound',{detail:packet}));}
+        spamBusy=false;
+        if(played&&!closed&&spamQueue.length)spamTimer=setTimeout(()=>{spamTimer=null;void playSpam();},400);
+    }
+    const onSpam=packet=>{
+        if(closed||Number(packet?.lobby_id)!==Number(lobbyId)||Number(packet.character_id)!==Number(subject().characterId)||typeof packet.message_id!=='string')return;
+        if(heardSpam.has(packet.message_id))return;
+        heardSpam.add(packet.message_id);
+        if(heardSpam.size>1000)heardSpam.delete(heardSpam.values().next().value);
+        try{sessionStorage.setItem(spamKey,JSON.stringify([...heardSpam].slice(-1000)));}catch{}
+        spamQueue.push(packet);showNotification('КПК: получен сигнал спам-атаки','system');
+        window.dispatchEvent(new CustomEvent('pda-spam-received',{detail:packet}));void playSpam();
+    };
+    const unlock=()=>{void playSpam();if(pendingSound)void testPdaSignal(()=>pendingSound).then(played=>{if(played)pendingSound=false;});};
     const events=['pda-network-updated','pda-game-time-updated','character-item-operation-finished','focus'];
     for(const name of events)window.addEventListener(name,wake);
     document.addEventListener('visibilitychange',wake);document.addEventListener('pointerdown',unlock);
     const socketEvents=['character_moved','world_group_updated','character_spawned'];
     for(const name of socketEvents)socket?.on(name,wake);
+    socket?.on('pda_spam_received',onSpam);
     timer=setInterval(wake,5000);wake();
     const close=()=>{
         closed=true;clearInterval(timer);clearTimeout(queued);for(const name of events)window.removeEventListener(name,wake);
         document.removeEventListener('visibilitychange',wake);document.removeEventListener('pointerdown',unlock);
         for(const name of socketEvents)socket?.off(name,wake);
+        socket?.off('pda_spam_received',onSpam);clearTimeout(spamTimer);spamQueue=[];
         window.removeEventListener('pagehide',close);
     };
     window.addEventListener('pagehide',close,{once:true});

@@ -17,17 +17,17 @@ export function createPdaAccessView({characterId,selection,onSaved,canEdit,getDa
     const button=(text,handler)=>{const el=node('button',text);el.type='button';el.className='btn btn-secondary';el.disabled=busy||!canEdit;
         el.onclick=handler;return el;};
     function controls(){for(const input of body.querySelectorAll('button,input,textarea,select'))input.disabled=busy||!canEdit;}
-    async function act(payload,software=false){
+    async function act(payload,software=false,propagate=false){
         if(busy||!canEdit)return;busy=true;error.textContent='';controls();
         try{
             const data=request({...payload,...(selected?{session_id:selected}:{}),operation_id:payload.operation_id||crypto.randomUUID()});
             if(software){const result=await Server.changePdaAccess(characterId,{...data,software:true});await onSaved?.(result.data);
                 if(payload.operation==='save_notes')showNotification('Заметки сохранены','system');}
             else await runController(characterId,data,onSaved,{actionKey:'pda_access',send:Server.changePdaAccess});
-            if(!['send','contact','remove_contact','proximity_sound'].includes(payload.operation)){
+            if(!['send','contact','remove_contact','proximity_sound','spam'].includes(payload.operation)){
                 network?.close();network=null;body.replaceChildren();
             }
-        }catch(failure){error.textContent=failure.message;showNotification(failure.message,'system');}
+        }catch(failure){error.textContent=failure.message;showNotification(failure.message,'system');if(propagate)throw failure;}
         finally{busy=false;controls();await refresh();}
     }
     async function refresh(){
@@ -129,7 +129,7 @@ export function createPdaAccessView({characterId,selection,onSaved,canEdit,getDa
             const service={getPdaNetwork:async()=>{
                 const fresh=await Server.getPdaAccess(characterId,request({session_id:selected}));
                 if(!fresh.network)throw Error('Нет положения подключённого КПК на карте');return fresh.network;
-            },changePdaNetwork:async(_id,payload)=>act({...payload,operation:payload.operation},true)};
+            },changePdaNetwork:async(_id,payload)=>act({...payload,operation:payload.operation},true,true)};
             network=createPdaNetworkView({characterId,findSource:()=>({path:selection().item_path,item:{id:selection().item_id}}),getData,canEdit,
                 operateHardware:payload=>act({operation:'jammer',enabled:payload.enabled}),service});
             body.append(network.element);network.setActive(true,tab);

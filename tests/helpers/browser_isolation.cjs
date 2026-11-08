@@ -122,7 +122,7 @@ ${scenario==='creation'?`        from character_creation_fixture import install
         install(app, db, check_database, '${runId}')
 `:''}${scenario==='medical-retry'?`        from medical_retry_fixture import install
         install(app, db, check_database, '${runId}')
-`:''}${scenario==='electronics'?`        from electronics_fixture import install
+`:''}${['electronics','artifacts'].includes(scenario)?`        from electronics_fixture import install
         install(app, db, check_database, '${runId}')
 `:''}${scenario==='improvised'?`        from improvised_fixture import install
         install(app, db, check_database, '${runId}')

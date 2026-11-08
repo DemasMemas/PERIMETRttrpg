@@ -1,8 +1,14 @@
 const {test}=require('node:test'),assert=require('node:assert/strict'),vm=require('node:vm'),fs=require('node:fs'),path=require('node:path');
 
-async function fixture(request){
+async function fixture(request,{audio=false}={}){
     const alerts=[],notifications=[],storage=new Map(),timeouts=[],socketHandlers=new Map();
     const window=new EventTarget(),document=new EventTarget();Object.assign(window,{currentCharacterId:12,isLocationActive:false});document.hidden=false;
+    const tones=[];
+    if(audio)window.AudioContext=class{
+        state='running';currentTime=0;destination={};async resume(){}
+        createGain(){return{gain:{setValueAtTime(){},linearRampToValueAtTime(){}},connect(){}};}
+        createOscillator(){return{frequency:{setValueAtTime(){}},connect(){},start(){tones.push(1);},stop(){}};}
+    };
     window.addEventListener('pda-proximity-alert',event=>alerts.push(event.detail));
     const context=vm.createContext({window,document,CustomEvent,Event,EventTarget,Set,Date,Promise,
         localStorage:{getItem:()=> '7'},sessionStorage:{getItem:key=>storage.get(key)||null,setItem:(key,value)=>storage.set(key,value)},
@@ -12,7 +18,7 @@ async function fixture(request){
         this.setExport(name==='./api.js'?'Server':'showNotification',name==='./api.js'?{getPdaProximity:request}:(...args)=>notifications.push(args));
     },{context}));await module.evaluate();
     const socket={on:(name,handler)=>socketHandlers.set(name,handler),off:name=>socketHandlers.delete(name)};
-    return {api:module.namespace,window,document,alerts,notifications,socket,storage,timeouts,socketHandlers};
+    return {api:module.namespace,window,document,alerts,notifications,socket,storage,timeouts,socketHandlers,tones};
 }
 const flush=()=>new Promise(resolve=>setImmediate(resolve));
 const signal=(sound=true)=>({devices:[{id:'physical-pda',sound,signals:[{id:'unknown',login:'Незнакомый КПК'}]}]});
@@ -37,4 +43,19 @@ test('частые события движения объединяются, о�
     let requests=0;const f=await fixture(async()=>{requests++;throw new Error('Нет связи');}),watcher=f.api.initPdaProximity(5,f.socket);await flush();
     for(let i=0;i<30;i++)f.socketHandlers.get('character_moved')();
     assert.equal(requests,1);assert.equal(f.timeouts.length,1);assert.equal(f.alerts.length,0);watcher.close();
+});
+
+test('пять спам-сигналов звучат независимо от отключённого детектора; повторы и чужие события не звучат',async()=>{
+    const f=await fixture(async()=>signal(false),{audio:true}),played=[];
+    f.window.addEventListener('pda-spam-sound',e=>played.push(e.detail.message_id));
+    const watcher=f.api.initPdaProximity('5',f.socket);await flush();assert.equal(f.tones.length,0);
+    const deliver=f.socketHandlers.get('pda_spam_received');
+    deliver({lobby_id:5,character_id:99,message_id:'foreign'});
+    deliver({lobby_id:6,character_id:12,message_id:'another-world'});
+    for(let i=1;i<=5;i++)deliver({lobby_id:5,character_id:12,message_id:`spam:${i}`,noise:10});
+    deliver({lobby_id:5,character_id:12,message_id:'spam:1',noise:10});
+    await flush();assert.equal(f.tones.length,1,'Быстро пришедшие игровые сигналы идут очередью');
+    for(let i=1;i<5;i++){assert.ok(f.timeouts.length);f.timeouts.shift()();await flush();}
+    assert.equal(f.tones.length,5);assert.deepEqual(played,['spam:1','spam:2','spam:3','spam:4','spam:5']);
+    watcher.close();assert.equal(f.socketHandlers.size,0);
 });

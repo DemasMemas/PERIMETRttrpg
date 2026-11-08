@@ -84,4 +84,5 @@ module.exports=async({page,request,token,lobby,base,safeSession})=>{
     console.log('Пылающий осколок: настоящее попадание, 50% на границе, 50 термического до защиты/40 после, только общий пул ОЗ.');
     await require('./daily_needs.browser.cjs')({page,request,token,characterId:actor.id,safeSession});
     await require('./artifact_devices.browser.cjs')({page,request,token,lobby,loc,characterId:actor.id,rules,safeSession});
+    await require('./pda_spam.browser.cjs')({page,request,token,lobby,loc,characterId:actor.id,locationId:location.id,safeSession});
 };

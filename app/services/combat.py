@@ -13077,6 +13077,8 @@ class CombatService:
             advance_controllers(location.lobby_id,6,location_id)
             from app.services.pda_access import advance as advance_pda_access
             advance_pda_access(location.lobby_id,6,location_id)
+            from app.services.pda_spam import advance as advance_spam
+            advance_spam(location.lobby,6,location_id)
             state.round_number += 1
             from app.services.sniper_position import expire as expire_sniper_position
             expire_sniper_position(location_id,state)

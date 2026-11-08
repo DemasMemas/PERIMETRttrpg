@@ -3,6 +3,8 @@ import hashlib
 import json
 import math
 import unicodedata
+from copy import deepcopy
+from datetime import timezone
 
 from sqlalchemy import inspect,or_,select
 from sqlalchemy.exc import IntegrityError
@@ -186,6 +188,7 @@ def snapshot_source(source,devices):
             if row.sender_account_id!=account.id and account.id not in row.recipient_account_ids:continue
             sender=db.session.get(PdaAccount,row.sender_account_id)
             messages.append({'id':row.id,'sender':sender.login if sender else 'Удалённый аккаунт','text':row.text,'game_time':row.game_time,
+                'sent_at':row.created_at.replace(tzinfo=timezone.utc).timestamp(),
                 'outgoing':row.sender_account_id==account.id,'recipient':row.target_login})
     saved=[]
     for contact in contacts:
@@ -193,7 +196,11 @@ def snapshot_source(source,devices):
         if not target or target.lobby_id!=character.lobby_id:continue
         saved.append({'account_id':target.id,'login':target.login,'friendly':contact.friendly,
             'can_send':any(peer['account'] and peer['account'].id==target.id and 'pda-b9' not in peer['mods'] and reaches(source,peer,devices) for peer in devices)})
+    messages.extend(deepcopy((item.get('pdaNetwork') or {}).get('spam_messages') or []))
+    messages.sort(key=lambda message:message.get('sent_at',0))
     return {'account':{'id':account.id,'login':account.login} if account else None,'source':{'signal_id':source['signal_id'],
+        'character_revision':getattr(character,'revision',None),'has_spam':'pda-b17' in source['mods'],
+        'spam_remaining':int(((item.get('pdaNetwork') or {}).get('spam_job') or {}).get('remaining',0)),
         'transmit_range':source['range'],'blocked':blocked(source,devices),'jammer_on':bool((item.get('pdaNetwork') or {}).get('jammer_on')),
         'has_jammer':'pda-b16' in source['mods'],'has_proximity':'pda-b8' in source['mods'],
         'proximity_sound':(item.get('pdaNetwork') or {}).get('proximity_sound',True)},'signals':signals,'contacts':saved,'messages':messages[-100:]}
@@ -203,6 +210,15 @@ def snapshot_source(source,devices):
 def operate(character_id,user_id,payload):
     character,item,source,devices=_source(character_id,user_id,payload,edit=True)
     operation=payload.get('operation')
+    if operation=='spam':
+        revision=character.revision
+        result=operate_source(source,devices,payload)
+        cost=0
+        if not result['replayed']:
+            if payload.get('character_revision')!=revision:raise ConflictError('Лист изменился')
+            from app.services.pda_spam import charge_start
+            cost=charge_start(character,user_id,item.get('id'),payload,result)
+        return character,{**result,'action_points':cost}
     if operation=='proximity_sound':
         if 'pda-b8' not in source['mods']:raise ValidationError('На КПК нет детектора приближения')
         if type(payload.get('enabled')) is not bool:raise ValidationError('Выберите состояние звукового сигнала')
@@ -222,6 +238,9 @@ def operate(character_id,user_id,payload):
 
 def operate_source(source,devices,payload):
     character=source['character'];operation=payload.get('operation')
+    if operation=='spam':
+        from app.services.pda_spam import start
+        return start(source,devices,payload)
     if operation=='contact':
         account=_account(source);login=unicodedata.normalize('NFKC',str(payload.get('login') or '')).strip().casefold()
         target=PdaAccount.query.filter_by(lobby_id=character.lobby_id,login_key=login).first()

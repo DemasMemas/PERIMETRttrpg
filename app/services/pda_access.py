@@ -267,10 +267,13 @@ def target_action(character_id,user_id,payload):
     elif operation=='proximity_sound':
         if 'pda-b8' not in target['mods'] or type(payload.get('enabled')) is not bool:raise ValidationError('Недоступна настройка звука детектора')
         target['item'].setdefault('pdaNetwork',{})['proximity_sound']=payload['enabled'];devices.save(target)
-    elif operation in {'send','contact','remove_contact'}:
+    elif operation in {'send','contact','remove_contact','spam'}:
         radios=_radio_sources(records);radio=next((entry for entry in radios if entry['id']==target['id']),None)
         if not radio:raise ValidationError('Нет положения подключённого КПК на карте')
         result.update(operate_source(radio,radios,payload))
+        if operation=='spam':
+            from app.services.pda_spam import charge_start
+            result['action_points']=charge_start(character,user_id,source['id'],payload,result)
     else:raise ValidationError('Неизвестное программное действие КПК')
     result['session']=project(row)
     row.receipts=[*(row.receipts or []),{'id':identity,'signature':signature,'result':deepcopy(result)}][-50:]

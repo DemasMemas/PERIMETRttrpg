@@ -336,15 +336,17 @@ def _advance_lobby_devices(lobby,seconds):
 def advance_lobby(lobby,seconds):
     from app.services.item_controllers import advance as advance_controllers,next_due
     from app.services.pda_access import advance as advance_access,next_due as next_access
+    from app.services.pda_spam import advance as advance_spam,next_due as next_spam
     remaining=max(0,seconds);updated={}
     while remaining>0:
-        step=min(next_due(lobby.id,remaining),next_access(lobby.id,remaining))
+        step=min(next_due(lobby.id,remaining),next_access(lobby.id,remaining),next_spam(lobby.id,remaining))
         for character in _advance_lobby_devices(lobby,step):updated[character.id]=character
         for result in advance_controllers(lobby.id,step):
             for identity in result.get('affected_character_ids',[]):
                 character=db.session.get(LobbyCharacter,identity)
                 if character:updated[identity]=character
         advance_access(lobby.id,step)
+        for character in advance_spam(lobby,step):updated[character.id]=character
         remaining=max(0,remaining-step)
     return list(updated.values())
 

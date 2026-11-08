@@ -8,14 +8,16 @@ export function createPdaNetworkView({characterId,findSource,getData,operateHard
         <div data-radio-proximity hidden><label><input type="checkbox" data-radio-proximity-sound> Звуковой сигнал о незнакомом КПК</label><button type="button" data-radio-test-sound>Проверить звук</button></div><p role="alert" data-radio-error></p>
         <div data-radio-chat><div class="pda-radio-messages" data-radio-messages aria-live="polite"></div>
         <form data-radio-send><label>Получатель<select aria-label="Получатель сообщения КПК"></select></label>
-        <label>Сообщение<textarea aria-label="Сообщение КПК" rows="3" maxlength="2000"></textarea></label><button type="submit">Передать</button></form></div>
+        <label>Сообщение<textarea aria-label="Сообщение КПК" rows="3" maxlength="2000"></textarea></label><button type="submit">Передать</button></form>
+        <div data-radio-spam hidden><button type="button" data-radio-spam-start>Спам-атака · 5 раундов</button><span data-radio-spam-status></span></div></div>
         <div data-radio-contacts hidden><h4>Сигналы поблизости</h4><div data-radio-signals></div><h4>Сохранённые контакты</h4><div data-radio-saved></div>
         <form data-radio-add><label>Логин контакта<input aria-label="Логин контакта КПК" autocomplete="off" maxlength="32"></label><button type="submit">Добавить в друзья</button></form></div>`;
     const status=element.querySelector('[data-radio-status]'),error=element.querySelector('[data-radio-error]'),jammer=element.querySelector('[data-radio-jammer]');
     const send=element.querySelector('[data-radio-send]'),receiver=send.querySelector('select'),text=send.querySelector('textarea');
     const add=element.querySelector('[data-radio-add]'),login=add.querySelector('input');
     const proximity=element.querySelector('[data-radio-proximity]'),sound=element.querySelector('[data-radio-proximity-sound]');
-    let active=false,closed=false,busy=false,loading=false,timer=null,snapshot=null,pendingMessage=null,actionError='';
+    const spam=element.querySelector('[data-radio-spam]'),spamButton=spam.querySelector('button');
+    let active=false,closed=false,busy=false,loading=false,timer=null,snapshot=null,pendingMessage=null,pendingSpam=null,actionError='';
     const node=(tag,value)=>{const el=document.createElement(tag);el.textContent=value;return el;};
     const selection=()=>{
         const source=findSource();if(!source)throw Error('КПК перемещён. Откройте его заново.');
@@ -30,6 +32,12 @@ export function createPdaNetworkView({characterId,findSource,getData,operateHard
         const state=window.locationCombatState,offTurn=state?.status==='active'&&Number(state.current_character?.character_id)!==Number(characterId);
         jammer.disabled=busy||!canEdit||offTurn;jammer.title=offTurn?'Только в свой ход':'';
         sound.disabled=busy||!canEdit;
+        const physical=receiver.value.startsWith('device:');
+        send.querySelector('[type=submit]').disabled ||= physical;
+        spamButton.disabled=unavailable||offTurn||Boolean(snapshot?.source.blocked)||Boolean(snapshot?.source.spam_remaining)||!physical||receiver.selectedOptions[0]?.disabled;
+        spamButton.textContent=`Спам-атака · ${state?.status==='active'?'3 ОД · ':''}5 раундов`;
+        spam.querySelector('[data-radio-spam-status]').textContent=snapshot?.source.spam_remaining?`Осталось сигналов: ${snapshot.source.spam_remaining}`:
+            physical?'Каждый сигнал — шум 10.':'Для атаки выберите КПК в списке получателей.';
     };
     function paint(){
         if(!snapshot)return;
@@ -37,10 +45,11 @@ export function createPdaNetworkView({characterId,findSource,getData,operateHard
         status.textContent=`Дальность передачи: ${source.transmit_range} м${source.blocked?' · '+source.blocked:''}${snapshot.account?'':' · войдите в аккаунт для переписки и контактов'}`;
         jammer.hidden=!source.has_jammer;jammer.textContent=source.jammer_on?'Выключить глушилку':'Включить глушилку · радиус 25 м';
         proximity.hidden=!source.has_proximity;sound.checked=source.proximity_sound!==false;
+        spam.hidden=!source.has_spam;
         const feed=element.querySelector('[data-radio-messages]'),bottom=feed.scrollHeight-feed.scrollTop-feed.clientHeight<40;
         feed.replaceChildren();
         for(const message of snapshot.messages){const author=message.outgoing?(message.recipient?'Вы → '+message.recipient:'Вы · общий канал'):
-            message.sender+(message.recipient?' · личное':' · общий канал');
+            message.sender+(message.spam?' · спам-атака':message.recipient?' · личное':' · общий канал');
             const row=node('div',`${author}: ${message.text}`);row.className='pda-radio-message';feed.append(row);}
         if(!snapshot.messages.length)feed.append(node('p','Сообщений пока нет.'));
         if(bottom)feed.scrollTop=feed.scrollHeight;
@@ -48,8 +57,11 @@ export function createPdaNetworkView({characterId,findSource,getData,operateHard
             const previous=receiver.value,previousLabel=receiver.selectedOptions[0]?.textContent;receiver.replaceChildren();const all=node('option','Общий радиоканал');all.value='';receiver.append(all);
             const accounts=new Map([...snapshot.contacts,...snapshot.signals].filter(v=>v.account_id&&v.account_id!==snapshot.account?.id).map(v=>[v.account_id,v]));
             for(const [id,account]of accounts){const option=node('option',account.login);option.value=id;receiver.append(option);}
+            if(source.has_spam){const group=document.createElement('optgroup');group.label='КПК для спам-атаки';
+                snapshot.signals.filter(signal=>signal.can_send).forEach((signal,index)=>{const option=node('option',`${signal.login} · КПК ${index+1}`);option.value='device:'+signal.signal_id;group.append(option);});
+                if(group.children.length)receiver.append(group);}
             if(previous&&![...receiver.options].some(option=>option.value===previous)){
-                const retained=node('option',previousLabel||'Выбранный контакт');retained.value=previous;receiver.append(retained);
+                const retained=node('option',previousLabel||'Выбранный контакт');retained.value=previous;retained.disabled=previous.startsWith('device:');receiver.append(retained);
             }
             receiver.value=previous;
         }
@@ -87,16 +99,19 @@ export function createPdaNetworkView({characterId,findSource,getData,operateHard
             if(payload.operation==='jammer'){
                 const source=findSource();if(!source)throw Error('КПК перемещён');
                 await operateHardware({operation:'pda_jammer',path:source.path,source_id:source.item.id,enabled:payload.enabled});
-            }else await service.changePdaNetwork(characterId,{...selection(),...payload,character_revision:getData()?._revision});
+            }else await service.changePdaNetwork(characterId,{...selection(),...payload,character_revision:snapshot?.source.character_revision??getData()?._revision});
             if(payload.operation==='send'){pendingMessage=null;text.value='';showNotification('Сообщение передано в эфир','system');}
+            if(payload.operation==='spam'){pendingSpam=null;text.value='';showNotification('Спам-атака запущена на 5 раундов','system');}
             if(payload.operation==='contact')login.value='';
         }catch(failure){actionError=failure.message;error.textContent=actionError;}
         finally{busy=false;controls();await refresh();}
     }
-    send.onsubmit=event=>{event.preventDefault();if(!text.value.trim())return;
+    send.onsubmit=event=>{event.preventDefault();if(!text.value.trim()||receiver.value.startsWith('device:'))return;
         pendingMessage ||= {operation:'send',operation_id:crypto.randomUUID(),text:text.value,
             target_account_id:receiver.value?Number(receiver.value):null};void act(pendingMessage);};
-    text.oninput=()=>{pendingMessage=null;};receiver.onchange=()=>{pendingMessage=null;};
+    text.oninput=()=>{pendingMessage=null;pendingSpam=null;};receiver.onchange=()=>{pendingMessage=null;pendingSpam=null;controls();};
+    spamButton.onclick=()=>{if(!text.value.trim()||!receiver.value.startsWith('device:')){error.textContent='Введите текст сообщения и выберите КПК';return;}
+        pendingSpam ||= {operation:'spam',operation_id:crypto.randomUUID(),text:text.value,target_signal_id:receiver.value.slice(7)};void act(pendingSpam);};
     add.onsubmit=event=>{event.preventDefault();if(login.value.trim())void act({operation:'contact',login:login.value,friendly:true});};
     jammer.onclick=()=>act({operation:'jammer',enabled:!snapshot?.source.jammer_on});
     sound.onchange=()=>act({operation:'proximity_sound',enabled:sound.checked});
