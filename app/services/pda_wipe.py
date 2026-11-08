@@ -99,11 +99,19 @@ def erase(lobby_id,item):
             meta.pop('pdaDynamo');flag_modified(character,'data');_changed(lobby_id,character)
     # Явная очистка ссылок работает и со старыми БД без включённого FK cascade.
     sent=[row.id for row in PdaTransmission.query.filter(PdaTransmission.sender_account_id.in_(identities)).all()]
+    from app.services.pda_identity import enabled as identity_enabled
+    if sent and identity_enabled():
+        from app.models import PdaTransmissionIdentity
+        PdaTransmissionIdentity.query.filter(PdaTransmissionIdentity.transmission_id.in_(sent)).delete(synchronize_session='fetch')
     PdaDelivery.query.filter(or_(PdaDelivery.account_id.in_(identities),PdaDelivery.transmission_id.in_(sent))).delete(synchronize_session='fetch')
     PdaTransmission.query.filter(PdaTransmission.id.in_(sent)).delete(synchronize_session='fetch')
     for message in PdaTransmission.query.filter_by(lobby_id=lobby_id).all():
         if identities.intersection(message.recipient_account_ids or []):
             message.recipient_account_ids=[identity for identity in message.recipient_account_ids if identity not in identities]
+    from app.services.pda_identity import contact_labels_enabled
+    if contact_labels_enabled():
+        from app.models import PdaContactLabel
+        PdaContactLabel.query.filter(or_(PdaContactLabel.account_id.in_(identities),PdaContactLabel.target_account_id.in_(identities))).delete(synchronize_session='fetch')
     PdaContact.query.filter(or_(PdaContact.account_id.in_(identities),PdaContact.target_account_id.in_(identities))).delete(synchronize_session='fetch')
     PdaAccountLogin.query.filter(PdaAccountLogin.account_id.in_(identities)).delete(synchronize_session='fetch')
     for account in accounts:db.session.delete(account)

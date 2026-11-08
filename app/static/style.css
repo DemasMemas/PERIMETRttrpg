@@ -2256,16 +2256,19 @@ input[type="number"] {
 .pda-shell-header small { display: block; color: #8bab83; font-size: .64rem; letter-spacing: .16em; }
 .pda-shell-header strong { font-size: 1.35rem; }
 .pda-shell-power { display: flex; align-items: center; gap: 12px; font-size: .72rem; letter-spacing: .1em; }
-.pda-shell-power button, .pda-shell-nav button { color: #cce7c0; background: #213c29; border: 1px solid #68905b88; border-radius: 6px; cursor: pointer; font: inherit; }
-.pda-shell-power button { padding: 7px 12px; }
-.pda-shell-power button:disabled, .pda-shell-nav button:disabled { opacity: .45; cursor: default; }
+.pda-shell button { box-sizing: border-box; min-height: 36px; padding: 7px 12px; color: #cce7c0; background: #213c29; border: 1px solid #68905b88; border-radius: 6px; cursor: pointer; font: inherit; line-height: 1.3; text-decoration: none; backdrop-filter: none; }
+.pda-shell button:not(:disabled):hover { background: #345337; border-color: #acd48e; }
+.pda-shell button:focus-visible { outline: 2px solid #cce7c0; outline-offset: 2px; }
+.pda-shell button:disabled { opacity: .45; cursor: default; }
+.pda-shell button.btn-danger { color: #f3d4cb; background: #623c34; border-color: #bc8b7c; }
+.pda-shell button.btn-danger:not(:disabled):hover { background: #79493d; border-color: #e3b09e; }
 .pda-shell-content { display: grid; grid-template-columns: 220px minmax(0, 1fr); flex: 1; min-height: 0; }
 .pda-shell-nav { display: flex; flex-direction: column; gap: 5px; padding: 14px; border-right: 1px solid #8eb87844; overflow: auto; }
 .pda-shell-nav button { text-align: left; padding: 8px 11px; }
-.pda-shell-nav button.active, .pda-shell-nav button:not(:disabled):hover { background: #456739; border-color: #acd48e; }
+.pda-shell .pda-shell-nav button.active { background: #456739; border-color: #acd48e; }
 .pda-shell-main { min-width: 0; overflow: auto; padding: 24px; line-height: 1.55; }
 .pda-access-tabs { display: flex; flex-wrap: wrap; gap: 6px; margin: 12px 0; }
-.pda-access-tabs button[aria-current="true"] { background:#456739; border:1px solid #acd48e; color:#e0f1d7; opacity:1; }
+.pda-shell .pda-access-tabs button[aria-current="true"] { background:#456739; border-color:#acd48e; color:#e0f1d7; opacity:1; }
 .pda-access > div > .btn { margin: 4px 6px 4px 0; }
 .pda-access .pda-file-card { grid-template-columns: minmax(0, 1fr); margin: 8px 0; }
 .pda-access .pda-file-card button { justify-self: start; }
@@ -2276,14 +2279,15 @@ input[type="number"] {
 .pda-file-card strong { min-width: 0; overflow-wrap: anywhere; }
 .pda-file-card > button { white-space: nowrap; }
 .pda-file-skills { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 6px; }
-.pda-file-skills button { color: #cce7c0; background: #213c29; border: 1px solid #68905b88; border-radius: 6px; padding: 5px 9px; cursor: pointer; }
-.pda-file-skills button.active { background: #456739; border-color: #acd48e; }
+.pda-shell .pda-file-skills button.active { background: #456739; border-color: #acd48e; }
 .pda-shell-note { display: inline-block; padding: 9px 13px; border: 1px solid #a1bc744d; border-radius: 6px; color: #bdd1af; }
 .pda-shell-mod { display: flex; flex-direction: column; margin: 8px 0; padding: 8px 12px; border-left: 3px solid #91b973; background: #ffffff0a; }
 .pda-shell-footer { flex-wrap: wrap; border-top: 1px solid #8eb87844; border-bottom: 0; color: #8bab83; font-size: .67rem; letter-spacing: .12em; }
 .pda-network form { display:grid; gap:10px; margin:12px 0; }
 .pda-network form label { display:grid; gap:5px; }
 .pda-network textarea { resize:vertical; min-height:72px; }
+.pda-network [data-radio-alias] { grid-template-columns:minmax(0,1fr) auto; align-items:end; }
+.pda-network [data-radio-alias] input, .pda-network [data-radio-alias] button { height:36px; box-sizing:border-box; }
 .pda-radio-messages { min-height:100px; max-height:260px; overflow:auto; }
 .pda-network [data-radio-spam]:not([hidden]) { display:flex; align-items:center; flex-wrap:wrap; gap:8px 12px; }
 .pda-network [data-radio-spam-start] { width:auto; }
@@ -2291,8 +2295,7 @@ input[type="number"] {
 .pda-radio-message { padding:7px 0; border-bottom:1px solid #8eb87833; white-space:pre-wrap; overflow-wrap:anywhere; }
 .pda-radio-contact { display:flex; flex-wrap:wrap; align-items:center; gap:8px; margin:8px 0; }
 .pda-radio-contact small { flex-basis:100%; }
-.pda-shell-account { border: 0; padding: 0; background: none; color: inherit; font: inherit; letter-spacing: inherit; cursor: pointer; text-align: left; }
-.pda-shell-account:hover, .pda-shell-account:focus-visible { color: #cce7c0; text-decoration: underline; }
+.pda-shell-account { letter-spacing: inherit; text-align: left; }
 .pda-account-title { margin: 0 0 8px; }
 .pda-account-rules { max-width: 540px; margin: 0; color: #bdd1af; }
 .pda-account-form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; max-width: 540px; margin-top: 12px; }
@@ -2302,8 +2305,6 @@ input[type="number"] {
 .pda-account-error { margin: 0; }
 .pda-account-submit { justify-self: start; }
 .pda-account-switch { margin: 10px 0 0; }
-.pda-account-mode-link { border: 0; padding: 0; background: none; color: #cce7c0; font: inherit; text-decoration: underline; cursor: pointer; }
-.pda-account-mode-link:hover, .pda-account-mode-link:focus-visible { color: #fff; }
 .pda-account-success { padding: 10px 12px; border: 1px solid #91b973; border-radius: 6px; background: #45673955; color: #ecf9da; }
 .pda-account-notes { display: block; width: 100%; min-height: 220px; margin: 12px 0; resize: vertical; }
 .pda-shell-close { display: block; flex-shrink: 0; margin: 14px auto 0; }

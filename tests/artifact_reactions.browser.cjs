@@ -88,4 +88,5 @@ module.exports=async({page,request,token,lobby,base,safeSession})=>{
     await require('./pda_instruments.browser.cjs')({page,request,token,lobby,loc,characterId:actor.id,fixture,safeSession});
     await require('./electronics_burn.browser.cjs')({page,request,token,lobby,loc,locationId:location.id,safeSession});
     await require('./air_filler.browser.cjs')({page,request,token,lobby,loc,locationId:location.id,safeSession});
+    await require('./pda_identity.browser.cjs')({page,request,token,lobby,loc,locationId:location.id,characterId:actor.id,safeSession});
 };

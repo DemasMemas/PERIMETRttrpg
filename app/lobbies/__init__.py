@@ -5444,9 +5444,9 @@ def character_pda_network(character_id):
             'location_id':request.args.get('location_id',type=int)})),200
     character,result=operate(character_id,user_id,request.get_json(silent=True) or {})
     socketio.emit('pda_network_updated',{'lobby_id':character.lobby_id},room=f'lobby_{character.lobby_id}')
-    if result.get('operation') in {'pda_jammer','proximity_sound','spam'}:
+    if result.get('operation') in {'pda_jammer','proximity_sound','spam','sender_name'}:
         emit_character_update({'character_id':character.id,'updates':{'data':character.data_snapshot()},'source':'pda_network'})
-    if result.get('operation')=='spam' and result.get('action_points'):
+    if result.get('operation') in {'spam','sender_name'} and result.get('action_points'):
         for model in LocationCharacter.query.filter_by(character_id=character.id).all():
             socketio.emit('combat_state_updated',CombatService.get_state(model.location_id,user_id),room=f'location_{model.location_id}')
     return jsonify({'result':result,'data':character.data_snapshot()}),200

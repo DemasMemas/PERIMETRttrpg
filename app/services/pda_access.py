@@ -198,6 +198,7 @@ def readable_book(character,data,remote,book_id,*,register=False):
 
 @atomic_operation
 def target_snapshot(character_id,user_id,payload):
+    from app.services.pda_identity import display
     character=db.session.get(LobbyCharacter,character_id)
     if not character:raise NotFoundError('Персонаж не найден')
     CharacterService.check_access(character,user_id,edit=True)
@@ -228,8 +229,8 @@ def target_snapshot(character_id,user_id,payload):
         'modifications':[entry.get('name') or entry.get('ruleId') for entry in item.get('modifications') or []],
         'has_jammer':'pda-b16' in target['mods'],'has_wipe':'pda-b14' in target['mods'],
         'jammer_on':bool((item.get('pdaNetwork') or {}).get('jammer_on'))},
-        'account':{'id':account.id,'login':account.login,'notes':account.notes or ''} if account else None,
-        'network':snapshot_source(radio,radios) if radio else None,'files':files,'charges':charges}
+        'account':{'id':account.id,'login':display(item,account),'notes':account.notes or ''} if account else None,
+        'network':snapshot_source(radio,radios,masked_account=True) if radio else None,'files':files,'charges':charges}
 
 
 @atomic_operation
@@ -249,7 +250,9 @@ def target_action(character_id,user_id,payload):
     signature=_signature(payload);prior=next((receipt for receipt in row.receipts or [] if receipt['id']==identity),None)
     if prior:
         if prior['signature']!=signature:raise ConflictError('Идентификатор действия уже использован')
-        return character,deepcopy(prior['result'])
+        result=deepcopy(prior['result'])
+        if result.get('operation')=='sender_name':result.update(replayed=True,action_points=0)
+        return character,result
     operation=payload.get('operation');account=devices.account(target);result={'operation':operation}
     if operation in {'login','register','logout'}:
         account=None if operation=='logout' else authenticate(character.lobby_id,operation,payload)
@@ -267,13 +270,16 @@ def target_action(character_id,user_id,payload):
     elif operation=='proximity_sound':
         if 'pda-b8' not in target['mods'] or type(payload.get('enabled')) is not bool:raise ValidationError('Недоступна настройка звука детектора')
         target['item'].setdefault('pdaNetwork',{})['proximity_sound']=payload['enabled'];devices.save(target)
-    elif operation in {'send','contact','remove_contact','spam'}:
+    elif operation in {'send','contact','remove_contact','spam','sender_name'}:
         radios=_radio_sources(records);radio=next((entry for entry in radios if entry['id']==target['id']),None)
         if not radio:raise ValidationError('Нет положения подключённого КПК на карте')
         result.update(operate_source(radio,radios,payload))
         if operation=='spam':
             from app.services.pda_spam import charge_start
             result['action_points']=charge_start(character,user_id,source['id'],payload,result)
+        elif operation=='sender_name':
+            from app.services.pda_action_cost import charge
+            result['action_points']=charge(character,user_id,source['id'],payload,result,'Замена имени') if result['changed'] else 0
     else:raise ValidationError('Неизвестное программное действие КПК')
     result['session']=project(row)
     row.receipts=[*(row.receipts or []),{'id':identity,'signature':signature,'result':deepcopy(result)}][-50:]

@@ -24,7 +24,7 @@ export function createPdaAccessView({characterId,selection,onSaved,canEdit,getDa
             if(software){const result=await Server.changePdaAccess(characterId,{...data,software:true});await onSaved?.(result.data);
                 if(payload.operation==='save_notes')showNotification('Заметки сохранены','system');}
             else await runController(characterId,data,onSaved,{actionKey:'pda_access',send:Server.changePdaAccess});
-            if(!['send','contact','remove_contact','proximity_sound','spam'].includes(payload.operation)){
+            if(!['send','contact','remove_contact','proximity_sound','spam','sender_name'].includes(payload.operation)){
                 network?.close();network=null;body.replaceChildren();
             }
         }catch(failure){error.textContent=failure.message;showNotification(failure.message,'system');if(propagate)throw failure;}

@@ -134,13 +134,14 @@ def _account(source):
 
 
 def _signals(source,devices):
+    from app.services.pda_identity import display
     character=source['character']
     account=source['account'];contacts=PdaContact.query.filter_by(account_id=account.id).all() if account else []
     friends={contact.target_account_id for contact in contacts if contact.friendly}
     signals=[]
     for peer in devices:
         if peer['character'].id==character.id or 'pda-b9' in peer['mods'] or not reaches(peer,source,devices):continue
-        peer_account=peer['account'];entry={'signal_id':peer['signal_id'],'login':peer_account.login if peer_account else 'Неизвестный КПК',
+        peer_account=peer['account'];entry={'signal_id':peer['signal_id'],'login':display(peer['item'],peer_account),
             'account_id':peer_account.id if peer_account else None,'friendly':bool(peer_account and peer_account.id in friends),
             'can_send':reaches(source,peer,devices),'can_receive':True}
         if 'pda-b2' in source['mods']:
@@ -174,8 +175,9 @@ def snapshot(character_id,user_id,payload):
     return snapshot_source(source,devices)
 
 
-def snapshot_source(source,devices):
+def snapshot_source(source,devices,*,masked_account=False):
     from app.services.pda_instruments import readings
+    from app.services.pda_identity import history,settings,display,contact_labels
     character=source['character'];item=source['item']
     account=source['account'];contacts=PdaContact.query.filter_by(account_id=account.id).all() if account else []
     signals=_signals(source,devices)
@@ -185,22 +187,30 @@ def snapshot_source(source,devices):
         rows=PdaTransmission.query.filter(PdaTransmission.lobby_id==character.lobby_id,
             or_(PdaTransmission.sender_account_id==account.id,PdaTransmission.id.in_(delivered))).order_by(
                 PdaTransmission.created_at.desc(),PdaTransmission.id.desc()).limit(100).all()
+        names=history([row.id for row in rows])
         for row in reversed(rows):
             if row.sender_account_id!=account.id and account.id not in row.recipient_account_ids:continue
             sender=db.session.get(PdaAccount,row.sender_account_id)
-            messages.append({'id':row.id,'sender':sender.login if sender else 'Удалённый аккаунт','text':row.text,'game_time':row.game_time,
+            identity=names.get(row.id,{})
+            recipient=identity.get('recipient') or row.target_login
+            if masked_account and recipient==account.login:recipient=display(item,account)
+            messages.append({'id':row.id,'sender':identity.get('sender',sender.login if sender else 'Удалённый аккаунт'),'text':row.text,'game_time':row.game_time,
                 'sent_at':row.created_at.replace(tzinfo=timezone.utc).timestamp(),
-                'outgoing':row.sender_account_id==account.id,'recipient':row.target_login})
+                'outgoing':row.sender_account_id==account.id,'recipient':recipient})
     saved=[]
+    labels=contact_labels(account.id) if account else {}
     for contact in contacts:
         target=db.session.get(PdaAccount,contact.target_account_id)
         if not target or target.lobby_id!=character.lobby_id:continue
-        saved.append({'account_id':target.id,'login':target.login,'friendly':contact.friendly,
+        label=labels.get(target.id)
+        signal=next((signal for signal in signals if label and signal['signal_id']==label['signal_id']),None)
+        name=signal['login'] if signal else label['name'] if label else target.login
+        saved.append({'account_id':target.id,'login':name,'friendly':contact.friendly,
             'can_send':any(peer['account'] and peer['account'].id==target.id and 'pda-b9' not in peer['mods'] and reaches(source,peer,devices) for peer in devices)})
     messages.extend(deepcopy((item.get('pdaNetwork') or {}).get('spam_messages') or []))
     messages.sort(key=lambda message:message.get('sent_at',0))
-    return {'instruments':readings(source),'account':{'id':account.id,'login':account.login} if account else None,'source':{'signal_id':source['signal_id'],
-        'character_revision':getattr(character,'revision',None),'has_spam':'pda-b17' in source['mods'],
+    return {'instruments':readings(source),'account':{'id':account.id,'login':display(item,account) if masked_account else account.login} if account else None,'source':{'signal_id':source['signal_id'],
+        **settings(source),'character_revision':getattr(character,'revision',None),'has_spam':'pda-b17' in source['mods'],
         'spam_remaining':int(((item.get('pdaNetwork') or {}).get('spam_job') or {}).get('remaining',0)),
         'transmit_range':source['range'],'blocked':blocked(source,devices),'jammer_on':bool((item.get('pdaNetwork') or {}).get('jammer_on')),
         'has_jammer':'pda-b16' in source['mods'],'has_proximity':'pda-b8' in source['mods'],
@@ -211,6 +221,15 @@ def snapshot_source(source,devices):
 def operate(character_id,user_id,payload):
     character,item,source,devices=_source(character_id,user_id,payload,edit=True)
     operation=payload.get('operation')
+    if operation=='sender_name':
+        revision=character.revision
+        result=operate_source(source,devices,payload);cost=0
+        if not result['replayed']:
+            if payload.get('character_revision')!=revision:raise ConflictError('Лист изменился')
+            if result['changed']:
+                from app.services.pda_action_cost import charge
+                cost=charge(character,user_id,item.get('id'),payload,result,'Замена имени')
+        return character,{**result,'action_points':cost}
     if operation=='spam':
         revision=character.revision
         result=operate_source(source,devices,payload)
@@ -239,22 +258,40 @@ def operate(character_id,user_id,payload):
 
 def operate_source(source,devices,payload):
     character=source['character'];operation=payload.get('operation')
+    if operation=='sender_name':
+        from app.services.pda_identity import change
+        return change(source,payload)
     if operation=='spam':
         from app.services.pda_spam import start
         return start(source,devices,payload)
     if operation=='contact':
-        account=_account(source);login=unicodedata.normalize('NFKC',str(payload.get('login') or '')).strip().casefold()
-        target=PdaAccount.query.filter_by(lobby_id=character.lobby_id,login_key=login).first()
+        from app.services.pda_identity import save_contact_label
+        account=_account(source);by_id='target_account_id' in payload
+        if by_id:
+            if type(payload['target_account_id']) is not int:raise ValidationError('Выберите аккаунт контакта')
+            target=PdaAccount.query.filter_by(lobby_id=character.lobby_id,id=payload['target_account_id']).first()
+        else:
+            login=unicodedata.normalize('NFKC',str(payload.get('login') or '')).strip().casefold()
+            target=PdaAccount.query.filter_by(lobby_id=character.lobby_id,login_key=login).first()
         if not target:raise NotFoundError('Аккаунт в этом мире не найден')
         if target.id==account.id:raise ValidationError('Это ваш аккаунт')
         if type(payload.get('friendly',True)) is not bool:raise ValidationError('Выберите отношение к контакту')
         contact=db.session.get(PdaContact,(account.id,target.id))
+        signal=None
+        if by_id:
+            token=payload.get('target_signal_id')
+            if token is not None and not isinstance(token,str):raise ValidationError('Выберите доступный сигнал')
+            signal=next((s for s in _signals(source,devices) if s['account_id']==target.id and (token is None or s['signal_id']==token)),None)
+            if not contact and not signal or token is not None and not signal:raise ValidationError('Этот контакт не найден в доступных сигналах')
         if contact:contact.friendly=payload.get('friendly',True)
         else:db.session.add(PdaContact(account_id=account.id,target_account_id=target.id,friendly=payload.get('friendly',True)))
+        if signal or not by_id:save_contact_label(account.id,target.id,signal['login'] if signal else target.login,signal['signal_id'] if signal else None)
     elif operation=='remove_contact':
+        from app.services.pda_identity import remove_contact_label
         account=_account(source)
         if type(payload.get('target_account_id')) is not int:raise ValidationError('Выберите контакт')
         contact=db.session.get(PdaContact,(account.id,payload['target_account_id']))
+        remove_contact_label(account.id,payload['target_account_id'])
         if contact:db.session.delete(contact)
     elif operation=='send':
         account=_account(source)
@@ -272,6 +309,11 @@ def operate_source(source,devices,payload):
             return {'message_id':prior.id,'replayed':True}
         reason=blocked(source,devices)
         if reason:raise ValidationError(reason)
+        from app.services.pda_identity import alias,require_storage,recipient_name
+        sender_name=alias(source['item'])
+        recipient=recipient_name(source,devices,target)
+        masked_recipient=bool(target and recipient!=target.login)
+        if sender_name or masked_recipient:require_storage()
         recipients={peer['account'].id for peer in devices if peer['account'] and peer['account'].id!=account.id
             and (target_id is None or peer['account'].id==target_id) and reaches(source,peer,devices)}
         message=PdaTransmission(id=identity,lobby_id=character.lobby_id,sender_account_id=account.id,
@@ -284,6 +326,10 @@ def operate_source(source,devices,payload):
             if prior and prior.sender_account_id==account.id and prior.signature==signature:return {'message_id':identity,'replayed':True}
             raise ConflictError('Идентификатор сообщения уже использован')
         db.session.add_all(PdaDelivery(account_id=account_id,transmission_id=identity) for account_id in recipients)
+        if sender_name or masked_recipient:
+            from app.models import PdaTransmissionIdentity
+            db.session.add(PdaTransmissionIdentity(transmission_id=identity,sender_name=sender_name or account.login,
+                recipient_name=recipient if masked_recipient else None))
         return {'message_id':identity,'replayed':False}
     else:raise ValidationError('Неизвестное действие сети КПК')
     return {'operation':operation}

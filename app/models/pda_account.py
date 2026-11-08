@@ -58,3 +58,22 @@ class PdaDelivery(db.Model):
     __tablename__='pda_deliveries'
     account_id=db.Column(db.Integer,db.ForeignKey('pda_accounts.id',ondelete='CASCADE'),primary_key=True)
     transmission_id=db.Column(db.String(100),db.ForeignKey('pda_transmissions.id',ondelete='CASCADE'),primary_key=True)
+
+
+class PdaTransmissionIdentity(db.Model):
+    """Имя в момент передачи, независимо от последующей настройки устройства."""
+    __tablename__='pda_transmission_identities'
+    transmission_id=db.Column(db.String(100),db.ForeignKey('pda_transmissions.id',ondelete='CASCADE'),primary_key=True)
+    sender_name=db.Column(db.String(100),nullable=False)
+    recipient_name=db.Column(db.String(100),nullable=True)
+
+
+class PdaContactLabel(db.Model):
+    """Увиденное имя контакта, общее для устройств одного аккаунта."""
+    __tablename__='pda_contact_labels'
+    __table_args__=(db.ForeignKeyConstraint(['account_id','target_account_id'],
+        ['pda_contacts.account_id','pda_contacts.target_account_id'],ondelete='CASCADE'),)
+    account_id=db.Column(db.Integer,primary_key=True)
+    target_account_id=db.Column(db.Integer,primary_key=True)
+    observed_name=db.Column(db.String(100),nullable=False)
+    signal_id=db.Column(db.String(64),nullable=True)

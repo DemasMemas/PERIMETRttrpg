@@ -11,15 +11,18 @@ export function createPdaNetworkView({characterId,findSource,getData,operateHard
         <form data-radio-send><label>Получатель<select aria-label="Получатель сообщения КПК"></select></label>
         <label>Сообщение<textarea aria-label="Сообщение КПК" rows="3" maxlength="2000"></textarea></label><button type="submit">Передать</button></form>
         <div data-radio-spam hidden><button type="button" data-radio-spam-start>Спам-атака · 5 раундов</button><span data-radio-spam-status></span></div></div>
-        <div data-radio-contacts hidden><h4>Сигналы поблизости</h4><div data-radio-signals></div><h4>Сохранённые контакты</h4><div data-radio-saved></div>
+        <div data-radio-contacts hidden><section data-radio-identity hidden><form data-radio-alias><label>Имя в эфире<input autocomplete="off" aria-label="Имя в эфире" maxlength="100"></label><button type="submit">Применить</button></form><p data-radio-alias-hint></p></section>
+        <h4>Сигналы поблизости</h4><div data-radio-signals></div><h4>Сохранённые контакты</h4><div data-radio-saved></div>
         <form data-radio-add><label>Логин контакта<input aria-label="Логин контакта КПК" autocomplete="off" maxlength="32"></label><button type="submit">Добавить в друзья</button></form></div>`;
+    for(const button of element.querySelectorAll('button'))button.classList.add('btn','btn-secondary');
     const status=element.querySelector('[data-radio-status]'),error=element.querySelector('[data-radio-error]'),jammer=element.querySelector('[data-radio-jammer]');
     const send=element.querySelector('[data-radio-send]'),receiver=send.querySelector('select'),text=send.querySelector('textarea');
     const add=element.querySelector('[data-radio-add]'),login=add.querySelector('input');
     const proximity=element.querySelector('[data-radio-proximity]'),sound=element.querySelector('[data-radio-proximity-sound]');
     const spam=element.querySelector('[data-radio-spam]'),spamButton=spam.querySelector('button');
-    let active=false,closed=false,busy=false,loading=false,timer=null,snapshot=null,pendingMessage=null,pendingSpam=null,actionError='';
-    const node=(tag,value)=>{const el=document.createElement(tag);el.textContent=value;return el;};
+    const identity=element.querySelector('[data-radio-identity]'),aliasForm=identity.querySelector('form'),aliasInput=aliasForm.querySelector('input');
+    let active=false,closed=false,busy=false,loading=false,timer=null,snapshot=null,pendingMessage=null,pendingSpam=null,pendingAlias=null,aliasDirty=false,actionError='';
+    const node=(tag,value)=>{const el=document.createElement(tag);el.textContent=value;if(tag==='button')el.classList.add('btn','btn-secondary');return el;};
     const selection=()=>{
         const source=findSource();if(!source)throw Error('КПК перемещён. Откройте его заново.');
         return {item_path:source.path,item_id:source.item.id||null,
@@ -39,6 +42,10 @@ export function createPdaNetworkView({characterId,findSource,getData,operateHard
         spamButton.textContent=`Спам-атака · ${state?.status==='active'?'3 ОД · ':''}5 раундов`;
         spam.querySelector('[data-radio-spam-status]').textContent=snapshot?.source.spam_remaining?`Осталось сигналов: ${snapshot.source.spam_remaining}`:
             physical?'Каждый сигнал — шум 10.':'Для атаки выберите КПК в списке получателей.';
+        const aliasUnavailable=busy||!canEdit||offTurn||!snapshot?.source.alias_ready||Boolean(snapshot?.source.alias_blocked);
+        aliasInput.disabled=aliasUnavailable;
+        const aliasButton=aliasForm.querySelector('button');aliasButton.disabled=aliasUnavailable||aliasInput.value.normalize('NFKC').trim()===(snapshot?.source.sender_name||'');
+        aliasButton.textContent=state?.status==='active'?'Применить · 3 ОД':'Применить';
     };
     function paint(){
         if(!snapshot)return;
@@ -47,6 +54,10 @@ export function createPdaNetworkView({characterId,findSource,getData,operateHard
         jammer.hidden=!source.has_jammer;jammer.textContent=source.jammer_on?'Выключить глушилку':'Включить глушилку · радиус 25 м';
         proximity.hidden=!source.has_proximity;sound.checked=source.proximity_sound!==false;
         spam.hidden=!source.has_spam;
+        identity.hidden=!source.has_alias;
+        if(!aliasDirty)aliasInput.value=source.sender_name||'';
+        identity.querySelector('[data-radio-alias-hint]').textContent=source.alias_blocked||(source.alias_ready?
+            'Получатели увидят это имя. Пустое поле возвращает имя аккаунта.':'Подмена имени требует обновления сервера.');
         const instruments=element.querySelector('[data-radio-instruments]');instruments.replaceChildren();
         if(snapshot.instruments===null)instruments.append(node('p','На КПК нет мини-осциллографа.'));
         else if(!snapshot.instruments?.length)instruments.append(node('p','Активных доступных приборов нет.'));
@@ -85,7 +96,7 @@ export function createPdaNetworkView({characterId,findSource,getData,operateHard
             if(signal.position){const p=signal.position;row.append(node('small',p.location_id?
                 `Координаты: ${p.x.toFixed(1)}, ${p.y.toFixed(1)} · этаж ${p.level}`:`Клетка мира: ${p.tile_x}, ${p.tile_y}`));}
             if(signal.account_id&&signal.account_id!==snapshot.account?.id&&!signal.friendly){const friend=node('button','В друзья');friend.type='button';friend.disabled=busy||!canEdit||!snapshot.account;
-                friend.onclick=()=>act({operation:'contact',login:signal.login,friendly:true});row.append(friend);}
+                friend.onclick=()=>act({operation:'contact',target_account_id:signal.account_id,target_signal_id:signal.signal_id,friendly:true});row.append(friend);}
             signals.append(row);
         }
         if(!snapshot.signals.length)signals.append(node('p',source.blocked?'Сигналы подавлены.':'Доступных сигналов нет.'));
@@ -93,7 +104,7 @@ export function createPdaNetworkView({characterId,findSource,getData,operateHard
         for(const contact of snapshot.contacts){
             const row=node('div',`${contact.login} · ${contact.can_send?'передача доступна':'нет доступного сигнала'}`);row.className='pda-radio-contact';
             const label=node('label','Друг '),check=document.createElement('input');check.type='checkbox';check.checked=contact.friendly;check.disabled=busy||!canEdit;
-            check.onchange=()=>act({operation:'contact',login:contact.login,friendly:check.checked});label.append(check);row.append(label);
+            check.onchange=()=>act({operation:'contact',target_account_id:contact.account_id,friendly:check.checked});label.append(check);row.append(label);
             const remove=node('button','Удалить контакт');remove.type='button';remove.disabled=busy||!canEdit;
             remove.onclick=()=>act({operation:'remove_contact',target_account_id:contact.account_id});row.append(remove);saved.append(row);
         }
@@ -116,6 +127,7 @@ export function createPdaNetworkView({characterId,findSource,getData,operateHard
             }else await service.changePdaNetwork(characterId,{...selection(),...payload,character_revision:snapshot?.source.character_revision??getData()?._revision});
             if(payload.operation==='send'){pendingMessage=null;text.value='';showNotification('Сообщение передано в эфир','system');}
             if(payload.operation==='spam'){pendingSpam=null;text.value='';showNotification('Спам-атака запущена на 5 раундов','system');}
+            if(payload.operation==='sender_name'){pendingAlias=null;aliasDirty=false;showNotification(payload.sender_name.trim()?'Имя в эфире сохранено':'В эфире снова видно имя аккаунта','system');}
             if(payload.operation==='contact')login.value='';
         }catch(failure){actionError=failure.message;error.textContent=actionError;}
         finally{busy=false;controls();await refresh();}
@@ -127,6 +139,8 @@ export function createPdaNetworkView({characterId,findSource,getData,operateHard
     spamButton.onclick=()=>{if(!text.value.trim()||!receiver.value.startsWith('device:')){error.textContent='Введите текст сообщения и выберите КПК';return;}
         pendingSpam ||= {operation:'spam',operation_id:crypto.randomUUID(),text:text.value,target_signal_id:receiver.value.slice(7)};void act(pendingSpam);};
     add.onsubmit=event=>{event.preventDefault();if(login.value.trim())void act({operation:'contact',login:login.value,friendly:true});};
+    aliasInput.oninput=()=>{pendingAlias=null;aliasDirty=true;controls();};
+    aliasForm.onsubmit=event=>{event.preventDefault();pendingAlias||={operation:'sender_name',operation_id:crypto.randomUUID(),sender_name:aliasInput.value};void act(pendingAlias);};
     jammer.onclick=()=>act({operation:'jammer',enabled:!snapshot?.source.jammer_on});
     sound.onchange=()=>act({operation:'proximity_sound',enabled:sound.checked});
     element.querySelector('[data-radio-test-sound]').onclick=()=>{void testPdaSignal();};

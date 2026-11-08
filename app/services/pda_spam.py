@@ -15,22 +15,8 @@ ATTEMPTS=5
 
 
 def charge_start(character,user_id,pda_id,payload,result):
-    if result.get('replayed'):return 0
-    from app.services.item_controllers import _context
-    from app.services.portable_lights import held_pda
-    from app.services.combat import CombatService
-    from app.models import LocationCombatState
-    from app.services.exceptions import PermissionDenied
-    actor=_context(character,payload.get('location_id'))
-    state=LocationCombatState.query.filter_by(location_id=actor.location_id,status='active').first() if actor else None
-    if not state:return 0
-    is_gm=CombatService._ensure_access(actor.location,user_id)
-    if state.current_location_character_id!=actor.id or not CombatService._can_end_turn_for_character(actor,user_id,is_gm=is_gm):
-        raise PermissionDenied('Спам-атаку можно запустить только в свой ход')
-    if (held_pda(character.data) or {}).get('id')!=pda_id:raise ValidationError('Возьмите этот КПК в руку')
-    if actor.action_points_current<3:raise ValidationError('Недостаточно ОД для спам-атаки')
-    actor.action_points_current-=3
-    return 3
+    from app.services.pda_action_cost import charge
+    return charge(character,user_id,pda_id,payload,result,'Спам-атака')
 
 
 @event.listens_for(Session,'after_commit')
@@ -50,6 +36,7 @@ def clear(session):
 
 def start(source,devices,payload):
     from app.services.pda_network import _account,_signals
+    from app.services.pda_identity import display
     if 'pda-b17' not in source['mods']:raise ValidationError('На КПК нет «Спам-атаки»')
     account=_account(source);text=payload.get('text');identity=payload.get('operation_id');target_id=payload.get('target_signal_id')
     if not isinstance(text,str) or not 1<=len(text.strip())<=2000:raise ValidationError('Сообщение: от 1 до 2000 символов')
@@ -69,7 +56,7 @@ def start(source,devices,payload):
     target=next(peer for peer in devices if peer['signal_id']==target_id)
     if not target['item'].get('id'):raise ValidationError('Сначала включите целевой КПК заново')
     job={'id':uuid4().hex,'target_device_id':target['item']['id'],'text':text.strip(),
-        'sender':account.login,'remaining':ATTEMPTS,'elapsed_seconds':0}
+        'sender':display(source['item'],account),'remaining':ATTEMPTS,'elapsed_seconds':0}
     network['spam_job']=job
     network['spam_receipts']=[*(network.get('spam_receipts') or [])[-127:],
         {'operation_id':identity,'signature':signature,'id':job['id']}]
