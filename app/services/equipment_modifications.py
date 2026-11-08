@@ -36,6 +36,7 @@ SPECIAL_ARMOR={
  'a14':({}, {'stealth_hiding_bonus':4}),
  'd23':({}, {'anomaly_escape_reduction':3}),'a34':({}, {'fixed_reload_extra':1}),
  'd14':({}, {'electronics_insulation':True}),
+ 'd7':({}, {'incoming_trauma_disadvantage':True,'bleeding_per_effect_reduction':1,'anomaly_effect_cancel':True}),
  'd26':({}, {'polymer_regeneration':True}),
  'd30':({}, {'worn_burst_accuracy_reduction':2,'snatch_difficulty_bonus':6}),
  'd24':({'radiation':30,'anomaly':-10},{}),'g40':({'explosive_physical':20},{}),
@@ -266,7 +267,7 @@ def make_record(rule_id,*,gunsmith=False,installer_id=None):
                 'ear_protection','filter_wear_reduction','flash_reduction','aimed_head_difficulty','concussion_reduction','belt_weight_reduction',
                 'explosion_wear_reduction','anomaly_wear_reduction','supported_accuracy','anomaly_escape_reduction',
                 'stealth_hiding_bonus','large_weapon_ergonomics','worn_burst_accuracy_reduction','snatch_difficulty_bonus',
-                'medical_pouch_capacity_multiplier','liquid_crystal_layer'):
+                'medical_pouch_capacity_multiplier','liquid_crystal_layer','bleeding_per_effect_reduction'):
         if key in flags:flags[key]*=factor
     if flags.get('pistol_burst'):flags['pistol_burst_factor']=factor
     return {'ruleId':rule_id,'name':rule.get('name') or rule['description'],'description':rule['description'],

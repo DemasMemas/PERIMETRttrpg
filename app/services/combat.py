@@ -9786,6 +9786,14 @@ class CombatService:
             bleeding.get('totalSeverity', health.get('bleedingSeverity', 0)),
             0,
         )
+        from app.services.equipment_modifications import worn_rule
+        per_effect=max(0,worn_rule(character_data,'bleeding_per_effect_reduction'))
+        equipment_reduction=0
+        if per_effect:
+            from app.services.effects import get_bleeding_state
+            equipment_reduction=sum(min(effect['severity'],per_effect*effect['stacks'])
+                for effect in get_bleeding_state(health)['effects'])
+            severity=max(0,severity-equipment_reduction)
         severity = max(
             0,
             severity*(.75 if CombatService._combat_background_active(target,'Стойкий') else 1)
@@ -9812,6 +9820,7 @@ class CombatService:
         )
         return {
             'severity': severity,
+            'equipmentSeverityReduction':equipment_reduction,
             'stagePenalty': stage_penalty,
             'modifierTotal': modifier_total,
             'willBonus': will_bonus,
@@ -10731,7 +10740,13 @@ class CombatService:
             result['psi'] = psi_result['received']
             result['psi_protection'] = psi_result['defense']['total']
             result['psi_state'] = psi_result
+        from app.services.equipment_modifications import worn_rule
+        category_cancelled=bool(apply_category_effect and fraction and worn_rule(data,'anomaly_effect_cancel'))
+        if category_cancelled:
+            apply_category_effect=False
+            result['category_effect_cancelled']=profile.get('category')
         for effect_type, profile_key in (('pain', 'pain'), ('exhaustion', 'exhaustion')):
+            if category_cancelled and (profile.get('category'),profile_key) in {('chemical','pain'),('radiation','exhaustion')}:continue
             amount = CombatService._coerce_float(profile.get(profile_key), 0) * fraction
             if amount:
                 apply_effect_to_health(health, {'type': effect_type, 'value': amount, 'source': 'anomaly'},character_data=data)
