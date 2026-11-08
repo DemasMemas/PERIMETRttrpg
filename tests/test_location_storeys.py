@@ -334,8 +334,9 @@ def test_closed_or_occupied_drop_is_rejected_before_damage_and_cost(storey_game)
     db.session.add(portal);actor.pos_y=4;actor.action_points_current=0
     state=LocationCombatState(location_id=location.id,status='active',round_number=1,current_location_character_id=actor.id)
     db.session.add(state);db.session.commit()
+    landing=CombatService._object_drop_plan(location,actor,portal)['landing']
     def drop(**extra):
-        return CombatService.move_character(location.id,gm['id'],actor.character_id,5,5,special_action='drop_down',object_id=portal.id,**extra)
+        return CombatService.move_character(location.id,gm['id'],actor.character_id,landing['x'],landing['y'],special_action='drop_down',object_id=portal.id,**extra)
     with patch.object(CombatService,'resolve_fall',wraps=CombatService.resolve_fall) as fall:
         with pytest.raises(ValidationError,match='action points'):drop()
         with pytest.raises(ValidationError,match='landing'):drop(floor_level=1)
@@ -343,7 +344,7 @@ def test_closed_or_occupied_drop_is_rejected_before_damage_and_cost(storey_game)
         actor.action_points_current=2
         occupied=LobbyCharacter(lobby_id=location.lobby_id,owner_id=gm['id'],name='below',data={})
         db.session.add(occupied);db.session.flush()
-        blocker=LocationCharacter(location_id=location.id,character_id=occupied.id,pos_x=5,pos_y=5,floor_level=-1)
+        blocker=LocationCharacter(location_id=location.id,character_id=occupied.id,pos_x=landing['x'],pos_y=landing['y'],floor_level=-1)
         db.session.add(blocker);db.session.commit()
         with pytest.raises(ValidationError,match='landing'):drop()
         assert not fall.called and actor.action_points_current==2
