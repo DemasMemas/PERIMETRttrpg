@@ -11,10 +11,13 @@ module.exports=async({page,request,token,lobby,loc,characterId,rules,safeSession
         operation,path:['inventory','pockets',index],source_id:fresh.data.inventory.pockets[index].id,
         character_revision:fresh.data._revision,...extra},token);};
     await operate('prepare',0,{mount:'hand'});await operate('toggle',0);await operate('pda_toggle',1);await operate('dosimeter_toggle',2);
+    await page.evaluate("(async()=>{window.artifactDeviceScene=(await import('/static/js/locationScene.js')).sceneGraphicsForTest();return true})()");
+    await page.until("artifactDeviceScene.scene.children.some(n=>n.isSpotLight&&n.visible&&n.intensity>0)",'Настоящий источник света появился в сцене');
     const before=await request(loc+'/combat',null,token,'GET');assert.equal(before.characters.find(c=>c.character_id===characterId).portable_lights.length,1);
     current=await get();const rule=rules.find(a=>a.name==='Громоотвод');assert.ok(rule);
     current.data.equipment={armor:{containers:[{item:{id:'electric-block-artifact',category:'artifact',name:rule.name,attributes:rule}}]}};
     await request(url,{data:current.data},token,'PUT');
+    await page.until("!artifactDeviceScene.scene.children.some(n=>n.isSpotLight&&n.visible&&n.intensity>0)",'Надевание артефакта убрало источник света по сетевому событию');
     const state=await request(loc+'/combat',null,token,'GET');assert.equal(state.characters.find(c=>c.character_id===characterId).portable_lights.length,0);
     const selection='?item_path='+encodeURIComponent(JSON.stringify(['inventory','pockets',1]))+'&item_id=artifact-pda&location_id='+state.location_id;
     const network=await request(url+'/pda-network'+selection,null,token,'GET');assert.ok(network.source.blocked.includes('Громоотвод'));
@@ -29,8 +32,9 @@ module.exports=async({page,request,token,lobby,loc,characterId,rules,safeSession
     current=afterRefusal;current.data.equipment={};await request(url,{data:current.data},token,'PUT');
     await operate('toggle',0);
     const restored=await request(loc+'/combat',null,token,'GET');assert.equal(restored.characters.find(c=>c.character_id===characterId).portable_lights.length,1);
+    await page.until("artifactDeviceScene.scene.children.some(n=>n.isSpotLight&&n.visible&&n.intensity>0)",'Свет вернулся в настоящую сцену после снятия');
     const resumed=await request(url+'/pda-network'+selection,null,token,'GET');assert.equal(resumed.source.blocked,null);
     fs.writeFileSync(path.join(safeSession.artifacts,'artifact-devices.json'),JSON.stringify({artifact:rule.name,existingLightSuppressed:true,
-        networkSuppressed:true,uiExplains:true,switchOffAllowed:true,rejectedWithoutInventoryCost:true,unequipRestores:true},null,2));
+        networkSuppressed:true,sceneLightRemovedAndRestored:true,uiExplains:true,switchOffAllowed:true,rejectedWithoutInventoryCost:true,unequipRestores:true},null,2));
     console.log('Громоотвод: готовый свет и связь подавлены, причина видна, выключение разрешено, отказ не расходует заряд, снятие возвращает работу.');
 };

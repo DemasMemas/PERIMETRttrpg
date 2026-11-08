@@ -158,3 +158,12 @@ def test_forbidden_timer_cannot_be_reconfigured_but_wire_disarm_remains_availabl
     assert character.data['inventory']==original
     write(case,'disarm',item_path=path,item_id=item['id'])
     assert locate(case,item['id'])[1]['controllerState']['disconnected'] is True
+
+
+def test_ground_pda_radio_does_not_require_character_data():
+    from app.services.pda_devices import radio_device
+    item=instrument('КПК');item['pdaState']={'on':True,'charge_percent':100}
+    record={'character':None,'host':'object:1','lobby_id':1,
+        'lobby':SimpleNamespace(weather_settings={}), 'item':item,'mods':set()}
+    assert powered(record)
+    assert blocked(radio_device(record),[]) is None
