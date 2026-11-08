@@ -2123,6 +2123,8 @@ function calculateCarriedWeight(data) {
     const inv = data?.inventory || {};
     const eq = data?.equipment || {};
     const items = [];
+    if(eq.belt?.protectionDisabled||!modificationRule(eq.belt,'belt_tool_mounts'))
+        items.push(...(eq.belt?.installedModules||[]).filter(item=>item?.slotType==='belt_tool'));
     items.push(...(eq.armor?.installedModules||[]).filter(item=>item?.slotType==='auto_injector'));
     items.push(...(data?.crafting?.current?.escrow || []).map(entry=>entry.item));
     if (Array.isArray(inv.backpack)) items.push(...inv.backpack);
@@ -5623,6 +5625,42 @@ window.useAutoInjector = async function(payment) {
 };
 window.loadAutoInjector = () => changeAutoInjector('load');
 window.unloadAutoInjector = () => changeAutoInjector('unload');
+window.mountBeltTool = () => changeBeltTool('mount');
+window.unmountBeltTool = index => changeBeltTool('unmount',index);
+async function changeBeltTool(operation,index) {
+    if(medicalOperationInProgress||!currentCharacterCanEdit)return;
+    const characterId=currentCharacterId;let locked=false;
+    try {
+        await forceSyncCharacter();await Server.waitForCharacterSave(characterId);
+        if(currentCharacterId!==characterId||sheetSaveBlocked||medicalOperationInProgress)return;
+        medicalOperationInProgress=locked=true;medicalRemoteUpdate=null;
+        let source;
+        if(operation==='mount'){
+            const choices=collectInventoryEntries(currentCharacterData,item=>getInventoryItemCategory(item)==='tool')
+                .filter(entry=>!entry.path.includes('installedModules'))
+                .map(entry=>({label:entry.item.name,source:{path:entry.path,snapshot:structuredClone(entry.item)}}));
+            if(!choices.length){showNotification('В инвентаре нет инструментов','system');return;}
+            const choice=await chooseConsumableApplication('Инструмент для крепления на поясе',choices,{alwaysShow:true});
+            if(!choice||currentCharacterId!==characterId)return;source=choice.source;
+        }else{
+            const item=currentCharacterData.equipment?.belt?.installedModules?.[index];
+            if(item?.slotType!=='belt_tool')return;
+            source={path:['equipment','belt','installedModules',index],snapshot:structuredClone(item)};
+        }
+        const response=await Server.operateBeltAttachment(characterId,{operation,source,
+            character_revision:currentCharacterData._revision,belt_id:currentCharacterData.equipment.belt.id});
+        if(currentCharacterId!==characterId)return;
+        currentCharacterData=response.data;
+        await renderEquipmentTab(currentCharacterData);renderInventoryTab(currentCharacterData);
+        showNotification(operation==='mount'?'Инструмент закреплён':'Инструмент снят в карманы','success');
+    }catch(error){showNotification(error.message||'Не удалось изменить крепление инструмента','system');}
+    finally{if(locked){
+        if(currentCharacterId===characterId&&medicalRemoteUpdate?.character_id===Number(characterId)
+            &&Number(medicalRemoteUpdate.data?._revision)>Number(currentCharacterData?._revision))currentCharacterData=medicalRemoteUpdate.data;
+        medicalOperationInProgress=false;medicalRemoteUpdate=null;
+        if(currentCharacterId===characterId)await refreshSavedSheet(characterId);
+    }}
+}
 async function changeAutoInjector(operation) {
     if(medicalOperationInProgress||!currentCharacterCanEdit)return;
     const characterId=currentCharacterId;let locked=false;
@@ -8582,14 +8620,19 @@ window.equipBeltFromInventory = async function(itemPath) {
         return;
     }
 
+    if(Number(item.quantity||1)>1&&((item.installedModules||[]).length||(item.pouches||[]).some(pouch=>pouch.contents?.length))){
+        showNotification('Сначала разделите заполненные пояса на отдельные экземпляры');return;
+    }
     const beltToEquip = {
-        id: item.id,
+        ...structuredClone(item),
+        id: Number(item.quantity||1)>1?generateItemId():item.id||generateItemId(),
+        quantity:1,
         createdByPlayer: Boolean(item.createdByPlayer),
         templateId: template.id,
         name: template.name,
         weight: template.weight,
         volume: template.volume,
-        attributes: structuredClone(template.attributes || {}),
+        attributes: structuredClone(item.attributes || template.attributes || {}),
         maxPouches: template.attributes?.max_pouches ?? 2,
         pouches: item.pouches || template.attributes?.pouches || [],
         modifications: item.modifications || [],
@@ -8597,7 +8640,8 @@ window.equipBeltFromInventory = async function(itemPath) {
         extraStoredItem: item.extraStoredItem || null
     };
 
-    if (!removeItemByPath(itemPath)) {
+    if(Number(item.quantity||1)>1){item.quantity-=1;}
+    else if (!removeItemByPath(itemPath)) {
         showNotification('Не удалось найти предмет в инвентаре');
         return;
     }
@@ -8608,6 +8652,7 @@ window.equipBeltFromInventory = async function(itemPath) {
         const oldTemplate = oldTemplates.find(t => t.id === oldBelt.templateId);
         if (oldTemplate) {
             const oldItem = createItemFromTemplate(oldTemplate);
+            Object.assign(oldItem,structuredClone(oldBelt),{quantity:1});
             oldItem.id = oldBelt.id || oldItem.id;
             oldItem.pouches = oldBelt.pouches || [];
             oldItem.modifications = oldBelt.modifications || [];
@@ -9609,6 +9654,7 @@ window.unequipBelt = async function() {
         return;
     }
     const restoredItem = createItemFromTemplate(template);
+    Object.assign(restoredItem,structuredClone(belt),{quantity:1});
     restoredItem.id = belt.id || restoredItem.id;
     restoredItem.pouches = belt.pouches || [];
     restoredItem.modifications = belt.modifications || [];
@@ -10444,6 +10490,9 @@ function collectInventoryEntries(data, predicate) {
     visit(data.inventory?.backpack, ['inventory', 'backpack']);
     (data.equipment?.belt?.pouches || []).forEach((pouch, index) => visit(pouch.contents, ['equipment', 'belt', 'pouches', index, 'contents']));
     (data.equipment?.vest?.pouches || []).forEach((pouch, index) => visit(pouch.contents, ['equipment', 'vest', 'pouches', index, 'contents']));
+    (data.equipment?.belt?.installedModules||[]).forEach((item,index)=>{
+        if(item?.slotType==='belt_tool'&&predicate(item))found.push({item,path:['equipment','belt','installedModules',index]});
+    });
     return found;
 }
 
@@ -14325,6 +14374,22 @@ async function renderInventoryTab(data) {
                 <button type="button" class="btn btn-sm btn-secondary" onclick="addBeltPouch()" style="padding: 2px 8px;" ${(eq.belt.pouches?.length || 0) >= beltPouchLimit(eq.belt) ? 'disabled' : ''}>➕</button>
             </div>
             <div id="belt-pouches-container"></div>
+            ${(modificationRule(eq.belt,'belt_tool_mounts')||(eq.belt.installedModules||[]).some(item=>item?.slotType==='belt_tool'))?`
+            <div data-belt-tools style="margin-top:12px;">
+                <div style="display:flex;align-items:center;gap:10px;">
+                    <h5 style="margin:0;">Инструменты (${(eq.belt.installedModules||[]).filter(item=>item?.slotType==='belt_tool').length} / 4)</h5>
+                    <button type="button" class="btn btn-sm btn-secondary" onclick="mountBeltTool()"
+                        ${eq.belt.protectionDisabled||!modificationRule(eq.belt,'belt_tool_mounts')||(eq.belt.installedModules||[]).filter(item=>item?.slotType==='belt_tool').length>=4?'disabled':''}>Закрепить${window.locationCombatState?.status==='active'?' · 3 ОД':''}</button>
+                </div>
+                <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px;margin-top:6px;">
+                ${(eq.belt.installedModules||[]).map((item,index)=>item?.slotType==='belt_tool'?`
+                    <div data-item-tooltip="true" data-item-template-id="${Number(item.templateId)||''}" data-path="equipment,belt,installedModules,${index}"
+                        style="min-width:0;border:1px solid #444;border-radius:4px;padding:6px;display:flex;align-items:center;gap:6px;">
+                        <span style="flex:1;overflow-wrap:anywhere;">${escapeHtml(item.name)}${item.uses!=null?` · ${escapeHtml(String(item.uses))}/${escapeHtml(String(item.maxUses??item.uses))}`:''}</span>
+                        <button type="button" class="btn btn-sm btn-secondary" onclick="unmountBeltTool(${index})">Снять${window.locationCombatState?.status==='active'?' · 3 ОД':''}</button>
+                    </div>`:'').join('')}
+                </div>
+            </div>`:''}
             <div style="display: flex; align-items: center; margin-top: 15px;">
                 <h5 style="margin: 0;">Модификации пояса</h5>
             </div>

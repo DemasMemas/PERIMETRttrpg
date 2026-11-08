@@ -77,6 +77,10 @@ test('масса на поясе и карманы совпадают с пра�
     data.health={combatMeta:{portableLights:[{id:'belt-light',mount:'belt',on:false}]}};
     context.collectInventoryEntries=()=>[{item:data.inventory.pockets[1],path:['inventory','pockets',1]}];
     assert.equal(context.calculateCarriedWeight(data),9);
+    data.equipment.belt.installedModules=[{id:'tool',slotType:'belt_tool',weight:4}];
+    data.equipment.belt.modifications.push({ruleId:'armor-g61',rules:{belt_tool_mounts:4}});
+    assert.equal(context.calculateCarriedWeight(data),9);
+    data.equipment.belt.protectionDisabled=true;assert.equal(context.calculateCarriedWeight(data),19);
 });
 
 test('расширенный пояс переносит купленные подсумки без дублирования',async()=>{

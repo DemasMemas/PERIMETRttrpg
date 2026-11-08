@@ -34,7 +34,7 @@ def validate_source(data,path,item,lobby_id):
         raise ValidationError('Для автоинъектора нужен инъекционный препарат')
 
 
-def combat_actor(character,user_id):
+def combat_actor(character,user_id,*,action_name='Автоинъектор'):
     from app.services.combat import CombatService
     from app.services.deferred_action import ensure_no_deferred_action
     models=LocationCharacter.query.join(LocationCombatState,LocationCombatState.location_id==LocationCharacter.location_id).filter(
@@ -43,10 +43,10 @@ def combat_actor(character,user_id):
     actor=models[0] if models else None
     if actor:
         state=LocationCombatState.query.filter_by(location_id=actor.location_id).one()
-        if state.current_location_character_id!=actor.id:raise PermissionDenied('Автоинъектор доступен в свой ход')
+        if state.current_location_character_id!=actor.id:raise PermissionDenied(f'{action_name}: действие доступно в свой ход')
         CombatService.ensure_character_can_act(actor);ensure_no_deferred_action(actor)
     elif CombatService._character_condition(character.data or {})['state']!='active':
-        raise ValidationError('Персонаж не может пользоваться автоинъектором')
+        raise ValidationError(f'{action_name}: персонаж не может действовать')
     return actor
 
 

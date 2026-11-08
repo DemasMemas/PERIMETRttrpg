@@ -56,7 +56,7 @@ test('перенос в пустые карманы учитывает вмес�
     const context=vm.createContext({currentCharacterData:data,draggedItem:null,draggedItemPath:null,
         getItemByPath:keys=>keys.reduce((value,key)=>value[key],data),
         removeItemByPath:keys=>{keys.slice(0,-1).reduce((value,key)=>value[key],data).splice(keys.at(-1),1);return true;},
-        pocketCapacity:()=>10,getTotalVolume:item=>item.volume*item.quantity,
+        pocketCapacity:()=>10,getTotalVolume:item=>item.volume*item.quantity,isLiquidCanister:()=>false,
         showNotification:message=>notices.push(message),renderInventoryTab:async()=>{},recalculateInventoryTotals(){},scheduleAutoSave(){},forceSyncCharacter(){},
     });
     const start=source.indexOf('function setupDropTarget('),end=source.indexOf('\nwindow.getAllItemTemplates',start);

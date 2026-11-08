@@ -39,7 +39,8 @@ def _scissors_medicine_bonus(actor_data, lobby_id, profile):
         return 0
     from app.services.portable_lights import walk
     for path,item in walk(actor_data,True):
-        if path[:2] not in (['inventory','pockets'],['inventory','backpack']):
+        from app.services.belt_attachments import accessible
+        if path[:2] not in (['inventory','pockets'],['inventory','backpack']) and not accessible(actor_data,path,item):
             continue
         template=resolve_item_template(item,lobby_id)
         if (template and template.name=='Ножницы' and template.category=='tool'
@@ -53,7 +54,8 @@ def _doctor_tools_medicine_bonus(actor_data, lobby_id, direct):
         return 0
     from app.services.portable_lights import walk
     for path, item in walk(actor_data, True):
-        if path[:2] not in (['inventory', 'pockets'], ['inventory', 'backpack']):
+        from app.services.belt_attachments import accessible
+        if path[:2] not in (['inventory', 'pockets'], ['inventory', 'backpack']) and not accessible(actor_data,path,item):
             continue
         template = resolve_item_template(item, lobby_id)
         if not (template and template.name == 'Набор инструментов Врача 50/50'
@@ -69,7 +71,8 @@ def _doctor_tools_medicine_bonus(actor_data, lobby_id, direct):
 def _surgeon_tools_available(actor_data, lobby_id):
     from app.services.portable_lights import walk
     for path, item in walk(actor_data, True):
-        if path[:2] not in (['inventory', 'pockets'], ['inventory', 'backpack']):
+        from app.services.belt_attachments import accessible
+        if path[:2] not in (['inventory', 'pockets'], ['inventory', 'backpack']) and not accessible(actor_data,path,item):
             continue
         template = resolve_item_template(item, lobby_id)
         if not (template and template.name == 'Набор инструментов Хирурга 30/30'

@@ -15,4 +15,5 @@ module.exports=async({page,request,token,lobby,base,safeSession})=>{
     await page.until(`window.currentLocationId===${location.id}&&window.locationControls&&document.getElementById('scene-loading-screen').classList.contains('is-hidden')`,'Припять готова');
     const offered=await request(api+'/templates',null,token,'GET');
     await require('./belt_light.browser.cjs')({page,request,token,lobby,offered,loc,npc,safeSession});
+    await require('./belt_attachments.browser.cjs')({page,request,token,lobby,offered,loc,npc,safeSession});
 };

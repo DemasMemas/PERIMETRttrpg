@@ -126,6 +126,7 @@ def calculate_inventory_access(character_data, item_path, item=None):
     base_action_points = 0
     quick_access_discount = 0
     source = "unknown"
+    from app.services.belt_attachments import accessible
 
     if path[:2] == ["inventory", "pockets"]:
         base_action_points = 1
@@ -135,6 +136,9 @@ def calculate_inventory_access(character_data, item_path, item=None):
     elif path[:2] == ["inventory", "backpack"]:
         base_action_points = 2
         source = "backpack"
+    elif accessible(character_data, path, item):
+        base_action_points = 1
+        source = "belt_tool"
     elif len(path) >= 6 and path[0] == "equipment" and path[1] in {"belt", "vest"} and path[2] == "pouches":
         pouch = _value_at_path(character_data, path[:4])
         if _pouch_allows(item, pouch):

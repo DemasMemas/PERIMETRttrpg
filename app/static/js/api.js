@@ -198,6 +198,11 @@ export const Server = {
             method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload),
         });
     },
+    async operateBeltAttachment(characterId,payload) {
+        return apiFetch(`/lobbies/characters/${characterId}/belt-attachment`,{
+            method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)
+        });
+    },
     async getLocationObject(lobbyId,objectId) {
         return apiFetch(`/lobbies/${lobbyId}/locations/objects/${objectId}`);
     },

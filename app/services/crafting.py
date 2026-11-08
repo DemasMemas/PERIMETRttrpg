@@ -112,6 +112,9 @@ def entries(data):
     result=[]
     for path,item in walk(data,True):
         if not isinstance(item,dict) or not item.get('name'):continue
+        from app.services.belt_attachments import accessible
+        if accessible(data,path,item):
+            result.append((path,item));continue
         if any(part in path for part in ('installedModules','installedMagazine','fixedAmmo','ammo','loadedGrenade')):continue
         # Установленное снаряжение и целые заполненные контейнеры не являются материалом.
         if path[:2]==['inventory','pockets'] or path[:2]==['inventory','backpack'] or 'contents' in path:

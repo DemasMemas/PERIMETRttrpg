@@ -84,7 +84,8 @@ def _validate_source_path(path):
         and type(path[3]) is int
         and path[4] == "contents"
     )
-    if not direct_inventory and not equipped_pouch:
+    from app.services.belt_attachments import tool_path
+    if not direct_inventory and not equipped_pouch and not tool_path(path):
         raise ValidationError("Фильтр нужно выбрать в инвентаре или подсумке")
 
 

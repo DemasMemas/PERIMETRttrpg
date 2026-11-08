@@ -1715,6 +1715,9 @@ class CombatService:
         equipment = equipment if isinstance(equipment, dict) else {}
 
         carried_items = []
+        from app.services.belt_attachments import loaded as belt_tools, available as tool_mounts
+        belt=equipment.get('belt') or {}
+        if not tool_mounts(belt):carried_items.extend(item for _,item in belt_tools(belt))
         from app.services.auto_injector import loaded as injector_loaded
         carried_items.extend(item for _,item in injector_loaded(equipment.get('armor')))
         carried_items.extend(entry['item'] for entry in ((character_data.get('crafting') or {}).get('current') or {}).get('escrow',[]))
