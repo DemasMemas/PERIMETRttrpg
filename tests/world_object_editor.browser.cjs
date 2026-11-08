@@ -322,7 +322,7 @@ if(typeof renderFacingPreview==='function'){const original=renderFacingPreview;r
             await require('./object_locks.browser.cjs')({page,request,token,lobby,base,connect,debugPort,safeSession});
             return;
         }
-        if (safeSession && ['equipment','effects'].includes(process.env.VTT_SAFE_SCENARIO)) {
+        if (safeSession && ['equipment','lights','effects'].includes(process.env.VTT_SAFE_SCENARIO)) {
             await require('./equipment_modifications.browser.cjs')({page,request,token,lobby,base,safeSession});
             return;
         }

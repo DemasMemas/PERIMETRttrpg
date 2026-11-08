@@ -2,7 +2,7 @@
 const assert=require('node:assert/strict');
 const {loadFixture,waitForDocument}=require('./durable_reload.browser.cjs');
 module.exports=async({page,request,token,lobby,base,safeSession})=>{
-    assert.ok(['equipment','effects'].includes(process.env.VTT_SAFE_SCENARIO));assert.ok(safeSession.verified);
+    assert.ok(['equipment','lights','effects'].includes(process.env.VTT_SAFE_SCENARIO));assert.ok(safeSession.verified);
     const api=`/lobbies/${lobby.id}`,{fixture}=loadFixture();
     const location=await request(api+'/locations',{...fixture,objects:undefined,world_tile_x:7,world_tile_z:8},token),loc=api+'/locations/'+location.id;
     await request(loc+'/objects/batch',{objects:fixture.objects},token);
@@ -14,6 +14,9 @@ module.exports=async({page,request,token,lobby,base,safeSession})=>{
     await page.call('Page.navigate',{url:href});await waitForDocument(page,{href,afterEpoch:epoch,label:'Снаряжение на копии Припяти'});
     await page.until(`window.currentLocationId===${location.id}&&window.locationControls&&document.getElementById('scene-loading-screen').classList.contains('is-hidden')`,'Припять готова');
     const offered=await request(api+'/templates',null,token,'GET');
+    if(process.env.VTT_SAFE_SCENARIO==='lights'){
+        await require('./flashlight_nearfield.browser.cjs')({page,request,token,lobby,offered,loc,safeSession});return;
+    }
     if(process.env.VTT_SAFE_SCENARIO==='effects'){
         await require('./water_component.browser.cjs')({page,request,token,lobby,offered,loc,safeSession});
         await require('./pepper_playtest.browser.cjs')({page,request,token,lobby,loc,safeSession});

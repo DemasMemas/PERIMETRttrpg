@@ -11537,7 +11537,10 @@ function attachStaticLightFieldToRoot(root, level) {
     // The field occludes walls, not ceilings; interior lamps must not light roof faces.
     if (!locationStaticLightField
         || root?.userData?.roofPlan
-        || !locationStaticLightField.field.levels.some(item => item.id === level)) return;
+        || !locationStaticLightField.field.levels.some(item => item.id === level)) {
+        portableLightRenderer?.attach(root);
+        return;
+    }
     const seen = new Set();
     root.traverse(child => {
         if (!child.isMesh || child.userData.fireFlame) return;
@@ -11547,6 +11550,7 @@ function attachStaticLightFieldToRoot(root, level) {
             locationStaticLightField.attach(material, level);
         }
     });
+    portableLightRenderer?.attach(root);
 }
 
 function quietHouseColor(color, type) {
