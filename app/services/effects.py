@@ -17,6 +17,7 @@ EFFECT_TYPE_META = {
     "regeneration": {"label": "Регенерация", "group": "medical"},
     "temporary_exhaustion": {"label": "Временное истощение", "group": "medical"},
     "temporary_hp_max": {"label": "Временный максимум ОЗ", "group": "medical"},
+    "temporary_organ_health": {"label": "Временные ОЗ органов", "group": "medical"},
     "sleep_support": {"label": "Поддержка без сна", "group": "medical"},
     "amputation": {"label": "Ампутация", "group": "injury"},
     "anomaly_compulsion": {"label": "Зов аномалии", "group": "mental"},
@@ -1143,6 +1144,7 @@ def _child_effects(effect):
 
 
 def apply_expired_effects_to_health(health: Dict[str, Any], effects: Iterable[Any], phase: str = "turn_end", *, character_data=None) -> Dict[str, Any]:
+    from app.services.health import restore_organ_health
     activated: List[Dict[str, Any]] = []
     cured_fracture_areas = set()
     for raw_effect in effects or []:
@@ -1152,6 +1154,8 @@ def apply_expired_effects_to_health(health: Dict[str, Any], effects: Iterable[An
         if effect.get("remaining") is None or _to_int(effect.get("remaining"), 0) > 1:
             continue
         _activate_timed_modifiers(health, effect)
+        if effect.get('type')=='temporary_organ_health':
+            restore_organ_health(health)
         radiation_before_expiry = _to_float(health.get("radiation"), 0)
         for adjustment in effect.get("onExpire") or effect.get("on_expire") or []:
             if not isinstance(adjustment, dict):
@@ -1354,6 +1358,9 @@ def advance_timed_effects(
             continue
 
         _activate_timed_modifiers(health, effect)
+        if effect.get('type')=='temporary_organ_health':
+            from app.services.health import restore_organ_health
+            restore_organ_health(health)
         radiation_before_expiry = _to_float(health.get("radiation"), 0)
         for adjustment in effect.get("onExpire") or effect.get("on_expire") or []:
             if isinstance(adjustment, dict) and adjustment.get("field"):

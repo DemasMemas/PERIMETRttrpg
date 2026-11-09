@@ -144,6 +144,28 @@ def test_starting_purchase_uses_catalog_prices_and_rejects_restricted_templates(
         with pytest.raises(ValidationError):build_character('Имя',plan('Бедный',purchases=selection))
 
 
+def test_starting_purchase_grants_catalog_filters_at_their_price(app):
+    from app.extensions import db
+    from app.models.templates import ItemTemplate
+    from app.services.character_starting_purchase import catalog, eligible
+    from app.services.equipment_catalog import load_catalog
+    from app.services.gas_mask_filters import filter_charges, is_gas_mask_filter
+
+    names = {'Фильтр для противогаза', 'Кустарный фильтр для противогаза'}
+    filters = [ItemTemplate(**entry) for entry in load_catalog() if entry['name'] in names]
+    db.session.add_all(filters)
+    db.session.flush()
+    assert {entry['name']:entry['price'] for entry in catalog() if entry['category']=='gas_mask_module'} == {
+        'Фильтр для противогаза':300, 'Кустарный фильтр для противогаза':200}
+    assert not eligible(ItemTemplate(name='Не фильтр', category='gas_mask_module', subcategory='visor'))
+    assert not eligible(ItemTemplate(name='Не продаётся', category='gas_mask_module',
+        subcategory='filter', attributes={'not_for_sale':True}))
+    data = build_character('Имя', plan('Бедный', purchases=[{'templateId':f.id,'quantity':1} for f in filters]))
+    assert data['inventory']['money'] == 4500
+    assert {item['name']:filter_charges(item) for item in data['inventory']['pockets'] if is_gas_mask_filter(item)} == {
+        'Фильтр для противогаза':20, 'Кустарный фильтр для противогаза':10}
+
+
 def test_starting_purchase_packs_fuel_into_individual_canisters(app):
     from app.extensions import db
     from app.models.templates import ItemTemplate
@@ -268,6 +290,72 @@ def test_monthly_history_api_saves_progress_and_denies_other_users(creation_case
     final=client.patch(url,json={'month':3,'choice':{'decline':True}},headers=headers)
     assert final.status_code==200 and final.json['data']['creation']['zoneHistory']['settled']
     assert final.json['data']['inventory']['money']==13000
+
+
+def test_starting_debt_spends_available_money_once_and_preserves_the_remainder():
+    from app.services.character_starting_purchase import grant_creation_money
+
+    data=build_character('Должник',plan())
+    data['creation']['zoneHistory']={'events':[
+        {'month':1,'incomeOptions':[2500],'debt':{'amount':10000,'creditor':'Бандиты'}},
+        {'month':2,'incomeOptions':[2500],'debt':{'amount':20000,'creditor':'Наёмники'}},
+    ]}
+    assert grant_creation_money(data)
+    assert data['inventory']['money']==0
+    debts=[event['debt'] for event in data['creation']['zoneHistory']['events']]
+    assert [(debt['paidAtCreation'],debt['remaining']) for debt in debts]==[(10000,0),(5000,15000)]
+    assert not grant_creation_money(data)
+
+
+def test_history_debt_uses_world_creditor_and_only_gm_can_repay(creation_case,client,monkeypatch):
+    from app.extensions import db
+    from app.models import WorldFactionConfig
+    from app.services.character import CharacterService
+
+    class RolledDebt:
+        values=iter([1,3,4,2])
+
+        def randint(self,low,high):
+            value=next(self.values)
+            assert low<=value<=high
+            return value
+
+    c=creation_case
+    lobby_id=c['lobby'].id
+    group_id='creditor-test'
+    db.session.add(WorldFactionConfig(lobby_id=lobby_id,groups=[{'id':group_id,'name':'Кредиторы','factions':[]}]))
+    db.session.commit()
+    monkeypatch.setattr('app.services.character_creation.generate_zone_history',
+        lambda data:generate_zone_history(data,RolledDebt()))
+    actor=CharacterService.create_character(lobby_id,c['player'].id,'Долг',{'creationRequest':plan(zoneHistory=True)})
+    owner,gm=(c['headers'][c[role].id] for role in ('player','gm'))
+    rules=client.get(f'/lobbies/{lobby_id}/character-creation',headers=owner)
+    assert rules.json['debtCreditors']==[{'id':group_id,'name':'Кредиторы'}]
+    url=f'/lobbies/{lobby_id}/characters/{actor.id}/creation-history'
+    assert actor.data['inventory']['money']==0
+    assert client.patch(url,headers=owner,json={'month':1,'choice':{'creditor':'other-world'}}).status_code==400
+    result=client.patch(url,headers=owner,json={'month':1,'choice':{'creditor':group_id}})
+    assert result.status_code==200,result.json
+    debt=result.json['data']['creation']['zoneHistory']['events'][0]['debt']
+    assert debt['creditor']=='Кредиторы' and debt['amount']==20000
+    assert debt['paidAtCreation']+debt['remaining']==20000 and debt['remaining']>1000
+    payload={'month':1,'amount':1000,'character_revision':actor.revision}
+    assert client.post(url+'/debt',headers=owner,json=payload).status_code==403
+    assert client.post(url+'/debt',headers=gm,json=payload).status_code==400
+    data=deepcopy(actor.data)
+    data['inventory']['money']=debt['remaining']
+    actor.data=data
+    db.session.commit()
+    payload['character_revision']=actor.revision
+    result=client.post(url+'/debt',headers=gm,json=payload)
+    assert result.status_code==200,result.json
+    assert result.json['data']['inventory']['money']==debt['remaining']-1000
+    assert result.json['data']['creation']['zoneHistory']['events'][0]['debt']['remaining']==debt['remaining']-1000
+    assert client.post(url+'/debt',headers=gm,json=payload).status_code==409
+    result=client.post(url+'/debt',headers=gm,json={**payload,'amount':debt['remaining']-1000,
+        'character_revision':actor.revision})
+    assert result.status_code==200 and result.json['data']['inventory']['money']==0
+    assert result.json['data']['creation']['zoneHistory']['events'][0]['debt']['remaining']==0
 
 
 @pytest.mark.parametrize('background',catalog()['backgrounds'],ids=lambda b:b['name'])

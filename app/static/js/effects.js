@@ -67,6 +67,7 @@ const EFFECT_TYPE_META = {
     infection_growth_block: { label: 'Блок нарастания заражения', group: 'medical' },
     analgesia: { label: 'Обезболивание', group: 'medical' },
     stimulant_crash: { label: 'Последствие стимулятора', group: 'medical' },
+    temporary_organ_health: { label: 'Временные ОЗ органов', group: 'medical' },
     radiation_filter: { label: 'Защита от входящей радиации', group: 'medical' },
     temperature_control: { label: 'Контроль температуры', group: 'medical' },
     limb_trauma_suppression: { label: 'Подавление травмы конечности', group: 'medical' },

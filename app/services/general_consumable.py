@@ -383,6 +383,16 @@ def _apply_profile(health, profile, direct, item, *, in_combat,character_data=No
         changed = True
 
     item_name = str(item.get("name") or "")
+    crash_source = f"{source}:crash"
+    active_crash = next((effect for effect in health.get("effects", [])
+        if isinstance(effect,dict) and effect.get("type")=="stimulant_crash"
+        and effect.get("source")==crash_source and effect.get("active",True)),None)
+    max_return_source=f'{source}:max-health-return'
+    active_max_return=next((e for e in health.get('effects',[]) if e.get('source')==max_return_source and e.get('active',True)),None)
+    if direct.get("hp_max_delta") is not None:
+        if active_crash is None and active_max_return is None:
+            health["max"] = max(1, _number(health.get("max")) + _number(direct["hp_max_delta"]))
+        changed = True
     if direct.get("hp") is not None:
         hp = _number(direct.get("hp"))
         if hp > 0:
@@ -466,21 +476,6 @@ def _apply_profile(health, profile, direct, item, *, in_combat,character_data=No
             modifier.get("tick") or tick, modifier.get("note") or "", source,
         )
 
-    crash_source = f"{source}:crash"
-    active_crash = next((
-        effect for effect in health.get("effects", [])
-        if isinstance(effect, dict)
-        and effect.get("type") == "stimulant_crash"
-        and effect.get("source") == crash_source
-        and effect.get("active", True)
-    ), None)
-    max_return_source=f'{source}:max-health-return'
-    active_max_return=next((e for e in health.get('effects',[]) if e.get('source')==max_return_source and e.get('active',True)),None)
-    if direct.get("hp_max_delta") is not None:
-        delta = _number(direct.get("hp_max_delta"))
-        if active_crash is None and active_max_return is None:
-            health["max"] = max(1, _number(health.get("max")) + delta)
-        changed = True
     if any(direct.get(key) is not None for key in ('post_duration_hp_delta','hp_max_delta','post_duration_exhaustion_delta','post_duration_pain_delta','post_duration_modifiers')):
         on_expire = []
         if direct.get('post_duration_pain_delta') is not None:
@@ -519,10 +514,22 @@ def _apply_profile(health, profile, direct, item, *, in_combat,character_data=No
         })
         changed = True
     if direct.get("organ_toughness_multiplier") is not None:
-        changed |= _add_modifier(
-            health, "organ_toughness_multiplier", direct.get("organ_toughness_multiplier"),
-            positive_duration('organ_toughness_multiplier',direct.get('organ_toughness_multiplier'),_number(duration,1),tick), tick, item_name, source,
-        )
+        multiplier=direct['organ_toughness_multiplier']
+        turns=positive_duration('organ_toughness_multiplier',multiplier,_number(duration,1),tick)
+        catalog_name=str((item.get('attributes') or {}).get('catalog_name') or item_name).strip().casefold()
+        if catalog_name=='стимулятор скала-н' and multiplier==2:
+            from app.services.health import double_organ_health
+            modifiers=meta.get('consumableModifiers') or []
+            modifiers[:]=[entry for entry in modifiers if not (
+                entry.get('stat')=='organ_toughness_multiplier' and (entry.get('source')==source
+                    or str(entry.get('note') or '').strip().casefold()==catalog_name))]
+            double_organ_health(health)
+            apply_effect_to_health(health,{'type':'temporary_organ_health','name':f'{item_name}: ОЗ органов ×2',
+                'source':'skala-n:organ-health','remaining':turns,'tick':tick,'medication_clock':True,
+                'remaining_seconds':_modifier_seconds(turns,tick)})
+            changed=True
+        else:
+            changed |= _add_modifier(health,"organ_toughness_multiplier",multiplier,turns,tick,item_name,source)
     if direct.get("action_points_duration"):
         changed |= _add_modifier(
             health, "action_points", direct.get("action_points_delta"),

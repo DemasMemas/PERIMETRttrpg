@@ -6144,6 +6144,8 @@ class CombatService:
             return None
         organs = health.setdefault('organs', {})
         organ = organs.setdefault(organ_key, {'current': maximum, 'max': maximum})
+        if 'temporaryBaseMax' in organ:
+            maximum = 2 * organ['temporaryBaseMax']
         organ['max'] = maximum
         before = max(0, CombatService._coerce_float(organ.get('current'), maximum))
         organ['current'] = max(0, before - max(0, damage))

@@ -43,6 +43,8 @@ def install(app, db, check_database, run_id):
             armed[:] = values
         descriptions = ['Препарат "Радист". Ампула.', 'Йод-плюс. Ампула. -2.5 радиации',
                         'Стимулятор Сова-Н. Действует 8 часов. +1 истощения', 'Стимулятор Воля. Ампула.']
+        skala='Стимулятор Скала-Н. Ампула. Действует 3 хода.'
         return {'run_id': run_id, 'draws': draws, 'pending': len(armed),
+                'skala_profile':parse_consumable_effects(skala),
                 'catalog_profiles': [{'name': text.split('.')[0], 'description': text,
                                       'profile': parse_consumable_effects(text)} for text in descriptions]}

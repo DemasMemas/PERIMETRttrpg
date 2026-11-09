@@ -13,7 +13,9 @@ def install(app, db, check_database, run_id):
         ItemTemplate(name='9x18 запрещённый БП',category='ammo',price=2,attributes={'caliber':'9x18','ammo_variant':'bp'}),
         ItemTemplate(name='Недоступная броня 2',category='armor',item_class='2',price=1,attributes={}),
     ]
-    templates.extend(ItemTemplate(**entry) for entry in load_catalog() if entry['attributes'].get('book_kind'))
+    equipment = {'Система "Вукладка"', 'Пояс', 'Бронеплита Барьер-1'}
+    templates.extend(ItemTemplate(**entry) for entry in load_catalog() if entry['attributes'].get('book_kind')
+        or entry['category']=='gas_mask_module' or entry['name'] in equipment)
     db.session.add_all(templates);db.session.commit()
     ids={template.category:template.id for template in templates[:4]}
 
@@ -28,7 +30,7 @@ def install(app, db, check_database, run_id):
         from app.services import character_creation
         original=character_creation.generate_zone_history
         class ScriptedRng:
-            def __init__(self):self.values=iter([3,8,1,10,2,2,11,2])
+            def __init__(self):self.values=iter([3,3,4,2,10,2,2,11,2])
             def randint(self,low,high):
                 value=next(self.values)
                 assert low<=value<=high

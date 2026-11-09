@@ -61,6 +61,19 @@ test('figure draws generic slot layers but never weapons', () => {
     assert.match(equipped, /loadout-art-helmet-anomalous[^>]*>.*loadout-art-visor-frame/s);
 });
 
+test('balaclavas have a fabric opening and the half-mask is in front of the headwear', () => {
+    const markup = figure({
+        helmet: {templateId: 1, name: 'Балаклава Призрак', attributes: {protection_zones: ['face']}},
+        gasMask: {templateId: 2, name: 'Противогаз Респиратор'},
+    });
+    assert.match(markup, /data-helmet="balaclava"[^>]*data-mask-kind="respirator"/);
+    assert.match(markup, /loadout-art-helmet-balaclava"><path fill-rule="evenodd"/);
+    const respirator = markup.match(/<g class="loadout-art-mask loadout-art-respirator">([\s\S]*?)<\/g>/)?.[1];
+    assert.ok(respirator);
+    assert.doesNotMatch(respirator, /loadout-art-lens/);
+    assert.ok(markup.indexOf('loadout-art-mask loadout-art-respirator') > markup.indexOf('loadout-art-helmet-anomalous'));
+});
+
 test('anomalous suit connects its glass helmet to a sealed collar', () => {
     const markup = figure({
         armor: { templateId: 2, name: 'Комбинезон Купол' },

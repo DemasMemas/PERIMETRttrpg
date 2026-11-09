@@ -374,7 +374,7 @@ module.exports=async({page,request,token,lobby,base,connect,debugPort,safeSessio
     const maskCatalog=await request(api+'/templates?category=gas_mask',null,token,'GET');
     const helmetTemplate=helmetCatalog.global.find(template=>template.name.startsWith('Шлем ')
         && !template.attributes?.integrated_visor && !template.attributes?.requires_filter);
-    const maskTemplate=maskCatalog.global.find(template=>template.category==='gas_mask');
+    const maskTemplate=maskCatalog.global.find(template=>template.category==='gas_mask'&&!template.name.includes('Респиратор'));
     assert.ok(helmetTemplate&&maskTemplate,'Шлем без забрала и противогаз есть в каталоге');
     const maskOwner=await read(a.id);
     for(const [id,template] of [['helmet',helmetTemplate],['mask',maskTemplate]]){
@@ -416,6 +416,28 @@ module.exports=async({page,request,token,lobby,base,connect,debugPort,safeSessio
         return {x,y,width,height,scale:1};})()`);
     fs.writeFileSync(path.join(safeSession.artifacts,'helmet-and-gas-mask.png'),
         Buffer.from((await page.call('Page.captureScreenshot',{format:'png',clip:figureClip})).data,'base64'));
+    await page.evaluate('window.closeCharacterSheet();true');
+    const balaclava=helmetCatalog.global.find(template=>template.name==='Балаклава');
+    const respirator=maskCatalog.global.find(template=>template.name==='Противогаз Респиратор');
+    assert.ok(balaclava&&respirator);
+    const visualItem=template=>({id:'visual-'+template.id,templateId:template.id,name:template.name,
+        category:template.category,attributes:template.attributes,quantity:1,installedModules:[]});
+    const outfit=await request(api+'/characters',{name:'Проверка рисунка экипировки',data:{
+        equipment:{helmet:visualItem(balaclava),gasMask:visualItem(respirator)},
+    }},token);
+    await page.evaluate(`window.openCharacterSheet(${outfit.id},'equipment').then(()=>true)`);
+    await page.until(`(()=>{const figure=document.querySelector('.loadout-figure[data-helmet="balaclava"][data-mask-kind="respirator"]');
+        if(!figure)return false;
+        const fabric=figure.querySelector('.loadout-art-helmet-balaclava'),mask=figure.querySelector('.loadout-art-respirator');
+        return getComputedStyle(fabric).display!=='none'&&getComputedStyle(mask).display!=='none'
+            &&getComputedStyle(figure.querySelector('.loadout-art-helmet-visor')).display==='none'
+            &&!mask.querySelector('.loadout-art-lens')&&mask.getBBox().y>40
+            &&Boolean(fabric.compareDocumentPosition(mask)&Node.DOCUMENT_POSITION_FOLLOWING);})()`,
+        'Балаклава и респиратор на переднем слое');
+    const respiratorClip=await page.evaluate(`(()=>{const {x,y,width,height}=document.querySelector('.loadout-figure').getBoundingClientRect();
+        return {x,y,width,height,scale:1};})()`);
+    fs.writeFileSync(path.join(safeSession.artifacts,'balaclava-and-respirator.png'),
+        Buffer.from((await page.call('Page.captureScreenshot',{format:'png',clip:respiratorClip})).data,'base64'));
     await page.evaluate('window.closeCharacterSheet();true');
     console.log(JSON.stringify({bareHelmetWithGasMaskUi:true,compatibleAfterReload:true}));
     const mediumTemplate=armorCatalog.global.find(template=>template.attributes?.modification_category==='Средняя');

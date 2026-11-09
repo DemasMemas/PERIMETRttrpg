@@ -125,6 +125,15 @@ module.exports=async({page,request,token,lobby,base,connect,debugPort,safeSessio
     await click(`${root} [data-purchase-quick-add="${books[0].id}"]`);
     assert.match(await page.evaluate(`document.querySelector('${root} [data-purchase-list]').textContent`),/Книга · /);
     await click(`${root} [data-purchase-remove="${books[0].id}"]`);
+    const groupLabel='Разгрузки, пояса и бронеплиты';
+    const equipmentCategories=await page.evaluate(`[...document.querySelectorAll('${root} [data-purchase-category] option')]
+        .filter(option=>option.textContent.includes('Разгрузки')).map(option=>option.textContent)`);
+    assert.deepEqual(equipmentCategories,[groupLabel]);
+    await set(`${root} [data-purchase-category]`,'vest');
+    const equipmentCatalog=await page.evaluate(`document.querySelector('${root} [data-purchase-catalog]').textContent`);
+    for(const name of ['Система "Вукладка"','Пояс','Бронеплита Барьер-1'])assert.ok(equipmentCatalog.includes(name),name);
+    const filters=rules.startingPurchaseTemplates.filter(item=>item.category==='gas_mask_module');
+    assert.equal(filters.length,2);
     await set(`${root} [name=cashPoints]`,3);
     const weaponPrice=rules.startingPurchaseTemplates.find(item=>item.id===fixture.templates.weapon).price;
     await set(`${root} [data-purchase-category]`,'weapon');
@@ -163,9 +172,10 @@ module.exports=async({page,request,token,lobby,base,connect,debugPort,safeSessio
     await buy('ammo',fixture.templates.ammo,20);
     assert.equal(await page.evaluate(`document.querySelector('${root} [data-purchase-catalog]').textContent.includes('запрещённый БП')`),false);
     await buy('backpack',fixture.templates.backpack,1);
+    for(const filter of filters)await buy('gas_mask_module',filter.id,1);
     await screenshot('creation-equipment');
     await step(6);await step(7);
-    assert.equal(await page.evaluate(`document.querySelectorAll('${root} [data-cart-quantity]').length`),4);
+    assert.equal(await page.evaluate(`document.querySelectorAll('${root} [data-cart-quantity]').length`),6);
     await page.call('Emulation.setDeviceMetricsOverride',{width:430,height:860,deviceScaleFactor:1,mobile:false});
     await screenshot('creation-equipment-mobile');await page.call('Emulation.clearDeviceMetricsOverride');
     await step(8);
@@ -180,7 +190,7 @@ module.exports=async({page,request,token,lobby,base,connect,debugPort,safeSessio
     for(let attempt=0;attempt<100&&!fs.existsSync(templatePath);attempt++)await pause(50);
     assert.ok(fs.existsSync(templatePath),'файл шаблона скачан браузером');
     const savedPlan=JSON.parse(fs.readFileSync(templatePath,'utf8'));
-    assert.equal(savedPlan.plan.traits.length,3);assert.equal(savedPlan.plan.purchases.length,4);
+    assert.equal(savedPlan.plan.traits.length,3);assert.equal(savedPlan.plan.purchases.length,6);
     assert.equal(savedPlan.plan.name,undefined);assert.equal(savedPlan.plan.health,undefined);
     await click(`${root} [data-creation-close]`);
     await page.evaluate(`(async()=>{const m=await import('/static/js/characters.js');await m.showCreateCharacterForm()})()`);
@@ -193,7 +203,7 @@ module.exports=async({page,request,token,lobby,base,connect,debugPort,safeSessio
     await click(`${root} [name=characterAlias]`);await page.call('Input.insertText',{text:'Созданный по книге'});
     assert.equal(await value(`${root} [data-stage=raises][data-skill="physical.agility"]`),'2');
     assert.equal(await value(`${root} [data-stage=finalRaises][data-skill="physical.agility"]`),'2');
-    assert.equal(await page.evaluate(`document.querySelectorAll('${root} [data-cart-quantity]').length`),4);
+    assert.equal(await page.evaluate(`document.querySelectorAll('${root} [data-cart-quantity]').length`),6);
     await step(8);
     await screenshot('creation-template-loaded');
     await click(`${root} [type=submit]`);
@@ -201,19 +211,21 @@ module.exports=async({page,request,token,lobby,base,connect,debugPort,safeSessio
     const list=await request(`/lobbies/${lobby.id}/characters`,null,token,'GET');
     const character=list.find(c=>c.name==='Созданный по книге');assert.ok(character);
     assert.equal(character.data.skills.physical.agility.base,10);assert.equal(character.data.skills.skillPoints,14);
-    assert.equal(character.data.inventory.money,3960);assert.equal(character.data.health.max,840);
+    assert.equal(character.data.inventory.money,3460);assert.equal(character.data.health.max,840);
     assert.equal(character.data.features.specialTraits.length,3);
-    assert.equal(character.data.creation.startingPurchase.items.length,4);
+    assert.equal(character.data.creation.startingPurchase.items.length,6);
     assert.equal(character.data.weapons.length,1);
     assert.ok(!character.data.weapons[0].createdByPlayer);
-    assert.equal(character.data.inventory.pockets.length,4);
+    assert.equal(character.data.inventory.pockets.length,6);
+    assert.deepEqual(character.data.inventory.pockets.filter(item=>item.category==='gas_mask_module')
+        .map(item=>item.durability).sort((a,b)=>a-b),[10,20]);
     const startingPda=character.data.inventory.pockets.find(item=>item.name==='КПК');
     assert.ok(startingPda&&startingPda.quantity===1&&startingPda.price===1500&&startingPda.volume===.5);
     assert.equal(character.data.inventory.backpack.length,0);
     assert.ok(character.data.inventory.pockets.every(item=>!item.createdByPlayer));
     assert.equal(character.data.creation.finalRaisePricing.nextCosts['physical.agility'],3);
     await page.evaluate(`window.openCharacterSheet(${character.id},'inventory')`);
-    await page.until('document.querySelectorAll("#pockets-container > [data-path]").length===4','покупки и бесплатный КПК видны в карманах');
+    await page.until('document.querySelectorAll("#pockets-container > [data-path]").length===6','покупки и бесплатный КПК видны в карманах');
     assert.equal(await page.evaluate('document.querySelector("[name=\\"inventory.pocketMaxVolume\\"]")'),null,'вместимость карманов не редактируется');
     assert.equal(await page.evaluate('document.querySelector("#pocket-capacity-display").textContent'),'10');
     await screenshot('creation-starting-pockets');
@@ -243,7 +255,8 @@ module.exports=async({page,request,token,lobby,base,connect,debugPort,safeSessio
     // Сохранение прежнего формата: покупки уже лежат в backpack, но рюкзака нет.
     const previous=(await request(`/lobbies/characters/${character.id}`,null,token,'GET')).data;
     await request(`/lobbies/characters/${character.id}`,{data:{...previous,inventory:{...previous.inventory,backpack:previous.inventory.pockets,pockets:[]}}},token,'PUT');
-    await page.until('document.querySelectorAll("#backpack-container > [data-path]").length===4','все покупки и КПК видны без надетого рюкзака');
+    const purchasedItems=previous.inventory.pockets.length,bagContents=purchasedItems-1;
+    await page.until(`document.querySelectorAll("#backpack-container > [data-path]").length===${purchasedItems}`,'все покупки и КПК видны без надетого рюкзака');
     assert.equal(await page.evaluate('document.querySelector("#sheet-tab-inventory").textContent.includes("Неразмещённое снаряжение")'),true);
     await screenshot('creation-visible-unplaced-items');
     const bagIndex=character.data.inventory.pockets.findIndex(item=>item.category==='backpack');
@@ -262,12 +275,12 @@ module.exports=async({page,request,token,lobby,base,connect,debugPort,safeSessio
     for(const type of ['dragEnter','dragOver','drop'])await page.call('Input.dispatchDragEvent',{type,...dropPoint,data:dragData});
     await page.call('Input.dispatchMouseEvent',{type:'mouseReleased',...dropPoint,button:'left',buttons:0,clickCount:1});
     await page.call('Input.setInterceptDrags',{enabled:false});
-    await page.until('document.querySelectorAll("#pockets-container > [data-path]").length===1&&document.querySelectorAll("#backpack-container > [data-path]").length===3','перенос предмета в пустые карманы');
+    await page.until(`document.querySelectorAll("#pockets-container > [data-path]").length===1&&document.querySelectorAll("#backpack-container > [data-path]").length===${bagContents}`,'перенос предмета в пустые карманы');
     await screenshot('inventory-empty-pockets-drop');
     await click('#pockets-container [data-path="inventory,pockets,0"] [data-widget-key=equip]');
-    await page.until(`(async()=>{const r=await fetch('/lobbies/characters/${character.id}',{headers:{Authorization:'Bearer '+localStorage.getItem('access_token')}});const data=(await r.json()).data;return data.equipment?.backpack?.id===${JSON.stringify(bagId)}&&data.inventory.backpack.length===3})()`,'рюкзак надет, покупки и КПК сохранены');
+    await page.until(`(async()=>{const r=await fetch('/lobbies/characters/${character.id}',{headers:{Authorization:'Bearer '+localStorage.getItem('access_token')}});const data=(await r.json()).data;return data.equipment?.backpack?.id===${JSON.stringify(bagId)}&&data.inventory.backpack.length===${bagContents}})()`,'рюкзак надет, покупки и КПК сохранены');
     await click('#sheet-tab-inventory [onclick="unequipBackpack()"]');
-    await page.until(`(async()=>{const r=await fetch('/lobbies/characters/${character.id}',{headers:{Authorization:'Bearer '+localStorage.getItem('access_token')}});const data=(await r.json()).data;const bag=data.inventory.pockets.find(item=>item.id===${JSON.stringify(bagId)});return !data.equipment.backpack&&bag?.contents?.length===3})()`,'рюкзак снят вместе со всеми вещами');
+    await page.until(`(async()=>{const r=await fetch('/lobbies/characters/${character.id}',{headers:{Authorization:'Bearer '+localStorage.getItem('access_token')}});const data=(await r.json()).data;const bag=data.inventory.pockets.find(item=>item.id===${JSON.stringify(bagId)});return !data.equipment.backpack&&bag?.contents?.length===${bagContents}})()`,'рюкзак снят вместе со всеми вещами');
     await page.evaluate('window.closeCharacterSheet()');
     // Пограничный случай пользователя: Помощник и три Специалиста = все 16 навыков.
     await page.evaluate(`(async()=>{const m=await import('/static/js/characters.js');await m.showCreateCharacterForm()})()`);
@@ -288,6 +301,12 @@ module.exports=async({page,request,token,lobby,base,connect,debugPort,safeSessio
     assert.equal(helper.data.creation.zoneHistory.confirmedThrough,0);
     const initialMoney=helper.data.inventory.money;
     assert.equal(initialMoney,helper.data.creation.initialCapital+helper.data.creation.entryMoney+helper.data.creation.zoneHistory.cashTotal,'деньги выданы до просмотра истории');
+    assert.equal(initialMoney,0,'Долг снимает стартовые деньги до нуля');
+    const debt=helper.data.creation.zoneHistory.events[0].debt;
+    assert.ok(debt.remaining>700&&debt.amount===20000);
+    await page.until('document.querySelector("#character-history-modal [data-debt-creditor]")','Месяц долга предлагает кредитора');
+    const creditor=rules.debtCreditors[0];
+    await set('#character-history-modal [data-debt-creditor]',creditor.id);
     await screenshot('history-month-one');
     await click('#character-history-modal [type=submit]');
     await page.until('document.querySelector("#character-history-modal [data-teacher]")','Учитель на втором месяце');
@@ -312,6 +331,17 @@ module.exports=async({page,request,token,lobby,base,connect,debugPort,safeSessio
     assert.equal(finished.creation.zoneHistory.confirmedThrough,3);assert.ok(finished.creation.zoneHistory.settled);
     assert.equal(finished.inventory.money,initialMoney,'подтверждение месяцев не дублирует деньги');
     assert.equal(finished.features.specialTraits.length,4,'Закалка поверх трёх начальных черт');
+    assert.equal(finished.creation.zoneHistory.events[0].debt.creditor,creditor.name);
+    const helperUrl=`/lobbies/characters/${helper.id}`;
+    await request(helperUrl,{data:{...finished,inventory:{...finished.inventory,money:1000}}},token,'PUT');
+    await page.evaluate(`window.openCharacterSheet(${helper.id},'basic')`);
+    await click('[data-creation-history] > summary');
+    assert.match(await page.evaluate('document.querySelector("[data-history-debt]").textContent'),new RegExp(creditor.name));
+    await set('[data-history-debt-amount]',700);
+    await click('[data-history-debt-month] button');
+    await page.until(`(async()=>{const {Server}=await import('/static/js/api.js');const {data}=await Server.getCharacter(${helper.id});
+        return data.inventory.money===300&&data.creation.zoneHistory.events[0].debt.remaining===${debt.remaining-700}})()`,
+        'ГМ погасил часть долга и списал деньги');
     fs.writeFileSync(path.join(safeSession.artifacts,'history-monthly.json'),JSON.stringify({threeMonths:true,teacherChoice:true,hardeningExtraTrait:true,resumedAtMonthTwo:true,noSpecialistFromHardening:true,moneyGrantedOnCreate:true,noRepeatedMoney:true},null,2));
     assert.equal(rules.skillOrder.filter(path=>{const[g,k]=path.split('.');return finished.skills[g][k].specialized}).length,16);
     await page.evaluate('window.closeCharacterSheet()');

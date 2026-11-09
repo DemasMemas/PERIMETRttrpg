@@ -34,6 +34,25 @@ BASE_ORGAN_MAXIMUMS = {
 NORMAL_BODY_TEMPERATURE = 36.0
 
 
+def double_organ_health(health):
+    organs=health.setdefault('organs',{})
+    for key,default in BASE_ORGAN_MAXIMUMS.items():
+        organ=organs.setdefault(key,{})
+        if 'temporaryBaseMax' in organ:continue
+        maximum=_number(organ.get('max')) or default
+        organ['temporaryBaseMax']=maximum
+        organ['current']=_scaled_current(organ.get('current'),maximum,maximum*2)
+        organ['max']=maximum*2
+
+
+def restore_organ_health(health):
+    for organ in (health.get('organs') or {}).values():
+        if not isinstance(organ,dict) or 'temporaryBaseMax' not in organ:continue
+        maximum=organ.pop('temporaryBaseMax')
+        organ['current']=_scaled_current(organ.get('current'),organ.get('max'),maximum)
+        organ['max']=maximum
+
+
 def has_mountain_background(character_data: Dict[str, Any]) -> bool:
     background = ((character_data or {}).get("basic") or {}).get("background") or {}
     name = str(background.get("name") or "").strip().lower()
@@ -102,6 +121,9 @@ def apply_health_maximums(character_data: Dict[str, Any], force: bool = False) -
             zone["max"] = new_max
 
     organs = health.setdefault("organs", {})
+    if not any(isinstance(effect,dict) and effect.get('type')=='temporary_organ_health'
+            and effect.get('active',True) and effect.get('remaining')!=0 for effect in health.get('effects') or []):
+        restore_organ_health(health)
     for key, new_max in BASE_ORGAN_MAXIMUMS.items():
         organ = organs.setdefault(key, {})
         old_organ_max = _number(organ.get("max"))

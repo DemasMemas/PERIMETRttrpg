@@ -7,6 +7,7 @@ import { openPdaShell } from './pdaShell.js';
 import { renderProstheses,prostheticLimb } from './prostheses.js';
 import { pairedFireOptions } from './pairedFire.js';
 import { hearingModifier } from './hearingRules.js';
+import { historyDebtText } from './characterHistory.js';
 import { passiveTraits, traitCount, backgroundIs, addLearningXp, backpackItemVolume, pocketCapacity,facialProfile,carriedWeaponEntries,ruleText } from './characterTraits.js';
 // static/js/characterSheet.js
 /*
@@ -2418,6 +2419,28 @@ function applyTemplateToObject(obj, template, mapping) {
 }
 
 // ========== 3. ВКЛАДКА "ОСНОВНОЕ" ==========
+function renderCreationHistory(history){
+    if(!history)return '';
+    const events=(history.events||[]).filter(event=>!history.presentationRequired||history.settled||event.confirmed);
+    const months=events.map(event=>{
+        const debt=event.debt;
+        const repayment=window.isGM&&event.confirmed&&debt?.creditor&&debt.remaining>0
+            ? `<div data-history-debt-month="${Number(event.month)}">
+                <label>Сумма погашения <input type="number" class="form-control" min="0.01"
+                    max="${Number(debt.remaining)}" step="0.01" data-history-debt-amount></label>
+                <button type="button" class="btn btn-secondary" onclick="repayCreationDebt(this)">Погасить из денег персонажа</button>
+                </div>`:'';
+        return `<div style="margin:10px 0"><strong>Месяц ${Number(event.month)}: ${escapeHtml(event.title)}</strong>
+            <p>${(event.details||[]).map(escapeHtml).join('<br>')}</p>
+            <p>Доход: ${(event.incomeOptions||[]).map(v=>Number(v).toLocaleString('ru-RU')).join(' или ')} руб.</p>
+            ${debt?`<p data-history-debt>${escapeHtml(historyDebtText(debt))}</p>`:''}${repayment}
+            ${(event.pending||[]).map(text=>`<p>${escapeHtml(text)}</p>`).join('')}</div>`;
+    }).join('');
+    return `<details data-creation-history ${history.settled?'':'open'}><summary>Жизнь в Зоне до игры: ${Number(history.months)} мес.</summary>
+        ${months}${history.settled?'':'<p>Перед входом в мир завершите историю жизни в Зоне.</p><button type="button" class="btn" onclick="completeCreationHistory()">Продолжить историю</button>'}
+        </details>`;
+}
+
 async function renderBasicTab(data) {
     const container = document.getElementById('sheet-tab-basic');
     const basic = data.basic || {};
@@ -2472,7 +2495,7 @@ async function renderBasicTab(data) {
         ${backgroundIs(data,'Бригадир')?Object.entries(data.health?.combatMeta?.brigadierRefusals||{}).map(([id,entry])=>`<div style="margin:8px 0"><span>Отказ от указания · персонаж №${Number(id)}</span> ${entry.choice_pending?`<button class="btn btn-secondary" type="button" onclick="resolveBrigadierRefusal(${Number(id)},'stress')">Получить 1 стресс</button><button class="btn btn-secondary" type="button" onclick="resolveBrigadierRefusal(${Number(id)},'provoke')">Провоцировать</button>`:entry.must_provoke?`<button class="btn btn-secondary" type="button" onclick="resolveBrigadierRefusal(${Number(id)},'provoked')">Провокация разыграна</button>`:''}</div>`).join(''):''}
         ${backgroundIs(data,'Один для бандитов\nВторой для мутантов') ? `<div class="target-weapon-choices" style="display:grid;gap:8px;margin-bottom:12px;">${[['human','Против людей: +2, против мутантов: −5'],['mutant','Против мутантов: +2, против людей: −5']].map(([key,label])=>`<label>${label}<select class="form-control" data-target-weapon="${key}" onchange="setBackgroundTargetWeapon('${key}',this.value)"><option value="">Не выбрано</option>${carriedWeaponEntries(data).map(({weapon,path},index)=>`<option value="${escapeHtml(JSON.stringify({path,id:weapon.id||null,name:weapon.name}))}" ${weapon.id && data.ruleChoices?.targetWeapons?.[key]===weapon.id?'selected':''}>${escapeHtml(weapon.name||'Оружие')} · ${index+1}</option>`).join('')}</select></label>`).join('')}<small>Можно переназначить. Бонус действует только у владельца этой предыстории.</small></div>` : ''}
         <div><strong>Метки персонажа</strong><p>${['Военный','Бандит','Торговец','Проходил военную службу'].map(tag=>`<label style="margin-right:12px"><input type="checkbox" ${basic.tags?.includes(tag)?'checked':''} ${window.isGM?'':'disabled'} onchange="setCharacterRuleTag('${tag}',this.checked)"> ${tag}</label>`).join('')}</p>${(basic.tags||[]).filter(t=>!['Военный','Бандит','Торговец','Проходил военную службу'].includes(t)).map(t=>`<span class="badge">${escapeHtml(t)}</span>`).join(' ')}</div>
-        ${data.creation?.zoneHistory?`<details ${data.creation.zoneHistory.settled?'':'open'}><summary>Жизнь в Зоне до игры: ${Number(data.creation.zoneHistory.months)} мес.</summary>${(data.creation.zoneHistory.events||[]).filter(event=>!data.creation.zoneHistory.presentationRequired||data.creation.zoneHistory.settled||event.confirmed).map(event=>`<div style="margin:10px 0"><strong>Месяц ${Number(event.month)}: ${escapeHtml(event.title)}</strong><p>${(event.details||[]).map(escapeHtml).join('<br>')}</p><p>Доход: ${(event.incomeOptions||[]).map(v=>Number(v).toLocaleString('ru-RU')).join(' или ')} руб.</p>${(event.pending||[]).map(text=>`<p>${escapeHtml(text)}</p>`).join('')}</div>`).join('')}${data.creation.zoneHistory.settled?'':'<p>Перед входом в мир завершите историю жизни в Зоне.</p>'}${data.creation.zoneHistory.settled?'':'<button type="button" class="btn" onclick="completeCreationHistory()">Продолжить историю</button>'}</details>`:''}
+        ${renderCreationHistory(data.creation?.zoneHistory)}
         <div style="margin-bottom: 10px;">
             <label>Название</label>
             <select name="basic.background.templateId" class="form-control" style="width:100%;" onchange="fillBackgroundFromTemplate(this)">
@@ -2602,6 +2625,29 @@ window.completeCreationHistory = async function(){
             currentCharacterData=data;await renderCharacterSheet(data.basic?.name||'',data);
         });
     }catch(error){showNotification(error.message);}
+};
+
+window.repayCreationDebt = async function(button){
+    if(!window.isGM||!currentCharacterCanEdit||button.disabled)return;
+    const row=button.closest('[data-history-debt-month]');
+    const amount=row.querySelector('[data-history-debt-amount]');
+    if(!amount.value||!amount.reportValidity()){amount.focus();return;}
+    const characterId=currentCharacterId;
+    const payment={month:Number(row.dataset.historyDebtMonth),amount:amount.valueAsNumber};
+    button.disabled=true;
+    try{
+        await forceSyncCharacter();
+        await Server.waitForCharacterSave(characterId);
+        if(currentCharacterId!==characterId||sheetSaveBlocked)return;
+        const {data}=await Server.repayCharacterHistoryDebt(currentLobbyId,characterId,
+            {...payment,character_revision:currentCharacterData._revision});
+        if(currentCharacterId!==characterId)return;
+        currentCharacterData=data;
+        await refreshSavedSheet(characterId);
+        const history=document.querySelector('#sheet-tab-basic [data-creation-history]');
+        if(history)history.open=true;
+    }catch(error){showNotification(error.message,'system');}
+    finally{button.disabled=false;}
 };
 
 window.fillBackgroundFromTemplate = async function(select) {
@@ -3270,8 +3316,17 @@ function ensureHealthMaximums(data) {
     }
     const mountain = hasMountainBackground(data);
     const profileName = mountain ? 'mountain' : 'base';
+    let temporaryMaximum = 0;
+    for (const effect of Array.isArray(health.effects) ? health.effects : []) {
+        if (!['stimulant_crash','temporary_hp_max'].includes(effect?.type)
+            || effect.active === false || effect.remaining === 0) continue;
+        for (const adjustment of effect.onExpire || []) {
+            const delta = Number(adjustment?.delta);
+            if (adjustment?.field === 'max' && Number.isFinite(delta) && delta < 0) temporaryMaximum -= delta;
+        }
+    }
     const profile = {
-        max: mountain ? 840 : BASE_HEALTH_MAXIMUMS.max,
+        max: (mountain ? 840 : BASE_HEALTH_MAXIMUMS.max) + temporaryMaximum,
         zones: { ...BASE_HEALTH_MAXIMUMS.zones },
     };
     if (mountain) {
@@ -4950,7 +5005,7 @@ function equipmentSlotMetrics(item, kind, template = null) {
     return metrics;
 }
 
-function equipmentFigureAppearance(equipment, armorTemplates, helmetTemplates) {
+function equipmentFigureAppearance(equipment, armorTemplates, helmetTemplates, gasMaskTemplates = []) {
     const armor = equipment.armor;
     const helmet = equipment.helmet;
     const armorTemplate = armorTemplates.find(template => template.id == armor?.templateId);
@@ -4981,12 +5036,16 @@ function equipmentFigureAppearance(equipment, armorTemplates, helmetTemplates) {
     let helmetKind = 'none';
     if (helmet?.templateId) {
         const helmetName = normalize(helmet.name || helmetTemplate?.name);
+        const isBalaclava = [helmetName, normalize(helmetTemplate?.name), normalize(helmet.attributes?.catalog_name)]
+            .some(name => /^балаклава(?:\s|$)/.test(name));
         const zones = helmetTemplate?.attributes?.protection_zones || helmet?.attributes?.protection_zones;
         const hasFilter = helmetTemplate?.attributes?.requires_filter
             || helmetTemplate?.attributes?.slots?.some(slot => slot.type === 'filter')
             || helmet?.attributes?.requires_filter;
         if (helmet.integratedWithArmor && armorKind === 'anomalous') {
             helmetKind = 'anomalous';
+        } else if (isBalaclava) {
+            helmetKind = 'balaclava';
         } else if (hasFilter || helmetName.includes('противогазо')) {
             helmetKind = 'sealed';
         } else if (helmet.integratedWithArmor
@@ -4997,16 +5056,22 @@ function equipmentFigureAppearance(equipment, armorTemplates, helmetTemplates) {
             helmetKind = 'open';
         }
     }
-    return { armorKind, helmetKind };
+    const gasMask = equipment.gasMask;
+    const gasMaskTemplate = gasMaskTemplates.find(template => template.id == gasMask?.templateId);
+    const isRespirator = [gasMask?.name, gasMask?.model, gasMask?.attributes?.catalog_name, gasMaskTemplate?.name]
+        .some(name => /(?:^|\s)респиратор(?:\s|$)/.test(normalize(name)));
+    const maskKind = gasMask?.templateId || gasMask?.model ? isRespirator ? 'respirator' : 'full' : 'none';
+    return { armorKind, helmetKind, maskKind };
 }
 
-function renderEquipmentFigure(equipment, armorTemplates, helmetTemplates) {
-    const { armorKind, helmetKind } = equipmentFigureAppearance(equipment, armorTemplates, helmetTemplates);
+function renderEquipmentFigure(equipment, armorTemplates, helmetTemplates, gasMaskTemplates) {
+    const { armorKind, helmetKind, maskKind } = equipmentFigureAppearance(equipment, armorTemplates, helmetTemplates, gasMaskTemplates);
     const occupied = item => Boolean(item?.templateId || item?.model);
     const flags = {
         'data-armor': armorKind,
         'data-helmet': helmetKind,
-        'data-mask': occupied(equipment.gasMask),
+        'data-mask': maskKind !== 'none',
+        'data-mask-kind': maskKind,
         'data-vest': occupied(equipment.vest),
         'data-belt': occupied(equipment.belt),
         'data-backpack': occupied(equipment.backpack),
@@ -5042,7 +5107,7 @@ function renderEquipmentFigure(equipment, armorTemplates, helmetTemplates) {
             <g class="loadout-art-vest"><path d="M66 84 L77 79 L103 79 L114 84 L117 145 L105 154 L75 154 L63 145Z"/><path d="M76 82 L76 153 M104 82 L104 153 M77 119 L103 119" class="loadout-art-detail"/></g>
             <g class="loadout-art-belt"><path d="M58 158 Q90 168 122 158 L122 171 Q90 180 58 171Z"/><path d="M84 158 L96 158 L96 175 L84 175Z" class="loadout-art-plate"/></g>
             <g class="loadout-art-headphones"><path class="loadout-art-headband" d="M67 36 Q68 7 90 7 Q112 7 113 36"/><path d="M62 33 L69 33 L69 45 L62 45Z M111 33 L118 33 L118 45 L111 45Z"/></g>
-            <g class="loadout-art-mask"><path d="M67 30 Q67 10 90 9 Q113 10 113 30 L111 50 Q108 64 90 70 Q72 64 69 50Z"/><circle cx="79" cy="37" r="8" class="loadout-art-lens"/><circle cx="101" cy="37" r="8" class="loadout-art-lens"/><path d="M90 45 L90 52" class="loadout-art-detail"/><circle cx="90" cy="57" r="9" class="loadout-art-filter"/><circle cx="90" cy="57" r="4" class="loadout-art-filter-center"/></g>
+            <g class="loadout-art-helmet loadout-art-helmet-balaclava"><path fill-rule="evenodd" d="M68 29 Q68 12 90 12 Q112 12 112 29 L109 49 Q107 60 102 64 L105 73 Q90 77 75 73 L78 64 Q73 60 71 49Z M74 33 Q76 29 90 30 Q104 29 106 33 L105 40 Q100 43 90 41 Q80 43 75 40Z"/><path d="M90 13 L90 26 M76 48 Q79 61 88 65 M104 48 Q101 61 92 65" class="loadout-art-fabric-seam"/></g>
             <g class="loadout-art-helmet loadout-art-helmet-open"><path d="M64 37 Q63 7 90 7 Q117 7 116 37 L111 42 L110 32 L70 32 L69 42Z"/><path d="M66 38 L76 44 M114 38 L104 44" class="loadout-art-detail"/></g>
             <g class="loadout-art-helmet loadout-art-helmet-visor"><path d="M62 35 Q62 6 90 6 Q118 6 118 35 L113 55 L105 63 L75 63 L67 55Z"/><path d="M70 29 L110 29 L107 47 L73 47Z" class="loadout-art-lens"/><path d="M78 53 L102 53" class="loadout-art-detail"/></g>
             <g class="loadout-art-helmet loadout-art-helmet-sealed"><path d="M61 36 Q61 5 90 5 Q119 5 119 36 L113 58 L102 68 L78 68 L67 58Z"/><path d="M69 28 L111 28 L106 44 L74 44Z" class="loadout-art-lens"/><circle cx="90" cy="53" r="7"/><path d="M77 51 L83 58 M103 51 L97 58" class="loadout-art-detail"/></g>
@@ -5052,6 +5117,13 @@ function renderEquipmentFigure(equipment, armorTemplates, helmetTemplates) {
             <g class="loadout-art-detector"><path d="M45 115 L57 117 L55 140 L43 138Z"/><circle cx="49" cy="124" r="3" class="loadout-art-core"/></g>
             <g class="loadout-art-necklace"><path d="M75 69 Q90 89 105 69"/><path d="M90 87 L85 94 L90 101 L95 94Z"/></g>
             <g class="loadout-art-earrings"><circle cx="68" cy="51" r="3"/><circle cx="112" cy="51" r="3"/></g>
+            ${maskKind === 'respirator' ? `<g class="loadout-art-mask loadout-art-respirator">
+                <path d="M70 44 L81 49 M110 44 L99 49" class="loadout-art-fabric-seam"/>
+                <path d="M90 42 Q86 42 82 48 L76 53 L81 61 Q84 66 90 67 Q96 66 99 61 L104 53 L98 48 Q94 42 90 42Z"/>
+                <path d="M68 49 Q70 46 76 47 L82 51 L81 59 Q79 63 74 62 L68 59 Q66 56 68 49Z M112 49 Q110 46 104 47 L98 51 L99 59 Q101 63 106 62 L112 59 Q114 56 112 49Z" class="loadout-art-filter"/>
+                <path d="M70 51 L78 53 M70 55 L78 57 M110 51 L102 53 M110 55 L102 57" class="loadout-art-respirator-grille"/>
+                <circle cx="90" cy="59" r="3.2" class="loadout-art-filter-center"/>
+            </g>` : maskKind === 'full' ? `<g class="loadout-art-mask"><path d="M70 34 Q70 19 90 19 Q110 19 110 34 L108 51 Q106 64 90 70 Q74 64 72 51Z"/><circle cx="80" cy="38" r="7" class="loadout-art-lens"/><circle cx="100" cy="38" r="7" class="loadout-art-lens"/><path d="M90 45 L90 52" class="loadout-art-detail"/><circle cx="90" cy="57" r="9" class="loadout-art-filter"/><circle cx="90" cy="57" r="4" class="loadout-art-filter-center"/></g>` : ''}
             <g class="loadout-art-bracelet1"><path d="M39 169 L53 172 L52 177 L39 174Z"/></g>
             <g class="loadout-art-bracelet2"><path d="M127 172 L141 169 L141 174 L128 177Z"/></g>
             <g class="loadout-art-ring"><path d="M43 186 L50 188 L49 191 L42 189Z"/></g>
@@ -5110,7 +5182,7 @@ function renderEquipmentLoadout(container, data, weaponTemplates, helmetTemplate
                     equipmentModule(equipment.detector, 'battery') ? `${equipmentModule(equipment.detector, 'battery').attributes?.power ?? '?'}% заряда` : '')}
                 ${slot('Пояс', equipment.belt?.templateId || equipment.belt?.model ? equipment.belt : null, 'inventory', 'П')}
             </div>
-            ${renderEquipmentFigure(equipment, armorTemplates, helmetTemplates)}
+            ${renderEquipmentFigure(equipment, armorTemplates, helmetTemplates, gasMaskTemplates)}
             <div class="loadout-column">
                 ${weaponSlot('Оружие I', ranged[0], 'I', 'weapons')}
                 ${weaponSlot('Оружие II', ranged[1], 'II', 'weapons')}

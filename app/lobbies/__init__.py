@@ -2472,7 +2472,9 @@ def character_creation_rules(lobby_id,lobby,participant):
     from app.services.character_creation import catalog,build_character
     if request.method=='GET':
         from app.services.character_starting_purchase import catalog as purchase_catalog
+        from app.services.character_history import debt_creditors
         rules=catalog();rules['startingPurchaseTemplates']=purchase_catalog()
+        rules['debtCreditors']=[{'id':key,'name':name} for key,name in debt_creditors(lobby_id).items()]
         return jsonify(rules)
     payload=request.get_json() or {}
     data=build_character(str(payload.get('name') or ''),payload.get('plan'),roll_history=False,finalize=False)
@@ -2499,7 +2501,7 @@ def award_character_session(lobby_id,character_id,lobby):
 @jwt_required()
 @requires_participant
 def settle_character_creation_history(lobby_id,character_id,lobby,participant):
-    from app.services.character_history import settle_history,confirm_history_month
+    from app.services.character_history import settle_history,confirm_history_month,debt_creditors
     character=LobbyCharacter.query.filter_by(id=character_id,lobby_id=lobby_id).first()
     if not character:raise NotFoundError('Персонаж не найден')
     CharacterService.check_access(character,int(get_jwt_identity()),edit=True)
@@ -2507,9 +2509,29 @@ def settle_character_creation_history(lobby_id,character_id,lobby,participant):
     expected={'month','choice'} if request.method=='PATCH' else {'choices'}
     if not isinstance(payload,dict) or set(payload)!=expected:raise ValidationError('Нужны решения событий')
     day=max(1,lobby.game_day or 1)
-    character.data=(confirm_history_month(character.data,payload['month'],payload['choice'],day) if request.method=='PATCH'
-                    else settle_history(character.data,payload['choices'],day))
+    creditors=debt_creditors(lobby_id)
+    character.data=(confirm_history_month(character.data,payload['month'],payload['choice'],day,creditors=creditors)
+                    if request.method=='PATCH' else settle_history(character.data,payload['choices'],day,creditors=creditors))
     flag_modified(character,'data');db.session.commit()
+    emit_character_update({'character_id':character.id,'updates':{'data':character.data_snapshot()},'source':'creation_history'})
+    return jsonify({'data':character.data_snapshot()})
+
+
+@lobbies_bp.route('/<int:lobby_id>/characters/<int:character_id>/creation-history/debt',methods=['POST'])
+@jwt_required()
+@requires_gm
+def repay_character_creation_debt(lobby_id,character_id,lobby):
+    from app.services.character_history import repay_debt
+    character=LobbyCharacter.query.filter_by(id=character_id,lobby_id=lobby_id).first()
+    if not character:raise NotFoundError('Персонаж не найден')
+    payload=request.get_json() or {}
+    if not isinstance(payload,dict) or set(payload)!={'month','amount','character_revision'}:
+        raise ValidationError('Укажите месяц и сумму погашения')
+    if type(payload['character_revision']) is not int or payload['character_revision']!=character.revision:
+        raise ConflictError('Лист изменился. Обновите его перед погашением')
+    character.data=repay_debt(character.data,payload['month'],payload['amount'])
+    flag_modified(character,'data')
+    db.session.commit()
     emit_character_update({'character_id':character.id,'updates':{'data':character.data_snapshot()},'source':'creation_history'})
     return jsonify({'data':character.data_snapshot()})
 

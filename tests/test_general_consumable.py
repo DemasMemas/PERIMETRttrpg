@@ -341,16 +341,45 @@ def test_skala_n_temporary_maximum_survives_recalculation_and_protects_organs():
     assert (health['current'],health['max'])==(500,900)
     apply_health_maximums(data)
     assert (health['current'],health['max'])==(500,900)
+    assert (health['organs']['heart']['current'],health['organs']['heart']['max'])==(40,40)
     organ=CombatService._apply_organ_damage(health,'heart',10,'chest')
-    assert organ['current']==15  # Обычный орган теряет 10 из 20; со Скала-Н — 5.
+    assert (organ['current'],organ['max'])==(30,40)
     health['effects']=advance_timed_effects(health,health['effects'],18,advance_medication_turns=True)
     apply_health_maximums(data)
     assert (health['current'],health['max'])==(200,700)
+    assert (health['organs']['heart']['current'],health['organs']['heart']['max'])==(15,20)
     assert CombatService._apply_organ_damage(health,'heart',10,'chest')['current']==5
     _apply_profile(health,profile,profile['direct'],{'name':'Стимулятор Скала-Н','templateId':42},in_combat=False)
     heal_character_fully(data)
     assert (health['current'],health['max'])==(700,700)
     assert not health['combatMeta'].get('consumableModifiers')
+
+
+def test_skala_n_raises_full_mountain_pool_before_healing_and_reverts_organ_health_in_combat():
+    from app.services.effects import apply_expired_effects_to_health,tick_effects
+    from app.services.health import apply_health_maximums
+
+    data={'basic':{'background':{'name':'Гора'}}}
+    health=apply_health_maximums(data)
+    health['organs']['heart']['current']=15
+    health['organs']['leftEye']['current']=0
+    health['combatMeta']={'consumableModifiers':[{'stat':'organ_toughness_multiplier','value':2,
+        'source':'consumable-template:42','remaining':2}]}
+    profile=parse_consumable_effects('Стимулятор Скала-Н. Ампула. Действует 3 хода.')
+    _apply_profile(health,profile,profile['direct'],{'name':'Стимулятор Скала-Н','templateId':42},
+        in_combat=True,character_data=data)
+    assert (health['current'],health['max'])==(1040,1040)
+    assert not health['combatMeta']['consumableModifiers']
+    assert (health['organs']['heart']['current'],health['organs']['heart']['max'])==(30,40)
+    assert (health['organs']['leftEye']['current'],health['organs']['leftEye']['max'])==(0,30)
+    for _ in range(3):
+        effects=health['effects']
+        apply_expired_effects_to_health(health,effects,character_data=data)
+        health['effects']=tick_effects(effects)
+    apply_health_maximums(data)
+    assert (health['current'],health['max'])==(740,840)
+    assert (health['organs']['heart']['current'],health['organs']['heart']['max'])==(15,20)
+    assert (health['organs']['leftEye']['current'],health['organs']['leftEye']['max'])==(0,15)
 
 
 @pytest.mark.parametrize('word',['Уровень','Уровня','Уровней'])

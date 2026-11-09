@@ -6,6 +6,14 @@ const escape=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&
 const historyText=value=>ruleText(value).replace(/^\d+\.\s*/u,'');
 const rubles=value=>Number(value).toLocaleString('ru-RU');
 
+export function historyDebtText(debt){
+    if(!debt)return '';
+    const creditor=debt.creditor? `Группировка-кредитор · ${debt.creditor}`:'Выберите группировку-кредитора';
+    const paid=debt.paidAtCreation??0;
+    const remaining=debt.remaining??debt.amount;
+    return `${creditor}. Долг ${rubles(debt.amount)} ₽. Списано при создании ${rubles(paid)} ₽. Осталось ${rubles(remaining)} ₽.`;
+}
+
 export function historyMonthPresentation(event,income){
     const delta=Number(event.cashDelta||0);
     const total=Number((event.incomeOptions||[0])[0]);
@@ -16,6 +24,7 @@ export function historyMonthPresentation(event,income){
     const incomeText=delta
         ? `Доход за месяц: ${rubles(base)} ₽ + ${rubles(delta)} ₽ = ${rubles(total)} ₽`
         : `Доход за месяц: ${rubles(total)} ₽`;
+    if(event.debt)details.push(historyDebtText(event.debt));
     return {title:historyText(event.title||'Жизнь в Зоне'),details,incomeText};
 }
 
@@ -37,7 +46,10 @@ export async function completeCharacterHistory(lobbyId,characterId,initialData,o
         content.dataset.month=event.month;
         const view=historyMonthPresentation(event,history.income);
         content.innerHTML='<p class="creation-hint">Месяц '+event.month+' из '+history.events.length+'</p><h4>'+escape(view.title)+'</h4>'+view.details.map(text=>'<p>'+escape(text)+'</p>').join('')+'<p>'+escape(view.incomeText)+'</p>';
-        if(event.teacher){
+        if(event.debt?.chooseCreditor){
+            content.insertAdjacentHTML('beforeend','<label>Нейтральная группировка<select data-debt-creditor class="form-control" required><option value="">Выберите группировку</option>'
+                +(rules.debtCreditors||[]).map(group=>'<option value="'+escape(group.id)+'">'+escape(group.name)+'</option>').join('')+'</select></label>');
+        }else if(event.teacher){
             content.insertAdjacentHTML('beforeend','<label>Учитель · '+event.teacher.xp+' опыта без бонусов обучения<select data-teacher class="form-control" required><option value="">Выберите навык</option>'+rules.skillOrder.filter(path=>!event.teacher.group||path.startsWith(event.teacher.group+'.')).map(path=>'<option value="'+escape(path)+'">'+escape(rules.skills[path.split('.')[0]][path.split('.')[1]])+'</option>').join('')+'</select></label>');
         }else if(event.hardening){
             const count=trait=>(data.features?.specialTraits||[]).filter(item=>item.ruleId===trait.id||item.name===trait.name).length;
@@ -63,7 +75,9 @@ export async function completeCharacterHistory(lobbyId,characterId,initialData,o
         form.onsubmit=async event=>{
             event.preventDefault();if(busy)return;
             const teacher=content.querySelector('[data-teacher]'),hardening=content.querySelector('[data-hardening]');let choice={};
-            if(teacher)choice={skill:teacher.value};
+            const creditor=content.querySelector('[data-debt-creditor]');
+            if(creditor)choice={creditor:creditor.value};
+            else if(teacher)choice={skill:teacher.value};
             else if(hardening){
                 if(hardening.value==='points')choice={decline:true};
                 else{const trait={id:hardening.value};content.querySelectorAll('[data-choice]').forEach(input=>trait[input.dataset.choice]=input.value.trim());choice={trait};}

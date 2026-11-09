@@ -2627,6 +2627,8 @@ input[type="number"] {
 .loadout-figure-art .loadout-art-glass-highlight { fill: none; stroke: rgba(240, 255, 249, .75); stroke-width: 1.5; }
 .loadout-figure-art .loadout-art-filter { fill: #59645e; stroke: #c5c8af; }
 .loadout-figure-art .loadout-art-filter-center { fill: #2f3b38; }
+.loadout-figure-art .loadout-art-fabric-seam { fill: none; stroke: #778078; stroke-width: 1; }
+.loadout-figure-art .loadout-art-respirator-grille { fill: none; stroke: #303a37; stroke-width: 1; }
 .loadout-art-armor,
 .loadout-art-helmet,
 .loadout-art-backpack,
@@ -2648,6 +2650,7 @@ input[type="number"] {
 .loadout-figure[data-armor="anomalous"] .loadout-art-armor-anomalous,
 .loadout-figure[data-armor="exo"] .loadout-art-armor-exo,
 .loadout-figure[data-helmet="open"] .loadout-art-helmet-open,
+.loadout-figure[data-helmet="balaclava"] .loadout-art-helmet-balaclava,
 .loadout-figure[data-helmet="visor"] .loadout-art-helmet-visor,
 .loadout-figure[data-helmet="sealed"] .loadout-art-helmet-sealed,
 .loadout-figure[data-helmet="anomalous"] .loadout-art-helmet-anomalous,
@@ -2675,6 +2678,8 @@ input[type="number"] {
 .loadout-art-helmet,
 .loadout-art-mask,
 .loadout-art-gloves { fill: #535e53 !important; }
+.loadout-art-helmet-balaclava,
+.loadout-art-respirator { fill: #374039 !important; }
 .loadout-art-helmet-anomalous { fill: rgba(173, 229, 220, .10) !important; stroke: #bedfd5 !important; }
 .loadout-art-headphones,
 .loadout-art-glasses,

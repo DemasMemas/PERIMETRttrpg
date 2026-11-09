@@ -118,6 +118,9 @@ export const Server = {
     async confirmCharacterHistoryMonth(lobbyId,characterId,month,choice){
         return apiFetch('/lobbies/'+lobbyId+'/characters/'+characterId+'/creation-history',{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({month,choice})});
     },
+    repayCharacterHistoryDebt: (lobbyId,characterId,payload) => apiFetch(
+        `/lobbies/${lobbyId}/characters/${characterId}/creation-history/debt`,
+        {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}),
     async applyWorldEditorChange(lobbyId,payload) {
         return apiFetch(`/lobbies/${lobbyId}/world-editor/changes`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
     },

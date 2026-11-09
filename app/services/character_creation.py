@@ -281,7 +281,15 @@ def generate_zone_history(data,rng=None):
                 multiplier-=({2:[1,.75,.25,.1],3:[1.5,.5,.4,.2]}.get(kind,[0,0,0,0]))[detail-1]
                 if kind==1:extra['addiction']=['Регенеративный стимулятор','Обезболивающий стимулятор','Водка','Сигареты'][detail-1]
         elif event==3:
-            pick('A',48);debt=rng.randint(1,12);rolls.append(debt);details.append(f'Долг {debt*10000} рублей')
+            creditor=rng.randint(1,4)
+            debt=rng.randint(1,12)
+            rolls.extend([creditor,debt])
+            extra['debt']={'amount':debt*10000}
+            if creditor==4:
+                extra['debt']['chooseCreditor']=True
+                pending.append('Выбрать нейтральную группировку')
+            else:
+                extra['debt']['creditor']=cells[f'A{47+creditor}'].split('. ',1)[-1]
         elif event==4:pick('A',55);pick('B',55)
         elif event==5:pick('A',62);multiplier-=[2,1,.5,.25][pick('B',62)-1]
         elif event==6:multiplier-=[1,.75,.5,.25][pick('A',69)-1]

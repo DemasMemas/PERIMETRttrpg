@@ -16,6 +16,10 @@ def eligible(template):
     category=template.category
     attrs=template.attributes or {}
     if attrs.get('craft_only') or 'price' in (attrs.get('unspecified_fields') or []):return False
+    if category=='gas_mask_module':
+        from app.services.gas_mask_filters import is_gas_mask_filter
+        return not attrs.get('not_for_sale') and is_gas_mask_filter({
+            'category':category, 'subcategory':template.subcategory, 'attributes':attrs})
     if category.endswith('_module') or category in {'modification','artifact','background','special_trait'}:
         return False
     if attrs.get('installedModules') or attrs.get('modifications'):
@@ -155,10 +159,9 @@ def grant_creation_money(data):
     if not isinstance(creation,dict) or creation.get('creationMoneyGranted') or creation.get('worldEntryGranted') or 'entryMoney' not in creation:return False
     inventory=data.setdefault('inventory',{})
     initial=inventory.get('money',0)+creation.get('entryMoney',0)
-    balance=initial
     history=creation.get('zoneHistory') or {}
-    for event in history.get('events') or []:
-        balance=max(0,balance+(event.get('incomeOptions') or [0])[0])
+    from app.services.character_history import starting_balance
+    balance=starting_balance(initial,history)
     if history:history['cashTotal']=balance-initial
     inventory['money']=max(0,balance)
     creation.update(creationMoneyGranted=True,creationMoneyBase=initial,creationMoneyAmount=balance-(initial-creation.get('entryMoney',0)))
