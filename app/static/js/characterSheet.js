@@ -5682,7 +5682,7 @@ function renderArtifactSpecial(item) {
         <span>${escapeHtml(hint)}</span>${powerOptions}
         ${state.supported?`<button type="button" class="btn btn-sm" data-artifact-special="${escapeHtml(String(state.item_id))}"
             onclick="window.activateArtifactSpecial(this.dataset.artifactSpecial,this.parentElement.querySelector('[data-artifact-power]')?.value)" ${!currentCharacterCanEdit||!state.available&&!state.armed?'disabled':''}>
-            ${state.armed?'Отменить применение при падении':state.fall_reaction?'Применить при следующем падении':'Применить'}${combat&&!state.armed?` · ${state.action_points} ОД`:''}</button>`:''}
+            ${state.armed?'Отменить применение при падении':state.fall_reaction?'Применить при следующем падении':state.target_range?'Выбрать цель':'Применить'}${combat&&!state.armed?` · ${state.action_points} ОД`:''}</button>`:''}
     </div>`;
 }
 window.activateArtifactSpecial = async function(itemId,power) {
@@ -5700,7 +5700,17 @@ window.activateArtifactSpecial = async function(itemId,power) {
             return;
         }
         const {runController}=await import('./itemControllers.js');
-        await runController(characterId,{item_id:itemId,...(power===undefined?{}:{power:Number(power)})},data=>{
+        const payload={item_id:itemId,...(power===undefined?{}:{power:Number(power)})};
+        if(state?.target_range){
+            if(!window.isLocationActive)throw new Error('Выберите цель на подлокации');
+            const {visibleArtifactTargets}=await import('./locationScene.js');
+            const choices=visibleArtifactTargets(characterId,state.target_range);
+            if(!choices.length)throw new Error('В радиусе действия нет видимых целей');
+            const target=await chooseConsumableApplication(`Цель: ${state.name}`,choices,{alwaysShow:true});
+            if(!target||currentCharacterId!==characterId)return;
+            payload.target_id=target.id;
+        }
+        await runController(characterId,payload,data=>{
             if(currentCharacterId===characterId)currentCharacterData=data;
         },{actionKey:'artifact_special',send:Server.activateArtifactSpecial});
     }catch(error){showNotification(error.message||'Не удалось применить артефакт','system');}

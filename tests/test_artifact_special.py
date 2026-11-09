@@ -810,6 +810,46 @@ def test_area_artifact_outside_location_does_not_spend():
     assert data == before
 
 
+def test_lightning_rod_spends_once_and_applies_electric_protection(grenade_game):
+    actor, target = grenade_game['actor_location'], grenade_game['target_location']
+    actor.character.data = ready(name='Громоотвод')
+    target.pos_x, target.pos_y = actor.pos_x+4, actor.pos_y
+    target.character.data = {'health': {'current':700, 'max':700, 'effects':[]},
+                             'equipment': {'armor': {'name':'Изолированная броня', 'protection':{'electric':50}}}}
+    db.session.commit()
+    payload = {'item_id':'reactive-artifact', 'operation_id':'electric-rod', 'target_id':target.character_id}
+    user_id = grenade_game['lobby'].gm_id
+    result = CombatService.perform_action(actor.location_id, user_id, actor.id, 'artifact_special', attribute_choice=payload)
+    assert result['narrative_action']['damage'] == 100 and actor.action_points_current == 19
+    assert target.character.data['health']['current'] == 600
+    repeated = CombatService.perform_action(actor.location_id, user_id, actor.id, 'artifact_special', attribute_choice=payload)
+    assert repeated['narrative_action']['replayed'] and actor.action_points_current == 19
+    assert target.character.data['health']['current'] == 600
+
+
+@pytest.mark.parametrize('reason', ['distance', 'behind', 'cover', 'hidden', 'floor'])
+def test_lightning_rod_rejects_unseen_or_out_of_range_target_before_cost(grenade_game, monkeypatch, reason):
+    actor, target = grenade_game['actor_location'], grenade_game['target_location']
+    actor.character.data = ready(name='Громоотвод')
+    target.pos_x, target.pos_y = actor.pos_x+4, actor.pos_y
+    if reason == 'distance':
+        target.pos_x = actor.pos_x+25
+    elif reason == 'behind':
+        target.pos_x = actor.pos_x-1
+    elif reason == 'cover':
+        monkeypatch.setattr(CombatService, '_cover_analysis', lambda *args, **kwargs: {'grade':'full'})
+    elif reason == 'hidden':
+        target.gm_hidden = True
+    elif reason == 'floor':
+        target.floor_level = 1
+    db.session.commit()
+    payload = {'item_id':'reactive-artifact', 'operation_id':'invalid-rod', 'target_id':target.character_id}
+    with pytest.raises(ValidationError):
+        CombatService.perform_action(actor.location_id, grenade_game['lobby'].gm_id, actor.id, 'artifact_special', attribute_choice=payload)
+    assert actor.action_points_current == 20
+    assert snapshot(actor.character.data)[0]['remaining_uses'] == 2
+
+
 def test_fiery_tear_removes_darkness_penalties_for_exactly_ten_minutes(monkeypatch):
     data = ready(name='Огненная слеза')
     monkeypatch.setattr('app.services.combat.random.randint', lambda *_: 10)

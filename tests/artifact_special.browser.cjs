@@ -481,6 +481,24 @@ module.exports=async({page,request,token,lobby,loc,locationId,rules,safeSession}
     await request(loc+'/combat/end_turn',{location_character_id:secondBearer.location_character_id},token);
     assert.equal((await getSponge()).data.health.current,600,'Вспышка исцеляет на 200 ОЗ');
     await request(loc+'/combat/end',{},token);
+    const rod=rules.find(row=>row.name==='Громоотвод'),rodData=await getSponge();assert.ok(rod);
+    rodData.data.equipment.armor.containers=[{item:{id:'native-lightning-rod',name:rod.name,category:'artifact',quantity:1,attributes:rod}}];
+    await request(spongeUrl,{data:rodData.data},token,'PUT');
+    await request('/__testing/artifact-preparation/'+safeSession.runId,{character_id:spongeBearer.id},token);
+    await changeMinutes(1);
+    await request(loc+'/spawn_character',{character_id:spongeBearer.id,tile_x:45,tile_y:62,force_relocate:true},token);
+    await request(loc+'/spawn_character',{character_id:exposed.id,tile_x:45,tile_y:67,force_relocate:true},token);
+    await page.evaluate(`window.openCharacterSheet(${spongeBearer.id},'equipment').then(()=>true)`);
+    await page.until("document.querySelector('.equipment-panel-tab[data-panel=armor]')",'Броня с Громоотводом');
+    await page.evaluate("document.querySelector('.equipment-panel-tab[data-panel=armor]').click();true");
+    await page.until("document.querySelector('[data-artifact-special=\"native-lightning-rod\"]:not(:disabled)')",'Громоотвод готов');
+    await page.evaluate("document.querySelector('[data-artifact-special=\"native-lightning-rod\"]').click();true");
+    const targetChoice="[...document.querySelectorAll('#consumable-application-modal .consumable-application-list button')].find(button=>button.textContent==='Цель Пиявки')";
+    await page.until(targetChoice,'В выборе доступна видимая цель');
+    await page.evaluate(`${targetChoice}.click();true`);
+    await page.evaluate('window.__artifactUsePromise.then(()=>true)');
+    assert.equal((await request(exposedUrl,null,token,'GET')).data.health.current,500);
+    assert.equal((await getSponge()).data._artifact_specials[0].remaining_uses,1);
     fs.writeFileSync(path.join(safeSession.artifacts,'artifact-special.json'),JSON.stringify({scene:'Припять',artifact:rule.name,
         preparedWornSeconds:86394,realRoundSeconds:6,readyAfterRealRound:true,realButtonActivations:2,apPerUse:1,
         first:{radiation:0,hp:200,cooldown:86400},second:{radiation:0,hp:300,cooldown:86394},reopened:true,
@@ -498,7 +516,8 @@ module.exports=async({page,request,token,lobby,loc,locationId,rules,safeSession}
         leech:{realButton:true,radius:3,ownerRadiation:0,neighborRadiation:0},
         fieryTear:{realButton:true,nightSun,daySun,seconds:600,otherCharacterRemainsDark:true},
         livingCurrent:{realButton:true,distance:5,jumpAp:2,expiredAfterRounds:2},
-        philosophersLeaf:{realButton:true,realAnomaly:'Вспышка',healthBefore:400,healthAfter:600}},null,2));
+        philosophersLeaf:{realButton:true,realAnomaly:'Вспышка',healthBefore:400,healthAfter:600},
+        lightningRod:{realButton:true,targetSelected:true,damage:200,healthAfter:500}},null,2));
     console.log('Особые свойства: подготовленное ношение+реальный раунд, две кнопки Ядра твари по1ОД без рук, радиация→ОЗ; общий срок после первого, переоткрытие.');
     console.log('Генератор: кнопка без радиации, фактический штраф перемещения−1→−3,600→594секунд за раунд; истечение по игровому времени возвращает−1.');
     console.log('Сердце жара: настоящая кнопка и настоящее горение; первый раунд0урона, после истечения50.');
@@ -515,4 +534,5 @@ module.exports=async({page,request,token,lobby,loc,locationId,rules,safeSession}
     console.log('Огненная слеза: личный дневной вид ночью, переключение на второго персонажа и восстановление ночного вида через 10 минут.');
     console.log('Живой ток: настоящая кнопка и прыжок на 5 м за 2 ОД. Через два раунда возвращается обычная дальность.');
     console.log('Философский лист: настоящая кнопка, прыжок во Вспышку, завершение хода и 400→600 общих ОЗ.');
+    console.log('Громоотвод: выбор видимой цели в интерфейсе и 200 электрического урона.');
 };

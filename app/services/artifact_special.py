@@ -10,6 +10,7 @@ from sqlalchemy.orm.attributes import flag_modified
 from app.extensions import db
 from app.models import LobbyCharacter, LocationCharacter, LocationCombatState
 from app.services.artifact_area import AREA_EFFECTS, apply as apply_area
+from app.services.artifact_targets import ELECTRIC, electric_damage, select_electric_target
 from app.services.exceptions import ConflictError, NotFoundError, ValidationError
 from app.services.transaction import atomic_operation
 
@@ -150,7 +151,8 @@ def status(data, item):
     used = _number(state.get('used'))
     cooldown = _number(state.get('cooldown_seconds'))
     fall_reaction = item.get('name') == FALL_ARTIFACT
-    supported = item.get('name') in HEALING or item.get('name') in BUFFS or item.get('name') in AREA_EFFECTS or fall_reaction
+    electric = ELECTRIC.get(item.get('name'))
+    supported = item.get('name') in HEALING or item.get('name') in BUFFS or item.get('name') in AREA_EFFECTS or bool(electric) or fall_reaction
     reason = None
     if not capacity:
         reason = 'Нужно Выживание не ниже 9'
@@ -167,6 +169,7 @@ def status(data, item):
             'capacity': capacity, 'remaining_uses': max(0, capacity - used),
             'action_points': 1 if level >= 15 else 2, 'available': reason is None, 'reason': reason,
             'power_cost': 50 if item.get('name') == 'Горелка' else None,
+            'target_range': electric[0] if electric else None,
             'fall_reaction': fall_reaction, 'armed': fall_reaction and
             (data.get(STATE_KEY) or {}).get('fall_item_id') == item.get('id')}
 
@@ -180,8 +183,9 @@ def _identity(payload):
     if not isinstance(identity, str) or not 1 <= len(identity) <= 100:
         raise ValidationError('Нужен идентификатор применения артефакта')
     choice = {'item_id': payload.get('item_id')}
-    if 'power' in payload:
-        choice['power'] = payload['power']
+    for key in ('power', 'target_id'):
+        if key in payload:
+            choice[key] = payload[key]
     signature = sha256(json.dumps(choice, sort_keys=True).encode()).hexdigest()
     return identity, signature
 
@@ -207,6 +211,8 @@ def prepare(actor, data, payload, user_id):
     if item.get('name') in HEALING and _number((data.get('health') or {}).get('radiation')) <= 0:
         raise ValidationError('Нет радиации для восстановления здоровья')
     plan = {'item': item, 'state': state, 'action_points': state['action_points']}
+    if state['target_range'] and actor is not None:
+        plan['target'], plan['round_number'] = select_electric_target(actor, data, payload.get('target_id'), state['target_range'])
     if state['power_cost']:
         power = payload.get('power')
         if type(power) is not int or not 1 <= power <= 5:
@@ -229,6 +235,7 @@ def execute(actor, data, payload, user_id, combat=None):
     before = _number(health.get('current'))
     radiation = 0
     affected = []
+    dealt = None
     if item['name'] in HEALING:
         limit, rate = HEALING[item['name']]
         radiation = min(limit, _number(health.get('radiation')))
@@ -236,6 +243,10 @@ def execute(actor, data, payload, user_id, combat=None):
         health['current'] = min(_number(health.get('max', 700)), before + healing_amount(data, radiation * rate))
     elif item['name'] in AREA_EFFECTS:
         radiation, affected = apply_area(actor, data, item['name'])
+    elif item['name'] in ELECTRIC:
+        target = plan['target']
+        dealt = electric_damage(target, ELECTRIC[item['name']][1], plan['round_number'])
+        affected = [target.character_id]
     else:
         duration, modifiers = BUFFS[item['name']]
         if plan.get('health_cost'):
@@ -291,6 +302,8 @@ def execute(actor, data, payload, user_id, combat=None):
         result['health_spent'] = plan['health_cost']
     if affected:
         result['_affected_character_ids'] = affected
+    if dealt is not None:
+        result['damage'] = dealt
     if item['name'] == 'Огненная слеза' and isinstance(actor, LocationCharacter):
         result['_vision_location_id'] = actor.location_id
     identity, signature = _identity(payload)
@@ -376,7 +389,7 @@ def operate(character_id, user_id, payload):
         raise ValidationError('Персонаж не может действовать')
     if payload.get('character_revision') != character.revision:
         raise ConflictError('Лист изменился')
-    if plan['item']['name'] in AREA_EFFECTS and not payload.get('location_id'):
+    if (plan['item']['name'] in AREA_EFFECTS or plan['state']['target_range']) and not payload.get('location_id'):
         raise ValidationError('Для этого особого свойства нужна подлокация')
     actor = _context(character, payload.get('location_id')) or SimpleNamespace(character=character)
     result = execute(actor, data, payload, user_id)

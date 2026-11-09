@@ -6619,14 +6619,25 @@ function isTileVisibleToPlayer(x, y, sources) {
     return isPointVisibleToPlayer(x, y, getTileHeight(x, y) + 1.65, sources);
 }
 
-function isCharacterVisibleToPlayer(entry, sources) {
+function isCharacterVisibleToPlayer(entry, sources, includeScouted = true) {
     if (entry.gmHidden || entry.camouflaged) return false;
-    if(scoutedCharacters.has(Number(entry.characterId))||scoutedCharacters.has(Number(entry.id)))return true;
+    if(includeScouted && (scoutedCharacters.has(Number(entry.characterId))||scoutedCharacters.has(Number(entry.id))))return true;
     sources = sources.filter(source => (source.floorLevel || 0) === (entry.floorLevel || 0));
     const height = { standing: 1.7, sitting: 1.1, prone: 0.4 }[entry.posture] ?? 1.7;
     return isPointVisibleToPlayer(
         Number(entry.posX), Number(entry.posY), (entry.physicalHeight ?? getTileHeight(entry.posX, entry.posY)) + height, sources,
     );
+}
+
+export function visibleArtifactTargets(characterId, radius) {
+    const observer = getCharacterModelEntry(characterId);
+    if (!observer || window.locationScoutView) return [];
+    return [...characterModels.values()].filter(entry => Number(entry.characterId) !== Number(characterId)
+        && Math.hypot(entry.posX - observer.posX, entry.posY - observer.posY,
+            (entry.physicalHeight ?? getTileHeight(entry.posX, entry.posY)) -
+            (observer.physicalHeight ?? getTileHeight(observer.posX, observer.posY))) < radius
+        && isCharacterVisibleToPlayer(entry, [observer], false))
+        .map(entry => ({ id: Number(entry.characterId), label: entry.name }));
 }
 
 function combatCharacterVisibleToPlayer(character) {
