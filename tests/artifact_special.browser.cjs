@@ -396,6 +396,44 @@ module.exports=async({page,request,token,lobby,loc,locationId,rules,safeSession}
     await page.evaluate('window.__artifactUsePromise.then(()=>true)');
     assert.equal((await getSponge()).data.health.radiation,0);
     assert.equal((await request(exposedUrl,null,token,'GET')).data.health.radiation,0);
+    const tear=rules.find(row=>row.name==='Огненная слеза'),tearData=await getSponge();assert.ok(tear);
+    tearData.data.equipment.armor.containers=[{item:{id:'native-fiery-tear',name:tear.name,category:'artifact',quantity:1,attributes:tear}}];
+    await request(spongeUrl,{data:tearData.data},token,'PUT');
+    await request('/__testing/artifact-preparation/'+safeSession.runId,{character_id:spongeBearer.id},token);
+    await changeMinutes(1);
+    const room=await request('/lobbies/'+lobby.id,null,token,'GET');
+    const site=await request(loc,null,token,'GET');
+    await request(loc,{lighting:{...site.lighting,mode:'world'}},token,'PUT');
+    await request('/lobbies/'+lobby.id+'/time',{game_day:room.game_day,game_time_minutes:120},token,'PATCH');
+    await page.evaluate("(async()=>{window.closeCharacterSheet();window.L=await import('/static/js/locationScene.js');return true;})()");
+    const sun='L.sceneGraphicsForTest().sun.intensity';
+    await page.until(`window.lobbyGameTimeMinutes===120&&${sun}<.15`,'На сцене два часа ночи');
+    const look=id=>page.evaluate(`(()=>{L.showCombatActionMenu(650,350,${id});const b=document.querySelector('.combat-radial-action[aria-label="Взгляд"]');if(!b)return false;b.click();return true;})()`);
+    assert.ok(await look(spongeBearer.id));
+    const camera=(x,z)=>page.evaluate(`(()=>{const g=L.sceneGraphicsForTest();g.controls.target.set(43.5,1,46.5);g.camera.position.set(${x},14,${z});g.controls.update();return true;})()`);
+    const capture=async name=>fs.writeFileSync(path.join(safeSession.artifacts,`${name}.png`),
+        Buffer.from((await page.call('Page.captureScreenshot',{format:'png'})).data,'base64'));
+    await camera(50,57);
+    const nightSun=await page.evaluate(sun);await capture('fiery-tear-night');
+    await page.evaluate(`window.openCharacterSheet(${spongeBearer.id},'equipment').then(()=>true)`);
+    await page.until("document.querySelector('.equipment-panel-tab[data-panel=armor]')",'Броня с Огненной слезой');
+    await page.evaluate("document.querySelector('.equipment-panel-tab[data-panel=armor]').click();true");
+    await page.until("document.querySelector('[data-artifact-special=\"native-fiery-tear\"]:not(:disabled)')",'Огненная слеза готова');
+    await page.evaluate("document.querySelector('[data-artifact-special=\"native-fiery-tear\"]').click();true");
+    await page.evaluate('window.__artifactUsePromise.then(()=>true)');
+    await page.evaluate('window.closeCharacterSheet();true');
+    await page.until(`${sun}>.5`,'Носитель видит при дневном освещении');
+    const daySun=await page.evaluate(sun);await capture('fiery-tear-active');
+    await camera(35,51);await capture('fiery-tear-side');
+    assert.ok(await look(exposed.id));
+    await page.until(`${sun}<.15`,'Другой персонаж видит прежнюю ночь');
+    assert.ok(await look(spongeBearer.id));
+    await page.until(`${sun}>.5`,'Возврат к виду носителя');
+    await camera(50,57);
+    await changeMinutes(10);
+    await page.until(`${sun}<.15`,'Через десять минут вид носителя снова ночной');
+    assert.equal(await page.evaluate('window.lobbyGameTimeMinutes'),130);
+    await capture('fiery-tear-expired');
     fs.writeFileSync(path.join(safeSession.artifacts,'artifact-special.json'),JSON.stringify({scene:'Припять',artifact:rule.name,
         preparedWornSeconds:86394,realRoundSeconds:6,readyAfterRealRound:true,realButtonActivations:2,apPerUse:1,
         first:{radiation:0,hp:200,cooldown:86400},second:{radiation:0,hp:300,cooldown:86394},reopened:true,
@@ -410,7 +448,8 @@ module.exports=async({page,request,token,lobby,loc,locationId,rules,safeSession}
         gravitySphere:{realButton:true,height:16,roll:null,damage:0,shock:false,fractures:false,remainingUses:1},
         sponge:{realButton:true,seconds:14400,radiationBefore:3,radiationAfter:0,ownCost:30,expired:true},
         burner:{realButton:true,power:3,seconds:600,healthSpent:150,movementDuring:-5,movementAfter:-2},
-        leech:{realButton:true,radius:3,ownerRadiation:0,neighborRadiation:0}},null,2));
+        leech:{realButton:true,radius:3,ownerRadiation:0,neighborRadiation:0},
+        fieryTear:{realButton:true,nightSun,daySun,seconds:600,otherCharacterRemainsDark:true}},null,2));
     console.log('Особые свойства: подготовленное ношение+реальный раунд, две кнопки Ядра твари по1ОД без рук, радиация→ОЗ; общий срок после первого, переоткрытие.');
     console.log('Генератор: кнопка без радиации, фактический штраф перемещения−1→−3,600→594секунд за раунд; истечение по игровому времени возвращает−1.');
     console.log('Сердце жара: настоящая кнопка и настоящее горение; первый раунд0урона, после истечения50.');
@@ -424,4 +463,5 @@ module.exports=async({page,request,token,lobby,loc,locationId,rules,safeSession}
     console.log('Чернобыльская губка: настоящая кнопка, защита действует 4 игровых часа, собственная цена за выведенные 3 ед. радиации составляет 30 ОЗ.');
     console.log('Горелка: выбор −3 и 150 ОЗ в интерфейсе; общий штраф −5 возвращается к −2 через 10 минут.');
     console.log('Пиявка: реальная кнопка убирает всю радиацию владельца и второго персонажа на расстоянии двух метров.');
+    console.log('Огненная слеза: личный дневной вид ночью, переключение на второго персонажа и восстановление ночного вида через 10 минут.');
 };

@@ -5400,6 +5400,10 @@ def character_artifact_special(character_id):
     from app.services.artifact_special import operate
     character,result=operate(character_id,int(get_jwt_identity()),request.get_json(silent=True) or {})
     publish(result)
+    vision_location_id = result.pop('_vision_location_id', None)
+    if vision_location_id and not result.get('replayed'):
+        state = CombatService.get_state(vision_location_id, int(get_jwt_identity()))
+        socketio.emit('combat_state_updated', state, room=f'location_{vision_location_id}')
     emit_character_update({'character_id':character.id,'updates':{'data':character.data_snapshot()},'source':'artifact_special'})
     return jsonify({'data':character.data_snapshot(),'result':result})
 
@@ -5660,6 +5664,7 @@ def perform_location_combat_action(lobby_id, location_id, lobby, participant):
     if result.get('action') == 'artifact_special':
         from app.services.artifact_area import publish
         publish(reduction)
+        reduction.pop('_vision_location_id', None)
     if reduction.get('object_hits') or reduction.get('tile_object_hits'):
         _publish_object_fire_updates(location_id,[
             *({'object_id':object_id} for object_id in reduction.get('object_hits') or []),

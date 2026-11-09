@@ -256,6 +256,7 @@ let locationShadowCache = null;
 let locationShadowPass = null;
 let locationRenderBatches = null;
 let locationLightingPreset = 'current';
+let artifactDaylightVision = false;
 let resolvedLightingProfile = null;
 let locationLightGroup = null;
 let lampPreviewGroup = null;
@@ -6147,7 +6148,7 @@ function toggleGmVision(characterId = null) {
         && gmVisionCharacterId !== nextCharacterId
         ? nextCharacterId
         : null;
-    applyFogOfWar();
+    if (!syncArtifactDaylightVision()) applyFogOfWar();
     renderCombatHud();
     const entry = gmVisionCharacterId === null ? null : getCharacterModelEntry(gmVisionCharacterId);
     showNotification(
@@ -6603,7 +6604,7 @@ function isPointVisibleToPlayer(x, y, targetHeight, sources) {
         const dy = y - sourceY;
         const distance = Math.hypot(dx, dy);
         if (!distance) return true;
-        if (darknessFactorAt(x, y) < 0.12) return false;
+        if (!sourceHasArtifactDaylightVision(source) && darknessFactorAt(x, y, false) < 0.12) return false;
         if (distance > FOG_VIEW_RADIUS) return false;
         const facingX = Number(source.facingX) || 0;
         const facingY = Number(source.facingY ?? 1);
@@ -8133,6 +8134,7 @@ export function setCombatState(state) {
         if (entry) {
             entry.hpZones = character.hp_zones;
             entry.effects = character.effects;
+            entry.artifactDaylightVision = character.artifact_daylight_vision === true;
         }
         updateCharacterPosition(character.character_id, character.x, character.y, { ...character, deferRefresh: true });
         updateCharacterTeamVisual(character.character_id, character.team_name, character.team_color);
@@ -8153,7 +8155,7 @@ export function setCombatState(state) {
         }, true);
     });
     invalidateMovementMapCache();
-    applyFogOfWar();
+    if (!syncArtifactDaylightVision()) applyFogOfWar();
     syncPortableLights();
     showAvailableOpportunityAttack();
     window.dispatchEvent(new CustomEvent('combat-state-updated', { detail: combatState }));
@@ -11980,7 +11982,8 @@ function createLocationObjectMesh(obj, forPreview = false, relatedObjects = curr
     return group;
 }
 
-function darknessFactorAt(x, z) {
+function darknessFactorAt(x, z, visual = true) {
+    if (visual && artifactDaylightVision) return 1;
     if (!locationDarknessFactors || !currentLocationData) return 1;
     const tileX = Math.floor(x);
     const tileZ = Math.floor(z);
@@ -12337,7 +12340,8 @@ function refreshLocationDarkness(profile = activeLightingProfile, lightOnly = fa
         return;
     }
     if (locationDarknessTexture) {
-        writeDarknessPixels(locationDarknessFactors, locationDarknessTexture.image.data);
+        const visualFactors = artifactDaylightVision ? new Float32Array(nextFactors.length).fill(1) : nextFactors;
+        writeDarknessPixels(visualFactors, locationDarknessTexture.image.data);
         locationDarknessTexture.needsUpdate = true;
     }
     if (!lightOnly) refreshDarknessEditorOverlay(profile.dark_tiles || []);
@@ -14292,10 +14296,37 @@ export function updateLocationObject(object) {
 
 window.updateLocationObject = updateLocationObject;
 
+function sourceHasArtifactDaylightVision(source) {
+    if (!source.artifactDaylightVision || window.locationScoutView) return false;
+    if (window.isGM) return Number(source.characterId) === gmVisionCharacterId;
+    const userId = getCurrentUserId();
+    return userId > 0 && (Number(source.controlledBy) === userId || Number(source.characterOwnerId) === userId);
+}
+
+function syncArtifactDaylightVision() {
+    const active = getFogVisionSources().some(sourceHasArtifactDaylightVision);
+    if (active === artifactDaylightVision) return false;
+    artifactDaylightVision = active;
+    applyVisualLocationLights();
+    refreshLocationDarkness();
+    return true;
+}
+
+export async function refreshArtifactDaylightVision() {
+    if (!currentLocationData || !combatState?.characters?.some(character => character.artifact_daylight_vision)) return;
+    const locationId = getCurrentLocationId();
+    const previous = combatState;
+    const state = await Server.getLocationCombatState(window.currentLobbyId, locationId).catch(() => null);
+    if (state && previous === combatState && locationId === getCurrentLocationId()) setCombatState(state);
+}
+
 function applyVisualLocationLights() {
     if (!resolvedLightingProfile || !locationAmbientLight || !locationDirectionalLight) return;
-    const visual = resolveLocationVisualPreset(resolvedLightingProfile, locationLightingPreset,
-        window.lobbyGameTimeMinutes ?? 480);
+    const minutes = window.lobbyGameTimeMinutes ?? 480;
+    const sun = window.weatherSettings?.sun;
+    const visual = artifactDaylightVision
+        ? resolveLocationLighting({ ...resolvedLightingProfile, mode: 'world' }, 720, sun?.enabled ? Number(sun.intensity) : 1)
+        : resolveLocationVisualPreset(resolvedLightingProfile, locationLightingPreset, minutes);
     locationAmbientLight.color.set(visual.ambient_color);
     locationAmbientLight.intensity = Number(visual.ambient_intensity);
     locationDirectionalLight.color.set(visual.directional_color);
@@ -20009,6 +20040,7 @@ export function destroyLocationScene() {
     locationAmbientLight = null;
     locationDirectionalLight = null;
     locationLightingPreset = 'current';
+    artifactDaylightVision = false;
     resolvedLightingProfile = null;
     locationLightGroup = null;
     lampPreviewGroup = null;

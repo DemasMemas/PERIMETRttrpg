@@ -17470,10 +17470,15 @@ window.rollSkill = async function(skillPath, skillLabel) {
         return;
     }
     let darkness = isWorldDarkTime(window.lobbyGameTimeMinutes ?? 480),portableIllumination=null;
+    const daylightVision = Boolean(currentCharacterData?._artifact_profile?.daylight_vision);
     if (window.isLocationActive && (skillPath === 'physical.awareness' || skillPath === 'physical.shooting')) {
         const scene = await import('./locationScene.js');
         darkness = scene.isLocationCharacterInDarkness(currentCharacterId) ?? darkness;
         portableIllumination=scene.getLocationPortableIllumination(currentCharacterId);
+    }
+    if (daylightVision && (skillPath === 'physical.awareness' || skillPath === 'physical.shooting')) {
+        darkness = false;
+        portableIllumination = null;
     }
     let awarenessMode = null;
     if (skillPath === 'physical.awareness') {

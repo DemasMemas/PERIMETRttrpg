@@ -42,6 +42,7 @@ BUFFS = {
     'Ядро мысли': (60, {'positive_multiplier': 2}),
     'Сердце Эха': (60, {'positive_multiplier': 2}),
     'Горелка': (600, {}),
+    'Огненная слеза': (600, {'daylight_vision': 1}),
 }
 STAT_LABELS = {'movement_penalty': 'Штраф перемещения', 'skill_strength': 'Сила',
                'physical_protection': 'Защита от физического урона', 'chemical_protection': 'Защита от химического урона',
@@ -54,6 +55,7 @@ STAT_LABELS['directed_psi_immunity'] = 'Иммунитет к направлен
 STAT_LABELS['stress_immunity'] = 'Стресс не повышается'
 STAT_LABELS['radiation_sickness_immunity'] = 'Иммунитет к последствиям радиации'
 STAT_LABELS['positive_multiplier'] = 'Множитель положительных эффектов артефакта ×'
+STAT_LABELS['daylight_vision'] = 'Видимость в темноте как днём'
 
 
 def is_special_effect(effect):
@@ -82,6 +84,10 @@ def stat_value(data, stat, *, item_id=None):
                and (source is None or effect.get('source') == source)
                and _number(effect.get('remaining_seconds', effect.get('remaining'))) > 0
                and type(effect.get('value')) in (int, float) and math.isfinite(effect['value']))
+
+
+def has_daylight_vision(data):
+    return stat_value(data, 'daylight_vision') > 0
 
 
 def _number(value):
@@ -238,7 +244,7 @@ def execute(actor, data, payload, user_id, combat=None):
             label = STAT_LABELS[stat]
             if stat == 'positive_multiplier':
                 label += f'{amount:g}'
-            elif not (stat.startswith('immune_') or stat.endswith('_immunity')):
+            elif not (stat.startswith('immune_') or stat.endswith('_immunity') or stat == 'daylight_vision'):
                 label += f' {amount:+g}'
             effects[:] = [effect for effect in effects if effect.get('source') != source]
             effects.append({'id': source, 'source': source, 'type': 'custom', 'name': f"{item['name']}: особое свойство",
@@ -280,6 +286,8 @@ def execute(actor, data, payload, user_id, combat=None):
         result['health_spent'] = plan['health_cost']
     if affected:
         result['_affected_character_ids'] = affected
+    if item['name'] == 'Огненная слеза' and isinstance(actor, LocationCharacter):
+        result['_vision_location_id'] = actor.location_id
     identity, signature = _identity(payload)
     ledger['receipts'] = [*ledger.get('receipts', [])[-127:],
                           {'id': identity, 'signature': signature, 'result': deepcopy(result)}]

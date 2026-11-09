@@ -189,7 +189,7 @@ else:
         await page.call('Page.enable');
         await page.call('Runtime.enable');
         await page.call('Log.enable');
-        if ((['traits','creation'].includes(process.env.VTT_SAFE_SCENARIO) || process.env.VTT_GM_RELOCATION_ONLY === '1' || process.env.VTT_UI_REGRESSION === '1' || process.env.VTT_PRIPYAT === '1' || process.env.VTT_MOVEMENT_ONLY === '1') && !process.env.VTT_WATER_BASELINE_DIR) {
+        if ((['traits','creation','artifacts'].includes(process.env.VTT_SAFE_SCENARIO) || process.env.VTT_GM_RELOCATION_ONLY === '1' || process.env.VTT_UI_REGRESSION === '1' || process.env.VTT_PRIPYAT === '1' || process.env.VTT_MOVEMENT_ONLY === '1') && !process.env.VTT_WATER_BASELINE_DIR) {
             const modules = path.join(profile, 'regression-modules');
             fs.mkdirSync(modules,{recursive:true});
             const source = process.env.VTT_PRIPYAT_LEGACY === '1'

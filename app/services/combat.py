@@ -15,6 +15,7 @@ from app.models.templates import ItemTemplate
 from app.services.exceptions import NotFoundError, PermissionDenied, ValidationError
 from app.services.effects import health_blocks_new_stress, advance_timed_effects, apply_effect_to_health, apply_expired_effects_to_health, apply_periodic_effects_to_health, normalize_character_effects, normalize_effect_list, sync_health_derived_statuses, tick_effects
 from app.services.artifact_effects import artifact_passive_profile,incoming_thermal_damage
+from app.services.artifact_special import has_daylight_vision
 from app.services.magazine import validate_magazine_selection, install_magazine
 from app.services.deferred_action import (
     durable_combat_action, snapshot_action_arguments, remember_action,
@@ -2430,6 +2431,8 @@ class CombatService:
         elif skill_path == 'skills.physical.awareness.hearing':
             awareness_mode = 'hearing'
             skill_path = 'skills.physical.awareness'
+        if (awareness_mode == 'visual' or skill_path == 'skills.physical.shooting') and has_daylight_vision(character_data):
+            darkness = False
         effective_value = CombatService._skill_value(character_data, skill_path)
         skill_modifier = CombatService._base_skill_modifier(character_data, skill_path)
         status_modifier = CombatService._health_roll_modifier(character_data, skill_path)
@@ -11765,6 +11768,7 @@ class CombatService:
             'weapon_grip_hands': grip_hands(data),
             'secondary_weapon_index': secondary_index(loc_char),
             'portable_lights': ready_sources(loc_char,objects=scene_objects),
+            'artifact_daylight_vision': has_daylight_vision(data),
             'portable_illumination': illumination(loc_char,actors=light_actors,objects=scene_objects),
             'aimed_target_character_id': loc_char.aimed_target_character_id,
             'aimed_weapon_index': loc_char.aimed_weapon_index,
@@ -14772,7 +14776,8 @@ class CombatService:
                 difficulty += CombatService._equipment_accuracy_penalty(data)
                 from app.services.weapon_modules import uses_nvg
                 from app.services.equipment_passives import darkness_modifier
-                if CombatService._is_dark_at_position(location, impact_x, impact_y):
+                darkness = not has_daylight_vision(data) and CombatService._is_dark_at_position(location, impact_x, impact_y)
+                if darkness:
                     difficulty -= darkness_modifier(data, 'accuracy_penalty')
                 difficulty += launcher_strength['accuracy_penalty']
                 difficulty += CombatService._coerce_int(
@@ -14790,7 +14795,7 @@ class CombatService:
                     or launcher_movement['disadvantage']
                     or CombatService._has_roll_disadvantage(
                         data, 'skills.physical.shooting',
-                        darkness=not uses_nvg(data) and CombatService._is_dark_at_position(location, impact_x, impact_y),
+                        darkness=not uses_nvg(data) and darkness,
                     )
                     or (launcher_jam and launcher_jam.get('shooting_disadvantage'))
                 )
@@ -16184,12 +16189,12 @@ class CombatService:
             portable_profile=portable_shooting(character,range_target,fire_mode) if range_target else {'lit':False,'accuracy':0,'aimed_blocked':False}
             if portable_profile['aimed_blocked']:
                 raise ValidationError('Нельзя прицельно стрелять через ПНВ в направленный на вас свет')
+            daylight_vision = has_daylight_vision(data)
+            target_in_darkness = not daylight_vision and CombatService._is_dark_at_position(location, facing_target_x, facing_target_y)
             base_shooting_disadvantage = (
                 CombatService._has_roll_disadvantage(
                     data, 'skills.physical.shooting',
-                    darkness=not portable_profile['lit'] and not uses_nvg(data) and CombatService._is_dark_at_position(
-                        location, facing_target_x, facing_target_y,
-                    ),
+                    darkness=not portable_profile['lit'] and not uses_nvg(data) and target_in_darkness,
                 )
                 or movement_modifiers['disadvantage']
             )
@@ -16332,13 +16337,14 @@ class CombatService:
             attack_details['weather']=weather
             if weather['accuracy_disadvantage']:
                 attack_details['shooting_disadvantage']=attack_details['base_shooting_disadvantage']=True
-            hit_difficulty-=portable_profile['accuracy']
-            if portable_profile['lit'] and CombatService._is_dark_at_position(location,facing_target_x,facing_target_y) and not uses_nvg(data):
+            if not daylight_vision:
+                hit_difficulty-=portable_profile['accuracy']
+            if portable_profile['lit'] and target_in_darkness and not uses_nvg(data):
                 hit_difficulty+=0 if portable_profile.get('improved') else 3
             attack_details['portable_light']=portable_profile
             hit_difficulty -= weapon_accuracy_bonus(data,weapon)
             hit_difficulty += CombatService._equipment_accuracy_penalty(data)
-            if not portable_profile['lit'] and CombatService._is_dark_at_position(location, facing_target_x, facing_target_y):
+            if not portable_profile['lit'] and target_in_darkness:
                 from app.services.equipment_passives import darkness_modifier
                 if not (fire_mode=='aimed' and installed(weapon,'night_scope') and not uses_nvg(data)):
                     hit_difficulty -= darkness_modifier(data, 'accuracy_penalty')

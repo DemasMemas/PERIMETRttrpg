@@ -32,6 +32,22 @@ test('осмотр ГМа тоже включает туман и не изме�
     assert.equal(context.fogIsActive(),true);assert.equal(context.getFogMemoryStorageKey(),null);
 });
 
+test('Огненная слеза обходит темноту только для своего наблюдателя и сохраняет преграды', () => {
+    let open = true;
+    const context = vm.createContext({ window: { isGM: false }, gmVisionCharacterId: null, getCurrentUserId: () => 1,
+        FOG_VIEW_RADIUS: 25, FOG_VIEW_HALF_ANGLE: Math.PI / 3, darknessFactorAt: () => .07,
+        visionEyeHeight: () => 1.7, hasLineOfSight: () => open });
+    vm.runInContext(section('function sourceHasArtifactDaylightVision(', 'function syncArtifactDaylightVision('), context);
+    vm.runInContext(section('function isPointVisibleToPlayer(', 'function isTileVisibleToPlayer('), context);
+    const own = { characterId: 10, characterOwnerId: 1, artifactDaylightVision: true, posX: 0, posY: 0, facingX: 1, facingY: 0 };
+    const ally = { ...own, characterId: 11, characterOwnerId: 2 };
+    assert.equal(context.isPointVisibleToPlayer(2, 0, 1.7, [own]), true);
+    assert.equal(context.isPointVisibleToPlayer(2, 0, 1.7, [ally]), false);
+    assert.equal(context.isPointVisibleToPlayer(-2, 0, 1.7, [own]), false);
+    open = false;
+    assert.equal(context.isPointVisibleToPlayer(2, 0, 1.7, [own]), false);
+});
+
 test('GM-hidden and camouflaged models restore their original appearance independently', () => {
     const material = { opacity: 1, clone() { return { ...this }; }, dispose() {} };
     const child = { isMesh: true, material, castShadow: true, receiveShadow: true };

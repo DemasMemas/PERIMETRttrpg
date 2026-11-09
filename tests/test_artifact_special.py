@@ -810,6 +810,22 @@ def test_area_artifact_outside_location_does_not_spend():
     assert data == before
 
 
+def test_fiery_tear_removes_darkness_penalties_for_exactly_ten_minutes(monkeypatch):
+    data = ready(name='Огненная слеза')
+    monkeypatch.setattr('app.services.combat.random.randint', lambda *_: 10)
+    visual = lambda: CombatService._narrative_skill_check(data, 'skills.physical.awareness.visual', darkness=True)
+    shooting = lambda: CombatService._narrative_skill_check(data, 'skills.physical.shooting', darkness=True)
+    assert visual()['darkness'] and visual()['equipment_modifier'] == shooting()['equipment_modifier'] == -5
+    use(data)
+    assert not visual()['darkness'] and visual()['equipment_modifier'] == shooting()['equipment_modifier'] == 0
+    assert CombatService._narrative_skill_check(data, 'skills.physical.shooting', darkness=True, forced_disadvantage=True)['disadvantage']
+    health = data['health']
+    health['effects'] = advance_timed_effects(health, health['effects'], 599, character_data=data)
+    assert visual()['equipment_modifier'] == 0
+    health['effects'] = advance_timed_effects(health, health['effects'], 1, character_data=data)
+    assert visual()['equipment_modifier'] == shooting()['equipment_modifier'] == -5
+
+
 def test_fire_gift_cost_survives_removal_and_cannot_be_forged_removed_or_reduced_by_healing_modifier():
     data = ready(name='Дар пламени')
     use(data)

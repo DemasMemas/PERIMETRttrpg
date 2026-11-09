@@ -140,7 +140,8 @@ def artifact_passive_profile(character_data):
     }
     health = character_data.get('health') if isinstance(character_data, dict) else {}
     radiation_level = float((health or {}).get('radiation') or 0)
-    from app.services.artifact_special import is_special_effect, stat_value
+    from app.services.artifact_special import has_daylight_vision, is_special_effect, stat_value
+    result['daylight_vision'] = has_daylight_vision(character_data)
     for artifact in equipped_artifacts(character_data):
         multiplier = 1
         if artifact.get('id') and artifact.get('name') in {'Хозяин свечения', 'Реактор', 'Ядро мысли', 'Сердце Эха'}:
