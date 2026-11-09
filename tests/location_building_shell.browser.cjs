@@ -234,7 +234,7 @@ module.exports = async ({page,request,token,lobby,base,connect,debugPort,safeSes
         await peer.until(`isLocationActive&&shellJoined?.location_id===${loc.id}`,'peer joined location room');
         await peer.until(`socket.io.engine.transport.name==='websocket'`,'peer WebSocket');
         await page.call('Page.bringToFront');
-        await peer.evaluate(`window.shellBatchesReceived=[];socket.on('location_objects_changed',d=>shellBatchesReceived.push(d));true`);
+        await peer.evaluate(`window.shellEditorChanges=[];socket.on('location_editor_objects_changed',d=>shellEditorChanges.push(d));true`);
         const pointAt=(x,y,z)=>page.evaluate(`(()=>{const p=new T.Vector3(${x},${y},${z}).project(locationControls.object),r=document.querySelector('#location-canvas canvas').getBoundingClientRect();return{x:r.left+(p.x+1)*r.width/2,y:r.top+(1-p.y)*r.height/2}})()`);
         const click=async p=>{await page.call('Input.dispatchMouseEvent',{type:'mouseMoved',...p});await pause(200);
             for(const type of ['mousePressed','mouseReleased'])await page.call('Input.dispatchMouseEvent',{type,button:'left',buttons:type==='mousePressed'?1:0,clickCount:1,...p});};
@@ -390,17 +390,47 @@ module.exports = async ({page,request,token,lobby,base,connect,debugPort,safeSes
         assert.equal(after.objects.find(o=>o.id===floor.id).properties.color,'#ac9872');
         const actor=await request(`${api}/characters`,{name:'Shell climber',data:{}},token);
         const g=built.objects[0].properties.building_generation;
-        await request(`${api}/locations/${loc.id}/spawn_character`,{character_id:actor.id,tile_x:g.minX+1,tile_y:g.minZ+1},token);
-        await page.evaluate(`window.shellMoves=[];window.shellRejects=[];socket.on('character_moved',d=>shellMoves.push(d));socket.on('movement_rejected',d=>shellRejects.push(d));L.setLocationEditMode(false);true`);
-        const move=async(x,y,level)=>{
-            await page.evaluate(`socket.emit('move_in_location',{token:localStorage.getItem('access_token'),location_id:${loc.id},character_id:${actor.id},x:${x},y:${y},floor_level:${level}});true`);
-            await page.until(`shellMoves.at(-1)?.x===${x}&&shellMoves.at(-1)?.y===${y}&&shellMoves.at(-1)?.floor_level===${level}`,'generated ladder movement');
+        const ladder=after.objects.find(object=>object.type==='ladder'&&object.properties.level===-1);
+        const stairs=after.objects.find(object=>object.type==='stairs'&&object.properties.level===0);
+        assert.ok(ladder&&stairs,'Постройка содержит лестницы из подвала и на верхний этаж');
+        const center=object=>({x:object.tile_x+(object.properties.offset_x||0),y:object.tile_y+(object.properties.offset_z||0)});
+        const ladderCell=center(ladder);
+        const hatch=after.objects.find(object=>object.type==='hatch'&&object.properties.level===0&&
+            center(object).x===ladderCell.x&&center(object).y===ladderCell.y);
+        assert.ok(hatch&&!hatch.properties.is_open,'Люк над подвальной лестницей изначально закрыт');
+        const spawn=(cell,force=false)=>request(`${api}/locations/${loc.id}/spawn_character`,{
+            character_id:actor.id,tile_x:cell.x,tile_y:cell.y,floor_level:0,force_relocate:force},token);
+        await spawn(ladderCell);
+        await page.evaluate(`window.shellMoves=[];window.shellRejects=[];
+            socket.on('character_moved',event=>{if(event.character_id===${actor.id})shellMoves.push(event)});
+            socket.on('movement_rejected',event=>{if(event.character_id===${actor.id})shellRejects.push(event)});
+            L.setLocationEditMode(false);true`);
+        const move=async(x,y,level,expectedRejections=[])=>{
+            await page.evaluate(`shellMoves.length=0;shellRejects.length=0;
+                socket.emit('move_in_location',{token:localStorage.getItem('access_token'),location_id:${loc.id},character_id:${actor.id},x:${x},y:${y},floor_level:${level}});true`);
+            await page.until(`shellRejects.length>0||shellMoves.some(event=>event.x===${x}&&event.y===${y}&&event.floor_level===${level})`,
+                `Перемещение по лестнице в (${x}, ${y}), этаж ${level}`);
+            assert.deepEqual(await page.evaluate('shellRejects.map(event=>event.message)'),expectedRejections,
+                'Сервер вернул ожидаемый результат перемещения');
             await pause(600);
         };
-        await move(g.minX+2,g.minZ+2,-1);
-        await move(g.minX+1,g.minZ+1,0);
-        await move(g.minX+1,g.minZ+1,1);
-        assert.equal(await page.evaluate('shellRejects.length'),0);
+        await move(ladderCell.x,ladderCell.y,-1,['Path is blocked']);
+        await page.evaluate(`window.currentLocationCharacterId=${actor.id};
+            L.showObjectContextMenu(650,350,${JSON.stringify(hatch)});true`);
+        await page.until("[...document.querySelectorAll('button')].some(b=>b.textContent==='Открыть люк')",
+            'Люк можно открыть из контекстного меню');
+        await page.evaluate("[...document.querySelectorAll('button')].find(b=>b.textContent==='Открыть люк').click();true");
+        await page.until(`L.sceneGraphicsForTest().roots.some(root=>root.userData.locationObjectId===${hatch.id}
+            &&root.userData.locationObject?.properties?.is_open)`,'Открытый люк появился в сцене');
+        await move(ladderCell.x,ladderCell.y,-1);
+        await move(ladderCell.x,ladderCell.y,0);
+        const stairCenter=center(stairs),angle=stairs.properties.rotation||0;
+        const beyondEnd=stairs.properties.dimensions.depth/2+.5;
+        const landing=sign=>({x:Math.round(stairCenter.x+sign*Math.sin(angle)*beyondEnd),
+            y:Math.round(stairCenter.y+sign*Math.cos(angle)*beyondEnd)});
+        await spawn(landing(-1),true);
+        const top=landing(1);
+        await move(top.x,top.y,1);
         const retained=await detail();
         if(process.env.VTT_SHELL_INSPECT==='1'){
             await page.evaluate(`L.setLocationViewLevel(-1);true`);await pause(800);
@@ -428,17 +458,19 @@ module.exports = async ({page,request,token,lobby,base,connect,debugPort,safeSes
         }
         await page.evaluate(`document.querySelector('dialog').close();true`);
         assert.equal((await detail()).objects.length,after.objects.length,'cancelled ruin preview persists nothing');
-        await page.evaluate(`window.fixChanges=[];socket.on('location_objects_changed',d=>fixChanges.push(d));L.setLocationViewLevel(-2);selectLocationEditorTool('erase');document.getElementById('loc-erase-structures').checked=true;L.setLocationBrushRadius(0);L.setLocationEraserMode(true);
+        await page.evaluate(`window.fixChanges=[];socket.on('location_editor_objects_changed',d=>fixChanges.push(d));L.setLocationViewLevel(-2);selectLocationEditorTool('erase');document.getElementById('loc-erase-structures').checked=true;L.setLocationBrushRadius(0);L.setLocationEraserMode(true);
             locationControls.target.set(3.2,-3.8,3.2);locationControls.object.position.set(12.2,7.2,14.2);locationControls.update();document.querySelector('#panel-tools:not(.collapsed) .toggle-btn')?.click();true`);
         const beforeErase=await detail();
         await click(await pointAt(3.2,-3.8,3.2));
-        await page.until('fixChanges.some(d=>d.deleted_ids.length)','eraser batch');
+        await page.until('fixChanges.some(d=>d.deleted_ids?.length)','Ластик отправил пакет удаления');
         await pause(500);
         const erased=await detail();
         assert.ok(erased.objects.length<beforeErase.objects.length);
         const erasedIds=new Set(erased.objects.map(o=>o.id));
-        assert.ok(beforeErase.objects.filter(o=>!erasedIds.has(o.id)).every(o=>o.properties.level===-2),'eraser preserves every other floor');
-        await peer.until('shellBatchesReceived.length>=2','peer receives atomic eraser change');
+        const removed=beforeErase.objects.filter(o=>!erasedIds.has(o.id));
+        assert.ok(removed.every(o=>o.properties.level===-2),'Ластик сохраняет остальные этажи');
+        await peer.until(`shellEditorChanges.some(change=>JSON.stringify([...(change.deleted_ids||[])].sort())===
+            ${JSON.stringify(JSON.stringify(removed.map(o=>o.id).sort()))})`,'Второй клиент получил тот же пакет удаления');
         await page.evaluate(`window.confirm=()=>true;L.setLocationEraserMode(false);window.dispatchEvent(new CustomEvent('location-editor-active-building',{detail:{buildingId:${JSON.stringify(buildingId)},level:-2}}));document.querySelector('[data-floor-delete]').click();true`);
         await pause(500);
         assert.ok((await detail()).objects.every(o=>o.properties.level!==-2),'floor delete removes one basement');
