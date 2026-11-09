@@ -768,6 +768,48 @@ def test_gravity_sphere_prevents_bleeding_from_anomaly_fall(grenade_game, key):
     assert not actor.character.data['health']['effects']
 
 
+@pytest.mark.parametrize('offset,level,in_range', [(3, 0, True), (3.05, 0, False), (3, 1, False)])
+def test_leech_clears_other_creatures_within_three_spatial_metres(grenade_game, offset, level, in_range):
+    actor, other = grenade_game['actor_location'], grenade_game['target_location']
+    actor.character.data = ready(name='Пиявка')
+    other.pos_x, other.pos_y, other.floor_level = actor.pos_x+offset, actor.pos_y, level
+    other.character.data = {'health': {'current':700, 'radiation':14, 'effects':[]}}
+    db.session.commit()
+    payload = {'item_id': 'reactive-artifact', 'operation_id': 'leech-area'}
+    result = execute(actor, actor.character.data, payload, grenade_game['lobby'].gm_id)
+    assert result['radiation_removed'] == 10 and actor.character.data['health']['radiation'] == 0
+    assert actor.character.data['health']['current'] == 100
+    assert other.character.data['health']['radiation'] == (0 if in_range else 14)
+    assert result.get('_affected_character_ids', []) == ([other.character_id] if in_range else [])
+    assert execute(actor, actor.character.data, payload, grenade_game['lobby'].gm_id)['replayed']
+
+
+@pytest.mark.parametrize('offset,facex,cover,received', [(1, -1, False, 80), (1, 1, False, 0),
+                                                        (1, -1, True, 0), (5, -1, False, 0)])
+def test_static_crystal_uses_flash_attenuation_and_never_blinds_owner(grenade_game, monkeypatch, offset, facex, cover, received):
+    actor, other = grenade_game['actor_location'], grenade_game['target_location']
+    actor.character.data = ready(name='Кристалл статики')
+    other.pos_x, other.pos_y = actor.pos_x+offset, actor.pos_y
+    other.facing_x, other.facing_y = facex, 0
+    other.character.data = {'health': {'current':700, 'effects':[]}}
+    db.session.commit()
+    if cover:
+        monkeypatch.setattr(CombatService, '_explosion_cover', lambda *args, **kwargs: {'zones': {'head': True}})
+    execute(actor, actor.character.data, {'item_id': 'reactive-artifact', 'operation_id': 'crystal-area'}, grenade_game['lobby'].gm_id)
+    assert not any(effect['type'] == 'blindness' for effect in actor.character.data['health']['effects'])
+    blindness = [effect for effect in other.character.data['health']['effects'] if effect['type'] == 'blindness']
+    assert sum(effect['value'] for effect in blindness) == received
+    assert all(effect['source'] == 'artifact_static_crystal' for effect in blindness)
+
+
+def test_area_artifact_outside_location_does_not_spend():
+    data = ready(name='Пиявка')
+    before = deepcopy(data)
+    with pytest.raises(ValidationError, match='подлокации'):
+        use(data)
+    assert data == before
+
+
 def test_fire_gift_cost_survives_removal_and_cannot_be_forged_removed_or_reduced_by_healing_modifier():
     data = ready(name='Дар пламени')
     use(data)

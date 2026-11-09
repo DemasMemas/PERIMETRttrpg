@@ -378,6 +378,24 @@ module.exports=async({page,request,token,lobby,loc,locationId,rules,safeSession}
     await changeMinutes(10);
     const burnerExpired=await getSponge();assert.equal(burnerExpired.data._artifact_profile.movement_penalty,-2);
     assert.equal(burnerExpired.data.health.current,550);
+    const leech=rules.find(row=>row.name==='Пиявка');assert.ok(leech);
+    const exposed=await request('/lobbies/'+lobby.id+'/characters',{name:'Цель Пиявки',data:{
+        health:{current:700,max:700,radiation:14,effects:[]}}},token);
+    const exposedUrl='/lobbies/characters/'+exposed.id;
+    await request(loc+'/spawn_character',{character_id:exposed.id,tile_x:45,tile_y:46},token);
+    burnerExpired.data.equipment.armor.containers=[{item:{id:'native-leech',name:leech.name,category:'artifact',quantity:1,attributes:leech}}];
+    burnerExpired.data.health.radiation=9;
+    await request(spongeUrl,{data:burnerExpired.data},token,'PUT');
+    await request('/__testing/artifact-preparation/'+safeSession.runId,{character_id:spongeBearer.id},token);
+    await changeMinutes(1);
+    await page.evaluate(`window.openCharacterSheet(${spongeBearer.id},'equipment').then(()=>true)`);
+    await page.until("document.querySelector('.equipment-panel-tab[data-panel=armor]')",'Броня с Пиявкой');
+    await page.evaluate("document.querySelector('.equipment-panel-tab[data-panel=armor]').click();true");
+    await page.until("document.querySelector('[data-artifact-special=\"native-leech\"]:not(:disabled)')",'Пиявка готова');
+    await page.evaluate("document.querySelector('[data-artifact-special=\"native-leech\"]').click();true");
+    await page.evaluate('window.__artifactUsePromise.then(()=>true)');
+    assert.equal((await getSponge()).data.health.radiation,0);
+    assert.equal((await request(exposedUrl,null,token,'GET')).data.health.radiation,0);
     fs.writeFileSync(path.join(safeSession.artifacts,'artifact-special.json'),JSON.stringify({scene:'Припять',artifact:rule.name,
         preparedWornSeconds:86394,realRoundSeconds:6,readyAfterRealRound:true,realButtonActivations:2,apPerUse:1,
         first:{radiation:0,hp:200,cooldown:86400},second:{radiation:0,hp:300,cooldown:86394},reopened:true,
@@ -391,7 +409,8 @@ module.exports=async({page,request,token,lobby,loc,locationId,rules,safeSession}
         liveShield:{realButton:true,stage:2,seconds:60,durability:[800,850,900,1000,950]},
         gravitySphere:{realButton:true,height:16,roll:null,damage:0,shock:false,fractures:false,remainingUses:1},
         sponge:{realButton:true,seconds:14400,radiationBefore:3,radiationAfter:0,ownCost:30,expired:true},
-        burner:{realButton:true,power:3,seconds:600,healthSpent:150,movementDuring:-5,movementAfter:-2}},null,2));
+        burner:{realButton:true,power:3,seconds:600,healthSpent:150,movementDuring:-5,movementAfter:-2},
+        leech:{realButton:true,radius:3,ownerRadiation:0,neighborRadiation:0}},null,2));
     console.log('Особые свойства: подготовленное ношение+реальный раунд, две кнопки Ядра твари по1ОД без рук, радиация→ОЗ; общий срок после первого, переоткрытие.');
     console.log('Генератор: кнопка без радиации, фактический штраф перемещения−1→−3,600→594секунд за раунд; истечение по игровому времени возвращает−1.');
     console.log('Сердце жара: настоящая кнопка и настоящее горение; первый раунд0урона, после истечения50.');
@@ -404,4 +423,5 @@ module.exports=async({page,request,token,lobby,loc,locationId,rules,safeSession}
     console.log('Сфера притяжения: настоящая кнопка, падение с 16 м без урона, шока и переломов; следующий удар без Сферы.');
     console.log('Чернобыльская губка: настоящая кнопка, защита действует 4 игровых часа, собственная цена за выведенные 3 ед. радиации составляет 30 ОЗ.');
     console.log('Горелка: выбор −3 и 150 ОЗ в интерфейсе; общий штраф −5 возвращается к −2 через 10 минут.');
+    console.log('Пиявка: реальная кнопка убирает всю радиацию владельца и второго персонажа на расстоянии двух метров.');
 };

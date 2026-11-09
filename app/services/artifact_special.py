@@ -9,6 +9,7 @@ from sqlalchemy.orm.attributes import flag_modified
 
 from app.extensions import db
 from app.models import LobbyCharacter, LocationCharacter, LocationCombatState
+from app.services.artifact_area import AREA_EFFECTS, apply as apply_area
 from app.services.exceptions import ConflictError, NotFoundError, ValidationError
 from app.services.transaction import atomic_operation
 
@@ -139,7 +140,7 @@ def status(data, item):
     used = _number(state.get('used'))
     cooldown = _number(state.get('cooldown_seconds'))
     fall_reaction = item.get('name') == FALL_ARTIFACT
-    supported = item.get('name') in HEALING or item.get('name') in BUFFS or fall_reaction
+    supported = item.get('name') in HEALING or item.get('name') in BUFFS or item.get('name') in AREA_EFFECTS or fall_reaction
     reason = None
     if not capacity:
         reason = 'Нужно Выживание не ниже 9'
@@ -217,11 +218,14 @@ def execute(actor, data, payload, user_id, combat=None):
     health = data.setdefault('health', {})
     before = _number(health.get('current'))
     radiation = 0
+    affected = []
     if item['name'] in HEALING:
         limit, rate = HEALING[item['name']]
         radiation = min(limit, _number(health.get('radiation')))
         health['radiation'] = _number(health.get('radiation')) - radiation
         health['current'] = min(_number(health.get('max', 700)), before + healing_amount(data, radiation * rate))
+    elif item['name'] in AREA_EFFECTS:
+        radiation, affected = apply_area(actor, data, item['name'])
     else:
         duration, modifiers = BUFFS[item['name']]
         if plan.get('health_cost'):
@@ -274,6 +278,8 @@ def execute(actor, data, payload, user_id, combat=None):
               'roll_required': False, 'replayed': False}
     if plan.get('health_cost'):
         result['health_spent'] = plan['health_cost']
+    if affected:
+        result['_affected_character_ids'] = affected
     identity, signature = _identity(payload)
     ledger['receipts'] = [*ledger.get('receipts', [])[-127:],
                           {'id': identity, 'signature': signature, 'result': deepcopy(result)}]
@@ -357,6 +363,8 @@ def operate(character_id, user_id, payload):
         raise ValidationError('Персонаж не может действовать')
     if payload.get('character_revision') != character.revision:
         raise ConflictError('Лист изменился')
+    if plan['item']['name'] in AREA_EFFECTS and not payload.get('location_id'):
+        raise ValidationError('Для этого особого свойства нужна подлокация')
     actor = _context(character, payload.get('location_id')) or SimpleNamespace(character=character)
     result = execute(actor, data, payload, user_id)
     character.data = data

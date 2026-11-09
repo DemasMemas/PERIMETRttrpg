@@ -5396,8 +5396,10 @@ def character_controllers(character_id):
 @lobbies_bp.route('/characters/<int:character_id>/artifact-special',methods=['POST'])
 @jwt_required()
 def character_artifact_special(character_id):
+    from app.services.artifact_area import publish
     from app.services.artifact_special import operate
     character,result=operate(character_id,int(get_jwt_identity()),request.get_json(silent=True) or {})
+    publish(result)
     emit_character_update({'character_id':character.id,'updates':{'data':character.data_snapshot()},'source':'artifact_special'})
     return jsonify({'data':character.data_snapshot(),'result':result})
 
@@ -5655,6 +5657,9 @@ def perform_location_combat_action(lobby_id, location_id, lobby, participant):
         )
     medical_retry_result = (result.get('must_do_it') or {}).get('medical_result')
     reduction=result.get('narrative_action') or {}
+    if result.get('action') == 'artifact_special':
+        from app.services.artifact_area import publish
+        publish(reduction)
     if reduction.get('object_hits') or reduction.get('tile_object_hits'):
         _publish_object_fire_updates(location_id,[
             *({'object_id':object_id} for object_id in reduction.get('object_hits') or []),

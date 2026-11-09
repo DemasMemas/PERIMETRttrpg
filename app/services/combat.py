@@ -6851,7 +6851,7 @@ class CombatService:
                     'type': 'blindness',
                     'name': '\u041e\u0441\u043b\u0435\u043f\u043b\u0435\u043d\u0438\u0435',
                     'value': blindness,
-                    'source': 'flash_grenade',
+                    'source': profile.get('source') or 'flash_grenade',
                     'tick': 'manual',
                 })
             target.character.data = data
