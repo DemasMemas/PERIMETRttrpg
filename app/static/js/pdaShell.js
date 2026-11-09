@@ -170,6 +170,15 @@ export function openPdaShell({ item, findItem, getData, operate, canEdit, charac
             nav.append(button);
         }
         content.replaceChildren();
+        if (state.on && accountSnapshot?.can_bind_profile_owner) {
+            const bind = document.createElement('button');
+            bind.type = 'button';
+            bind.className = 'btn btn-secondary';
+            bind.textContent = 'Закрепить второй профиль за персонажем';
+            bind.disabled = busy || !canEdit;
+            bind.onclick = () => accountAction('bind_profile_owner', {});
+            content.append(bind);
+        }
         if(state.on&&accountSnapshot?.profiles){
             const profiles=document.createElement('nav');profiles.className='pda-access-tabs';profiles.setAttribute('aria-label','Профили КПК');
             for(const profile of accountSnapshot.profiles){
@@ -387,10 +396,10 @@ export function openPdaShell({ item, findItem, getData, operate, canEdit, charac
             const storedBooks = filesSnapshot.inventory.filter(entry => entry.item.attributes?.book_kind
                 && entry.path.length > pdaPath.length
                 && pdaPath.every((part, index) => entry.path[index] === part));
-            const books=storedBooks.filter(entry=>!accountSnapshot?.profiles
+            const books=storedBooks.filter(entry=>!accountSnapshot?.profile
                 || (accountSnapshot.file_profiles?.[entry.item.id]||'main')===accountSnapshot.profile);
             const job = filesSnapshot.state?.current;
-            if (job?.kind === 'book'&&(!accountSnapshot?.profiles||books.some(entry=>entry.item.id===job.book_id))) {
+            if (job?.kind === 'book'&&(!accountSnapshot?.profile||books.some(entry=>entry.item.id===job.book_id))) {
                 const title = document.createElement('strong');
                 title.textContent = bookTitle(job.name);
                 const status = document.createElement('p');
@@ -474,7 +483,7 @@ export function openPdaShell({ item, findItem, getData, operate, canEdit, charac
                     content.append(storedList);
                 }
             }
-            const learned = (filesSnapshot.state.library || []).filter(entry=>!accountSnapshot?.profiles
+            const learned = (filesSnapshot.state.library || []).filter(entry=>!accountSnapshot?.profile
                 || books.some(book=>book.item.name===entry.name));
             if (learned.length) {
                 const label = document.createElement('h4');
@@ -498,7 +507,7 @@ export function openPdaShell({ item, findItem, getData, operate, canEdit, charac
                 item_path:source?.path,item_id:source?.item.id,...(window.isLocationActive?{location_id:window.currentLocationId}:{})};},onSaved});
         } else if (selected === 'mods') {
             const recorded = (current.modifications || []).filter(mod => mod?.ruleId);
-            if(canEdit&&recorded.some(mod=>mod.ruleId==='pda-b14'))content.append(createPdaWipeControl({disabled:busy,hasProfiles:Boolean(accountSnapshot?.profiles),onWipe:async()=>{
+            if(canEdit&&recorded.some(mod=>mod.ruleId==='pda-b14'))content.append(createPdaWipeControl({disabled:busy,hasProfiles:recorded.some(mod=>mod.ruleId==='pda-b15'),onWipe:async()=>{
                 const source=findItem(item.id);if(busy||!source)return;busy=true;render();
                 try{
                     await operate({operation:'pda_wipe',path:source.path,source_id:source.item.id});

@@ -22,9 +22,12 @@ def rule_by_id(rule_id):
     return rule
 
 
-def record(rule, installer_id):
-    return {'ruleId': rule['id'], 'name': rule['name'], 'description': rule['description'], 'level': 1,
+def record(rule, installer_id, *, owner_id=None):
+    result = {'ruleId': rule['id'], 'name': rule['name'], 'description': rule['description'], 'level': 1,
             'installerId': installer_id, 'modifiers': {}, 'rules': {'special_rule': rule['id']}}
+    if rule['id'] == 'pda-b15' and owner_id is not None:
+        result['profileOwnerId'] = owner_id
+    return result
 
 
 def target(data, payload):

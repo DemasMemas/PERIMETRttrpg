@@ -3,16 +3,19 @@ from copy import deepcopy
 import pytest
 from app.extensions import db
 from app.services.pda_accounts import account_action,account_status
-from app.services.exceptions import ValidationError
+from app.services.exceptions import PermissionDenied, ValidationError
 from app.services.pda_access import target_snapshot
 from test_pda_device_accounts import account_game,act,status,register
 from test_pda_access import access_game,connected,selection,write
 from test_grenade_rules import grenade_game
 
 
-def enable(character):
+def enable(character, *, legacy=False):
     data=deepcopy(character.data);item=data['inventory']['pockets'][0]
-    item.setdefault('modifications',[]).append({'ruleId':'pda-b15'})
+    modification={'ruleId':'pda-b15'}
+    if not legacy:
+        modification['profileOwnerId']=character.id
+    item.setdefault('modifications',[]).append(modification)
     item['contents']=[{'id':'single-book','name':'Книга','attributes':{'book_kind':'skill'},'quantity':1,'volume':0}]
     character.data=data;db.session.commit()
 
@@ -29,11 +32,65 @@ def test_second_profile_has_own_account_notes_and_file_visibility_without_copy(a
     from app.services.pda_network import registry
     assert next(row for row in registry(pair['lobby'].id) if row['item']['id']=='first-pda')['account'].id==decoy['id']
     act(pair,'switch_profile',profile='main');assert status(pair)['account']['notes']=='Настоящие заметки'
+    from app.services.crafting import readable_book
+    assert not readable_book(pair['actor_character'],pair['actor_character'].data,{'book_id':'single-book'})
     act(pair,'login',1,login=main['login'],password='synthetic-password')
     assert status(pair,1)['account']['notes']=='Настоящие заметки'
     assert len(pair['actor_character'].data['inventory']['pockets'][0]['contents'])==1
     assert not pair['actor_character'].data['inventory']['pockets'][1].get('contents')
     act(pair,'switch_profile',profile='decoy');assert status(pair)['account']['notes']=='Ложные заметки'
+    assert readable_book(pair['actor_character'],pair['actor_character'].data,{'book_id':'single-book'})
+
+
+def test_new_holder_cannot_switch_second_profile_or_move_files(account_game):
+    from app.services.container_transfer import ContainerTransferService
+    from app.services.portable_lights import operate
+
+    pair=account_game;actor=pair['actor_character'];target=pair['target_character'];enable(actor)
+    act(pair,'switch_profile',profile='decoy')
+    decoy=register(pair,login='transfer-decoy')['account']
+    target.data={'inventory':{'pockets':[],'backpack':[]}}
+    item=deepcopy(actor.data['inventory']['pockets'][0])
+    db.session.commit()
+    _,obj,_=ContainerTransferService.drop(pair['lobby'].id,pair['location'].id,pair['actor_user']['id'],{
+        'character_id':actor.id,'character_revision':actor.revision,
+        'item_path':['inventory','pockets',0],'expected_item':item,'amount':1})
+    pair['target_location'].pos_x=pair['actor_location'].pos_x
+    pair['target_location'].pos_y=pair['actor_location'].pos_y
+    db.session.commit()
+    user=pair['target_user']['id']
+    ContainerTransferService.transfer(pair['lobby'].id,obj.id,user,{'character_id':target.id,
+        'character_revision':target.revision,'object_revision':obj.revision,'direction':'to_character',
+        'item_path':['contents',0],'expected_item':item,'amount':1})
+    path=['inventory','backpack',0]
+    selection={'item_path':path,'item_id':'first-pda'}
+    snapshot=account_status(target.id,user,selection)
+    assert snapshot['profile']=='decoy' and snapshot['account']['id']==decoy['id']
+    assert 'profiles' not in snapshot and 'can_bind_profile_owner' not in snapshot
+    for operation,payload in [('switch_profile',{'profile':'main'}),
+                              ('move_file',{'file_id':'single-book','profile':'decoy'}),
+                              ('bind_profile_owner',{})]:
+        with pytest.raises(PermissionDenied):
+            account_action(target.id,user,operation,{**selection,**payload})
+    with pytest.raises(PermissionDenied):
+        operate(target.id,user,{'operation':'pda_profile','path':path,'source_id':'first-pda',
+            'character_revision':target.revision,'profile':'main'})
+    assert account_status(target.id,user,selection)==snapshot
+
+
+def test_legacy_profile_can_be_assigned_once_by_gm(account_game):
+    from test_pda_device_accounts import selection as device_selection
+
+    pair=account_game;character=pair['actor_character'];enable(character,legacy=True)
+    gm=pair['lobby'].gm_id
+    assert 'profiles' not in status(pair)
+    assert account_status(character.id,gm,device_selection())['can_bind_profile_owner']
+    with pytest.raises(PermissionDenied):
+        act(pair,'switch_profile',profile='decoy')
+    account_action(character.id,gm,'bind_profile_owner',device_selection())
+    assert act(pair,'switch_profile',profile='decoy')['profile']=='decoy'
+    with pytest.raises(ValidationError,match='уже назначен'):
+        account_action(character.id,gm,'bind_profile_owner',device_selection())
 
 
 def test_missing_modification_or_file_does_not_change_profiles(account_game):

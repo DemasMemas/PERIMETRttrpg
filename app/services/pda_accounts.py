@@ -9,7 +9,7 @@ from sqlalchemy.orm.attributes import flag_modified
 from app.extensions import db
 from app.models import LobbyCharacter, PdaAccount, PdaAccountLogin
 from app.services.character import CharacterService
-from app.services.exceptions import ConflictError, NotFoundError, ValidationError
+from app.services.exceptions import ConflictError, NotFoundError, PermissionDenied, ValidationError
 from app.services.transaction import atomic_operation
 
 
@@ -96,17 +96,21 @@ def _assign(character,device,account):
 
 def account_status(character_id, user_id,payload=None):
     character = _character(character_id, user_id, edit=True)
-    return device_status(character,_device(character,payload))
+    return device_status(character,_device(character,payload),user_id)
 
 
-def device_status(character,device):
+def device_status(character,device,user_id):
     from app.services.artifact_effects import device_block_reason
     from app.services.artifact_jamming import for_character
     reason=device_block_reason(character.data or {},device,jammed_by=for_character(character) if device else None)
     if reason:return {'account':None,'unavailable':reason}
     account = _account(character,device)
-    from app.services.pda_profiles import public
+    from app.services.pda_profiles import owner_id, public
     profiles=public(device) if device else {}
+    if profiles and owner_id(device) != character.id:
+        profiles.pop('profiles',None)
+        if owner_id(device) is None and character.lobby.gm_id == user_id:
+            profiles['can_bind_profile_owner'] = True
     if not account or account.lobby_id != character.lobby_id:
         return {'account': None,**profiles}
     return {'account': {'id': account.id, 'login': account.login, 'notes': account.notes or ''},**profiles}
@@ -117,6 +121,15 @@ def account_action(character_id, user_id, operation, payload):
     character = _character(character_id, user_id, edit=True)
     if not isinstance(payload,dict):raise ValidationError('Выберите действие с аккаунтом КПК')
     device=_device(character,payload)
+    if operation == 'bind_profile_owner':
+        if character.lobby.gm_id != user_id:
+            raise PermissionDenied('Владельца старого профиля назначает ГМ')
+        if device is None:
+            raise ValidationError('Выберите физический КПК')
+        from app.services.pda_profiles import bind_legacy_owner
+        bind_legacy_owner(device, character.id)
+        flag_modified(character,'data')
+        return device_status(character,device,user_id)
     if device is not None and operation in {'login','register','save_notes','switch_profile','move_file'}:
         from app.services.artifact_effects import require_device_available
         from app.services.artifact_jamming import for_character
@@ -131,8 +144,8 @@ def account_action(character_id, user_id, operation, payload):
             if LocationCharacter.query.join(LocationCombatState,LocationCombatState.location_id==LocationCharacter.location_id).filter(
                     LocationCharacter.character_id==character.id,LocationCombatState.status=='active').first():
                 raise ValidationError('В бою переключайте профиль действием КПК за 3 ОД')
-        from app.services.pda_profiles import switch,assign_file,enabled
-        if not enabled(device):raise ValidationError('На КПК нет «Второго профиля»')
+        from app.services.pda_profiles import switch,assign_file,require_owner
+        require_owner(device, character.id)
         if operation=='switch_profile':
             # Материализуем старый общий вход перед первым переключением.
             current=_account(character,device)
@@ -146,11 +159,11 @@ def account_action(character_id, user_id, operation, payload):
                 raise ValidationError('Выберите файл книги на этом КПК')
             assign_file(device,file['id'],payload.get('profile'))
         flag_modified(character,'data')
-        return device_status(character,device)
+        return device_status(character,device,user_id)
     if operation == 'logout':
         _assign(character,device,None)
         db.session.flush()
-        return device_status(character,device)
+        return device_status(character,device,user_id)
     if operation == 'save_notes':
         account = _account(character,device)
         if not account or account.lobby_id != character.lobby_id:
@@ -159,12 +172,12 @@ def account_action(character_id, user_id, operation, payload):
         if not isinstance(notes, str) or len(notes) > 10000:
             raise ValidationError('Заметки должны содержать не более 10 000 символов')
         account.notes = notes
-        return device_status(character,device)
+        return device_status(character,device,user_id)
     if operation not in {'register', 'login'} or not isinstance(payload, dict):
         raise ValidationError('Неизвестное действие с аккаунтом КПК')
     account = authenticate(character.lobby_id, operation, payload)
     _assign(character,device,account)
-    return device_status(character,device)
+    return device_status(character,device,user_id)
 
 
 def authenticate(lobby_id, operation, payload):

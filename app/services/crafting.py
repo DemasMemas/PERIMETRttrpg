@@ -36,6 +36,16 @@ def preserve(current,incoming):
 def now(character):return ((character.lobby.game_day or 1)*1440+(character.lobby.game_time_minutes or 0))*60
 
 
+def _visible_book(data, path, item):
+    from app.services.portable_lights import definition
+    from app.services.pda_profiles import active, file_profile
+
+    for device_path, device in walk(data, True):
+        if path[:len(device_path) + 1] == [*device_path, 'contents'] and definition(device) == 'pda':
+            return active(device) == file_profile(device, item.get('id'))
+    return True
+
+
 def readable_book(character,data,job):
     if job.get('remote_source'):
         from app.services.pda_access import readable_book as remote_book
@@ -43,7 +53,7 @@ def readable_book(character,data,job):
         try:remote_book(character,data,job['remote_source'],job['book_id'])
         except ServiceError:return False
         return True
-    return any(item.get('id')==job['book_id'] for _,item in entries(data))
+    return any(item.get('id')==job['book_id'] and _visible_book(data,path,item) for path,item in entries(data))
 
 
 def complete_ready_book(character):
@@ -681,7 +691,7 @@ def operate(character_id,user_id,payload):
             tool.setdefault('attributes',{})['uses_remaining']=tool['uses']
         reserve=_escrow(data,prepared['allocations'])
         result={'id':str(uuid4()),'kind':'pda_modification','name':prepared['rule']['name'],
-            'record':record(prepared['rule'],character.id),'target_id':prepared['target_id'],
+            'record':record(prepared['rule'],character.id,owner_id=character.id),'target_id':prepared['target_id'],
             'previous':previous,
             'station_usage':station_usage,
             'quote':{k:deepcopy(prepared[k]) for k in ('difficulty','automatic_success','failure_loss')},
@@ -727,7 +737,9 @@ def operate(character_id,user_id,payload):
         if payload.get('remote_source'):
             from app.services.pda_access import readable_book as remote_book
             item=remote_book(character,data,payload['remote_source'],payload.get('book_id'),register=True)
-        else:item=next((item for path,item in entries(data) if path==payload.get('path')),None)
+        else:
+            item=next((item for path,item in entries(data)
+                if path==payload.get('path') and _visible_book(data,path,item)),None)
         template=resolve_item_template(item,character.lobby_id) if item else None
         attrs=(template.attributes or {}) if template else {}
         if attrs.get('book_kind') not in {'skill','equipment'}:raise ValidationError('Выберите электронную книгу')
@@ -872,7 +884,10 @@ def operate(character_id,user_id,payload):
                 and definition(item)=='pda'),None)
             if not target or [m['ruleId'] for m in installed(target)]!=job['previous']:
                 raise ConflictError('КПК или его модификации изменились')
-            install(target,job['record'])
+            record=job['record']
+            if record['ruleId']=='pda-b15' and 'profileOwnerId' not in record:
+                record={**record,'profileOwnerId':character.id}
+            install(target,record)
         if success and job['kind']=='recipe':
             output=db.session.get(ItemTemplate,job['output_id'])
             if not output:raise ConflictError('Шаблон результата удалён')

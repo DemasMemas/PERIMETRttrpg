@@ -5529,7 +5529,7 @@ def change_character_pda_account(character_id, operation):
     from app.services.pda_accounts import account_action
 
     result=account_action(character_id, int(get_jwt_identity()), operation,request.get_json(silent=True) or {})
-    if operation in {'login','register','logout','switch_profile','move_file'}:
+    if operation in {'login','register','logout','switch_profile','move_file','bind_profile_owner'}:
         character=db.session.get(LobbyCharacter,character_id)
         result['data']=character.data_snapshot()
         emit_character_update({'character_id':character.id,'updates':{'data':character.data_snapshot()},'source':'pda_account'})

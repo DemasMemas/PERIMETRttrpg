@@ -133,7 +133,7 @@ def perform(location_id, user_id, payload):
         target = pda_target(actor_data, {'target_path': plan['target_path'], 'item_id': payload.get('item_id')})
         if [m['ruleId'] for m in installed(target)] != plan['previous']:
             raise ConflictError('Модификации КПК изменились')
-        install(target, record(rule_by_id(plan['rule_id']), specialist.character_id))
+        install(target, record(rule_by_id(plan['rule_id']), specialist.character_id, owner_id=actor.character_id))
         label = 'Установка модификации КПК у электрика'
         outcome = f"{plan['item_name']}: {plan['rule_name']}, {plan['price']} ₽"
     else:

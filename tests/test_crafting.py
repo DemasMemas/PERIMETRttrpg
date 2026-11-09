@@ -123,10 +123,11 @@ def test_pda_modification_is_installed_on_selected_device(client,workshop,auth_h
     assert duplicate.status_code==400
 
 
-def test_electrician_installs_pda_modification_for_catalog_formula(workshop):
+@pytest.mark.parametrize(('rule_id','price'), [('pda-b2',700),('pda-b15',2550)])
+def test_electrician_installs_pda_modification_for_catalog_formula(workshop,rule_id,price):
     from app.services.professional_modification import quote,perform
     pair=workshop;actor=pair['actor_character'];specialist=pair['target_character']
-    owned=deepcopy(actor.data);owned['inventory']['money']=1000
+    owned=deepcopy(actor.data);owned['inventory']['money']=3000
     owned['inventory']['pockets']=[{'id':'paid-pda','name':'КПК','category':'misc','quantity':1}]
     actor.data=owned
     specialist.data={**deepcopy(specialist.data),'is_npc':True,
@@ -135,15 +136,18 @@ def test_electrician_installs_pda_modification_for_catalog_formula(workshop):
     db.session.commit()
     payload={'actor_location_character_id':pair['actor_location'].id,
         'specialist_character_id':specialist.id,'target_path':['inventory','pockets',0],
-        'item_id':'paid-pda','rule_id':'pda-b2','action':'install_pda'}
+        'item_id':'paid-pda','rule_id':rule_id,'action':'install_pda'}
     planned=quote(pair['location'].id,pair['actor_user']['id'],payload)
-    assert planned['price']==700
+    assert planned['price']==price
     outcome=perform(pair['location'].id,pair['actor_user']['id'],{**payload,'operation_id':'paid-pda-once',
         'actor_revision':actor.revision,'specialist_revision':specialist.revision})
-    assert outcome['price']==700
-    assert actor.data['inventory']['money']==300
-    assert specialist.data['inventory']['money']==700
-    assert actor.data['inventory']['pockets'][0]['modifications'][0]['ruleId']=='pda-b2'
+    assert outcome['price']==price
+    assert actor.data['inventory']['money']==3000-price
+    assert specialist.data['inventory']['money']==price
+    modification=actor.data['inventory']['pockets'][0]['modifications'][0]
+    assert modification['ruleId']==rule_id
+    assert modification['installerId']==specialist.id
+    assert modification.get('profileOwnerId')==(actor.id if rule_id=='pda-b15' else None)
 
 
 def test_high_pda_modification_needs_nearby_electrician_station(workshop):

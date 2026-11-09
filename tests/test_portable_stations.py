@@ -155,6 +155,7 @@ def test_high_pda_modification_uses_one_loaded_station_charge(station_game,clien
     monkeypatch.setattr('app.services.crafting.random.SystemRandom',lambda:SimpleNamespace(randint=lambda *args:100))
     finished=call('finish',job_id=started.json['result']['id'],chosen_loss=[]);assert finished.status_code==200,finished.json
     assert character.data['inventory']['pockets'][0]['modifications'][0]['ruleId']=='pda-b15'
+    assert character.data['inventory']['pockets'][0]['modifications'][0]['profileOwnerId']==character.id
 
 
 def test_weapon_modification_accepts_deployed_station_and_spends_one_charge(station_game,client,auth_headers,monkeypatch):

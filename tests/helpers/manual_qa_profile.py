@@ -63,6 +63,7 @@ PYTHON_MODULES = (
     'test_object_locks.py',
     'test_pda_access.py',
     'test_pda_power.py',
+    'test_pda_profiles.py',
     'test_portable_lights.py',
     'test_portable_stations.py',
     'test_professional_modification.py',

@@ -1,12 +1,36 @@
 """Два набора данных на одном физическом КПК; файлы не копируются."""
-from app.services.exceptions import ValidationError
+from app.services.exceptions import PermissionDenied, ValidationError
 
 PROFILES={'main':'Основной профиль','decoy':'Ложный профиль'}
 
 
-def enabled(item):
+def _modification(item):
     from app.services.equipment_modifications import installed
-    return any(mod['ruleId']=='pda-b15' for mod in installed(item))
+    return next((mod for mod in installed(item) if mod['ruleId']=='pda-b15'), None)
+
+
+def enabled(item):
+    return _modification(item) is not None
+
+
+def owner_id(item):
+    return (_modification(item) or {}).get('profileOwnerId')
+
+
+def require_owner(item, character_id):
+    if not enabled(item):
+        raise ValidationError('На КПК нет «Второго профиля»')
+    if owner_id(item) != character_id:
+        raise PermissionDenied('Переключение профилей доступно только владельцу КПК')
+
+
+def bind_legacy_owner(item, character_id):
+    modification = _modification(item)
+    if modification is None:
+        raise ValidationError('На КПК нет «Второго профиля»')
+    if owner_id(item) is not None:
+        raise ValidationError('Владелец второго профиля уже назначен')
+    modification['profileOwnerId'] = character_id
 
 
 def active(item):

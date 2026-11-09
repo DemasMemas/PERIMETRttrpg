@@ -598,8 +598,9 @@ def operate(character_id,user_id,payload):
         status=pda_state(selected)
         if status.get('broken') and operation not in {'pda_hold','pda_stow'}:raise ValidationError('КПК вышел из строя')
         if operation=='pda_profile':
-            from app.services.pda_profiles import switch,active
+            from app.services.pda_profiles import switch,active,require_owner
             from app.services.pda_accounts import _assign,account_for_device
+            require_owner(selected, character.id)
             if not status['on'] or status['charge_percent']<=0:raise ValidationError('Включите заряженный КПК')
             cost=3 if actor and active(selected)!=payload.get('profile') else 0
             if actor and actor.action_points_current<cost:raise ValidationError('Недостаточно ОД для переключения профиля')
