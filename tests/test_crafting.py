@@ -711,6 +711,34 @@ def test_extinguished_campfire_does_not_satisfy_recipe_tool(workshop):
     assert _tools(workshop['actor_character'],data,recipe,0)==[]
 
 
+def test_glue_uses_dead_mutant_on_the_map_without_fat(client,workshop,auth_headers,monkeypatch):
+    character=workshop['actor_character']
+    data=deepcopy(character.data)
+    data['skills']['other']['survival']={'base':20,'bonus':0}
+    data['inventory']['pockets']=[{'id':'pot','name':'Котелок','category':'misc','quantity':1}]
+    character.data=data
+    mutant=workshop['target_character']
+    mutant.data={**mutant.data,'is_mutant':True,'health':{'current':700,'max':700,'effects':[]}}
+    placement=workshop['actor_location']
+    db.session.add(LocationObject(location_id=placement.location_id,name='Костёр',type='campfire',
+        tile_x=round(placement.pos_x),tile_y=round(placement.pos_y),properties={'is_lit':True}))
+    output=catalog_template('Клей')
+    db.session.commit()
+    blocked=call(client,workshop,auth_headers,'start',recipe_id='recipe-aa9')
+    assert blocked.status_code==400,blocked.json
+    mutant.data={**mutant.data,'health':{'current':0,'max':700,'effects':[{'type':'death'}]}}
+    db.session.commit()
+    started=call(client,workshop,auth_headers,'start',recipe_id='recipe-aa9')
+    assert started.status_code==200,started.json
+    job=started.json['result']
+    assert job['escrow']==[]
+    assert_recipe_wait(client,workshop,auth_headers,job,60,chosen_loss=[])
+    monkeypatch.setattr('app.services.crafting.resolve_creation',lambda quote:{'success':True,'roll':100,'automatic':False})
+    result=call(client,workshop,auth_headers,'finish',job_id=job['id'],chosen_loss=[])
+    assert result.status_code==200,result.json
+    assert any(item.get('templateId')==output.id for item in result.json['data']['inventory']['pockets'])
+
+
 def test_empty_catalog_pot_remains_usable_as_cooking_tool(workshop):
     from app.services.crafting import _tools,recipe_by_id
     placed=LocationCharacter.query.filter_by(character_id=workshop['actor_character'].id).first()
@@ -985,8 +1013,8 @@ def test_aeration_spends_charges_across_filters_and_produces_eight_water_portion
     workshop['actor_character'].data=data
     placement=LocationCharacter.query.filter_by(character_id=workshop['actor_character'].id).first()
     db.session.add(LocationObject(location_id=placement.location_id,
-        name=recipe_by_id('recipe-aa12')['tools_text'],type='workbench',
-        tile_x=round(placement.pos_x),tile_y=round(placement.pos_y),properties={}))
+        name=recipe_by_id('recipe-aa12')['tools_text'],type='station_aeration',
+        tile_x=round(placement.pos_x),tile_y=round(placement.pos_y),properties={'portable_station':'recipe-m34'}))
     db.session.commit()
     started=call(client,workshop,auth_headers,'start',recipe_id='recipe-aa12')
     assert started.status_code==200,started.json
@@ -1003,7 +1031,14 @@ def test_aeration_spends_charges_across_filters_and_produces_eight_water_portion
         assert units(result.json['data'],'Радиоактивная вода')==10
         assert units(result.json['data'],'Вода')==0
     else:
+        start_x=placement.pos_x
+        placement.pos_x+=3
+        db.session.commit()
         assert_recipe_wait(client, workshop, auth_headers, job, 30, chosen_loss=[])
+        remote=call(client,workshop,auth_headers,'finish',job_id=job['id'],chosen_loss=[])
+        assert remote.status_code==400 and 'Вернитесь к аэрационной установке' in str(remote.json)
+        placement.pos_x=start_x
+        db.session.commit()
         result=call(client,workshop,auth_headers,'finish',job_id=started.json['result']['id'],chosen_loss=[])
         assert result.status_code==200,result.json
         assert units(result.json['data'],'Вода')==8

@@ -180,7 +180,7 @@ def _craft_filter_charges(item):
     return int(filter_charges(item))*quantity
 
 
-def _allocate(data,recipe,*,with_status=False,grenade_paths=None,lobby_id=None):
+def _allocate(data,recipe,*,with_status=False,grenade_paths=None,lobby_id=None,mutant_corpse=False):
     from app.services.trade import _contains_individual_items
     candidates=entries(data);spent={};allocations=[];missing=[];statuses=[]
     grenade_counts=None
@@ -199,6 +199,12 @@ def _allocate(data,recipe,*,with_status=False,grenade_paths=None,lobby_id=None):
         remaining=None;picked=None;options=[];prior_spent=spent.copy()
         for variant in variants:
             names={normalized(name) for name in variant['name'].split('/')}
+            if recipe['id']=='recipe-aa9' and names=={'кости с одного мутанта'}:
+                if with_status:
+                    options.append({'name':variant['name'],'available':int(mutant_corpse),'required':variant['quantity']})
+                if mutant_corpse and picked is None:
+                    picked=(prior_spent,[])
+                continue
             if component.get('mixed_water'):
                 names={normalized(name) for name in ('Болотная вода','Дождевая вода','Радиоактивная вода')}
             if 'ргд 5' in names:names.add('граната ргд 5')
@@ -323,8 +329,16 @@ def quote(character,data,payload):
         from app.services.character_traits import trait_count,background_is
         if not trait_count(data,'Мастер на все руки') and not background_is(data,'Полевой ученый'):raise ValidationError('Изготовление инструментов требует «Мастера на все руки» или предыстории «Полевой учёный»')
     missing_tools=_tools(character,data,recipe,option)
+    mutant_corpse=False
+    if recipe['id']=='recipe-aa9':
+        placement=LocationCharacter.query.filter_by(character_id=character.id).order_by(
+            LocationCharacter.last_action.desc().nullslast(),LocationCharacter.id.desc()).first()
+        if placement:
+            mutant_corpse=any(model.character and CombatService._is_mutant_character(model.character.data)
+                and CombatService._location_character_condition(model)['state']=='dead'
+                for model in LocationCharacter.query.filter_by(location_id=placement.location_id))
     allocations,missing,component_status=_allocate(data,recipe,with_status=True,
-        grenade_paths=payload.get('grenade_paths'),lobby_id=character.lobby_id)
+        grenade_paths=payload.get('grenade_paths'),lobby_id=character.lobby_id,mutant_corpse=mutant_corpse)
     component_missing_count=len(missing)
     state=data.get('crafting') or {};approval=next((r for r in state.get('tool_requests',[]) if r['id']==payload.get('approval_id')
         and r['recipe_id']==recipe['id'] and r['status']=='approved' and r.get('environment') and not r.get('used')),None)
@@ -739,6 +753,8 @@ def operate(character_id,user_id,payload):
             'ammo_template_id':plan['ammo_template_id'],
             'station_usage':station_usage,
             'started_at':now(character),'ready_at':now(character)+plan['duration_seconds']}
+        if result['recipe_id']=='recipe-aa12':
+            result['collection_station_id']=plan.get('station_id')
         state['current']=result
         if plan['approval_id']:
             next(r for r in state['tool_requests'] if r['id']==plan['approval_id'])['used']=True
@@ -746,6 +762,12 @@ def operate(character_id,user_id,payload):
         job=state.get('current')
         if not job or payload.get('job_id')!=job['id']:raise ConflictError('Работа уже завершена или изменена')
         if action=='finish' and now(character)<job['ready_at']:raise ValidationError('Время работы ещё не прошло')
+        if action=='finish' and job.get('recipe_id')=='recipe-aa12':
+            station_id=job.get('collection_station_id') or (job.get('station_usage') or {}).get('object_id')
+            if station_id is not None:
+                from app.services.portable_stations import nearby
+                if not any(obj.id==station_id for obj in nearby(character)):
+                    raise ValidationError('Вернитесь к аэрационной установке, чтобы забрать воду')
         lost={};roll=None;success=bool(action=='finish' and job['kind']=='book')
         if success:
             if not readable_book(character,data,job):raise ConflictError('Книга больше не доступна')

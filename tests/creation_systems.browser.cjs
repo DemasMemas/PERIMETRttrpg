@@ -46,6 +46,7 @@ module.exports=async({peer,request,recipient,token,api,read})=>{
     let saved=(await read()).data;
     assert.ok(!saved.inventory.pockets.some(i=>i.id===pistol.id));
     assert.ok(saved.crafting.history.at(-1).materials.some(i=>i.name==='Металлические детали'&&i.quantity>0));
+    await peer.until("document.querySelector('[data-crafting-tab=other]')",'Вкладки создания снова видны после разбора');
     await peer.evaluate("document.querySelector('[data-crafting-tab=other]').click();true");
     await peer.until(`document.querySelector('.crafting-flamethrowers select[aria-label="Ёмкость огнемёта"]')?.getClientRects().length`,'Обслуживание огнемёта видно во вкладке другого');
     for(const word of ['Бензин','сжатого воздуха']){

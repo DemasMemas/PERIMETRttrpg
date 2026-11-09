@@ -116,7 +116,15 @@ module.exports = async ({page, request, token, api, loc}) => {
     await click('Начать создание');
     await waitState("data.crafting?.current?.recipe_id==='recipe-aa12'", 'Вода и заряды зарезервированы');
     assert.deepEqual((await read()).data.inventory.pockets.map(i => [i.id, i.durability]), [['recipe-filter-7', 3]]);
-    await finish(30);
+    const relocate = (x,y) => request(loc+'/spawn_character',
+        {character_id:actor.id,tile_x:x,tile_y:y,force_relocate:true},token);
+    await relocate(35,48);
+    await advance(30);
+    await click('Завершить · к100');
+    await page.until("document.body.innerText.includes('Вернитесь к аэрационной установке')",'Издалека воду забрать нельзя');
+    await relocate(41,48);
+    await click('Завершить · к100');
+    await waitState('!data.crafting?.current','Вода собрана после возвращения');
     const cleanWater = await checkOutput('Вода', 3);
     assert.deepEqual(cleanWater.map(i => [i.quantity, i.uses, i.maxUses]), [[3, 2, 3]]);
     await closeCrafting();

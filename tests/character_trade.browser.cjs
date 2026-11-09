@@ -407,6 +407,16 @@ module.exports=async({page,request,token,lobby,base,connect,debugPort,safeSessio
     const savedMaskAndHelmet=await read(a.id);
     assert.equal(savedMaskAndHelmet.data.equipment.helmet.templateId,helmetTemplate.id);
     assert.equal(savedMaskAndHelmet.data.equipment.gasMask.templateId,maskTemplate.id);
+    await page.evaluate(`window.openCharacterSheet(${a.id},'equipment').then(()=>true)`);
+    await page.until(`(()=>{const figure=document.querySelector('.loadout-figure[data-helmet="open"][data-mask="true"]');
+        return figure && ['.loadout-art-mask','.loadout-art-helmet-open'].every(selector=>
+            getComputedStyle(figure.querySelector(selector)).display!=='none') && figure.getBoundingClientRect().width>100})()`,
+        'На фигуре видны шлем без забрала и противогаз');
+    const figureClip=await page.evaluate(`(()=>{const {x,y,width,height}=document.querySelector('.loadout-figure').getBoundingClientRect();
+        return {x,y,width,height,scale:1};})()`);
+    fs.writeFileSync(path.join(safeSession.artifacts,'helmet-and-gas-mask.png'),
+        Buffer.from((await page.call('Page.captureScreenshot',{format:'png',clip:figureClip})).data,'base64'));
+    await page.evaluate('window.closeCharacterSheet();true');
     console.log(JSON.stringify({bareHelmetWithGasMaskUi:true,compatibleAfterReload:true}));
     const mediumTemplate=armorCatalog.global.find(template=>template.attributes?.modification_category==='Средняя');
     assert.ok(mediumTemplate,'Средняя броня присутствует в каталоге');
