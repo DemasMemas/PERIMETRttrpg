@@ -1146,7 +1146,7 @@ function captureSheetViewState() {
     };
 }
 
-function restoreSheetViewState(state) {
+function restoreSheetViewState(state, { restoreWeaponCards = true } = {}) {
     const root = document.getElementById('character-sheet-modal');
     if (!root || !state) return;
     for (const entry of state.pendingWeaponModels || []) {
@@ -1165,7 +1165,9 @@ function restoreSheetViewState(state) {
             : entry.id
                 ? document.getElementById(entry.id)
                 : scope?.querySelectorAll('details')[entry.index];
-        if (detail) detail.open = entry.open;
+        if (detail && (restoreWeaponCards || !detail.classList.contains('loadout-weapon-details'))) {
+            detail.open = entry.open;
+        }
     }
     for (const path of state.openContainers) {
         const container = [...root.querySelectorAll('[data-container-path]')]
@@ -4866,7 +4868,9 @@ async function renderEquipmentTab(data, { focusWeaponIndex = null } = {}) {
         craftingButton.id='character-crafting-open';craftingButton.textContent='Создание, модификации и разбор';craftingButton.disabled=!currentCharacterCanEdit;
         craftingButton.onclick=window.openCharacterCrafting;container.prepend(craftingButton);
     }
-    restoreSheetViewState(viewState);
+    if (renderVersion === equipmentRenderVersion) {
+        restoreSheetViewState(viewState, { restoreWeaponCards: focusWeaponIndex === null });
+    }
 }
 
 window.openCharacterCrafting=async function(){

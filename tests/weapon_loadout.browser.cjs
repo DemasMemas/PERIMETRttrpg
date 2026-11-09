@@ -133,12 +133,17 @@ module.exports=async({page,request,token,lobby,safeSession})=>{
             assert.equal(saved.inventory.backpack.filter(m=>m.attributes?.moduleRuleId===t.attributes.moduleRuleId).length,1,'модуль возвращается без дубля');
         }
     }
+    const beforeShorten=(await read()).data;
+    beforeShorten.weapons.push({...structuredClone(beforeShorten.weapons[0]),id:'unmodified-barrel-control'});
+    await request(`/lobbies/characters/${character.id}`,{data:beforeShorten},token,'PUT');
+    const control=(await waitSaved(d=>d.weapons[1]?.id==='unmodified-barrel-control')).weapons[1];
     await openStats();
     await page.evaluate('window.confirm=()=>true');
     await click('[onclick="shortenWeaponBarrel(0)"]');
     const shortened=await waitSaved(d=>d.weapons[0]?.installedModules?.some(m=>m.attributes?.moduleRuleId==='short_barrel'));
     assert.equal(shortened.weapons[0].volume,6,'действие уменьшает размер оружия на 2');
     assert.equal(shortened.weapons[0].installedModules.length,1,'действие записывает изменение в экземпляр');
+    assert.deepEqual(shortened.weapons[1],control,'Действие не меняет второй экземпляр того же оружия');
     assert.equal(await page.evaluate('Boolean(document.querySelector(`[onclick="unequipModuleFromWeapon(0, \'barrel\')"]`))'),false);
     await page.evaluate('window.shortenWeaponBarrel(0)');
     assert.equal((await read()).data.weapons[0].installedModules.length,1,'повторное действие не дублирует изменение');

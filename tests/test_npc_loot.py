@@ -71,6 +71,26 @@ def test_retired_sport_gloves_are_not_offered_or_generated(client,prepared,auth_
     assert [entry['name'] for entry in response.json['global']]==['Рабочие']
 
 
+def test_retired_short_barrel_stays_in_saved_catalog_but_is_not_issued(client,prepared,auth_headers):
+    from app.services.character_starting_purchase import available_templates
+
+    legacy = ItemTemplate(name='Укорочение ствола', category='weapon_module', subcategory='barrel',
+                          price=10, attributes={})
+    available = ItemTemplate(name='Проверочный модуль ствола', category='weapon_module', subcategory='barrel',
+                             price=10, attributes={})
+    db.session.add_all([legacy, available])
+    db.session.commit()
+    loot, _ = roll_loot(profile(pools=[pool(category='weapon_module', subcategory='barrel', item_class='')]),
+                        [legacy, available], rng=random.Random(1))
+    assert [item['templateId'] for item in loot] == [available.id, available.id]
+    assert legacy.id not in {item.id for item in available_templates()}
+    response = client.get(f"/lobbies/{prepared['lobby'].id}/templates?category=weapon_module",
+                          headers=auth_headers(prepared['actor_user']))
+    assert response.status_code == 200, response.json
+    assert not any(item['name'] == legacy.name for item in response.json['global'])
+    assert db.session.get(ItemTemplate, legacy.id).name == 'Укорочение ствола'
+
+
 def test_legacy_catalog_duplicates_are_hidden_from_new_issuance(client,prepared,auth_headers):
     from app.services.equipment_catalog import load_catalog, canonical_catalog_templates
     from app.services.character_starting_purchase import available_templates
