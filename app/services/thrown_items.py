@@ -6,9 +6,7 @@ from uuid import uuid4
 
 from sqlalchemy.orm.attributes import flag_modified
 
-from app.extensions import db
 from app.models import LocationCharacter
-from app.models.location_object import LocationObject
 from app.services.exceptions import ValidationError
 
 
@@ -56,11 +54,12 @@ def prepare(location, actor, data, item_path, item_id, target_x, target_y, targe
     held_binding = next((binding for binding in
         (((data.get('health') or {}).get('combatMeta') or {}).get('portableLights') or [])
         if binding.get('id') == item_id and binding.get('mount') == 'hand'), None)
-    if held_binding:
+    already_held = bool(held_binding) or len(item_path) == 3 and item_path[:2] == ['inventory', 'held']
+    if already_held:
         from app.services.weapon_grip import functional_arms
         if functional_arms(data) < 1:
             raise ValidationError('Для броска нужна действующая рука')
-    if not CombatService._has_usable_free_hand(actor) and item_path[0] != 'weapons' and not held_binding:
+    if not CombatService._has_usable_free_hand(actor) and item_path[0] != 'weapons' and not already_held:
         raise ValidationError('Для броска нужна свободная действующая рука')
     if any(type(value) not in {int, float} or not math.isfinite(value) for value in (target_x, target_y)):
         raise ValidationError('Выберите клетку броска')
@@ -101,21 +100,8 @@ def execute(location, actor, data, plan, round_number):
         location=location, floor_level=plan['floor_level'])
     path = plan['path']
     if path[0] == 'weapons':
-        from app.services.weapon_grip import secondary_index
-        secondary = secondary_index(actor)
-        primary = actor.drawn_weapon_index
-        item = data['weapons'].pop(path[1])
-        meta = data.setdefault('health', {}).setdefault('combatMeta', {})
-        meta.pop('secondaryWeaponId', None)
-        if primary == path[1]:
-            replacement = secondary
-            actor.drawn_weapon_index = replacement - 1 if replacement is not None and replacement > path[1] else replacement
-        elif primary is not None and primary > path[1]:
-            actor.drawn_weapon_index = primary - 1
-        if actor.drawn_weapon_index is None:
-            data.pop('activeWeaponIndex', None)
-        else:
-            data['activeWeaponIndex'] = actor.drawn_weapon_index
+        from app.services.weapon_grip import remove_drawn
+        item = remove_drawn(actor, data, path[1])
     else:
         item = CombatService._take_inventory_item(data, path, 1)
         if plan['held_binding']:
@@ -124,21 +110,9 @@ def execute(location, actor, data, plan, round_number):
     item = deepcopy(item)
     if plan['split_stack'] or not item.get('id'):
         item['id'] = str(uuid4())
-    tile_x, tile_y = min(location.grid_width - 1, int(x + .5)), min(location.grid_height - 1, int(y + .5))
-    ground = next((obj for obj in LocationObject.query.filter_by(location_id=location.id,
-        type='ground_item', tile_x=tile_x, tile_y=tile_y).all()
-        if (obj.properties or {}).get('floor_level', 0) == plan['floor_level']), None)
-    created = ground is None
-    if created:
-        ground = LocationObject(location_id=location.id, name='Пол', type='ground_item',
-            tile_x=tile_x, tile_y=tile_y, properties={'contents': [], 'is_ground_item': True,
-                'passable': True, 'floor_level':plan['floor_level'],
-                'interactions': ['open_container']})
-        db.session.add(ground)
-        db.session.flush()
-    props = deepcopy(ground.properties or {})
-    props.setdefault('contents', []).append(item)
-    ground.properties = props
+    from app.services.container_transfer import put_on_ground
+    ground, created = put_on_ground(location, x, y, plan['floor_level'], item)
+    tile_x, tile_y = ground.tile_x, ground.tile_y
     target = next((other for other in LocationCharacter.query.filter_by(location_id=location.id).all()
         if other.id != actor.id and (other.floor_level or 0) == plan['floor_level']
         and other.pos_x == tile_x and other.pos_y == tile_y), None)

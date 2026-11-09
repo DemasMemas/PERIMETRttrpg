@@ -2133,6 +2133,7 @@ function calculateCarriedWeight(data) {
     items.push(...(data?.crafting?.current?.escrow || []).map(entry=>entry.item));
     if (Array.isArray(inv.backpack)) items.push(...inv.backpack);
     if (Array.isArray(inv.pockets)) items.push(...inv.pockets);
+    if (Array.isArray(inv.held)) items.push(...inv.held);
     for (const group of ['belt', 'vest']) {
         const pouches = Array.isArray(eq[group]?.pouches) ? eq[group].pouches : [];
         pouches.forEach((pouch) => {
@@ -5165,6 +5166,8 @@ function renderEquipmentLoadout(container, data, weaponTemplates, helmetTemplate
     ];
     const extraWeapons = [...ranged.slice(2), ...melee.slice(1)];
     const statusLines = equipmentStatusLines(equipment, helmetTemplates, gasMaskTemplates);
+    const held = data.inventory?.held || [];
+    if (held.length) statusLines.push(`В руках: ${held.map(item => item.name || 'Предмет').join(', ')}`);
     const filterStatus = item => {
         const filter = equipmentModule(item, 'filter');
         return filter ? `Фильтр ${filter.durability ?? filter.attributes?.durability ?? 0}/${filter.maxDurability ?? filter.attributes?.max_durability ?? '?'}` : '';
@@ -5754,7 +5757,7 @@ function renderArtifactSpecial(item) {
         <span>${escapeHtml(hint)}</span>${powerOptions}
         ${state.supported?`<button type="button" class="btn btn-sm" data-artifact-special="${escapeHtml(String(state.item_id))}"
             onclick="window.activateArtifactSpecial(this.dataset.artifactSpecial,this.parentElement.querySelector('[data-artifact-power]')?.value)" ${!currentCharacterCanEdit||!state.available&&!state.armed?'disabled':''}>
-            ${state.armed?'Отменить применение при падении':state.fall_reaction?'Применить при следующем падении':state.target_range?'Выбрать цель':'Применить'}${combat&&!state.armed?` · ${state.action_points} ОД`:''}</button>`:''}
+            ${state.armed?'Отменить применение при падении':state.fall_reaction?'Применить при следующем падении':state.target_range?'Выбрать цель':state.magnet_target?'Выбрать предмет':'Применить'}${combat&&!state.armed?` · ${state.action_points} ОД`:''}</button>`:''}
     </div>`;
 }
 window.activateArtifactSpecial = async function(itemId,power) {
@@ -5773,6 +5776,15 @@ window.activateArtifactSpecial = async function(itemId,power) {
         }
         const {runController}=await import('./itemControllers.js');
         const payload={item_id:itemId,...(power===undefined?{}:{power:Number(power)})};
+        if(state?.magnet_target){
+            if(!window.isLocationActive)throw new Error('Откройте подлокацию с этим персонажем');
+            const locationId=window.currentLocationId;
+            const {targets}=await Server.getArtifactMagnetTargets(characterId,locationId,itemId);
+            if(!targets.length)throw new Error('В поле зрения нет подходящих металлических предметов до 1 кг');
+            const target=await chooseConsumableApplication('Ферромагнит · выберите предмет',targets,{alwaysShow:true});
+            if(!target||currentCharacterId!==characterId||window.currentLocationId!==locationId)return;
+            payload.magnet_target=target.id;
+        }
         if(state?.target_range){
             if(!window.isLocationActive)throw new Error('Выберите цель на подлокации');
             const {visibleArtifactTargets}=await import('./locationScene.js');
@@ -10651,6 +10663,7 @@ function collectInventoryEntries(data, predicate) {
     };
     visit(data.inventory?.pockets, ['inventory', 'pockets']);
     visit(data.inventory?.backpack, ['inventory', 'backpack']);
+    visit(data.inventory?.held, ['inventory', 'held']);
     (data.equipment?.belt?.pouches || []).forEach((pouch, index) => visit(pouch.contents, ['equipment', 'belt', 'pouches', index, 'contents']));
     (data.equipment?.vest?.pouches || []).forEach((pouch, index) => visit(pouch.contents, ['equipment', 'vest', 'pouches', index, 'contents']));
     (data.equipment?.belt?.installedModules||[]).forEach((item,index)=>{
@@ -14427,10 +14440,12 @@ async function renderInventoryTab(data) {
     const container = document.getElementById('sheet-tab-inventory');
     if (!container) return;
     normalizeCharacterAmmoSlots(data);
-    const inv = data.inventory || {};
+    const inv = data.inventory ||= {};
     const eq = data.equipment || {};
-    const pockets = Array.isArray(inv.pockets) ? inv.pockets : [];
-    const backpack = Array.isArray(inv.backpack) ? inv.backpack : [];
+    if (!Array.isArray(inv.pockets)) inv.pockets = [];
+    if (!Array.isArray(inv.backpack)) inv.backpack = [];
+    const { pockets, backpack } = inv;
+    const held = Array.isArray(inv.held) ? inv.held : [];
     const pocketMaxVolume = pocketCapacity(data);
     const pocketFill = pockets.reduce((sum, item) => sum + (item.volume || 0) * (item.quantity || 1), 0);
 
@@ -14506,6 +14521,7 @@ async function renderInventoryTab(data) {
             <button type="button" class="btn btn-sm btn-secondary" onclick="openCreateMagazineTemplateModal()">➕ Создать магазин</button>
         </div>` : ''}
         <hr>
+        ${held.length ? '<section><h4>В руках</h4><div id="held-items-container"></div></section>' : ''}
         <section data-widget-block="pockets"><h4>Карманы</h4>
         <div style="margin-bottom:10px;">Заполнено: <span id="pocket-fill-display">${pocketFill}</span> / <span id="pocket-capacity-display">${pocketMaxVolume}</span></div>
         <div style="display: grid; grid-template-columns: 2fr 1fr 1fr 1fr auto; gap: 5px; font-weight: bold; margin-bottom: 5px; align-items: center;">
@@ -14655,6 +14671,30 @@ async function renderInventoryTab(data) {
 
     const viewState = captureSheetViewState();
     container.innerHTML = html;
+    const heldContainer = container.querySelector('#held-items-container');
+    held.forEach((item, index) => {
+        const path = ['inventory', 'held', index];
+        const row = document.createElement('div');
+        row.className = 'item-name';
+        row.dataset.path = path.join(',');
+        row.dataset.itemTooltip = 'true';
+        if (item.templateId) row.dataset.itemTemplateId = String(item.templateId);
+        row.draggable = currentCharacterCanEdit;
+        row.textContent = item.name || 'Предмет';
+        row.addEventListener('dragstart', event => {
+            event.dataTransfer.setData('application/x-inventory-path', JSON.stringify(path));
+            event.dataTransfer.effectAllowed = 'move';
+        });
+        if (currentCharacterCanEdit && window.isLocationActive) {
+            const drop = document.createElement('button');
+            drop.type = 'button';
+            drop.className = 'btn btn-sm btn-secondary';
+            drop.textContent = 'Положить на землю';
+            drop.onclick = () => window.dropBackpackItemAtPath(path.join(','));
+            row.append(' ', drop);
+        }
+        heldContainer.append(row);
+    });
     if (eq.belt?.templateId) {
         renderBeltPouchesNew(eq.belt.pouches || [], pouchTemplates, allTemplates);
     }

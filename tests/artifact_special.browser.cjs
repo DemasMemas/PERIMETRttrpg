@@ -515,6 +515,46 @@ module.exports=async({page,request,token,lobby,loc,locationId,rules,safeSession}
     await page.evaluate('window.__artifactUsePromise.then(()=>true)');
     assert.equal((await request(exposedUrl,null,token,'GET')).data.health.current,150);
     assert.equal((await getSponge()).data._artifact_specials[0].remaining_uses,1);
+    const magnet=rules.find(row=>row.name==='Ферромагнит'),magnetData=await getSponge();assert.ok(magnet);
+    magnetData.data.equipment.armor.containers=[{item:{id:'native-ferromagnet',name:magnet.name,
+        category:'artifact',quantity:1,attributes:magnet}}];
+    await request(spongeUrl,{data:magnetData.data},token,'PUT');
+    await request('/__testing/artifact-preparation/'+safeSession.runId,{character_id:spongeBearer.id},token);
+    const magnetClock=await request('/lobbies/'+lobby.id,null,token,'GET');
+    await changeMinutes(720-magnetClock.game_time_minutes);
+    await request(loc+'/objects',{name:'Пол',type:'ground_item',tile_x:45,tile_y:64,
+        properties:{is_ground_item:true,passable:true,floor_level:0,contents:[
+            {id:'metal-stack',name:'Металлические детали',category:'material',quantity:2,weight:.2,volume:.1},
+            {id:'glass',name:'Стекло',category:'material',quantity:1,weight:.2,volume:.1},
+        ]}},token);
+    await page.evaluate(`window.openCharacterSheet(${spongeBearer.id},'equipment').then(()=>true)`);
+    await page.until("document.querySelector('.equipment-panel-tab[data-panel=armor]')",'Броня с Ферромагнитом');
+    await page.evaluate("document.querySelector('.equipment-panel-tab[data-panel=armor]').click();true");
+    const magnetButton='document.querySelector(\'[data-artifact-special="native-ferromagnet"]:not(:disabled)\')';
+    await page.until(magnetButton,'Ферромагнит готов');
+    await page.evaluate(`${magnetButton}.click();true`);
+    const magnetChoices="[...document.querySelectorAll('#consumable-application-modal .consumable-application-list button')]";
+    await page.until(`${magnetChoices}.some(button=>button.textContent.includes('Металлические детали'))`,'Металл виден в выборе');
+    assert.equal(await page.evaluate(`${magnetChoices}.some(button=>button.textContent.includes('Стекло'))`),false);
+    await page.evaluate(`${magnetChoices}.find(button=>button.textContent.includes('Металлические детали')).click();true`);
+    await page.evaluate('window.__artifactUsePromise.then(()=>true)');
+    const magnetAfter=(await getSponge()).data;
+    assert.equal(magnetAfter.inventory.held[0].name,'Металлические детали');
+    assert.equal(magnetAfter.inventory.held[0].quantity,1);
+    assert.equal(magnetAfter._artifact_specials[0].remaining_uses,1);
+    await page.evaluate(`window.openCharacterSheet(${spongeBearer.id},'inventory').then(()=>true)`);
+    await page.until("document.querySelector('#held-items-container')?.textContent.includes('Металлические детали')",'Притянутый предмет виден в руках');
+    await page.evaluate(`(()=>{
+        const transfer=new DataTransfer();
+        document.querySelector('#held-items-container [draggable=true]').dispatchEvent(new DragEvent('dragstart',{bubbles:true,dataTransfer:transfer}));
+        document.querySelector('#pockets-container').dispatchEvent(new DragEvent('drop',{bubbles:true,cancelable:true,dataTransfer:transfer}));
+        return true;
+    })()`);
+    await page.until("document.querySelector('#pockets-container input[data-widget-key=name]')?.value==='Металлические детали'",'Предмет перетащен в карман');
+    await page.evaluate(`import('/static/js/api.js').then(({Server})=>Server.waitForCharacterSave(${spongeBearer.id})).then(()=>true)`);
+    const magnetStored=(await getSponge()).data.inventory;
+    assert.equal(magnetStored.held.length,0);
+    assert.ok(magnetStored.pockets.some(item=>item.id===magnetAfter.inventory.held[0].id));
     fs.writeFileSync(path.join(safeSession.artifacts,'artifact-special.json'),JSON.stringify({scene:'Припять',artifact:rule.name,
         preparedWornSeconds:86394,realRoundSeconds:6,readyAfterRealRound:true,realButtonActivations:2,apPerUse:1,
         first:{radiation:0,hp:200,cooldown:86400},second:{radiation:0,hp:300,cooldown:86394},reopened:true,
@@ -534,7 +574,8 @@ module.exports=async({page,request,token,lobby,loc,locationId,rules,safeSession}
         livingCurrent:{realButton:true,distance:5,jumpAp:2,expiredAfterRounds:2},
         philosophersLeaf:{realButton:true,realAnomaly:'Вспышка',healthBefore:400,healthAfter:600},
         lightningRod:{realButton:true,targetSelected:true,damage:200,healthAfter:500},
-        stormConductor:{realButton:true,targetSelected:true,damage:350,healthAfter:150}},null,2));
+        stormConductor:{realButton:true,targetSelected:true,damage:350,healthAfter:150},
+        ferromagnet:{realButton:true,metalSelected:true,glassExcluded:true,oneUnitInHand:true,movedToPocket:true,remainingUses:1}},null,2));
     console.log('Особые свойства: подготовленное ношение+реальный раунд, две кнопки Ядра твари по1ОД без рук, радиация→ОЗ; общий срок после первого, переоткрытие.');
     console.log('Генератор: кнопка без радиации, фактический штраф перемещения−1→−3,600→594секунд за раунд; истечение по игровому времени возвращает−1.');
     console.log('Сердце жара: настоящая кнопка и настоящее горение; первый раунд0урона, после истечения50.');
@@ -552,4 +593,5 @@ module.exports=async({page,request,token,lobby,loc,locationId,rules,safeSession}
     console.log('Живой ток: настоящая кнопка и прыжок на 5 м за 2 ОД. Через два раунда возвращается обычная дальность.');
     console.log('Философский лист: настоящая кнопка, прыжок во Вспышку, завершение хода и 400→600 общих ОЗ.');
     console.log('Громоотвод: выбор видимой цели в интерфейсе и 200 электрического урона.');
+    console.log('Ферромагнит: выбор металла без стекла, одна единица отображается в руках и перетаскивается в карман.');
 };

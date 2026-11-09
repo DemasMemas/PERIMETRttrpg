@@ -52,11 +52,12 @@ def validate_load(data,weapon,sides):
 def draw_plan(data,weapon,choice=None,*,extra_occupied=False):
     from app.services.combat import CombatService
     from app.services.portable_lights import held_hand
+    from app.services.held_items import items as held_items
     if weapon.get('naturalWeapon') or CombatService._template_attributes(weapon).get('natural_weapon'):return None
     choices={'left_hand':(1,'left'),'right_hand':(1,'right'),'both_hands':(2,primary_hand(data))}
     if choice is not None and choice not in choices:raise ValidationError('Выберите руку для оружия')
     meta=((data.get('health') or {}).get('combatMeta') or {})
-    occupied=int(bool(meta.get('heldWaterItem')))+int(bool(held_hand(data)))+int(bool(extra_occupied or meta.get('bodyTransport')))
+    occupied=int(bool(meta.get('heldWaterItem')))+int(bool(held_hand(data)))+int(bool(extra_occupied or meta.get('bodyTransport')))+len(held_items(data))
     candidates=[choices[choice]] if choice else [(hands(data),primary_hand(data)),(1,primary_hand(data)),(1,'left' if primary_hand(data)=='right' else 'right')]
     error=None
     for count,side in candidates:
@@ -87,6 +88,23 @@ def secondary_index(actor):
 
 def held(actor,index):
     return index is not None and index in (getattr(actor,'drawn_weapon_index',None),secondary_index(actor))
+
+
+def remove_drawn(actor, data, index):
+    secondary = secondary_index(actor)
+    primary = actor.drawn_weapon_index
+    item = data['weapons'].pop(index)
+    meta = data.setdefault('health', {}).setdefault('combatMeta', {})
+    meta.pop('secondaryWeaponId', None)
+    if primary == index:
+        actor.drawn_weapon_index = secondary - 1 if secondary is not None and secondary > index else secondary
+    elif primary is not None and primary > index:
+        actor.drawn_weapon_index = primary - 1
+    if actor.drawn_weapon_index is None:
+        data.pop('activeWeaponIndex', None)
+    else:
+        data['activeWeaponIndex'] = actor.drawn_weapon_index
+    return item
 
 
 def pair(actor):
@@ -318,8 +336,9 @@ def change(character_id, user_id, payload):
         return character, actor, {'hands':before, 'hand':primary_hand(data), 'weapon_index':index, 'action_points':0}
     meta = data.setdefault('health', {}).setdefault('combatMeta', {})
     from app.services.portable_lights import held_hand
+    from app.services.held_items import items as held_items
     paired=bool(meta.get('secondaryWeaponId'))
-    occupied = bool(meta.get('heldWaterItem')) or bool(meta.get('bodyTransport')) or held_hand(data) or bool(actor and actor.grapple_target_id)
+    occupied = bool(meta.get('heldWaterItem')) or bool(meta.get('bodyTransport')) or held_hand(data) or bool(held_items(data)) or bool(actor and actor.grapple_target_id)
     if paired:raise ValidationError('Сначала освободите вторую руку')
     if requested==1 and before==1 and primary_hand(data)!=side and occupied:
         raise ValidationError('Выбранная рука занята')

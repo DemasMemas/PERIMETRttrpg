@@ -136,6 +136,8 @@ def calculate_inventory_access(character_data, item_path, item=None):
     elif path[:2] == ["inventory", "backpack"]:
         base_action_points = 2
         source = "backpack"
+    elif path[:2] == ["inventory", "held"]:
+        source = "held"
     elif accessible(character_data, path, item):
         base_action_points = 1
         source = "belt_tool"
@@ -167,7 +169,7 @@ def calculate_inventory_access(character_data, item_path, item=None):
         isinstance(zones.get(area), dict) and _non_negative_number(zones[area].get("current")) == 0
         for area in ("leftArm", "rightArm") if not limb(character_data,area)
     ))
-    retrieval = max(0, base_action_points - quick_access_discount + limb_penalty)
+    retrieval = max(0, base_action_points - quick_access_discount + (0 if len(path) == 3 and source == 'held' else limb_penalty))
     return {
         "source": source,
         "base_action_points": base_action_points,

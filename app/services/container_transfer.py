@@ -12,6 +12,25 @@ from app.services.inventory import normalize_inventory_ammo_stacks
 from app.services.transaction import atomic_operation
 
 
+def put_on_ground(location, x, y, level, item):
+    tile_x = min(location.grid_width - 1, max(0, int(x + .5)))
+    tile_y = min(location.grid_height - 1, max(0, int(y + .5)))
+    ground = next((obj for obj in LocationObject.query.filter_by(location_id=location.id,
+        type='ground_item', tile_x=tile_x, tile_y=tile_y).all()
+        if (obj.properties or {}).get('floor_level', 0) == level and not (obj.properties or {}).get('gm_hidden')), None)
+    created = ground is None
+    if created:
+        ground = LocationObject(location_id=location.id, name='Пол', type='ground_item',
+            tile_x=tile_x, tile_y=tile_y, properties={'contents': [], 'is_ground_item': True,
+                'passable': True, 'floor_level': level, 'interactions': ['open_container']})
+        db.session.add(ground)
+    props = deepcopy(ground.properties or {})
+    props.setdefault('contents', []).append(item)
+    ground.properties = props
+    db.session.flush()
+    return ground, created
+
+
 class ContainerTransferService:
     @staticmethod
     @atomic_operation

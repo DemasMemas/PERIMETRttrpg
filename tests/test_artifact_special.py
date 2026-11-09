@@ -5,7 +5,7 @@ from types import SimpleNamespace
 import pytest
 
 from app.extensions import db
-from app.models import LocationCombatState
+from app.models import LocationCombatState, LocationObject
 from app.services.artifact_special import DAY, STATE_KEY, advance, execute, operate, preserve, snapshot
 from app.services.character import CharacterService
 from app.services.character_merge import clean_snapshot
@@ -853,6 +853,103 @@ def test_electric_artifact_rejects_unseen_or_out_of_range_target_before_cost(gre
         CombatService.perform_action(actor.location_id, grenade_game['lobby'].gm_id, actor.id, 'artifact_special', attribute_choice=payload)
     assert actor.action_points_current == 20
     assert snapshot(actor.character.data)[0]['remaining_uses'] == 2
+
+
+def magnet_scene(game, level=15):
+    actor, target = game['actor_location'], game['target_location']
+    actor.character.data = ready(level, 'Ферромагнит')
+    target.pos_x, target.pos_y = 6, 5
+    game['lobby'].game_time_minutes = 12 * 60
+    return actor, target
+
+
+def test_magnet_targets_and_transfers_one_visible_unit_through_http(grenade_game, client, auth_headers):
+    actor, _ = magnet_scene(grenade_game)
+    LocationCombatState.query.filter_by(location_id=actor.location_id).first().status = 'inactive'
+    items = [{'id':'metal-stack', 'name':'Металлические детали', 'weight':1, 'quantity':3},
+             {'id':'glass', 'name':'Стекло', 'weight':.2},
+             {'id':'heavy', 'name':'Тяжёлая сталь', 'weight':1.01, 'attributes':{'material':'Сталь'}},
+             {'id':'rgd5', 'name':'Граната РГД-5', 'weight':0, 'category':'grenade'},
+             {'id':'molotov', 'name':'Коктейль Молотова', 'weight':.5, 'category':'grenade'}]
+    ground = LocationObject(location_id=actor.location_id, type='ground_item', tile_x=6, tile_y=5,
+                            properties={'contents':items})
+    db.session.add(ground)
+    db.session.commit()
+    url = f'/lobbies/characters/{actor.character_id}/artifact-special'
+    headers = auth_headers(grenade_game['actor_user'])
+    query = f'?location_id={actor.location_id}&item_id=reactive-artifact'
+    choices = client.get(url+'/targets'+query, headers=headers).get_json()['targets']
+    assert [choice['label'] for choice in choices] == ['Металлические детали · земля · 6, 5', 'Граната РГД-5 · земля · 6, 5']
+    payload = {'item_id':'reactive-artifact', 'operation_id':'catch-stack', 'location_id':actor.location_id,
+               'character_revision':actor.character.revision, 'magnet_target':choices[0]['id']}
+    response = client.post(url, json=payload, headers=headers)
+    assert response.status_code == 200, response.get_json()
+    body = response.get_json()
+    caught, = body['data']['inventory']['held']
+    assert caught['quantity'] == 1 and caught['id'] != 'metal-stack' and not body['result']['at_feet']
+    assert ground.properties['contents'][0]['id'] == 'metal-stack' and ground.properties['contents'][0]['quantity'] == 2
+    assert body['data']['_artifact_specials'][0]['remaining_uses'] == 1
+    assert body['data']['_artifact_specials'][0]['cooldown_seconds'] == DAY
+    assert client.post(url, json=payload, headers=headers).get_json()['result']['replayed']
+    assert len(actor.character.data['inventory']['held']) == 1
+    assert ground.properties['contents'][0]['quantity'] == 2
+    moved = actor.character.data_snapshot()
+    moved['inventory']['pockets'] = [moved['inventory']['held'].pop()]
+    saved = client.put(f'/lobbies/characters/{actor.character_id}', json={'data':moved}, headers=headers)
+    assert saved.status_code == 200, saved.get_json()
+    assert actor.character.data['inventory']['pockets'][0]['id'] == caught['id']
+    assert not actor.character.data['inventory']['held']
+
+
+def test_magnet_takes_drawn_weapon_and_drops_it_by_owner_when_hands_are_full(grenade_game):
+    from app.services.artifact_magnet import targets
+    actor, target = magnet_scene(grenade_game, 9)
+    actor.character.data['weapons'] = [{'id':'rifle', 'name':'Винтовка', 'category':'weapon', 'weight':4}]
+    actor.drawn_weapon_index = 0
+    pistol = {'id':'pistol', 'name':'Пистолет', 'category':'weapon', 'weight':.9,
+              'installedMagazine':{'id':'mag', 'category':'magazine', 'emptyWeight':.1, 'ammo':[]}}
+    target.character.data = {'health':{'current':700, 'max':700}, 'weapons':[pistol], 'activeWeaponIndex':0}
+    target.drawn_weapon_index = 0
+    db.session.commit()
+    choice, = targets(actor, actor.character.data)
+    assert 'Пистолет · в руках' in choice['label']
+    result = CombatService.perform_action(actor.location_id, grenade_game['lobby'].gm_id, actor.id, 'artifact_special',
+        attribute_choice={'item_id':'reactive-artifact', 'operation_id':'take-pistol', 'magnet_target':choice['id']})
+    assert result['narrative_action']['at_feet'] and actor.action_points_current == 18
+    assert target.drawn_weapon_index is None and target.character.data['weapons'] == []
+    assert not (actor.character.data.get('inventory') or {}).get('held')
+    ground = LocationObject.query.filter_by(location_id=actor.location_id, tile_x=2, tile_y=5, type='ground_item').one()
+    assert ground.properties['contents'] == [pistol]
+
+
+@pytest.mark.parametrize('blocked_by', ['wall', 'smoke', 'night', 'hidden', 'floor', 'turned', 'stale'])
+def test_magnet_rechecks_visibility_and_item_state_before_spending(grenade_game, blocked_by):
+    from app.services.artifact_magnet import targets
+    actor, _ = magnet_scene(grenade_game)
+    ground = LocationObject(location_id=actor.location_id, type='ground_item', tile_x=6, tile_y=5,
+        properties={'contents':[{'id':'steel', 'name':'Образец', 'weight':.5, 'attributes':{'metallic':True}}]})
+    db.session.add(ground)
+    db.session.commit()
+    choice, = targets(actor, actor.character.data)
+    if blocked_by == 'wall':
+        db.session.add(LocationObject(location_id=actor.location_id, type='wall', tile_x=4, tile_y=5,
+            properties={'dimensions':{'width':1,'depth':1,'height':3}}))
+    elif blocked_by == 'smoke':
+        LocationCombatState.query.filter_by(location_id=actor.location_id).one().area_effects = [
+            {'type':'smoke', 'x':4, 'y':5, 'radius':1}]
+    elif blocked_by == 'night':
+        grenade_game['lobby'].game_time_minutes = 0
+    elif blocked_by == 'turned':
+        actor.facing_x = -1
+    else:
+        key, value = {'hidden':('gm_hidden',True), 'floor':('floor_level',1), 'stale':('test_revision',1)}[blocked_by]
+        ground.properties = {**ground.properties, key:value}
+    db.session.commit()
+    assert choice not in targets(actor, actor.character.data)
+    with pytest.raises(ValidationError, match='Предмет недоступен'):
+        CombatService.perform_action(actor.location_id, grenade_game['lobby'].gm_id, actor.id, 'artifact_special',
+            attribute_choice={'item_id':'reactive-artifact', 'operation_id':'invalid-magnet', 'magnet_target':choice['id']})
+    assert actor.action_points_current == 20 and snapshot(actor.character.data)[0]['remaining_uses'] == 2
 
 
 def test_fiery_tear_removes_darkness_penalties_for_exactly_ten_minutes(monkeypatch):

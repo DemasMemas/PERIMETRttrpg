@@ -10,6 +10,7 @@ from sqlalchemy.orm.attributes import flag_modified
 from app.extensions import db
 from app.models import LobbyCharacter, LocationCharacter, LocationCombatState
 from app.services.artifact_area import AREA_EFFECTS, apply as apply_area
+from app.services.artifact_magnet import MAGNET
 from app.services.artifact_targets import ELECTRIC, electric_damage, select_electric_target
 from app.services.exceptions import ConflictError, NotFoundError, ValidationError
 from app.services.transaction import atomic_operation
@@ -152,7 +153,8 @@ def status(data, item):
     cooldown = _number(state.get('cooldown_seconds'))
     fall_reaction = item.get('name') == FALL_ARTIFACT
     electric = ELECTRIC.get(item.get('name'))
-    supported = item.get('name') in HEALING or item.get('name') in BUFFS or item.get('name') in AREA_EFFECTS or bool(electric) or fall_reaction
+    magnet_target = item.get('name') == MAGNET
+    supported = item.get('name') in HEALING or item.get('name') in BUFFS or item.get('name') in AREA_EFFECTS or bool(electric) or fall_reaction or magnet_target
     reason = None
     if not capacity:
         reason = 'Нужно Выживание не ниже 9'
@@ -170,6 +172,7 @@ def status(data, item):
             'action_points': 1 if level >= 15 else 2, 'available': reason is None, 'reason': reason,
             'power_cost': 50 if item.get('name') == 'Горелка' else None,
             'target_range': electric[0] if electric else None,
+            'magnet_target': magnet_target,
             'fall_reaction': fall_reaction, 'armed': fall_reaction and
             (data.get(STATE_KEY) or {}).get('fall_item_id') == item.get('id')}
 
@@ -183,7 +186,7 @@ def _identity(payload):
     if not isinstance(identity, str) or not 1 <= len(identity) <= 100:
         raise ValidationError('Нужен идентификатор применения артефакта')
     choice = {'item_id': payload.get('item_id')}
-    for key in ('power', 'target_id'):
+    for key in ('power', 'target_id', 'magnet_target'):
         if key in payload:
             choice[key] = payload[key]
     signature = sha256(json.dumps(choice, sort_keys=True).encode()).hexdigest()
@@ -213,6 +216,9 @@ def prepare(actor, data, payload, user_id):
     plan = {'item': item, 'state': state, 'action_points': state['action_points']}
     if state['target_range'] and actor is not None:
         plan['target'], plan['round_number'] = select_electric_target(actor, data, payload.get('target_id'), state['target_range'])
+    if state['magnet_target'] and actor is not None:
+        from app.services.artifact_magnet import select
+        plan['magnet_source'] = select(actor, data, payload.get('magnet_target'))
     if state['power_cost']:
         power = payload.get('power')
         if type(power) is not int or not 1 <= power <= 5:
@@ -236,6 +242,7 @@ def execute(actor, data, payload, user_id, combat=None):
     radiation = 0
     affected = []
     dealt = None
+    extra = {}
     if item['name'] in HEALING:
         limit, rate = HEALING[item['name']]
         radiation = min(limit, _number(health.get('radiation')))
@@ -247,6 +254,9 @@ def execute(actor, data, payload, user_id, combat=None):
         target = plan['target']
         dealt = electric_damage(target, ELECTRIC[item['name']][1], plan['round_number'])
         affected = [target.character_id]
+    elif item['name'] == MAGNET:
+        from app.services.artifact_magnet import apply
+        extra = apply(actor, data, plan['magnet_source'])
     else:
         duration, modifiers = BUFFS[item['name']]
         if plan.get('health_cost'):
@@ -297,7 +307,7 @@ def execute(actor, data, payload, user_id, combat=None):
     ledger = _spend(data, item['id'])
     result = {'name': f"Особое свойство: {item['name']}", 'item_id': item['id'], 'radiation_removed': radiation,
               'healed': max(0, _number(health.get('current')) - before), 'action_points': plan['action_points'] if combat else 0,
-              'roll_required': False, 'replayed': False}
+              'roll_required': False, 'replayed': False, **extra}
     if plan.get('health_cost'):
         result['health_spent'] = plan['health_cost']
     if affected:
@@ -389,10 +399,31 @@ def operate(character_id, user_id, payload):
         raise ValidationError('Персонаж не может действовать')
     if payload.get('character_revision') != character.revision:
         raise ConflictError('Лист изменился')
-    if (plan['item']['name'] in AREA_EFFECTS or plan['state']['target_range']) and not payload.get('location_id'):
+    if (plan['item']['name'] in AREA_EFFECTS or plan['state']['target_range'] or plan['state']['magnet_target']) and not payload.get('location_id'):
         raise ValidationError('Для этого особого свойства нужна подлокация')
     actor = _context(character, payload.get('location_id')) or SimpleNamespace(character=character)
     result = execute(actor, data, payload, user_id)
     character.data = data
     flag_modified(character, 'data')
     return character, result
+
+
+def magnet_targets(character_id, user_id, location_id, item_id):
+    from app.services.artifact_magnet import targets
+    from app.services.character import CharacterService
+    from app.services.combat import CombatService
+    from app.services.item_controllers import _context
+    character = db.session.get(LobbyCharacter, character_id)
+    if not character:
+        raise NotFoundError('Персонаж не найден')
+    CharacterService.check_access(character, user_id, edit=True)
+    data = character.data or {}
+    if not location_id or CombatService._character_condition(data)['state'] != 'active':
+        raise ValidationError('Для Ферромагнита нужен персонаж на подлокации, способный действовать')
+    matches = [item for item in _equipped(data) if item['id'] == item_id]
+    if len(matches) != 1 or matches[0]['name'] != MAGNET or matches[0].get('quantity', 1) != 1:
+        raise ValidationError('Выберите Ферромагнит')
+    state = status(data, matches[0])
+    if not state['available']:
+        raise ValidationError(state['reason'])
+    return targets(_context(character, location_id), data)

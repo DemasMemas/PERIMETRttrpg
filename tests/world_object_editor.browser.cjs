@@ -66,7 +66,7 @@ async function connect(url) {
     };
     const call = (method, params = {}) => new Promise((resolve, reject) => {
         const id = ++nextId;
-        const timer = setTimeout(() => { waiting.delete(id); reject(new Error(`Timed out: ${method}`)); }, ['fog-water','water-final'].includes(process.env.VTT_SAFE_SCENARIO)||process.env.VTT_WATER_FINAL==='1'||process.env.VTT_WATER_GEOMETRY==='1'||process.env.VTT_SECONDARY_TOOLS==='1'||process.env.VTT_ROAD_TERRAIN==='1'||process.env.VTT_BRIDGE_BANK==='1'?90000:30000);
+        const timer = setTimeout(() => { waiting.delete(id); reject(new Error(`Timed out: ${method}`)); }, ['artifacts','fog-water','water-final'].includes(process.env.VTT_SAFE_SCENARIO)||process.env.VTT_WATER_FINAL==='1'||process.env.VTT_WATER_GEOMETRY==='1'||process.env.VTT_SECONDARY_TOOLS==='1'||process.env.VTT_ROAD_TERRAIN==='1'||process.env.VTT_BRIDGE_BANK==='1'?90000:30000);
         waiting.set(id, message => {
             clearTimeout(timer);
             if (message.closed && method !== 'Browser.close') reject(new Error(`Browser connection closed: ${method}`));

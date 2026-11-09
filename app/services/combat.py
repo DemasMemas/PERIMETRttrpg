@@ -690,7 +690,7 @@ class CombatService:
         return lower
 
     @staticmethod
-    def _cover_analysis(location_id, shooter, target, *, objects=None):
+    def _cover_analysis(location_id, shooter, target, *, objects=None, point_height=None):
         from app.services.location_navigation import level_of, contains, surface, ground, opening_at
         from app.services.terrain_los import TerrainMesh
         location = db.session.get(Location, location_id)
@@ -731,6 +731,8 @@ class CombatService:
                 'chest': 0.3, 'left_arm': 0.3, 'right_arm': 0.3, 'head': 0.4,
             },
         }[CombatService._posture_key(target)]
+        if point_height is not None:
+            zone_heights = {'point': point_height}
         shooter_eye += base_height(shooter)
         target_base=base_height(target)
         zone_heights = {zone: height + target_base for zone, height in zone_heights.items()}
@@ -1726,7 +1728,7 @@ class CombatService:
         from app.services.auto_injector import loaded as injector_loaded
         carried_items.extend(item for _,item in injector_loaded(equipment.get('armor')))
         carried_items.extend(entry['item'] for entry in ((character_data.get('crafting') or {}).get('current') or {}).get('escrow',[]))
-        for key in ('backpack', 'pockets'):
+        for key in ('backpack', 'pockets', 'held'):
             values = inventory.get(key)
             if isinstance(values, list):
                 carried_items.extend(values)
@@ -3616,8 +3618,9 @@ class CombatService:
         data = loc_char.character.data if loc_char.character and isinstance(loc_char.character.data, dict) else {}
         from app.services.portable_lights import held_hand
         from app.services.weapon_grip import pair
+        from app.services.held_items import items as held_items
         if pair(loc_char):return False
-        occupied_extra = int(bool(data.get('health', {}).get('combatMeta', {}).get('heldWaterItem')))+int(held_hand(data))
+        occupied_extra = int(bool(data.get('health', {}).get('combatMeta', {}).get('heldWaterItem')))+int(held_hand(data))+len(held_items(data))
         if loc_char.drawn_weapon_index is None:
             return occupied_extra<2
         data = loc_char.character.data if loc_char.character and isinstance(loc_char.character.data, dict) else {}
@@ -3632,7 +3635,7 @@ class CombatService:
         return hands(data) + occupied_extra < 2
 
     @staticmethod
-    def _has_usable_free_hand(loc_char):
+    def _has_usable_free_hand(loc_char, *, reserved_hands=0):
         if not CombatService._has_free_hand(loc_char):
             return False
         data = (
@@ -3646,7 +3649,8 @@ class CombatService:
         weapon=weapons[index] if type(index) is int and 0<=index<len(weapons) else {}
         natural=weapon.get('naturalWeapon') or CombatService._template_attributes(weapon).get('natural_weapon')
         from app.services.portable_lights import held_hand
-        occupied_hands=(hands(data) if weapon and not natural else 0)+int(bool(((data.get('health') or {}).get('combatMeta') or {}).get('heldWaterItem')))+int(held_hand(data))
+        from app.services.held_items import items as held_items
+        occupied_hands=(hands(data) if weapon and not natural else 0)+int(bool(((data.get('health') or {}).get('combatMeta') or {}).get('heldWaterItem')))+int(held_hand(data))+len(held_items(data))+reserved_hands
         return functional_arms(data) > occupied_hands
 
     @staticmethod

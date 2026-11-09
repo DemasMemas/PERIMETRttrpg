@@ -49,8 +49,24 @@ def apply(actor, data, name):
 def publish(result):
     from app.services.character_events import emit_character_update
     ids = result.pop('_affected_character_ids', [])
-    if result.get('replayed') or not ids:
+    ground_changes = result.pop('_magnet_ground_changes', {})
+    if result.get('replayed'):
         return
-    for character in LobbyCharacter.query.filter(LobbyCharacter.id.in_(ids)).all():
-        emit_character_update({'character_id': character.id, 'updates': {'data': character.data_snapshot()},
-                               'source': 'artifact_special'})
+    if ids:
+        for character in LobbyCharacter.query.filter(LobbyCharacter.id.in_(ids)).all():
+            emit_character_update({'character_id': character.id, 'updates': {'data': character.data_snapshot()},
+                                   'source': 'artifact_special'})
+    if ground_changes:
+        from app.extensions import socketio
+        from app.schemas import LocationObjectSchema
+        location_id = result['_vision_location_id']
+        for object_id, event in ground_changes.items():
+            payload = {'location_id': location_id}
+            if event == 'deleted':
+                payload['object_id'] = object_id
+            else:
+                obj = db.session.get(LocationObject, object_id)
+                if not obj:
+                    continue
+                payload['object'] = LocationObjectSchema().dump(obj)
+            socketio.emit(f'location_object_{event}', payload, room=f'location_{location_id}')

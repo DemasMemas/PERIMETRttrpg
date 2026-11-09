@@ -8,6 +8,7 @@ from sqlalchemy.orm.attributes import flag_modified
 from app.extensions import db
 from app.models import LobbyCharacter, LocationCharacter, LocationCombatState, LocationObject, Location
 from app.services.exceptions import ValidationError, PermissionDenied, ConflictError, NotFoundError
+from app.services.held_items import items as held_items
 from app.services.transaction import atomic_operation
 from app.services.action_journal import journaled
 
@@ -591,7 +592,7 @@ def operate(character_id,user_id,payload):
                 if not same_dynamo:
                     if held_hand(data):raise ValidationError('Рука уже занята переносным прибором')
                     if present and not CombatService._has_usable_free_hand(present):raise ValidationError('Для КПК нужна свободная рука')
-                    if not present and functional_arms(data)-int(bool(meta.get('heldWaterItem')))-int(bool(meta.get('bodyTransport')))<1:raise ValidationError('Для КПК нужна свободная рука')
+                    if not present and functional_arms(data)-int(bool(meta.get('heldWaterItem')))-int(bool(meta.get('bodyTransport')))-len(held_items(data))<1:raise ValidationError('Для КПК нужна свободная рука')
                 else:meta.pop('pdaDynamo',None)
                 meta['heldPda']={'id':selected['id']}
                 cost=max(1,int(calculate_inventory_access(data,path,selected)['retrieval_action_points'])) if actor and not same_dynamo else 0
@@ -620,7 +621,7 @@ def operate(character_id,user_id,payload):
                 if was_held:meta.pop('heldPda',None)
                 elif present:
                     if not CombatService._has_usable_free_hand(present):raise ValidationError('Для динамо-машины нужна свободная рука')
-                elif functional_arms(data)-int(bool(meta.get('heldWaterItem')))-int(bool(meta.get('bodyTransport')))<1:
+                elif functional_arms(data)-int(bool(meta.get('heldWaterItem')))-int(bool(meta.get('bodyTransport')))-len(held_items(data))<1:
                     raise ValidationError('Для динамо-машины нужна свободная рука')
                 meta['pdaDynamo']={'id':selected['id'],'elapsed_seconds':0}
         elif operation=='pda_toggle':
@@ -690,7 +691,7 @@ def operate(character_id,user_id,payload):
         meta=data.get('health',{}).get('combatMeta',{})
         primary=actor.drawn_weapon_index if actor else data.get('activeWeaponIndex')
         armed=type(primary) is int and 0<=primary<len(data.get('weapons') or [])
-        if (held_hand(data) or functional_arms(data)<(2 if armed or meta.get('heldWaterItem') else 1)
+        if (held_hand(data) or functional_arms(data)-len(held_items(data))<(2 if armed or meta.get('heldWaterItem') else 1)
                 or meta.get('bodyTransport') or meta.get('secondaryWeaponId') or actor and actor.grapple_target_id):
             raise ValidationError('Для источника света нужна свободная действующая рука')
         from app.services.magazine import inventory_slot
@@ -750,7 +751,7 @@ def operate(character_id,user_id,payload):
             meta=data.get('health',{}).get('combatMeta',{})
             if meta.get('secondaryWeaponId') and any(item.get('id')==meta['secondaryWeaponId'] for item in data.get('weapons') or []):
                 raise ValidationError('Обе руки заняты оружием')
-            if held_hand(data) or functional_arms(data)<(2 if armed or meta.get('heldWaterItem') else 1) or meta.get('bodyTransport') or actor and actor.grapple_target_id:
+            if held_hand(data) or functional_arms(data)-len(held_items(data))<(2 if armed or meta.get('heldWaterItem') else 1) or meta.get('bodyTransport') or actor and actor.grapple_target_id:
                 raise ValidationError('Для ручного фонаря нужна свободная действующая рука')
             if armed and meta.get('heldWaterItem'):raise ValidationError('Руки заняты оружием и водой')
             if actor:cost=max(1,int(calculate_inventory_access(data,path,selected)['retrieval_action_points']))

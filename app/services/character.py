@@ -54,6 +54,8 @@ def _preserve_intoxication_status(current_data, incoming_data, *, is_gm=True):
     preserve(current_data, incoming_data)
     from app.services.weapon_grip import preserve as preserve_grip
     preserve_grip(current_data, incoming_data)
+    from app.services.held_items import preserve as preserve_held
+    preserve_held(current_data, incoming_data)
     from app.services.effects import is_intoxication_coma
     current = (current_data or {}).get('health') or {}
     health = incoming_data.setdefault('health', {})
