@@ -12745,8 +12745,10 @@ class CombatService:
         # Один снимок геометрии на сборку ответа, без кеша между действиями.
         scene_objects=LocationObject.query.filter_by(location_id=location.id).all()
         from app.services.portable_lights import bindings, ground_sources
+        from app.services.artifact_effects import ignition_aura_range
         from app.services.artifact_jamming import local_sources
-        light_actors=[item for item in characters if item.character and bindings(item.character.data)]
+        light_actors=[item for item in characters if item.character and
+                      (bindings(item.character.data) or ignition_aura_range(item.character.data))]
         jammers=local_sources(location.id,characters)
 
         return {
@@ -18692,7 +18694,13 @@ class CombatService:
     @staticmethod
     def _movement_idle_snapshot(location_id, user_id, changed):
         from app.services.artifact_jamming import local_sources
-        if changed or local_sources(location_id):
+        from app.services.artifact_effects import ignition_aura_range
+        if changed:
+            return CombatService.get_state(location_id, user_id)
+        people = CombatService._unique_location_characters(LocationCharacter.query.filter_by(location_id=location_id).all())
+        if local_sources(location_id, people) or any(
+            person.character and ignition_aura_range(person.character.data) for person in people
+        ):
             return CombatService.get_state(location_id, user_id)
         return None
 

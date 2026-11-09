@@ -6602,7 +6602,7 @@ function hasLineOfSight(sourceX, sourceY, targetX, targetY, sourceHeight = null,
     );
 }
 
-function isPointVisibleToPlayer(x, y, targetHeight, sources) {
+function isPointVisibleToPlayer(x, y, targetHeight, sources, visibleGlow = false) {
     return sources.some((source) => {
         const sourceX = Number(source.posX);
         const sourceY = Number(source.posY);
@@ -6610,14 +6610,18 @@ function isPointVisibleToPlayer(x, y, targetHeight, sources) {
         const dy = y - sourceY;
         const distance = Math.hypot(dx, dy);
         if (!distance) return true;
-        if (!sourceHasArtifactDaylightVision(source) && darknessFactorAt(x, y, false) < 0.12) return false;
+        const eyeHeight = visionEyeHeight(source);
+        const auraLit = source.ignitionAuraRange > 0 &&
+            Math.hypot(distance, targetHeight - eyeHeight) <= source.ignitionAuraRange;
+        if (auraLit) return hasLineOfSight(sourceX, sourceY, x, y, eyeHeight, targetHeight);
+        if (!visibleGlow && !sourceHasArtifactDaylightVision(source) && darknessFactorAt(x, y, false) < 0.12) return false;
         if (distance > FOG_VIEW_RADIUS) return false;
         const facingX = Number(source.facingX) || 0;
         const facingY = Number(source.facingY ?? 1);
         const facingLength = Math.hypot(facingX, facingY);
         const cosine = (dx * facingX + dy * facingY) / (distance * facingLength);
         if (cosine < Math.cos(FOG_VIEW_HALF_ANGLE)) return false;
-        return hasLineOfSight(sourceX, sourceY, x, y, visionEyeHeight(source), targetHeight);
+        return hasLineOfSight(sourceX, sourceY, x, y, eyeHeight, targetHeight);
     });
 }
 
@@ -6632,6 +6636,7 @@ function isCharacterVisibleToPlayer(entry, sources, includeScouted = true) {
     const height = { standing: 1.7, sitting: 1.1, prone: 0.4 }[entry.posture] ?? 1.7;
     return isPointVisibleToPlayer(
         Number(entry.posX), Number(entry.posY), (entry.physicalHeight ?? getTileHeight(entry.posX, entry.posY)) + height, sources,
+        entry.ignitionAuraRange > 0,
     );
 }
 
@@ -8152,6 +8157,7 @@ export function setCombatState(state) {
             entry.hpZones = character.hp_zones;
             entry.effects = character.effects;
             entry.artifactDaylightVision = character.artifact_daylight_vision === true;
+            entry.ignitionAuraRange = character.portable_lights?.find(source => source.ignition_aura)?.range || 0;
         }
         updateCharacterPosition(character.character_id, character.x, character.y, { ...character, deferRefresh: true });
         updateCharacterTeamVisual(character.character_id, character.team_name, character.team_color);

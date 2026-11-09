@@ -3466,10 +3466,10 @@ def spawn_character_in_location(lobby_id, location_id):
                 'location_id': location_id,
                 'updates': [{'x': x, 'z': y, 'objects': location.tiles_data[y][x].get('objects', [])}],
             }, room=f'location_{location_id}')
-    from app.services.artifact_jamming import local_sources
-    if existing or local_sources(location_id):
+    state_snapshot = CombatService._movement_idle_snapshot(location_id, user_id, bool(existing))
+    if state_snapshot:
         socketio.emit(
-            'combat_state_updated', CombatService.get_state(location_id, user_id),
+            'combat_state_updated', state_snapshot,
             room=f"location_{location_id}",
         )
 
@@ -3558,7 +3558,10 @@ def remove_character_from_location(
             )
 
     from app.services.artifact_jamming import aura
-    removed_jammer = any(item.character and aura(item.character.data)[1] for item in location_characters)
+    from app.services.artifact_effects import ignition_aura_range
+    removed_artifact_source = any(item.character and (
+        aura(item.character.data)[1] or ignition_aura_range(item.character.data)
+    ) for item in location_characters)
     for location_character in location_characters:
         db.session.delete(location_character)
     db.session.commit()
@@ -3571,7 +3574,7 @@ def remove_character_from_location(
         },
         room=f"location_{location_id}",
     )
-    if combat_state or removed_jammer:
+    if combat_state or removed_artifact_source:
         socketio.emit(
             'combat_state_updated',
             CombatService.get_state(location_id, lobby.gm_id),

@@ -46,6 +46,10 @@ def equipped_artifacts(character_data):
     return found
 
 
+def ignition_aura_range(character_data):
+    return 5 if any(item.get('name') == 'Ядро возгорания' for item in equipped_artifacts(character_data)) else 0
+
+
 def _signed(text, pattern):
     match = re.search(pattern + r'\s*([+-]\d+)', text, re.IGNORECASE)
     return int(match.group(1)) if match else 0

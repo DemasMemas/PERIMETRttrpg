@@ -354,14 +354,22 @@ def advance_lobby(lobby,seconds):
 
 def ready_sources(actor,*,objects=None,jammers=None):
     from app.services.combat import CombatService
-    from app.services.artifact_effects import device_block_reason
+    from app.services.artifact_effects import device_block_reason, ignition_aura_range
     from app.services.artifact_jamming import for_actor
     data=(actor.character.data if actor.character else {}) or {}
+    result=[]
+    radius=ignition_aura_range(data)
+    if radius and not actor.gm_hidden:
+        height=mount_height('belt',actor.posture)
+        result.append({'id':f'ignition-aura-{actor.id}','mount':'belt','radial':True,'improved':True,
+            'ignition_aura':True,'range':radius,'mount_height':height,
+            'x':actor.pos_x+.5,'z':actor.pos_y+.5,'floor_level':actor.floor_level or 0,
+            'y':CombatService.physical_position(actor,objects=objects)['height']+height})
     active=[binding for binding in bindings(data) if binding.get('on')]
-    if not active:return []
+    if not active:return result
     jammed_by=for_actor(actor,sources=jammers,objects=objects)
     paths={item.get('id'):path for path,item in walk(data)};items={item.get('id'):item for _,item in walk(data)}
-    result=[];weapons=data.get('weapons') or [];primary=actor.drawn_weapon_index
+    weapons=data.get('weapons') or [];primary=actor.drawn_weapon_index
     for binding in active:
         item=items.get(binding.get('id'))
         if not item or device_block_reason(data,item,jammed_by=jammed_by):continue
@@ -429,18 +437,29 @@ def active_his_sources(location_id):
 def covers(actor,target,*,wide=False,objects=None,jammers=None):
     from app.services.combat import CombatService
     sources=ready_sources(actor,objects=objects,jammers=jammers)
-    if not sources or actor.id==target.id:return []
+    if actor.id==target.id:return [source for source in sources if source.get('ignition_aura')]
+    if not sources:return []
     # Проверка тела и перекрытий использует действующую геометрию света/взрывов.
     dx=target.pos_x-actor.pos_x;dz=target.pos_y-actor.pos_y
     dy=CombatService.physical_position(target,objects=objects)['height']-CombatService.physical_position(actor,objects=objects)['height']
     length=math.sqrt(dx*dx+dz*dz+dy*dy)
     facing=math.hypot(actor.facing_x or 0,actor.facing_y or 0)
-    if not facing:return []
-    dot=(dx*(actor.facing_x or 0)+dz*(actor.facing_y or 0))/(length*facing) if length>1e-9 else 1
+    dot=(dx*(actor.facing_x or 0)+dz*(actor.facing_y or 0))/(length*facing) if length>1e-9 and facing else 1
+    visible=[]
+    for source in sources:
+        if length>source['range']+1e-9:
+            continue
+        if source.get('ignition_aura'):
+            if (actor.floor_level or 0)==(target.floor_level or 0):
+                visible.append(source)
+        elif facing:
+            angle=math.pi/4 if wide else math.atan(source['end_width']/2/source['range'])
+            if source.get('radial') or dot>=math.cos(angle)-1e-9:
+                visible.append(source)
+    if not visible:return []
     if CombatService._cover_analysis(actor.location_id,actor,target,objects=objects).get('zones',{}).get('head'):
         return []
-    return [source for source in sources if length<=source['range'] and (source.get('radial') or
-        dot>=math.cos(math.pi/4 if wide else math.atan(source['end_width']/2/source['range']))-1e-9)]
+    return visible
 
 
 def illumination(target,*,actors=None,objects=None,jammers=None):
@@ -471,10 +490,12 @@ def shooting(actor,target,fire_mode):
     jammers=local_sources(actor.location_id,people)
     scene_objects=LocationObject.query.filter_by(location_id=actor.location_id).all()
     jammed_by=for_actor(actor,sources=jammers,objects=scene_objects)
-    nvg=uses_nvg(actor.character.data or {},jammed_by=jammed_by);bonus=0;improved=False
+    nvg=uses_nvg(actor.character.data or {},jammed_by=jammed_by);bonus=0;improved=False;aura_lit=False
     for source in people:
         lit=covers(source,target,objects=scene_objects,jammers=jammers)
-        if lit:bonus=2;improved=improved or any(item['improved'] for item in lit)
+        aura_lit=aura_lit or any(item.get('ignition_aura') for item in lit)
+        if any(not item.get('ignition_aura') for item in lit):bonus=2
+        improved=improved or any(item['improved'] for item in lit)
     from app.services.lighting_rules import _light_path_open
     if any(source['floor_level']==(target.floor_level or 0)
             and math.hypot(source['x']-target.pos_x-.5,source['z']-target.pos_y-.5)<=source['range']
@@ -487,7 +508,7 @@ def shooting(actor,target,fire_mode):
     from app.services.lighting_rules import world_is_dark
     dark=world_is_dark(actor.location.lobby.game_time_minutes) or CombatService._is_dark_at_character(actor.location,actor) or CombatService._is_dark_at_character(actor.location,target)
     if not dark:bonus=penalty=0
-    return {'accuracy':(bonus-penalty)*(2 if nvg else 1), 'lit':bool(bonus), 'improved':improved,
+    return {'accuracy':(bonus-penalty)*(2 if nvg else 1), 'lit':bool(bonus or dark and aura_lit), 'improved':improved,
         'aimed_blocked':bool(dark and nvg and facing and fire_mode=='aimed'), 'jammed_by':jammed_by}
 
 

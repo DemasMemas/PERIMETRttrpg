@@ -256,7 +256,10 @@ export function createPortableLightRenderer(THREE,scene) {
                 let entry=lights.get(source.id);
                 if (!entry) {
                     if(source.radial){
-                        const light=new THREE.PointLight('#dcf0aa',12,source.range||5,1);shadowSettings(light);
+                        const light=source.ignition_aura
+                            ? new THREE.PointLight('#ffab64',5,source.range,1)
+                            : new THREE.PointLight('#dcf0aa',12,source.range||5,1);
+                        shadowSettings(light);
                         scene.add(light);entry={light,source};
                     }else{
                         prepare();entry=spotPool.find(slot=>!slot.active);

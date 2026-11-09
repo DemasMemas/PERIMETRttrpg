@@ -662,6 +662,27 @@ module.exports=async({page,request,token,lobby,loc,locationId,rules,safeSession}
     assert.equal(blow.character.action_points_current,gravityBefore-3);
     assert.equal((await getSponge()).data._artifact_specials[0].remaining_uses,1);
     await request(loc+'/combat/end',{},token);
+    await page.evaluate('window.closeCharacterSheet();true');
+    const auraClock=await request('/lobbies/'+lobby.id,null,token,'GET');
+    await request('/lobbies/'+lobby.id+'/time',{game_day:auraClock.game_day,game_time_minutes:120},token,'PATCH');
+    await page.until(`window.lobbyGameTimeMinutes===120&&${sun}<.15`,'Ночь для ауры возгорания');
+    const auraCamera=(x,z)=>page.evaluate(`(()=>{const g=L.sceneGraphicsForTest();
+        g.controls.target.set(45.5,1,64.5);g.camera.position.set(${x},9,${z});g.controls.update();return true;})()`);
+    const auraLight="L.sceneGraphicsForTest().scene.children.find(child=>child.isPointLight&&child.color.getHexString()==='ffab64')";
+    await auraCamera(52,71);
+    await capture('ignition-aura-before');
+    await equipSpecial('Ядро возгорания','native-ignition-aura');
+    await page.until(`${auraLight}?.distance===5&&${auraLight}?.intensity===5`,'Появилась тёплая аура радиусом 5 м');
+    const auraBefore=await page.evaluate(`${auraLight}.position.z`);
+    await capture('ignition-aura-active');
+    await request(loc+'/spawn_character',{character_id:spongeBearer.id,tile_x:45,tile_y:62,force_relocate:true},token);
+    await page.until(`${auraLight}?.position.z<${auraBefore-1}`,'Свет следует за носителем');
+    await auraCamera(39,67);
+    await capture('ignition-aura-side');
+    const withoutAura=await getSponge();
+    withoutAura.data.equipment.armor.containers=[];
+    await request(spongeUrl,{data:withoutAura.data},token,'PUT');
+    await page.until(`!(${auraLight})`,'Снятие артефакта убрало свет');
     fs.writeFileSync(path.join(safeSession.artifacts,'artifact-special.json'),JSON.stringify({scene:'Припять',artifact:rule.name,
         preparedWornSeconds:86394,realRoundSeconds:6,readyAfterRealRound:true,realButtonActivations:2,apPerUse:1,
         first:{radiation:0,hp:200,cooldown:86400},second:{radiation:0,hp:300,cooldown:86394},reopened:true,
@@ -686,7 +707,8 @@ module.exports=async({page,request,token,lobby,loc,locationId,rules,safeSession}
         crystalCloud:{realButton:true,visible:true,movedWithBearer:true,expired:true},
         plasmaCord:{realButton:true,groundClick:true,position:[plasmaOwner.x,plasmaOwner.y],remainingUses:1},
         pole:{realButton:true,groundTransfer:true,electronicsDestroyed:true,nearbyLampRestoredOutsideRadius:true},
-        gravityCore:{realButton:true,baseDamage:strike.base_damage,zone:strike.zone,destination:[thrownTarget.x,thrownTarget.y],totalActionPoints:3}},null,2));
+        gravityCore:{realButton:true,baseDamage:strike.base_damage,zone:strike.zone,destination:[thrownTarget.x,thrownTarget.y],totalActionPoints:3},
+        ignitionAura:{radius:5,night:true,movedWithBearer:true,removedWithArtifact:true}},null,2));
     console.log('Особые свойства: подготовленное ношение+реальный раунд, две кнопки Ядра твари по1ОД без рук, радиация→ОЗ; общий срок после первого, переоткрытие.');
     console.log('Генератор: кнопка без радиации, фактический штраф перемещения−1→−3,600→594секунд за раунд; истечение по игровому времени возвращает−1.');
     console.log('Сердце жара: настоящая кнопка и настоящее горение; первый раунд0урона, после истечения50.');

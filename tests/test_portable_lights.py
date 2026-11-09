@@ -241,6 +241,39 @@ def test_improved_light_removes_residual_penalty(grenade_game):
     assert light['lit'] and light['penalty']==0
 
 
+def test_ignition_core_lights_a_five_meter_radius_without_flashlight_bonus(grenade_game):
+    actor=grenade_game['actor_location']
+    target=grenade_game['target_location']
+    data=deepcopy(actor.character.data)
+    artifact={'id':'ignition-test','name':'Ядро возгорания','category':'artifact'}
+    data.setdefault('equipment',{})['armor']={'containers':[{'item':artifact}]}
+    actor.character.data=data
+    actor.pos_x,actor.pos_y=10,10
+    actor.facing_x,actor.facing_y=1,0
+    target.pos_x,target.pos_y=actor.pos_x-5,actor.pos_y
+    grenade_game['lobby'].game_time_minutes=0
+    db.session.commit()
+
+    source,=ready_sources(actor)
+    assert source['range']==5 and source['radial'] and source['ignition_aura']
+    assert illumination(actor)['lit']
+    assert illumination(target)['lit']
+    assert shooting(actor,target,'aimed')['accuracy']==0
+    assert shooting(actor,target,'aimed')['lit']
+
+    target.pos_x=actor.pos_x-5.01
+    assert not illumination(target)['lit']
+    target.pos_x=actor.pos_x-3
+    target.floor_level=1
+    assert not illumination(target)['lit']
+    target.floor_level=0
+    data=deepcopy(actor.character.data)
+    data['equipment']['armor']['containers'].clear()
+    actor.character.data=data
+    assert not ready_sources(actor)
+    assert not illumination(target)['lit']
+
+
 def test_hand_light_changes_ergonomics_and_occupies_hand(client,grenade_game,auth_headers):
     actor=install(grenade_game['actor_location'])
     assert operate(client,grenade_game,auth_headers,'prepare').status_code==200
