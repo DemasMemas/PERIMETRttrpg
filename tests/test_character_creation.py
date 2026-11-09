@@ -1150,10 +1150,27 @@ def test_background_penalties_do_not_discount_final_raise():
     assert ledger['traits']['points']-ledger['final_raises']['points']==3
 
 
-def test_positive_trait_increases_pricing_level_without_discount_from_lowering():
-    data=build_character('Специалист после понижений',plan(raises={'physical.agility':7},lowers={'physical.agility':2},
+def test_specialist_counts_at_specialization_before_the_first_raise_and_lowering():
+    data=build_character('Специалист',plan(raises={'physical.agility':7},lowers={'physical.agility':2},
         traits=[trait('Специалист',skill='physical.agility')],finalRaises={'physical.agility':1}))
     ledger={row['stage']:row for row in data['creation']['ledger']}
+    assert ledger['specializations']['levels']['physical.agility']==8
+    assert ledger['raises']['levels']['physical.agility']==15
+    assert ledger['specializations']['points']-ledger['raises']['points']==17
     assert ledger['traits']['levels']['physical.agility']==9
     assert data['skills']['physical']['agility']['base']==10
     assert ledger['traits']['points']-ledger['final_raises']['points']==6
+
+
+def test_specialist_reprices_helper_raises_and_rejects_overspending():
+    skill='physical.agility'
+    selected=plan('Помощник',raises={skill:10})
+    assert skill not in selected['specializations']
+    ordinary=build_character('Помощник',selected)
+    assert ordinary['skills']['physical']['agility']['base']>=15
+    selected['traits']=[trait('Специалист',skill=skill)]
+    preview=build_character('Помощник',selected,finalize=False)
+    ledger={row['stage']:row for row in preview['creation']['ledger']}
+    assert ledger['raises']['points']<0
+    with pytest.raises(ValidationError,match='Недостаточно очков'):
+        build_character('Помощник',selected)

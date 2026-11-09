@@ -255,6 +255,7 @@ export async function openCharacterCreation(lobbyId, onCreated) {
             const specialized = skills.filter(([path]) => { const [group, key] = path.split('.'); return latestData.skills[group][key].specialized; }).length;
             if (specialized < skills.length) return `Распределите оставшиеся специализации: ${latestData.skills.specializations}.`;
         }
+        if (step >= 2 && ledger.find(entry => entry.stage === 'raises')?.points < 0) return 'Не хватает очков на шаге «Повышение навыков». Уменьшите количество повышений.';
         if (step >= 2 && selected?.points < 0 || step >= 6 && latestData.skills.skillPoints < 0) return 'Не хватает очков навыков. Уменьшите расходы на этом или предыдущих шагах.';
         if (step >= 7 && latestData.inventory.money < 0) return 'Баланс снаряжения не должен быть отрицательным.';
         return '';

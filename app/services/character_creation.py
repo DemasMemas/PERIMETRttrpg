@@ -165,6 +165,13 @@ def build_character(name,plan,*,roll_history=True,finalize=True):
             for path in selected:levels[path]=max(1,levels[path]+e['amount'])
     apply_background(True);snapshot('background_positive')
     for path in specs:levels[path]+=3
+    trait_choices=_list(plan.get('traits',[]),'Особые черты',3)
+    specialist_id=next(entry['id'] for entry in c['traits'] if entry['name']=='Специалист')
+    selected_specs=set(specs);counts={}
+    early_traits={}
+    for index,choice in enumerate(trait_choices):
+        if isinstance(choice,dict) and choice.get('id')==specialist_id:
+            early_traits[index],_=apply_trait_choice(choice,levels,selected_specs,counts)
     snapshot('specializations')
     def raise_skills(key,price_levels=None):
         nonlocal points
@@ -193,8 +200,11 @@ def build_character(name,plan,*,roll_history=True,finalize=True):
         if levels[path]<1:raise ValidationError('При ручном понижении навык не может стать меньше 1')
     points+=count;snapshot('lowers')
     apply_background(False);snapshot('background_negative')
-    traits=[];counts={};selected_specs=set(specs);weapon_choices=[]
-    for choice in _list(plan.get('traits',[]),'Особые черты',3):
+    traits=[];weapon_choices=[]
+    for index,choice in enumerate(trait_choices):
+        if index in early_traits:
+            traits.append(early_traits[index])
+            continue
         before_trait=dict(levels)
         item,weapon_choice=apply_trait_choice(choice,levels,selected_specs,counts)
         for path in paths:final_price_levels[path]+=max(0,levels[path]-before_trait[path])

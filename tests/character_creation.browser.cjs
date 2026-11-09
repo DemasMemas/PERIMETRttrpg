@@ -289,9 +289,22 @@ module.exports=async({page,request,token,lobby,base,connect,debugPort,safeSessio
     await set(`${root} [name=backgroundId]`,rules.backgrounds.find(b=>b.name==='Помощник').id);
     await step(1);
     for(const skill of rules.skillOrder.slice(0,13))await click(`${root} [data-specialization="${skill}"]`);
+    const specialistSkill=rules.skillOrder[13];
+    const specialistRaise=`${root} [data-stage=raises][data-skill="${specialistSkill}"]`;
+    await step(2);
+    await set(specialistRaise,10);
     await step(5);
     for(const index of [0,1,2])await set(`${root} [data-trait="${index}"]`,trait('Специалист'));
+    await set(`${root} [data-trait-choice="0"] [data-choice=skill]`,specialistSkill);
     await page.until(`document.querySelector('${root} [data-specs-remaining]').textContent.includes('все навыки выбраны')`,'все 16 навыков специализированы');
+    await page.until(`document.querySelector('${root} [data-points-remaining]').classList.contains('creation-negative')`,
+        'Специалист пересчитал предыдущие покупки навыка');
+    await click(`${root} [data-go-step="7"]`);
+    await page.until(`document.querySelector('${root} [data-creation-error]').textContent.includes('Повышение навыков')`,
+        'Мастер показывает, на каком шаге не хватает очков');
+    await step(2);
+    await set(specialistRaise,1);
+    await step(5);
     await step(7);await step(8);await click(`${root} [name=zoneHistory][value=yes]`);
     await request('/__history_fixture/'+safeSession.runId,{},token);
     await click(`${root} [type=submit]`);
