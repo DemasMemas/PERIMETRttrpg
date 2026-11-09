@@ -48,6 +48,33 @@ module.exports = async ({ page, request, token, lobby, login, profile, base, con
     };
     await page.evaluate(`window.openCharacterSheet(${character.id})`);
     await page.until(`document.body.classList.contains('character-sheet-open') && document.querySelectorAll('#sheet-content .sheet-pin').length>10`, 'sheet pin controls');
+    const alignment = await page.evaluate(`(()=>{
+        const form=document.getElementById('character-sheet-form');
+        const numbers=[...form.querySelectorAll('input[type=number]')];
+        return {
+            checked:numbers.length,
+            offCenter:numbers.filter(input=>getComputedStyle(input).textAlign!=='center')
+                .map(input=>input.name || input.dataset.widgetKey || input.id || 'поле без имени'),
+            vitalHeights:[...form.querySelectorAll('.health-vitals-grid .form-control, .health-vitals-grid .health-readonly-value, .health-vitals-grid .health-need-controls')]
+                .map(control=>control.getBoundingClientRect().height).filter(height=>height>0)
+        };
+    })()`);
+    assert.ok(alignment.checked > 30);
+    assert.deepEqual(alignment.offCenter.slice(0, 12), [], `Смещение в ${alignment.offCenter.length} числовых полях листа`);
+    assert.ok(alignment.vitalHeights.length > 5);
+    assert.ok(Math.max(...alignment.vitalHeights) - Math.min(...alignment.vitalHeights) < 1,
+        `Поля здоровья и счётчики одной высоты: ${alignment.vitalHeights.join(', ')}`);
+    for (const [width,height] of [[1920,1080],[1600,900],[1366,768],[1280,720]]) {
+        await page.call('Emulation.setDeviceMetricsOverride', {width,height,deviceScaleFactor:1,mobile:false});
+        assert.equal(await page.evaluate(`(()=>{
+            const rows=[...document.querySelectorAll('.character-identity-fields input')].map(input=>input.getBoundingClientRect());
+            return rows.length===3&&rows.every(row=>Math.abs(row.bottom-rows[0].bottom)<1&&row.width>60);
+        })()`),true,`Имя, возраст и организация выровнены при ${width}×${height}`);
+        if (width===1366) fs.writeFileSync(path.join(artifactDir,'sheet-basic-numbers-1366.png'),
+            Buffer.from((await page.call('Page.captureScreenshot',{format:'png'})).data,'base64'));
+    }
+    await page.call('Emulation.clearDeviceMetricsOverride');
+    console.log(JSON.stringify({sheetNumberAlignment:alignment.checked,vitalsHeight:alignment.vitalHeights[0]}));
     assert.equal(await page.evaluate(`getComputedStyle(document.querySelector('.lobby-menu')).visibility==='hidden' && getComputedStyle(document.getElementById('panel-participants')).visibility==='hidden' && getComputedStyle(document.getElementById('panel-common-tools')).visibility==='hidden'`), true);
     const masteryKeys = await page.evaluate(`(async()=>Object.keys((await import('/static/js/characterWidgets.js')).weaponMasteryLabels))()`);
     const catalogueState = `(()=>{const root=document.getElementById('sheet-content');return{fields:[...root.querySelectorAll('[name]')].map(control=>control.name).filter(name=>name.startsWith('skills.specialized.')&&name.endsWith('.level')),blocks:[...root.querySelectorAll('.sheet-pin')].flatMap(button=>(button.dataset.pinBlocks||'').split(' ')).filter(Boolean)}})()`;

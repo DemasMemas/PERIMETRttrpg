@@ -22,6 +22,8 @@ module.exports=async({page,request,token,lobby,base,safeSession})=>{
         await require('./pepper_playtest.browser.cjs')({page,request,token,lobby,loc,safeSession});
         return;
     }
+    await require('./spare_plates.browser.cjs')({page,request,token,lobby,offered,loc,npc,safeSession});
+    await require('./medical_pouches.browser.cjs')({page,request,token,lobby,offered,loc,npc,safeSession});
     await require('./belt_light.browser.cjs')({page,request,token,lobby,offered,loc,npc,safeSession});
     await require('./belt_attachments.browser.cjs')({page,request,token,lobby,offered,loc,npc,safeSession});
     await require('./belt_artifact.browser.cjs')({page,request,token,lobby,offered,loc,npc,safeSession});

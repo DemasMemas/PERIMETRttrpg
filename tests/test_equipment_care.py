@@ -61,6 +61,26 @@ def test_spare_plates_require_ten_ap_and_do_not_change_armor_on_failure(client,c
     assert actor.action_points_current==9
 
 
+def test_spare_plates_require_own_turn_even_with_enough_ap(client,checks,auth_headers):
+    from app.models import LocationCombatState
+
+    character=checks['actor_character'];actor=checks['actor_location']
+    data=deepcopy(character.data)
+    armor={'id':'armor-spare','name':'Тяжёлая броня','category':'armor',
+        'durability':100,'stage':4,'currentStageDurability':70,'modifications':[make_record('armor-a49')]}
+    data['equipment']['armor']=armor
+    character.data=data;actor.action_points_current=12
+    state=LocationCombatState.query.filter_by(location_id=actor.location_id).one()
+    state.current_location_character_id=checks['target_location'].id
+    db.session.commit()
+    revision=character.revision
+    response=client.post(f'/lobbies/characters/{character.id}/spare-plates',headers=auth_headers(checks['actor_user']),
+        json={'character_revision':revision,'item_id':armor['id'],'operation_id':'plates-other-turn'})
+    assert response.status_code==403,response.json
+    assert actor.action_points_current==12 and character.revision==revision
+    assert character.data['equipment']['armor']==armor
+
+
 def test_polymer_regenerator_does_not_restore_destroyed_stage_or_other_armor():
     armor={'name':'Экзоскелет','category':'armor','stage':5,'stageDurability':1000,
         'currentStageDurability':0,'modifications':[make_record('armor-d26')]}

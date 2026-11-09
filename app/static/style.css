@@ -2197,6 +2197,11 @@ body.light-theme .lobby-time-field input[type="time"] {
 .number-input {
   width: 70px;
 }
+#character-sheet-form input[type="number"],
+#character-widgets input[type="number"] {
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
 input[type="number"]::-webkit-inner-spin-button,
 input[type="number"]::-webkit-outer-spin-button {
   -webkit-appearance: none;
@@ -2500,9 +2505,11 @@ input[type="number"] {
   align-items: center;
 }
 #sheet-tab-inventory .inventory-item-heading { font-weight: 700; margin-bottom: 5px; }
+#sheet-tab-inventory .inventory-item-heading > :nth-child(n+2):nth-child(-n+4) { text-align: center; }
 #sheet-tab-inventory .inventory-item-heading > :last-child { display: none; }
 #sheet-tab-inventory .inventory-item-grid > .number-input { width: 100%; min-width: 0; }
-#sheet-tab-inventory .inventory-item-grid .inventory-item-quantity { min-width: 0; }
+#sheet-tab-inventory .inventory-item-grid .inventory-item-quantity { min-width: 0; justify-content: center; }
+#sheet-tab-inventory .inventory-item-grid .number-input { padding-inline: 3px; }
 #sheet-tab-inventory .inventory-item-quantity .number-input { width: 40px; min-width: 0 !important; }
 #sheet-tab-inventory .inventory-item-quantity .btn { width: 24px !important; flex: 0 0 24px; }
 #sheet-tab-inventory .inventory-item-grid .item-name,
@@ -3197,6 +3204,7 @@ body.light-theme #sheet-tab-equipment .loadout-weapon-details[open] > summary { 
   display: flex !important;
   flex-wrap: wrap !important;
   gap: 6px !important;
+  align-items: flex-end !important;
 }
 .equipment-main-block .field-group {
   min-width: 0 !important;
@@ -3257,7 +3265,7 @@ body.light-theme #sheet-tab-equipment .loadout-weapon-details[open] > summary { 
   width: auto !important;
   max-width: none !important;
   display: grid !important;
-  grid-template-rows: minmax(0, 1fr) 30px;
+  grid-template-rows: minmax(0, 1fr) minmax(30px, auto);
   align-items: end;
 }
 .equipment-main-block.helmet-main-block .field-name {
@@ -3293,6 +3301,15 @@ body.light-theme #sheet-tab-equipment .loadout-weapon-details[open] > summary { 
   text-align: center !important;
   line-height: 1.15 !important;
   min-height: 0 !important;
+}
+.equipment-main-block .field-name > strong {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 30px;
+  text-align: center;
+  line-height: 1.2;
+  overflow-wrap: anywhere;
 }
 .field-group {
   display: flex !important;
@@ -3790,12 +3807,21 @@ input[type=range]::-webkit-slider-thumb {
 }
 
 /* Character health layout */
+.character-identity-fields {
+    display: grid;
+    grid-template-columns: minmax(0, 2fr) 84px minmax(0, 1fr);
+    gap: 10px;
+    align-items: end;
+    margin-bottom: 15px;
+}
+.character-identity-fields .character-age-field label { display: block; text-align: center; }
 .health-vitals-grid {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(105px, 1fr));
     gap: 8px;
     align-items: start;
     margin-bottom: 10px;
+    --vital-control-height: 38px;
 }
 .health-field {
     min-width: 0;
@@ -3804,9 +3830,22 @@ input[type=range]::-webkit-slider-thumb {
 .health-need-field label {
     display: flex;
     align-items: flex-end;
+    justify-content: center;
     min-height: 28px;
     margin-bottom: 4px;
     line-height: 1.15;
+    text-align: center;
+}
+.health-field.sheet-pinnable-field > label {
+    padding-inline: 24px;
+}
+.health-vitals-grid .form-control,
+.health-vitals-grid .health-readonly-value,
+.health-vitals-grid .health-stress-controls,
+.health-vitals-grid .health-need-controls {
+    height: var(--vital-control-height);
+    min-height: 0;
+    box-sizing: border-box;
 }
 .health-field-pool,
 .health-field-blood {
@@ -3822,11 +3861,14 @@ input[type=range]::-webkit-slider-thumb {
     min-height: 38px;
     display: flex;
     align-items: center;
+    justify-content: center;
     padding: 7px 10px;
     border: 1px solid rgba(255,255,255,0.12);
     border-radius: 6px;
     background: rgba(255,255,255,0.035);
     box-sizing: border-box;
+    text-align: center;
+    font-variant-numeric: tabular-nums;
 }
 .health-compact-panel {
     margin-bottom: 8px;
@@ -3872,9 +3914,10 @@ input[type=range]::-webkit-slider-thumb {
     min-width: 0;
 }
 .health-need-controls { display: flex; align-items: stretch; gap: 4px; height: 38px; }
-.health-need-controls > button { padding: 0 7px; border-radius: 5px; }
+.health-need-controls > button,
+.health-stress-controls > button { flex: 0 0 24px; padding: 0; border-radius: 5px; }
 .health-need-value { display: flex; align-items: center; justify-content: center; flex: 1; min-width: 0; white-space: nowrap; }
-.health-need-value input { width: 1.6em; min-width: 0; padding: 0; border: 0; background: transparent; color: inherit; font: inherit; text-align: right; appearance: textfield; }
+.health-need-value input { width: 1ch; min-width: 0; padding: 0; border: 0; background: transparent; color: inherit; font: inherit; text-align: center; appearance: textfield; }
 .health-need-value input::-webkit-inner-spin-button,
 .health-need-value input::-webkit-outer-spin-button { appearance: none; margin: 0; }
 .health-need-field {

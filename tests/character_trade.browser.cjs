@@ -516,6 +516,10 @@ module.exports=async({page,request,token,lobby,base,connect,debugPort,safeSessio
     assert.equal(bothEquipped.data.equipment.helmet.id,visualItem(balaclava).id);
     assert.equal(bothEquipped.data.equipment.gasMask.id,visualItem(respirator).id);
     assert.ok((await outfitCombat()).current_character.action_points_current<20);
+    const maskAlignment=`(()=>{const group=document.querySelector('[data-equipment-group="gasMask"]');
+        const values=[...group.querySelectorAll('input[type=number]')];
+        return values.length>4&&values.every(value=>getComputedStyle(value).textAlign==='center')})()`;
+    assert.equal(await page.evaluate(maskAlignment),true,'Числа надетого респиратора по центру');
     await page.evaluate(`window.locationCombatState=null;
         document.querySelector('[data-equipment-group="gasMask"] button[onclick="unequipGasMask()"]').click();true`);
     await page.until(`document.querySelector('.loadout-figure[data-helmet="balaclava"][data-mask="false"]')`,
@@ -523,6 +527,7 @@ module.exports=async({page,request,token,lobby,base,connect,debugPort,safeSessio
     const respiratorOff=await read(outfit.id);
     assert.equal(respiratorOff.data.equipment.gasMask?.id,undefined);
     assert.equal(respiratorOff.data.inventory.backpack.filter(item=>item.id===visualItem(respirator).id).length,1);
+    assert.equal(await page.evaluate(maskAlignment),true,'После снятия значения поля остаются выровнены');
     await page.evaluate(`window.locationCombatState=null;window.drawWeaponFromEquipment(0,'both').then(()=>true)`);
     combat=await outfitCombat();
     assert.equal(combat.current_character.drawn_weapon_index,0);

@@ -2485,16 +2485,16 @@ async function renderBasicTab(data) {
 
     // Левая колонка
     let leftHtml = `
-        <div style="display: flex; gap: 20px; flex-wrap: wrap; align-items: center; margin-bottom: 15px;">
-            <div style="flex: 2; min-width: 200px;">
+        <div class="character-identity-fields">
+            <div>
                 <label>Имя</label>
                 <input type="text" class="form-control" name="basic.name" value="${escapeHtml(basic.name || '')}" style="width:100%;">
             </div>
-            <div style="width: 100px;">
+            <div class="character-age-field">
                 <label>Возраст</label>
                 <input type="number" class="form-control number-input" name="basic.age" value="${basic.age ?? ''}" style="width:100%;">
             </div>
-            <div style="min-width: 200px;">
+            <div>
                 <label>Организация</label>
                 <input type="text" class="form-control" name="basic.organization" value="${escapeHtml(basic.organization || '')}" style="width:100%;">
             </div>
@@ -3555,7 +3555,7 @@ function renderHealthTab(data, container = null) {
                     <label>Стресс</label>
                     <div class="health-stress-controls">
                         ${window.isGM ? '<button type="button" class="btn btn-sm btn-secondary" onclick="adjustCharacterStress(-1)" title="Снизить стресс на 1" aria-label="Снизить стресс">−</button>' : ''}
-                        <div class="health-readonly-value" data-widget-readout="health.stress" data-widget-label="Стресс" style="min-width:42px;display:flex;align-items:center;justify-content:center;" title="Стресс изменяется игровыми событиями и действиями">${Number(health.stress || 0)}</div>
+                        <div class="health-readonly-value" data-widget-readout="health.stress" data-widget-label="Стресс" title="Стресс изменяется игровыми событиями и действиями">${Number(health.stress || 0)}</div>
                         ${window.isGM ? '<button type="button" class="btn btn-sm btn-secondary" onclick="adjustCharacterStress(1)" title="Повысить стресс на 1" aria-label="Повысить стресс">+</button>' : ''}
                     </div>
                 </div>
@@ -15640,17 +15640,25 @@ async function addTemplateItemToInventory(templateId, target, quantity = 1, ammo
         createdByPlayer: !window.isGM,
     });
     if (itemAttributes) newItem.attributes = { ...(newItem.attributes || {}), ...itemAttributes };
-    const targetCanister = targetPath.at(-1) === 'contents' ? getItemByPath(targetPath.slice(0, -1)) : null;
-    if (liquidCanisterKind(newItem) === 'fuel' && !isLiquidCanister(targetCanister)) {
+    const targetContainer = targetPath.at(-1) === 'contents' ? getItemByPath(targetPath.slice(0, -1)) : null;
+    if (liquidCanisterKind(newItem) === 'fuel' && !isLiquidCanister(targetContainer)) {
         showNotification('Топливо можно добавить только внутрь канистры');
         return false;
     }
-    if (isLiquidCanister(targetCanister) && !canStoreInLiquidCanister(targetCanister, newItem, targetItems)) {
+    if (isLiquidCanister(targetContainer) && !canStoreInLiquidCanister(targetContainer, newItem, targetItems)) {
         showNotification('В канистру помещаются только вода или топливо, не более 15 л; после топлива воду добавлять нельзя');
         return false;
     }
+    if (targetContainer && (targetContainer.category === 'pouch' || targetPath[2] === 'pouches')) {
+        const wornBelt = targetPath[0] === 'equipment' && targetPath[1] === 'belt'
+            ? currentCharacterData.equipment?.belt : null;
+        if (calculatePouchUsedVolume(targetContainer) + getTotalVolume(newItem) > pouchCapacity(targetContainer, wornBelt)) {
+            showNotification('Недостаточно места в подсумке');
+            return false;
+        }
+    }
     targetItems.push(...splitAmmoItemIntoSlotStacks(newItem));
-    if (isLiquidCanister(targetCanister) && liquidCanisterKind(newItem) === 'fuel') targetCanister.fuelUsed = true;
+    if (isLiquidCanister(targetContainer) && liquidCanisterKind(newItem) === 'fuel') targetContainer.fuelUsed = true;
 
     await rerenderContainer(targetPath, null, { keepExpanded: true });
     recalculateInventoryTotals();

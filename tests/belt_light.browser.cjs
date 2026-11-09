@@ -21,7 +21,12 @@ module.exports=async({page,request,token,lobby,offered,loc,npc,safeSession})=>{
     const detail=await request(loc,null,token,'GET');await request(loc,{lighting:{...detail.lighting,mode:'manual',ambient_intensity:.15,directional_intensity:.1}},token,'PUT');
     await page.evaluate(`(async()=>{window.L=await import('/static/js/locationScene.js');window.T=await import('three');window.mapAudit=(await import('/static/js/mapSceneContext.js')).getMapSceneContext();
         locationControls.enableDamping=false;locationControls.target.set(49.5,1,52);locationControls.object.position.set(54,7,48);locationControls.update();return true})()`);
-    const open=()=>page.evaluate(`window.openCharacterSheet(${owner.id},'equipment').then(()=>true)`);
+    const selectPanel=key=>page.evaluate(`document.querySelector('.equipment-panel-tab[data-panel=${key}]').click();true`);
+    const open=async()=>{
+        await page.evaluate(`window.openCharacterSheet(${owner.id},'equipment').then(()=>true)`);
+        await page.until("document.querySelector('.equipment-panel-tab[data-panel=detector]')",'Вкладка приборов');
+        await selectPanel('detector');
+    };
     const row=id=>`document.querySelector('.portable-light-row[data-light-id="${id}"]')`;
     await open();await page.until(row(lamp.id),'Фонарь в экипировке');
     await page.evaluate(`${row(lamp.id)}.querySelector('[data-light-operation=prepare]').click();true`);
@@ -69,9 +74,13 @@ module.exports=async({page,request,token,lobby,offered,loc,npc,safeSession})=>{
         {remainingSeconds:status.lights.find(light=>light.id===his.id).remaining_seconds,mount:status.lights.find(light=>light.id===his.id).mount});
     for(const[width,height]of [[1920,1080],[1600,900],[1366,768],[1280,720]]){
         await page.call('Emulation.setDeviceMetricsOverride',{width,height,deviceScaleFactor:1,mobile:false});
-        await page.until(`(()=>{const root=document.getElementById('sheet-tab-equipment').getBoundingClientRect();return [...document.querySelectorAll('.portable-light-row')].filter(row=>['${lamp.id}','${his.id}'].includes(row.dataset.lightId)).every(row=>{const r=row.getBoundingClientRect();return r.y>=root.y&&r.bottom<=root.bottom&&r.right<=root.right})})()`,'Оба источника видны '+width);
-        await page.until("(()=>{const grid=document.querySelector('[data-weapon-index=\"-1\"] .weapon-summary-grid');return grid&&[...grid.children].every(cell=>{const label=cell.querySelector('strong').getBoundingClientRect(),r=cell.getBoundingClientRect();return label.right<=r.right+.5})})()",'Характеристики кулаков не перекрываются '+width);
+        await selectPanel('detector');
+        await page.until(`(()=>{const root=document.getElementById('sheet-tab-equipment').getBoundingClientRect();
+            const rows=[...document.querySelectorAll('.portable-light-row')].filter(row=>['${lamp.id}','${his.id}'].includes(row.dataset.lightId));
+            return rows.length===2&&rows.every(row=>{const r=row.getBoundingClientRect();return r.width>0&&r.y>=root.y&&r.bottom<=root.bottom&&r.right<=root.right})})()`,'Оба источника видны '+width);
         if(width===1280)await shot('belt-his-1280x720.png');
+        await page.evaluate("document.querySelector('.loadout-slot[data-equipment-open=weapon--1]').click();true");
+        await page.until("(()=>{const grid=document.querySelector('[data-weapon-index=\"-1\"] .weapon-summary-grid');return grid?.getBoundingClientRect().width>0&&[...grid.children].every(cell=>{const label=cell.querySelector('strong').getBoundingClientRect(),r=cell.getBoundingClientRect();return label.right<=r.right+.5})})()",'Характеристики кулаков не перекрываются '+width);
     }
     console.log('Свет на поясе: штатная установка g62, перенос включённого фонаря из руки за 3 ОД, обе руки доступны оружию, настоящий луч и два ракурса Припяти, ХИС без сброса таймера, четыре настольных размера.');
     evidence?.publish({images:['belt-light-before-hand.png','belt-light-after-belt.png','belt-light-other-angle.png','belt-his-1280x720.png'],
