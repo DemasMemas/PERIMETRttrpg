@@ -51,5 +51,26 @@ module.exports=async({peer,request,recipient,token,api,read})=>{
     await peer.until("document.querySelector('#crafting-modal .block-header button')&&!document.querySelector('#crafting-modal').innerText.includes('Работа идёт')",'Завершённая работа исчезла');
     await peer.evaluate("document.querySelector('#crafting-modal .block-header button').click();true");
     await peer.until("document.querySelector('.installed-rule-modification')?.textContent.includes('Оружейник')",'В листе показано защищённое улучшение');
-    console.log(JSON.stringify({equipment_book_read:true,four_game_hours:true,native_weapon_modification:true,normal_player:true,gunsmith_bonus:7.5,tool_uses:20,installation_minutes:30}));
+    const helmet=all.find(t=>t.category==='helmet'&&!t.attributes?.soft_headwear);assert.ok(helmet);
+    saved.equipment={...saved.equipment,helmet:{...make(helmet,'upgrade-browser-helmet'),
+        attributes:{...helmet.attributes,slots:[{type:'visor',label:'Забрало',maxItems:1}]},
+        installedModules:[{id:'upgrade-browser-visor',name:'Забрало',category:'visor',slotType:'visor',
+            modifications:[{name:'Старое покрытие',description:'Сохранённый эффект покрытия'}]}]}};
+    await request('/lobbies/characters/'+recipient.id,{data:saved},token,'PUT');
+    await peer.evaluate(`window.openCharacterSheet(${recipient.id},'equipment').then(()=>true)`);
+    await peer.until("document.querySelector('.equipment-panel-tab[data-panel=helmet]')",'Экипировка загружена');
+    await peer.evaluate("document.querySelector('.equipment-panel-tab[data-panel=helmet]').click();true");
+    await peer.until("document.querySelector('#sheet-tab-equipment button[onclick^=openVisorModificationsModal]')",
+        'В экипировке доступен просмотр забрала');
+    await peer.evaluate("document.querySelector('#sheet-tab-equipment button[onclick^=openVisorModificationsModal]').click();true");
+    const visor=await peer.evaluate(`(()=>{
+        const modal=document.querySelector('#visor-modifications-modal');
+        return {effect:modal.querySelector('#installed-mods-list').textContent,
+            controls:[...modal.querySelectorAll('button,select,input')].map(node=>node.textContent.trim())};
+    })()`);
+    assert.match(visor.effect,/Старое покрытие/);
+    assert.match(visor.effect,/Сохранённый эффект покрытия/);
+    assert.deepEqual(visor.controls,['Закрыть'],'Окно забрала позволяет только просматривать улучшения');
+    await peer.evaluate("document.querySelector('#visor-modifications-modal #close-modal-btn').click();true");
+    console.log(JSON.stringify({equipment_book_read:true,four_game_hours:true,native_weapon_modification:true,normal_player:true,gunsmith_bonus:7.5,tool_uses:20,installation_minutes:30,visor_modifications_read_only:true}));
 };

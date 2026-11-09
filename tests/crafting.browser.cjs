@@ -36,6 +36,10 @@ module.exports=async({peer,page,request,recipient,token,api,read})=>{
     await peer.until("[...document.querySelectorAll('#crafting-modal .crafting-recipe-detail p')].some(p=>p.textContent==='Металлические детали 1/1')",'Открытый рецепт обновился после изменения инвентаря');
     await peer.evaluate("(()=>{const recipe=document.querySelector('#crafting-modal select[aria-label=Рецепт]');recipe.value='recipe-m8';recipe.dispatchEvent(new Event('change'));return true})()");
     await peer.until("[...document.querySelectorAll('#crafting-modal .crafting-recipe-detail p')].some(p=>p.textContent==='Электронные материалы 0/1 или Тканные материалы 0/1')",'Альтернативы показаны одной строкой');
+    await peer.evaluate("(()=>{const recipe=document.querySelector('#crafting-modal select[aria-label=Рецепт]');recipe.value='recipe-aa23';recipe.dispatchEvent(new Event('change'));return true})()");
+    await peer.until(`[...document.querySelectorAll('#crafting-modal .crafting-recipe-detail p')].some(p=>
+        p.textContent.replace(/\\b\\d+\\//g,'/').trim()==='Анальгин /3 или Бинт /3 или Шина /2 или Жгут /2')`,
+        'Рецепт медицинских материалов показывает четыре альтернативы и их количества');
     await peer.evaluate("(()=>{const recipe=document.querySelector('#crafting-modal select[aria-label=Рецепт]');recipe.value='recipe-aa29';recipe.dispatchEvent(new Event('change'));return true})()");
     await peer.until("[...document.querySelectorAll('#crafting-modal button')].some(b=>b.textContent==='Попросить подтверждение ГМа')",'Показано условие сцены');
     await peer.evaluate("[...document.querySelectorAll('#crafting-modal button')].find(b=>b.textContent==='Попросить подтверждение ГМа').click();true");

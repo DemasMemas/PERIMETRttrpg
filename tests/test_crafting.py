@@ -32,6 +32,36 @@ def call(client,workshop,auth_headers,operation,**payload):
 def units(data,name):return sum(_available_uses(i) for i in data['inventory']['pockets'] if i['name']==name)
 
 
+def catalog_template(name):
+    from app.services.equipment_catalog import load_catalog
+
+    template = ItemTemplate(**next(row for row in load_catalog() if row['name'] == name))
+    db.session.add(template)
+    db.session.flush()
+    return template
+
+
+def assert_recipe_wait(client, workshop, auth_headers, job, minutes, **finish_payload):
+    assert job['ready_at'] - job['started_at'] == minutes * 60
+    lobby = workshop['lobby']
+
+    def advance(elapsed):
+        days, minute = divmod(lobby.game_time_minutes + elapsed, 1440)
+        lobby.game_day += days
+        lobby.game_time_minutes = minute
+        db.session.commit()
+
+    advance(minutes - 1)
+    character = workshop['actor_character']
+    before = deepcopy(character.data)
+    revision = character.revision
+    early = call(client, workshop, auth_headers, 'finish', job_id=job['id'], **finish_payload)
+    assert early.status_code == 400, early.json
+    assert character.data == before
+    assert character.revision == revision
+    advance(1)
+
+
 @pytest.mark.parametrize('recipe_id,name,materials',[('recipe-m29','Отвертка',[('Металлические детали',3),('Веревка 10м',1)]),
     ('recipe-m30','Кусачки',[('Металлические детали',4),('Резина',1)])])
 def test_handmade_recipe_creates_the_ordinary_catalog_tool(client,workshop,auth_headers,monkeypatch,recipe_id,name,materials):
@@ -501,30 +531,50 @@ def test_bark_tincture_spends_catalog_charcoal_tablet(client,workshop,auth_heade
 
 
 def test_spirit_recipe_accepts_catalog_beer_and_moonshine_still(client,workshop,auth_headers,monkeypatch):
+    from app.services.character_starting_purchase import item_from_template
+
+    beer = catalog_template('Банка пива')
+    output = catalog_template('Спирт')
+    still = {'id': 'legacy-still', 'name': 'Самогонный Аппарат', 'category': 'tool', 'quantity': 1}
     data=deepcopy(workshop['actor_character'].data)
     data['skills']['other']['survival']={'base':20,'bonus':0}
     data['inventory']['pockets']=[
         {'name':'Вода','category':'consumable','quantity':5},
-        {'name':'Банка пива','category':'consumable','quantity':1},
+        item_from_template(beer),
         {'name':'Хлеб','category':'food','quantity':2},
-        {'name':'Самогонный Аппарат','category':'tool','quantity':1},
+        still,
     ]
     workshop['actor_character'].data=data
-    db.session.add(ItemTemplate(name='Спирт',category='consumable',price=100,attributes={'uses':10}))
     db.session.commit()
     quoted=call(client,workshop,auth_headers,'quote',recipe_id='recipe-aa7')
     assert quoted.status_code==200 and quoted.json['result']['missing']==[],quoted.json
     started=call(client,workshop,auth_headers,'start',recipe_id='recipe-aa7')
     assert started.status_code==200,started.json
-    assert units(started.json['data'],'Банка пива')==0
-    workshop['lobby'].game_day+=1;db.session.commit()
+    reserved = {'Вода': 5, 'Банка пива': 1, 'Хлеб': 2}
+    assert {row['item']['name']: row['amount'] for row in started.json['result']['escrow']} == reserved
+    assert started.json['data']['inventory']['pockets'] == [still]
+    cancelled = call(client, workshop, auth_headers, 'cancel', job_id=started.json['result']['id'])
+    assert cancelled.status_code == 200 and cancelled.json['result']['cancelled'], cancelled.json
+    assert {name: units(cancelled.json['data'], name) for name in reserved} == reserved
+    assert units(cancelled.json['data'], 'Спирт') == 0
+
+    started = call(client, workshop, auth_headers, 'start', recipe_id='recipe-aa7', operation_id='start-after-cancel')
+    assert started.status_code == 200, started.json
+    job = started.json['result']
+    assert_recipe_wait(client, workshop, auth_headers, job, 1440, chosen_loss=[])
     monkeypatch.setattr('app.services.crafting.resolve_creation',lambda quote:{'success':True,'roll':100,'automatic':False})
     finished=call(client,workshop,auth_headers,'finish',job_id=started.json['result']['id'],chosen_loss=[])
     assert finished.status_code==200,finished.json
-    assert units(finished.json['data'],'Спирт')==30
+    assert finished.json['result']['success']
+    bottles = [item for item in finished.json['data']['inventory']['pockets'] if item.get('templateId') == output.id]
+    assert sum(item['quantity'] for item in bottles) == 3
+    assert all(item['uses'] == item['maxUses'] == 10 for item in bottles)
+    assert still in finished.json['data']['inventory']['pockets']
+    assert {name: units(finished.json['data'], name) for name in reserved} == dict.fromkeys(reserved, 0)
 
 
 def test_beer_recipe_produces_eight_catalog_cans(client,workshop,auth_headers,monkeypatch):
+    output = catalog_template('Банка пива')
     data=deepcopy(workshop['actor_character'].data)
     data['skills']['other']['survival']={'base':20,'bonus':0}
     data['inventory']['pockets']=[
@@ -535,21 +585,31 @@ def test_beer_recipe_produces_eight_catalog_cans(client,workshop,auth_headers,mo
         {'name':'Самогонный Аппарат','category':'tool','quantity':1},
     ]
     workshop['actor_character'].data=data
-    db.session.add(ItemTemplate(name='Банка пива',category='consumable',price=50))
     db.session.commit()
     quoted=call(client,workshop,auth_headers,'quote',recipe_id='recipe-aa13')
     assert quoted.status_code==200 and quoted.json['result']['missing']==[],quoted.json
     started=call(client,workshop,auth_headers,'start',recipe_id='recipe-aa13')
     assert started.status_code==200,started.json
-    workshop['lobby'].game_day+=2;db.session.commit()
+    job = started.json['result']
+    assert {row['item']['name']: row['amount'] for row in job['escrow']} == {
+        'Вода': 3, 'Хлеб': 1, 'Сахар': 1, 'Металлические детали': 2,
+    }
+    assert_recipe_wait(client, workshop, auth_headers, job, 2880, chosen_loss=[])
     monkeypatch.setattr('app.services.crafting.resolve_creation',lambda quote:{'success':True,'roll':100,'automatic':False})
     finished=call(client,workshop,auth_headers,'finish',job_id=started.json['result']['id'],chosen_loss=[])
     assert finished.status_code==200,finished.json
-    assert units(finished.json['data'],'Банка пива')==8
+    assert finished.json['result']['success']
+    cans = [item for item in finished.json['data']['inventory']['pockets'] if item.get('templateId') == output.id]
+    assert sum(item['quantity'] for item in cans) == 8
+    assert all(item['uses'] == item['maxUses'] == 1 for item in cans)
     assert units(finished.json['data'],'Самогонный Аппарат')==1
+    replay = call(client,workshop,auth_headers,'finish',job_id=job['id'],chosen_loss=[])
+    assert replay.status_code == 200 and replay.json['result']['replayed'], replay.json
+    assert replay.json['data']['inventory']['pockets'] == finished.json['data']['inventory']['pockets']
 
 
 def test_moonshine_recipe_spends_five_spirit_uses_and_keeps_still(client,workshop,auth_headers,monkeypatch):
+    output = catalog_template('Самогон')
     data=deepcopy(workshop['actor_character'].data)
     data['skills']['other']['medicine']={'base':20,'bonus':0}
     data['inventory']['pockets']=[
@@ -558,49 +618,84 @@ def test_moonshine_recipe_spends_five_spirit_uses_and_keeps_still(client,worksho
         {'name':'Самогонный Аппарат','category':'tool','quantity':1},
     ]
     workshop['actor_character'].data=data
-    db.session.add(ItemTemplate(name='Самогон',category='consumable',price=50))
     db.session.commit()
     quoted=call(client,workshop,auth_headers,'quote',recipe_id='recipe-aa48')
     assert quoted.status_code==200 and quoted.json['result']['missing']==[],quoted.json
     started=call(client,workshop,auth_headers,'start',recipe_id='recipe-aa48')
     assert started.status_code==200,started.json
     assert units(started.json['data'],'Спирт')==5
-    workshop['lobby'].game_day+=1;db.session.commit()
+    job = started.json['result']
+    assert {row['item']['name']: row['amount'] for row in job['escrow']} == {'Спирт': 5, 'Сахар': 1}
+    assert_recipe_wait(client, workshop, auth_headers, job, 1440, chosen_loss=[])
     monkeypatch.setattr('app.services.crafting.resolve_creation',lambda quote:{'success':True,'roll':100,'automatic':False})
     finished=call(client,workshop,auth_headers,'finish',job_id=started.json['result']['id'],chosen_loss=[])
     assert finished.status_code==200,finished.json
-    assert units(finished.json['data'],'Самогон')==4
+    assert finished.json['result']['success']
+    assert sum(item['quantity'] for item in finished.json['data']['inventory']['pockets']
+               if item.get('templateId') == output.id) == 4
+    assert units(finished.json['data'],'Спирт')==5
     assert units(finished.json['data'],'Самогонный Аппарат')==1
+    replay = call(client,workshop,auth_headers,'finish',job_id=job['id'],chosen_loss=[])
+    assert replay.status_code == 200 and replay.json['result']['replayed'], replay.json
+    assert replay.json['data']['inventory']['pockets'] == finished.json['data']['inventory']['pockets']
 
 
-def test_glue_recipe_uses_catalog_pot_without_consuming_it(client,workshop,auth_headers,monkeypatch):
-    from app.services.crafting import _allocate,recipe_by_id
-    pot='Котелок (Объем 2 литра)(6 использований воды)'
-    pan='Кастрюля (Объем 5 литров) (15 использований воды)'
+@pytest.mark.parametrize('vessel_name,uses,maximum', [
+    ('Котелок (Объем 2 литра)(6 использований воды)', 6, 6),
+    ('Котелок (Объем 2 литра)(6 использований воды)', 0, 6),
+    ('Кастрюля (Объем 5 литров) (15 использований воды)', 15, 15),
+])
+def test_glue_recipe_uses_catalog_pot_without_consuming_it(client,workshop,auth_headers,monkeypatch,vessel_name,uses,maximum):
+    from app.services.character_starting_purchase import item_from_template
+
+    vessel = item_from_template(catalog_template(vessel_name))
+    vessel.update(uses=uses, maxUses=maximum)
+    output = catalog_template('Клей')
     data=deepcopy(workshop['actor_character'].data)
     data['skills']['other']['survival']={'base':20,'bonus':0}
     data['inventory']['pockets']=[{'name':'Жир','category':'misc','quantity':3},
-        {'name':pot,'category':'misc','quantity':1,'uses':6,'maxUses':6}]
+        vessel]
     workshop['actor_character'].data=data
     placed=LocationCharacter.query.filter_by(character_id=workshop['actor_character'].id).first()
-    db.session.add(LocationObject(location_id=placed.location_id,name='Костёр',type='campfire',
-        tile_x=round(placed.pos_x),tile_y=round(placed.pos_y),properties={'is_lit':True}))
-    db.session.add(ItemTemplate(name='Клей',category='crafting_material',price=100))
+    fire = LocationObject(location_id=placed.location_id,name='Костёр',type='campfire',
+        tile_x=round(placed.pos_x),tile_y=round(placed.pos_y),properties={'is_lit':False})
+    db.session.add(fire)
+    db.session.commit()
+    dark = call(client,workshop,auth_headers,'quote',recipe_id='recipe-aa9')
+    assert dark.status_code == 200 and dark.json['result']['missing'] == ['Нужны: Костер'], dark.json
+    fire.properties = {'is_lit': True}
     db.session.commit()
     quoted=call(client,workshop,auth_headers,'quote',recipe_id='recipe-aa9')
     assert quoted.status_code==200 and quoted.json['result']['missing']==[],quoted.json
     started=call(client,workshop,auth_headers,'start',recipe_id='recipe-aa9')
     assert started.status_code==200,started.json
-    workshop['lobby'].game_time_minutes+=60;db.session.commit()
+    job = started.json['result']
+    assert [(entry['item']['name'], entry['amount']) for entry in job['escrow']] == [('Жир', 3)]
+    assert_recipe_wait(client, workshop, auth_headers, job, 60, chosen_loss=[])
     monkeypatch.setattr('app.services.crafting.resolve_creation',lambda quote:{'success':True,'roll':100,'automatic':False})
     finished=call(client,workshop,auth_headers,'finish',job_id=started.json['result']['id'],chosen_loss=[])
     assert finished.status_code==200,finished.json
     assert units(finished.json['data'],'Жир')==0
-    assert units(finished.json['data'],pot)==6
-    assert units(finished.json['data'],'Клей')==1
-    pan_data={'inventory':{'pockets':[{'name':pan,'category':'misc','quantity':1,'uses':15,'maxUses':15}]}}
-    allocations,_=_allocate(pan_data,recipe_by_id('recipe-m40'))
-    assert any(entry['item']['name']==pan and entry['whole'] for entry in allocations)
+    assert vessel in finished.json['data']['inventory']['pockets']
+    assert [item['quantity'] for item in finished.json['data']['inventory']['pockets']
+            if item.get('templateId') == output.id] == [1]
+    if vessel_name.startswith('Кастрюля'):
+        catalog_template('Кустарный самогонный аппарат')
+        data = deepcopy(workshop['actor_character'].data)
+        data['features'] = {'specialTraits': [{'name': 'Мастер на все руки'}]}
+        data['inventory']['pockets'].extend(
+            {'name': name, 'category': 'crafting_material', 'quantity': quantity}
+            for name, quantity in [('Металлические детали', 4), ('Электронные материалы', 4),
+                ('Стеклянная бутылка', 2), ('Канистра', 1), ('Датчик', 1)]
+        )
+        workshop['actor_character'].data = data
+        db.session.commit()
+        still_job = call(client, workshop, auth_headers, 'start', recipe_id='recipe-m40', operation_id='start-still')
+        assert still_job.status_code == 200, still_job.json
+        reserved = next(entry for entry in still_job.json['result']['escrow']
+                        if entry['item'].get('templateId') == vessel['templateId'])
+        assert (reserved['maximum'], reserved['amount'], reserved['item']['quantity'], reserved['item']['uses']) == (1, 1, 1, 15)
+        assert not any(item['id'] == vessel['id'] for item in still_job.json['data']['inventory']['pockets'])
 
 
 def test_extinguished_campfire_does_not_satisfy_recipe_tool(workshop):
@@ -936,24 +1031,39 @@ def test_tool_charge_suffix_matches_recipe_and_multiple_sets_cover_fifty_uses(wo
 
 
 def test_dry_ration_recipe_spends_one_box_of_ten_matches(client,workshop,auth_headers,monkeypatch):
+    from app.services.character_starting_purchase import item_from_template
+
+    matches = catalog_template('Спички (10 штук)')
+    output = catalog_template('Сухой паек')
     data=deepcopy(workshop['actor_character'].data)
     data['skills']['other']['survival']={'base':13,'bonus':0}
     data['inventory']['pockets']=[{'name':name,'category':'consumable','quantity':quantity}
-        for name,quantity in [('Консервы',2),('Хлеб',1),('Спички (10 штук)',2),('Бумага',1)]]
+        for name,quantity in [('Консервы',2),('Хлеб',1),('Бумага',1)]]
+    boxes = [item_from_template(matches), item_from_template(matches)]
+    data['inventory']['pockets'].extend(boxes)
     workshop['actor_character'].data=data
-    output=ItemTemplate(name='Сухой паек',category='consumable',price=100)
-    db.session.add(output);db.session.commit()
+    db.session.commit()
     quoted=call(client,workshop,auth_headers,'quote',recipe_id='recipe-aa4')
     assert quoted.status_code==200,quoted.json
     assert quoted.json['result']['missing']==[]
     started=call(client,workshop,auth_headers,'start',recipe_id='recipe-aa4')
     assert started.status_code==200,started.json
-    workshop['lobby'].game_time_minutes+=5;db.session.commit()
+    job = started.json['result']
+    assert_recipe_wait(client, workshop, auth_headers, job, 5, chosen_loss=[0])
     monkeypatch.setattr('app.services.crafting.resolve_creation',lambda quote:{'success':True,'roll':100,'automatic':False})
     finished=call(client,workshop,auth_headers,'finish',job_id=started.json['result']['id'],chosen_loss=[0])
     assert finished.status_code==200,finished.json
-    assert units(finished.json['data'],'Спички (10 штук)')==1
-    assert units(finished.json['data'],'Сухой паек')==1
+    assert finished.json['result']['success']
+    pockets = finished.json['data']['inventory']['pockets']
+    assert [item['id'] for item in pockets if item.get('templateId') == matches.id] == [boxes[1]['id']]
+    assert [item['quantity'] for item in pockets if item.get('templateId') == output.id] == [1]
+    repeat = call(client, workshop, auth_headers, 'finish', job_id=job['id'], chosen_loss=[0])
+    assert repeat.status_code == 200 and repeat.json['result']['replayed'], repeat.json
+    assert repeat.json['data']['inventory']['pockets'] == pockets
+    stale_job = call(client, workshop, auth_headers, 'finish', job_id=job['id'], chosen_loss=[0],
+                     operation_id='finish-again')
+    assert stale_job.status_code == 409, stale_job.json
+    assert workshop['actor_character'].data['inventory']['pockets'] == pockets
 
 
 @pytest.mark.parametrize('name,quantity',[
@@ -972,24 +1082,45 @@ def test_medical_materials_recipe_accepts_each_whole_alternative(app,name,quanti
     assert _allocate(data,recipe)[1]
 
 
-def test_medical_materials_recipe_finishes_with_two_splints(client,workshop,auth_headers,monkeypatch):
+@pytest.mark.parametrize('name,quantity', [
+    ('Анальгин (Таблетка)', 3), ('Бинт', 3), ('Шина', 2), ('Жгут', 2),
+])
+def test_medical_materials_recipe_finishes_with_each_alternative(client,workshop,auth_headers,monkeypatch,name,quantity):
     data=deepcopy(workshop['actor_character'].data)
     data['skills']['other']['medicine']={'base':15,'bonus':0}
-    data['inventory']['pockets']=[{'name':'Шина','category':'consumable','quantity':2}]
+    alternatives = [('Анальгин (Таблетка)', 3), ('Бинт', 3), ('Шина', 2), ('Жгут', 2)]
+    insufficient = {label: required - 1 for label, required in alternatives}
+    data['inventory']['pockets'] = [
+        {'name':label,'category':'consumable','quantity':amount} for label, amount in insufficient.items()
+    ]
     workshop['actor_character'].data=data
-    output=ItemTemplate(name='Медицинские материалы',category='crafting_material',price=100)
-    db.session.add(output);db.session.commit()
+    output = catalog_template('Медицинские материалы')
+    db.session.commit()
+    blocked = call(client,workshop,auth_headers,'quote',recipe_id='recipe-aa23')
+    assert blocked.status_code == 200 and blocked.json['result']['missing'], blocked.json
+    assert call(client,workshop,auth_headers,'start',recipe_id='recipe-aa23').status_code == 400
+    data = deepcopy(workshop['actor_character'].data)
+    next(item for item in data['inventory']['pockets'] if item['name'] == name)['quantity'] = quantity
+    workshop['actor_character'].data = data
+    db.session.commit()
     quoted=call(client,workshop,auth_headers,'quote',recipe_id='recipe-aa23')
     assert quoted.status_code==200,quoted.json
     assert quoted.json['result']['missing']==[]
     started=call(client,workshop,auth_headers,'start',recipe_id='recipe-aa23')
     assert started.status_code==200,started.json
-    workshop['lobby'].game_time_minutes+=10;db.session.commit()
+    job = started.json['result']
+    assert [(entry['item']['name'], entry['amount']) for entry in job['escrow']] == [(name, quantity)]
+    assert_recipe_wait(client, workshop, auth_headers, job, 10, chosen_loss=[])
     monkeypatch.setattr('app.services.crafting.resolve_creation',lambda quote:{'success':True,'roll':100,'automatic':False})
     finished=call(client,workshop,auth_headers,'finish',job_id=started.json['result']['id'],chosen_loss=[])
     assert finished.status_code==200,finished.json
-    assert units(finished.json['data'],'Шина')==0
-    assert units(finished.json['data'],'Медицинские материалы')==1
+    assert finished.json['result']['success']
+    assert units(finished.json['data'],name)==0
+    assert {label: units(finished.json['data'], label) for label in insufficient if label != name} == {
+        label: amount for label, amount in insufficient.items() if label != name
+    }
+    assert [item['quantity'] for item in finished.json['data']['inventory']['pockets']
+            if item.get('templateId') == output.id] == [1]
 
 
 def test_depleted_workbench_does_not_satisfy_recipe_requirement(client,workshop,auth_headers,monkeypatch):
