@@ -26,6 +26,7 @@ HEAVY_HIT = 'Тяжесть'
 GRAVITY_HIT = 'Ядро тяготения'
 PREPARED_HITS = {HEAVY_HIT, GRAVITY_HIT}
 FORECASTS = {'Тень чужого': 10, 'Лик чужого': 20}
+FORECAST_ACTION_POINTS = {'Тень чужого': 2, 'Лик чужого': 1}
 RADIATION_AMPLIFIER_COST = {'Хозяин свечения': 20, 'Реактор': 50}
 PREFIX = 'artifact-special:'
 BUFFS = {
@@ -119,22 +120,52 @@ def forecast_accuracy(data, target_id):
     return 0
 
 
-def _forecast(actor, data, item):
-    from app.services.artifact_area import location_members
+def _forecast_opponents(actor, people):
     from app.services.character_rules import allied_ids
     from app.services.combat import CombatService
-    if not isinstance(actor, LocationCharacter):
-        raise ValidationError('Для этого особого свойства нужна подлокация')
-    people = location_members(actor, FORECASTS[item['name']])
     allies = allied_ids(actor, people=people)
     def reasonable(person):
         target_data = person.character.data or {}
         basic = target_data.get('basic') or {}
         return (not CombatService._is_mutant_character(target_data) or basic.get('intelligent') is True
                 or str(basic.get('mutant_variant') or '').casefold().startswith('разумн'))
-    targets = [person for person in people if CombatService._are_opponents(actor, person)
+    return [person for person in people if person.character and CombatService._are_opponents(actor, person)
         and person.character_id not in allies and CombatService._character_condition(person.character.data)['state'] != 'dead'
         and reasonable(person)]
+
+
+def _forecast_notice(actor, item, targets):
+    return {'gm_id':actor.location.lobby.gm_id, 'actor':actor.character.name, 'artifact':item['name'],
+            'targets':[person.character.name for person in targets]}
+
+
+def _single_forecast_targets(actor, data, target_id=None):
+    combat = LocationCombatState.query.filter_by(location_id=actor.location_id, status='active').first()
+    if not combat or combat.current_location_character_id != actor.id:
+        raise ValidationError('Предвидение доступно в свой ход в бою')
+    people = LocationCharacter.query.filter(
+        LocationCharacter.location_id == actor.location_id,
+        LocationCharacter.id.in_(combat.turn_order or []),
+        LocationCharacter.id != actor.id,
+    ).all()
+    targets = []
+    for opponent in _forecast_opponents(actor, people):
+        if target_id is not None and opponent.character_id != target_id:
+            continue
+        try:
+            target, _ = select_electric_target(actor, data, opponent.character_id, SIGHT_RADIUS)
+        except ValidationError:
+            continue
+        if target.id == opponent.id:
+            targets.append(target)
+    return targets
+
+
+def _forecast(actor, data, item):
+    from app.services.artifact_area import location_members
+    if not isinstance(actor, LocationCharacter):
+        raise ValidationError('Для этого особого свойства нужна подлокация')
+    targets = _forecast_opponents(actor, location_members(actor, FORECASTS[item['name']]))
     if item['name'] == 'Лик чужого':
         source = _effect_source(item['id'], 'forecast_accuracy')
         effects = data['health'].setdefault('effects', [])
@@ -143,8 +174,7 @@ def _forecast(actor, data, item):
             'note':'Точность +4 по выбранным при активации противникам', 'artifact_stat':'forecast_accuracy',
             'value':4, 'target_keys':[_forecast_key(person.character_id) for person in targets], 'tick':'time_elapsed',
             'time_unit':'second', 'remaining':60, 'remaining_seconds':60})
-    return {'gm_id':actor.location.lobby.gm_id, 'actor':actor.character.name, 'artifact':item['name'],
-            'targets':[person.character.name for person in targets]}
+    return _forecast_notice(actor, item, targets)
 
 
 def has_daylight_vision(data):
@@ -251,6 +281,7 @@ def status(data, item):
             'worn_seconds': worn, 'required_seconds': required, 'cooldown_seconds': cooldown,
             'capacity': capacity, 'remaining_uses': max(0, capacity - used),
             'action_points': 1 if level >= 15 else 2, 'available': reason is None, 'reason': reason,
+            'forecast_action_points': FORECAST_ACTION_POINTS.get(item.get('name')),
             'power_cost': 50 if item.get('name') == 'Горелка' else None,
             'target_range': electric[0] if electric else SIGHT_RADIUS + 1e-6 if item.get('name') == PULL else None,
             'magnet_target': magnet_target,
@@ -269,7 +300,7 @@ def _identity(payload):
     if not isinstance(identity, str) or not 1 <= len(identity) <= 100:
         raise ValidationError('Нужен идентификатор применения артефакта')
     choice = {'item_id': payload.get('item_id')}
-    for key in ('power', 'target_id', 'magnet_target', 'point'):
+    for key in ('power', 'target_id', 'magnet_target', 'point', 'single_forecast'):
         if key in payload:
             choice[key] = payload[key]
     signature = sha256(json.dumps(choice, sort_keys=True).encode()).hexdigest()
@@ -289,6 +320,16 @@ def prepare(actor, data, payload, user_id):
     if len(items) != 1 or items[0].get('quantity', 1) != 1:
         raise ValidationError('Выберите один активный артефакт на броне или поясе')
     item = items[0]
+    if 'single_forecast' in payload:
+        cost = FORECAST_ACTION_POINTS.get(item['name'])
+        if payload['single_forecast'] is not True or not cost or type(payload.get('target_id')) is not int:
+            raise ValidationError('Выберите одного противника для предвидения')
+        if not isinstance(actor, LocationCharacter):
+            raise ValidationError('Предвидение доступно в свой ход в бою')
+        targets = _single_forecast_targets(actor, data, payload['target_id'])
+        if not targets:
+            raise ValidationError('Выберите видимого разумного противника в бою')
+        return {'item':item, 'action_points':cost, 'forecast_target':targets[0]}
     state = status(data, item)
     if state['fall_reaction']:
         raise ValidationError('Сфера притяжения применяется в момент падения')
@@ -323,6 +364,14 @@ def execute(actor, data, payload, user_id, combat=None):
     from app.services.artifact_effects import healing_amount
     from app.services.effects import sync_health_derived_statuses
     item = plan['item']
+    if 'forecast_target' in plan:
+        from app.services.combat import CombatService
+        psi = CombatService._increase_psy_state(data, 5, 'artifact_forecast', loc_char=actor)
+        result = {'name':f'Предвидение · {item["name"]}', 'item_id':item['id'], 'psi_received':psi['received'],
+                  'action_points':plan['action_points'], 'roll_required':False, 'replayed':False,
+                  '_gm_forecast':_forecast_notice(actor, item, [plan['forecast_target']])}
+        _record_receipt(data.setdefault(STATE_KEY, {}), payload, result)
+        return result
     health = data.setdefault('health', {})
     before = _number(health.get('current'))
     radiation = 0
@@ -439,10 +488,14 @@ def execute(actor, data, payload, user_id, combat=None):
         result['damage'] = dealt
     if item['name'] in {'Огненная слеза', FAN} and isinstance(actor, LocationCharacter):
         result['_vision_location_id'] = actor.location_id
+    _record_receipt(ledger, payload, result)
+    return result
+
+
+def _record_receipt(ledger, payload, result):
     identity, signature = _identity(payload)
     ledger['receipts'] = [*ledger.get('receipts', [])[-127:], {'id': identity, 'signature': signature,
                           'result': deepcopy({key:value for key,value in result.items() if not key.startswith('_')})}]
-    return result
 
 
 def _spend(data, item_id):
@@ -563,3 +616,20 @@ def magnet_targets(character_id, user_id, location_id, item_id):
     if not state['available']:
         raise ValidationError(state['reason'])
     return targets(_context(character, location_id), data)
+
+
+def forecast_targets(character_id, user_id, location_id, item_id):
+    from app.services.character import CharacterService
+    from app.services.item_controllers import _context
+    character = db.session.get(LobbyCharacter, character_id)
+    if not character:
+        raise NotFoundError('Персонаж не найден')
+    CharacterService.check_access(character, user_id, edit=True)
+    data = character.data or {}
+    matches = [item for item in _equipped(data) if item['id'] == item_id]
+    if len(matches) != 1 or matches[0]['name'] not in FORECAST_ACTION_POINTS or matches[0].get('quantity', 1) != 1:
+        raise ValidationError('Выберите надетую «Тень чужого» или «Лик чужого»')
+    if not location_id:
+        raise ValidationError('Предвидение доступно на подлокации в бою')
+    return [{'id':target.character_id, 'label':target.character.name}
+            for target in _single_forecast_targets(_context(character, location_id), data)]

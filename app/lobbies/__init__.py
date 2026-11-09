@@ -5438,6 +5438,14 @@ def character_artifact_magnet_targets(character_id):
         request.args.get('location_id', type=int), request.args.get('item_id'))})
 
 
+@lobbies_bp.route('/characters/<int:character_id>/artifact-special/forecast-targets',methods=['GET'])
+@jwt_required()
+def character_artifact_forecast_targets(character_id):
+    from app.services.artifact_special import forecast_targets
+    return jsonify({'targets': forecast_targets(character_id, int(get_jwt_identity()),
+        request.args.get('location_id', type=int), request.args.get('item_id'))})
+
+
 @lobbies_bp.route('/characters/<int:character_id>/artifact-special',methods=['POST'])
 @jwt_required()
 def character_artifact_special(character_id):

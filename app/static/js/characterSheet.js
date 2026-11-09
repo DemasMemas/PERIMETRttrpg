@@ -5768,9 +5768,13 @@ function renderArtifactSpecial(item) {
         ${state.supported?`<button type="button" class="btn btn-sm" data-artifact-special="${escapeHtml(String(state.item_id))}"
             onclick="window.activateArtifactSpecial(this.dataset.artifactSpecial,this.parentElement.querySelector('[data-artifact-power]')?.value)" ${!currentCharacterCanEdit||!state.available&&!state.armed?'disabled':''}>
             ${state.armed?'Отменить применение при падении':state.fall_reaction?'Применить при следующем падении':state.target_range?'Выбрать цель':state.magnet_target?'Выбрать предмет':state.map_point?'Выбрать точку':state.heavy_hit?'Подготовить удар':'Применить'}${combat&&!state.armed?` · ${state.action_points} ОД`:''}</button>`:''}
+        ${state.forecast_action_points?`<button type="button" class="btn btn-sm" data-artifact-forecast="${escapeHtml(String(state.item_id))}"
+            onclick="window.activateArtifactSpecial(this.dataset.artifactForecast,undefined,true)" ${!currentCharacterCanEdit?'disabled':''}
+            title="В свой ход. Цена в 5 Пси-состояний зависит от пси-защиты.">
+            Предвидеть ход · ${state.forecast_action_points} ОД</button>`:''}
     </div>`;
 }
-window.activateArtifactSpecial = async function(itemId,power) {
+window.activateArtifactSpecial = async function(itemId,power,singleForecast=false) {
     if(medicalOperationInProgress||!currentCharacterCanEdit)return;
     const characterId=currentCharacterId;let locked=false;
     try {
@@ -5786,6 +5790,16 @@ window.activateArtifactSpecial = async function(itemId,power) {
         }
         const {runController}=await import('./itemControllers.js');
         const payload={item_id:itemId,...(power===undefined?{}:{power:Number(power)})};
+        if(singleForecast){
+            const locationId=window.currentLocationId;
+            if(!window.isLocationActive||window.locationCombatState?.status!=='active')throw new Error('Предвидение доступно в свой ход в бою');
+            const {targets}=await Server.getArtifactForecastTargets(characterId,locationId,itemId);
+            if(!targets.length)throw new Error('Нет видимых разумных противников в бою');
+            const target=await chooseConsumableApplication('Предвидеть ход противника',targets,{alwaysShow:true});
+            if(!target||currentCharacterId!==characterId||window.currentLocationId!==locationId)return;
+            payload.single_forecast=true;
+            payload.target_id=target.id;
+        }
         if(state?.map_point){
             const sheet=document.getElementById('character-sheet-modal');
             const locationId=window.currentLocationId;

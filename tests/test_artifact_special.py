@@ -907,6 +907,60 @@ def test_forecast_targets_only_reasonable_opponents_and_uses_separate_timers(gre
     assert forecast_accuracy(data, target.character_id) == 0
 
 
+@pytest.mark.parametrize('name,cost,protection', [('Тень чужого',2,-50),('Лик чужого',1,-100)])
+def test_single_forecast_pays_fixed_ap_and_applies_psi_protection_without_charge(client, grenade_game, auth_headers,
+                                                                                   name, cost, protection):
+    actor, target = grenade_game['actor_location'], grenade_game['target_location']
+    actor.character.data = value(0, name)
+    target.pos_x, target.pos_y = actor.pos_x+4, actor.pos_y
+    actor.character.data['health']['psyState'] = 1
+    db.session.commit()
+    user = grenade_game['actor_user']
+    url = f'/lobbies/characters/{actor.character_id}/artifact-special/forecast-targets'
+    response = client.get(url, headers=auth_headers(user),
+                          query_string={'location_id':actor.location_id,'item_id':'reactive-artifact'})
+    assert response.status_code == 200, response.json
+    assert response.json['targets'] == [{'id':target.character_id,'label':target.character.name}]
+    assert not snapshot(actor.character.data)[0]['available']
+    payload = {'item_id':'reactive-artifact','operation_id':'single-forecast','single_forecast':True,
+               'target_id':target.character_id}
+    assert CombatService._psi_defense_profile(actor.character.data)['total'] == protection
+    result = CombatService.perform_action(actor.location_id, grenade_game['lobby'].gm_id, actor.id,
+                                          'artifact_special', attribute_choice=payload)['narrative_action']
+    assert result['_gm_forecast']['targets'] == [target.character.name]
+    assert result['psi_received'] == 5*(1-protection/100)
+    assert actor.character.data['health']['psyState'] == 1+result['psi_received']
+    assert actor.action_points_current == 20-cost
+    assert actor.character.data[STATE_KEY].get('items', {}) == {}
+    assert not any(effect.get('artifact_stat') for effect in actor.character.data['health']['effects'])
+
+    repeated = CombatService.perform_action(actor.location_id, grenade_game['lobby'].gm_id, actor.id,
+                                            'artifact_special', attribute_choice=payload)['narrative_action']
+    assert repeated['replayed'] and '_gm_forecast' not in repeated
+    assert actor.action_points_current == 20-cost
+    assert actor.character.data['health']['psyState'] == 1+result['psi_received']
+
+
+def test_single_forecast_rejects_allies_and_other_turn_before_cost(grenade_game):
+    actor, target = grenade_game['actor_location'], grenade_game['target_location']
+    actor.character.data = value(0, 'Тень чужого')
+    target.pos_x, target.pos_y = actor.pos_x+4, actor.pos_y
+    actor.team_name = target.team_name = 'Союзники'
+    db.session.commit()
+    payload = {'item_id':'reactive-artifact','operation_id':'forecast-ally','single_forecast':True,
+               'target_id':target.character_id}
+    with pytest.raises(ValidationError, match='видимого разумного противника'):
+        CombatService.perform_action(actor.location_id, grenade_game['lobby'].gm_id, actor.id,
+                                     'artifact_special', attribute_choice=payload)
+    from app.services.artifact_special import forecast_targets
+    state = LocationCombatState.query.filter_by(location_id=actor.location_id).one()
+    state.current_location_character_id = target.id
+    with pytest.raises(ValidationError, match='в свой ход'):
+        forecast_targets(actor.character_id, grenade_game['lobby'].gm_id, actor.location_id, 'reactive-artifact')
+    assert actor.action_points_current == 20
+    assert not actor.character.data['health'].get('psyState')
+
+
 def test_heavy_attack_pays_ap_when_armed_and_only_spends_on_melee_hit(grenade_game, monkeypatch):
     actor, target = grenade_game['actor_location'], grenade_game['target_location']
     actor.character.data = ready(name='Тяжесть')

@@ -74,6 +74,8 @@ export const Server = {
         method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}),
     getArtifactMagnetTargets: (characterId, locationId, itemId) => apiFetch(`/lobbies/characters/${characterId}/artifact-special/targets?${new URLSearchParams({
         location_id: locationId, item_id: itemId})}`),
+    getArtifactForecastTargets: (characterId, locationId, itemId) => apiFetch(`/lobbies/characters/${characterId}/artifact-special/forecast-targets?${new URLSearchParams({
+        location_id: locationId, item_id: itemId})}`),
     getDetonations: lobbyId => apiFetch(`/lobbies/${lobbyId}/detonations`),
     resolveDetonation: (lobbyId,eventId,payload) => apiFetch(`/lobbies/${lobbyId}/detonations/${encodeURIComponent(eventId)}`,{
         method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}),

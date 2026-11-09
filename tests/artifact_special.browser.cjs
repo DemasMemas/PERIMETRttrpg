@@ -712,6 +712,37 @@ module.exports=async({page,request,token,lobby,loc,locationId,rules,safeSession}
     await page.evaluate(`${targetChoice}.click();true`);
     await page.evaluate('window.__artifactUsePromise.then(()=>true)');
     assert.equal((await getExposed()).data.health.current,150);
+
+    const forecastRule=rules.find(row=>row.name==='Тень чужого');
+    const forecastSheet=await getSponge();
+    forecastSheet.data.equipment.armor.containers=[{item:{id:'native-forecast-one',name:forecastRule.name,
+        category:'artifact',quantity:1,attributes:forecastRule}}];
+    forecastSheet.data.skills.physical.will={base:10,bonus:0,xp:0};
+    forecastSheet.data.health.psyState=forecastSheet.data.health.psy_state=0;
+    await request(spongeUrl,{data:forecastSheet.data},token,'PUT');
+    await request(loc+'/spawn_character',{character_id:spongeBearer.id,tile_x:45,tile_y:64,force_relocate:true},token);
+    await request(loc+'/characters/'+spongeBearer.id+'/facing',{facing_x:0,facing_y:1},token,'PATCH');
+    await request(loc+'/combat/start',{location_character_ids:[sharedSightActor.location_character_id,sharedSightTarget.location_character_id],
+        initiator_location_character_id:sharedSightActor.location_character_id,initiator_first:true},token);
+    const forecastBefore=(await liveState()).current_character.action_points_current;
+    await page.evaluate(`window.openCharacterSheet(${spongeBearer.id},'equipment').then(()=>true)`);
+    await page.until("document.querySelector('.equipment-panel-tab[data-panel=armor]')",'Броня с Тенью чужого');
+    await page.evaluate("document.querySelector('.equipment-panel-tab[data-panel=armor]').click();true");
+    const forecastButton='document.querySelector(\'[data-artifact-forecast="native-forecast-one"]:not(:disabled)\')';
+    await page.until(forecastButton,'Предвидение доступно без времени ношения');
+    await page.evaluate(`${forecastButton}.click();true`);
+    await page.until(targetChoice,'В предвидении доступна одна цель');
+    assert.equal(await page.evaluate("document.querySelectorAll('#consumable-application-modal .consumable-application-list button').length"),1);
+    await page.evaluate(`${targetChoice}.click();true`);
+    await page.evaluate('window.__artifactUsePromise.then(()=>true)');
+    await page.until("[...document.querySelectorAll('.notification')].some(el=>el.textContent.includes('Намерения на следующий ход')&&el.textContent.includes('Цель Пиявки'))",
+        'ГМ получил запрос о намерениях выбранного противника');
+    const forecastAfter=await getSponge();
+    const psiPrice=forecastAfter.data.health.psyState;
+    assert.ok(psiPrice>5,'Отрицательная пси-защита увеличивает цену');
+    assert.equal(forecastAfter.data._artifact_specials[0].remaining_uses,2);
+    assert.equal((await liveState()).current_character.action_points_current,forecastBefore-2);
+    await request(loc+'/combat/end',{},token);
     fs.writeFileSync(path.join(safeSession.artifacts,'artifact-special.json'),JSON.stringify({scene:'Припять',artifact:rule.name,
         preparedWornSeconds:86394,realRoundSeconds:6,readyAfterRealRound:true,realButtonActivations:2,apPerUse:1,
         first:{radiation:0,hp:200,cooldown:86400},second:{radiation:0,hp:300,cooldown:86394},reopened:true,
@@ -738,7 +769,8 @@ module.exports=async({page,request,token,lobby,loc,locationId,rules,safeSession}
         pole:{realButton:true,groundTransfer:true,electronicsDestroyed:true,nearbyLampRestoredOutsideRadius:true},
         gravityCore:{realButton:true,baseDamage:strike.base_damage,zone:strike.zone,destination:[thrownTarget.x,thrownTarget.y],totalActionPoints:3},
         ignitionAura:{radius:5,night:true,movedWithBearer:true,removedWithArtifact:true},
-        stormConductorSharedSight:{realButton:true,distance:28,damage:350}},null,2));
+        stormConductorSharedSight:{realButton:true,distance:28,damage:350},
+        singleForecast:{realButton:true,actionPoints:2,psiPrice,dailyChargesSpent:0,gmNotice:true}},null,2));
     console.log('Особые свойства: подготовленное ношение+реальный раунд, две кнопки Ядра твари по1ОД без рук, радиация→ОЗ; общий срок после первого, переоткрытие.');
     console.log('Генератор: кнопка без радиации, фактический штраф перемещения−1→−3,600→594секунд за раунд; истечение по игровому времени возвращает−1.');
     console.log('Сердце жара: настоящая кнопка и настоящее горение; первый раунд0урона, после истечения50.');
