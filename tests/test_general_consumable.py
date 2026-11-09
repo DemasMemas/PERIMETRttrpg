@@ -331,16 +331,18 @@ def test_infection_or_exhaustion_prevents_natural_temperature_recovery(blocker):
     assert health['temperature']==38
 
 
-def test_skala_n_temporary_maximum_survives_recalculation_and_protects_organs():
+@pytest.mark.parametrize('name,boost', [('Стимулятор Скала',0), ('Стимулятор Скала-Н',200)])
+def test_skala_temporary_health_survives_recalculation_and_protects_organs(name,boost):
     from app.services.combat import CombatService
     from app.services.health import apply_health_maximums, heal_character_fully
     data={'health':{'current':300,'max':700,'effects':[]}}
-    profile=parse_consumable_effects('Стимулятор Скала-Н. Ампула. Действует 3 хода.')
+    profile=parse_consumable_effects(f'{name}. Ампула. Действует 3 хода.')
+    item={'name':name,'templateId':42}
     health=data['health']
-    _apply_profile(health,profile,profile['direct'],{'name':'Стимулятор Скала-Н','templateId':42},in_combat=False)
-    assert (health['current'],health['max'])==(500,900)
+    _apply_profile(health,profile,profile['direct'],item,in_combat=False)
+    assert (health['current'],health['max'])==(300+boost,700+boost)
     apply_health_maximums(data)
-    assert (health['current'],health['max'])==(500,900)
+    assert (health['current'],health['max'])==(300+boost,700+boost)
     assert (health['organs']['heart']['current'],health['organs']['heart']['max'])==(40,40)
     organ=CombatService._apply_organ_damage(health,'heart',10,'chest')
     assert (organ['current'],organ['max'])==(30,40)
@@ -349,9 +351,10 @@ def test_skala_n_temporary_maximum_survives_recalculation_and_protects_organs():
     assert (health['current'],health['max'])==(200,700)
     assert (health['organs']['heart']['current'],health['organs']['heart']['max'])==(15,20)
     assert CombatService._apply_organ_damage(health,'heart',10,'chest')['current']==5
-    _apply_profile(health,profile,profile['direct'],{'name':'Стимулятор Скала-Н','templateId':42},in_combat=False)
+    _apply_profile(health,profile,profile['direct'],item,in_combat=False)
     heal_character_fully(data)
     assert (health['current'],health['max'])==(700,700)
+    assert (health['organs']['heart']['current'],health['organs']['heart']['max'])==(20,20)
     assert not health['combatMeta'].get('consumableModifiers')
 
 
@@ -363,8 +366,11 @@ def test_skala_n_raises_full_mountain_pool_before_healing_and_reverts_organ_heal
     health=apply_health_maximums(data)
     health['organs']['heart']['current']=15
     health['organs']['leftEye']['current']=0
-    health['combatMeta']={'consumableModifiers':[{'stat':'organ_toughness_multiplier','value':2,
-        'source':'consumable-template:42','remaining':2}]}
+    health['combatMeta']={'consumableModifiers':[
+        {'stat':'organ_toughness_multiplier','value':2,'source':'consumable-template:42','remaining':2},
+        {'stat':'organ_toughness_multiplier','value':2,'source':'consumable-template:41',
+         'note':'Стимулятор Скала','remaining':2},
+    ]}
     profile=parse_consumable_effects('Стимулятор Скала-Н. Ампула. Действует 3 хода.')
     _apply_profile(health,profile,profile['direct'],{'name':'Стимулятор Скала-Н','templateId':42},
         in_combat=True,character_data=data)
@@ -380,6 +386,22 @@ def test_skala_n_raises_full_mountain_pool_before_healing_and_reverts_organ_heal
     assert (health['current'],health['max'])==(740,840)
     assert (health['organs']['heart']['current'],health['organs']['heart']['max'])==(15,20)
     assert (health['organs']['leftEye']['current'],health['organs']['leftEye']['max'])==(0,15)
+
+
+@pytest.mark.parametrize('first,second', [(41,41),(41,42),(42,41),(42,42)])
+def test_skala_doses_refresh_one_organ_health_effect(first,second):
+    names={41:'Стимулятор Скала',42:'Стимулятор Скала-Н'}
+    health={'current':600,'max':700,'effects':[]}
+    for template_id,elapsed in ((first,13),(second,12)):
+        name=names[template_id]
+        profile=parse_consumable_effects(f'{name}. Ампула. Действует 3 хода.')
+        _apply_profile(health,profile,profile['direct'],{'name':name,'templateId':template_id},in_combat=False)
+        assert (health['organs']['heart']['current'],health['organs']['heart']['max'])==(40,40)
+        health['effects']=advance_timed_effects(health,health['effects'],elapsed,advance_medication_turns=True)
+    effects=[effect for effect in health['effects'] if effect['type']=='temporary_organ_health']
+    assert len(effects)==1 and effects[0]['remaining_seconds']==6
+    health['effects']=advance_timed_effects(health,health['effects'],6,advance_medication_turns=True)
+    assert (health['organs']['heart']['current'],health['organs']['heart']['max'])==(20,20)
 
 
 @pytest.mark.parametrize('word',['Уровень','Уровня','Уровней'])

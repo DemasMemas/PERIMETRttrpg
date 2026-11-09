@@ -194,35 +194,37 @@ module.exports=async({page,request,token,lobby,base,connect,debugPort,safeSessio
         const after=copy(snapshot.data);after.health.intoxication+=20;
         await request('/lobbies/characters/'+drunk.id,{data:after},token,'PUT');
         const evidence=await(await fetch(base+'/__health_audit/'+safeSession.runId)).json();assert.equal(evidence.draws.length,3);
-        await page.evaluate('window.closeCharacterSheet()');
-        const skala=await request(api+'/templates',{name:'Стимулятор Скала-Н',category:'consumable',weight:0,volume:.2,
-            attributes:{consumable:controls.skala_profile}},token);
-        const mountain=await request(api+'/characters',{name:'Гора со Скалой-Н',data:{
-            basic:{background:{name:'Гора'}},health:{current:840,max:840,effects:[]},
-            skills:{other:{medicine:{base:20}}},
-            inventory:{pockets:[{id:'audit-skala-n',templateId:skala.id+1000000,name:skala.name,category:'consumable',
-                quantity:1,attributes:copy(skala.attributes)}],backpack:[]},
-        }},token);
-        const mountainUrl='/lobbies/characters/'+mountain.id;
-        const mountainBefore=(await request(mountainUrl,null,token,'GET')).data;
-        assert.equal(mountainBefore.health.current,840);
-        const outcome=await request(mountainUrl+'/medical-procedure',{operation_id:'audit-skala-mountain',
-            target_character_id:mountain.id,source:{path:['inventory','pockets',0],snapshot:mountainBefore.inventory.pockets[0]},
-            application:{kind:'self',actionPoints:0}},token);
-        assert.equal(outcome.medical_result.success,true);
-        const boosted=(await request(mountainUrl,null,token,'GET')).data.health;
-        assert.deepEqual([boosted.current,boosted.max,boosted.organs.heart.current,boosted.organs.heart.max],[1040,1040,40,40]);
-        await page.evaluate(`window.openCharacterSheet(${mountain.id}).then(()=>true)`);
-        await page.until(`document.querySelector('[name="health.current"]')?.value==='1040'
-            &&document.querySelector('[name="health.max"]')?.value==='1040'
-            &&document.querySelector('[name="health.organs.heart.current"]')?.value==='40'`,'Скала-Н в листе Горы');
-        await request(api+'/characters/time-active',{character_ids:[mountain.id]},token,'PATCH');
-        const clock=await request(api,null,token,'GET'), minute=clock.game_time_minutes+1;
-        await request(api+'/time',{game_day:clock.game_day+Math.floor(minute/1440),game_time_minutes:minute%1440},token,'PATCH');
-        await page.until(`document.querySelector('[name="health.current"]')?.value==='740'
-            &&document.querySelector('[name="health.max"]')?.value==='840'
-            &&document.querySelector('[name="health.organs.heart.current"]')?.value==='20'`,'Скала-Н истекла и вернула обычные ОЗ органов');
-        console.log(JSON.stringify({skalaMountain:true,pool:[840,1040,740],organHealth:[20,40,20]}));
+        for(const [name,maximum] of [['Стимулятор Скала',840],['Стимулятор Скала-Н',1040]]){
+            await page.evaluate('window.closeCharacterSheet()');
+            const skala=await request(api+'/templates',{name,category:'consumable',weight:0,volume:.2,
+                attributes:{consumable:controls.skala_profiles[name]}},token);
+            const mountain=await request(api+'/characters',{name:'Гора · '+name,data:{
+                basic:{background:{name:'Гора'}},health:{current:840,max:840,effects:[]},
+                skills:{other:{medicine:{base:20}}},
+                inventory:{pockets:[{id:'audit-skala-'+skala.id,templateId:skala.id+1000000,name:skala.name,category:'consumable',
+                    quantity:1,attributes:copy(skala.attributes)}],backpack:[]},
+            }},token);
+            const mountainUrl='/lobbies/characters/'+mountain.id;
+            const mountainBefore=(await request(mountainUrl,null,token,'GET')).data;
+            assert.equal(mountainBefore.health.current,840);
+            const outcome=await request(mountainUrl+'/medical-procedure',{operation_id:'audit-skala-mountain-'+skala.id,
+                target_character_id:mountain.id,source:{path:['inventory','pockets',0],snapshot:mountainBefore.inventory.pockets[0]},
+                application:{kind:'self',actionPoints:0}},token);
+            assert.equal(outcome.medical_result.success,true);
+            const boosted=(await request(mountainUrl,null,token,'GET')).data.health;
+            assert.deepEqual([boosted.current,boosted.max,boosted.organs.heart.current,boosted.organs.heart.max],[maximum,maximum,40,40]);
+            await page.evaluate(`window.openCharacterSheet(${mountain.id}).then(()=>true)`);
+            await page.until(`document.querySelector('[name="health.current"]')?.value==='${maximum}'
+                &&document.querySelector('[name="health.max"]')?.value==='${maximum}'
+                &&document.querySelector('[name="health.organs.heart.current"]')?.value==='40'`,name+' в листе Горы');
+            await request(api+'/characters/time-active',{character_ids:[mountain.id]},token,'PATCH');
+            const clock=await request(api,null,token,'GET'), minute=clock.game_time_minutes+1;
+            await request(api+'/time',{game_day:clock.game_day+Math.floor(minute/1440),game_time_minutes:minute%1440},token,'PATCH');
+            await page.until(`document.querySelector('[name="health.current"]')?.value==='740'
+                &&document.querySelector('[name="health.max"]')?.value==='840'
+                &&document.querySelector('[name="health.organs.heart.current"]')?.value==='20'`,name+' вернул обычные ОЗ органов');
+            console.log(JSON.stringify({skalaMountain:true,name,pool:[840,maximum,740],organHealth:[20,40,20]}));
+        }
         fs.writeFileSync(path.join(safeSession.artifacts,'health-audit.json'),JSON.stringify({status:'PASS',shots,manualEffect:true,instantManualEffectOnce:true,worldClockMedication:true,treeTrunkProtection:20,bodyTransport:['drag','shoulder','rope'],recentActions:{reconnectWithoutDuplicates:true,humanMessagesHidden:true},medicines:meds.map(m=>m.name),woundedZones:wounded.health.zones.leftArm,tooltips:{medTooltip,equippedTooltip,longTooltip},intoxication:{draws:evidence.draws,after24h:snapshot.data.health.intoxication},twoClients:true},null,2));
     }finally{await peer?.close();if(context)await protocol?.call('Target.disposeBrowserContext',{browserContextId:context.browserContextId});await protocol?.close();}
 };

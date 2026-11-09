@@ -517,16 +517,18 @@ def _apply_profile(health, profile, direct, item, *, in_combat,character_data=No
         multiplier=direct['organ_toughness_multiplier']
         turns=positive_duration('organ_toughness_multiplier',multiplier,_number(duration,1),tick)
         catalog_name=str((item.get('attributes') or {}).get('catalog_name') or item_name).strip().casefold()
-        if catalog_name=='стимулятор скала-н' and multiplier==2:
+        skala_names={'стимулятор скала','стимулятор скала-н'}
+        if catalog_name in skala_names and multiplier==2:
             from app.services.health import double_organ_health
             modifiers=meta.get('consumableModifiers') or []
             modifiers[:]=[entry for entry in modifiers if not (
                 entry.get('stat')=='organ_toughness_multiplier' and (entry.get('source')==source
-                    or str(entry.get('note') or '').strip().casefold()==catalog_name))]
+                    or str(entry.get('note') or '').strip().casefold() in skala_names))]
             double_organ_health(health)
+            # Обе ампулы обновляют один эффект, в том числе сохранённый эффект «Скалы-Н».
             apply_effect_to_health(health,{'type':'temporary_organ_health','name':f'{item_name}: ОЗ органов ×2',
                 'source':'skala-n:organ-health','remaining':turns,'tick':tick,'medication_clock':True,
-                'remaining_seconds':_modifier_seconds(turns,tick)})
+                'remaining_seconds':_modifier_seconds(turns,tick),'world_tick_elapsed':0})
             changed=True
         else:
             changed |= _add_modifier(health,"organ_toughness_multiplier",multiplier,turns,tick,item_name,source)
