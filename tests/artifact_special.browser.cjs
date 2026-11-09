@@ -4,10 +4,12 @@ module.exports=async({page,request,token,lobby,loc,locationId,rules,safeSession}
     assert.ok(safeSession.verified);assert.equal(process.env.VTT_SAFE_SCENARIO,'artifacts');
     await page.evaluate("document.querySelector('[data-pda-close]')?.click();window.closeCharacterSheet();true");
     await page.evaluate(`(()=>{
-        const original=window.fetch;window.__artifactHttp=[];
+        const original=window.fetch;window.__artifactHttp=[];window.__artifactSheetHttp=[];
         window.fetch=async(...args)=>{const response=await original(...args);
             if(String(args[0]).includes('/combat/action')&&String(args[1]?.body||'').includes('artifact_special')){
                 const body=await response.clone().json();window.__artifactHttp.push({status:response.status,error:body.error||body.message||null});
+            }else if(String(args[0]).endsWith('/artifact-special')){
+                const body=await response.clone().json();window.__artifactSheetHttp.push({status:response.status,error:body.error||body.message||null});
             }return response;};
         const activate=window.activateArtifactSpecial;
         window.activateArtifactSpecial=(...args)=>(window.__artifactUsePromise=activate(...args));
@@ -307,6 +309,75 @@ module.exports=async({page,request,token,lobby,loc,locationId,rules,safeSession}
     await endShieldRound();
     assert.equal((await get()).data.equipment.armor.currentStageDurability,950,'После минуты износ снова действует');
     await request(loc+'/combat/end',{},token);
+    const sphere=rules.find(row=>row.name==='Сфера притяжения'),sphereData=await get();assert.ok(sphere);
+    sphereData.data.equipment.armor.containers=[{item:{id:'native-gravity-sphere',name:sphere.name,category:'artifact',quantity:1,attributes:sphere}}];
+    Object.assign(sphereData.data.health,{current:700,effects:[]});
+    await request(url,{data:sphereData.data},token,'PUT');
+    await request('/__testing/artifact-preparation/'+safeSession.runId,{character_id:character.id},token);
+    await request(loc+'/combat/start',{location_character_ids:[placed.location_character_id],
+        initiator_location_character_id:placed.location_character_id,initiator_first:true},token);
+    await endShieldRound();
+    await page.evaluate(`window.openCharacterSheet(${character.id},'equipment').then(()=>true)`);
+    await page.until("document.querySelector('.equipment-panel-tab[data-panel=armor]')",'Броня со Сферой притяжения');
+    await page.evaluate("document.querySelector('.equipment-panel-tab[data-panel=armor]').click();true");
+    await page.until("document.querySelector('[data-artifact-special=\"native-gravity-sphere\"]:not(:disabled)')",'Сфера притяжения готова');
+    await page.evaluate("document.querySelector('[data-artifact-special=\"native-gravity-sphere\"]').click();true");
+    await page.evaluate('window.__artifactUsePromise.then(()=>true)');
+    const armed=await get();assert.equal(armed.data._artifact_specials[0].armed,true);
+    assert.equal(armed.data._artifact_specials[0].remaining_uses,2);
+    const fall=()=>request(loc+'/gm-events',{type:'fall',height_meters:16,location_character_ids:[placed.location_character_id]},token);
+    const protectedFall=(await fall()).characters[0];
+    assert.equal(protectedFall.fall.artifact,sphere.name);assert.equal(protectedFall.fall.roll,null);
+    assert.equal(protectedFall.fall.shock,false);assert.equal(protectedFall.fall.fracture_both_legs,false);
+    const sphereUsed=await get();assert.equal(sphereUsed.data.health.current,700);
+    assert.equal(sphereUsed.data._artifact_specials[0].armed,false);
+    assert.equal(sphereUsed.data._artifact_specials[0].remaining_uses,1);
+    assert.equal(sphereUsed.data._artifact_specials[0].cooldown_seconds,86400);
+    assert.ok((await fall()).characters[0].fall.base_damage>0,'Повторное падение без выбора проходит обычно');
+    await request(loc+'/combat/end',{},token);
+    const sponge=rules.find(row=>row.name==='Чернобыльская губка');assert.ok(sponge);
+    const spongeBearer=await request('/lobbies/'+lobby.id+'/characters',{name:'Проверка особого свойства',data:{
+        skills:{other:{survival:{base:15}}},equipment:{armor:{id:'sponge-test-armor',name:'Броня для проверки',
+            containers:[{item:{id:'native-sponge',name:sponge.name,category:'artifact',quantity:1,attributes:sponge}}]}},
+        health:{current:700,max:700,radiation:0,effects:[]}}},token);
+    const spongeUrl='/lobbies/characters/'+spongeBearer.id,getSponge=()=>request(spongeUrl,null,token,'GET');
+    await request(loc+'/spawn_character',{character_id:spongeBearer.id,tile_x:43,tile_y:46},token);
+    await request('/__testing/artifact-preparation/'+safeSession.runId,{character_id:spongeBearer.id},token);
+    await changeMinutes(1);
+    await page.evaluate(`window.openCharacterSheet(${spongeBearer.id},'equipment').then(()=>true)`);
+    await page.until("document.querySelector('.equipment-panel-tab[data-panel=armor]')",'Броня с Чернобыльской губкой');
+    await page.evaluate("document.querySelector('.equipment-panel-tab[data-panel=armor]').click();true");
+    await page.until("document.querySelector('[data-artifact-special=\"native-sponge\"]:not(:disabled)')",'Чернобыльская губка готова');
+    await page.evaluate("document.querySelector('[data-artifact-special=\"native-sponge\"]').click();true");
+    await page.evaluate('window.__artifactUsePromise.then(()=>true)');
+    const sheetResponses=await page.evaluate('window.__artifactSheetHttp');
+    assert.deepEqual(sheetResponses,[{status:200,error:null},{status:200,error:null}],JSON.stringify(sheetResponses));
+    const immunity=data=>data.health.effects.find(effect=>effect.artifact_stat==='radiation_sickness_immunity');
+    const spongeActive=await getSponge();assert.equal(immunity(spongeActive.data).remaining_seconds,14400);
+    spongeActive.data.health.radiation=3;
+    await request(spongeUrl,{data:spongeActive.data},token,'PUT');
+    await changeMinutes(1);
+    const spongeMinute=await getSponge();assert.equal(spongeMinute.data.health.current,670);
+    assert.equal(spongeMinute.data.health.radiation,0);assert.equal(immunity(spongeMinute.data).remaining_seconds,14340);
+    await changeMinutes(238);assert.equal(immunity((await getSponge()).data).remaining_seconds,60);
+    await changeMinutes(1);assert.equal(immunity((await getSponge()).data),undefined);
+    const burner=rules.find(row=>row.name==='Горелка'),burnerData=await getSponge();assert.ok(burner);
+    burnerData.data.equipment.armor.containers=[{item:{id:'native-burner',name:burner.name,category:'artifact',quantity:1,attributes:burner}}];
+    burnerData.data.health.current=700;
+    await request(spongeUrl,{data:burnerData.data},token,'PUT');
+    await request('/__testing/artifact-preparation/'+safeSession.runId,{character_id:spongeBearer.id},token);
+    await changeMinutes(1);
+    await page.evaluate(`window.openCharacterSheet(${spongeBearer.id},'equipment').then(()=>true)`);
+    await page.until("document.querySelector('.equipment-panel-tab[data-panel=armor]')",'Броня с Горелкой');
+    await page.evaluate("document.querySelector('.equipment-panel-tab[data-panel=armor]').click();true");
+    await page.until("document.querySelector('[data-artifact-power]:not(:disabled)')",'Горелка готова');
+    await page.evaluate("document.querySelector('[data-artifact-power]').value='3';document.querySelector('[data-artifact-special=\"native-burner\"]').click();true");
+    await page.evaluate('window.__artifactUsePromise.then(()=>true)');
+    const burnerActive=await getSponge();assert.equal(burnerActive.data.health.current,550);
+    assert.equal(burnerActive.data._artifact_profile.movement_penalty,-5);
+    await changeMinutes(10);
+    const burnerExpired=await getSponge();assert.equal(burnerExpired.data._artifact_profile.movement_penalty,-2);
+    assert.equal(burnerExpired.data.health.current,550);
     fs.writeFileSync(path.join(safeSession.artifacts,'artifact-special.json'),JSON.stringify({scene:'Припять',artifact:rule.name,
         preparedWornSeconds:86394,realRoundSeconds:6,readyAfterRealRound:true,realButtonActivations:2,apPerUse:1,
         first:{radiation:0,hp:200,cooldown:86400},second:{radiation:0,hp:300,cooldown:86394},reopened:true,
@@ -317,7 +388,10 @@ module.exports=async({page,request,token,lobby,loc,locationId,rules,safeSession}
         shell:{buttonActivated:true,protectedRounds:10,stageDurabilityBefore:1000,stageDurabilityProtected:1000,stageDurabilityAfterExpiry:950},
         psiImmunities:psiResults,fireGift:{realButton:true,physicalProtection:30,seconds:18,
             healthBefore:700,healthAfterTwoRounds:700,healthAfterThreeRounds:450,noRepeatedCost:true},
-        liveShield:{realButton:true,stage:2,seconds:60,durability:[800,850,900,1000,950]}},null,2));
+        liveShield:{realButton:true,stage:2,seconds:60,durability:[800,850,900,1000,950]},
+        gravitySphere:{realButton:true,height:16,roll:null,damage:0,shock:false,fractures:false,remainingUses:1},
+        sponge:{realButton:true,seconds:14400,radiationBefore:3,radiationAfter:0,ownCost:30,expired:true},
+        burner:{realButton:true,power:3,seconds:600,healthSpent:150,movementDuring:-5,movementAfter:-2}},null,2));
     console.log('Особые свойства: подготовленное ношение+реальный раунд, две кнопки Ядра твари по1ОД без рук, радиация→ОЗ; общий срок после первого, переоткрытие.');
     console.log('Генератор: кнопка без радиации, фактический штраф перемещения−1→−3,600→594секунд за раунд; истечение по игровому времени возвращает−1.');
     console.log('Сердце жара: настоящая кнопка и настоящее горение; первый раунд0урона, после истечения50.');
@@ -327,4 +401,7 @@ module.exports=async({page,request,token,lobby,loc,locationId,rules,safeSession}
     console.log('Ментальный бастион и Щит сознания: настоящие кнопки, реальные Пси-удары не воздействуют, атакующий тратит3ОД; стресс блокируется Щитом и возвращается после истечения.');
     console.log('Дар пламени: настоящая кнопка, +30% физической защиты3раунда, затем ровно−250ОЗ, следующего списания нет.');
     console.log('Живой щит: настоящая кнопка, горение восстанавливает 800→850→900→1000 прочности на стадии 2; после минуты износ до 950.');
+    console.log('Сфера притяжения: настоящая кнопка, падение с 16 м без урона, шока и переломов; следующий удар без Сферы.');
+    console.log('Чернобыльская губка: настоящая кнопка, защита действует 4 игровых часа, собственная цена за выведенные 3 ед. радиации составляет 30 ОЗ.');
+    console.log('Горелка: выбор −3 и 150 ОЗ в интерфейсе; общий штраф −5 возвращается к −2 через 10 минут.');
 };

@@ -15,6 +15,8 @@ from app.services.transaction import atomic_operation
 STATE_KEY = 'artifactSpecial'
 DAY = 86400
 HEALING = {'Ядро твари': (50, 10), 'Звезда гнили': (100, 5)}
+FALL_ARTIFACT = 'Сфера притяжения'
+RADIATION_AMPLIFIER_COST = {'Хозяин свечения': 20, 'Реактор': 50}
 PREFIX = 'artifact-special:'
 BUFFS = {
     'Искровая жилка': (6, {'movement_penalty': -3}),
@@ -33,6 +35,12 @@ BUFFS = {
     'Ментальный бастион': (30, {'directed_psi_immunity': 1}),
     'Щит сознания': (60, {'directed_psi_immunity': 1, 'stress_immunity': 1}),
     'Дар пламени': (18, {'physical_protection': 30}),
+    'Чернобыльская губка': (4 * 3600, {'radiation_sickness_immunity': 1}),
+    'Хозяин свечения': (60, {'positive_multiplier': 2}),
+    'Реактор': (60, {'positive_multiplier': 3}),
+    'Ядро мысли': (60, {'positive_multiplier': 2}),
+    'Сердце Эха': (60, {'positive_multiplier': 2}),
+    'Горелка': (600, {}),
 }
 STAT_LABELS = {'movement_penalty': 'Штраф перемещения', 'skill_strength': 'Сила',
                'physical_protection': 'Защита от физического урона', 'chemical_protection': 'Защита от химического урона',
@@ -43,10 +51,16 @@ STAT_LABELS['armor_wear_immunity'] = 'Броня не теряет прочно�
 STAT_LABELS['armor_restore_on_hit'] = 'Восстановление прочности брони от входящего урона'
 STAT_LABELS['directed_psi_immunity'] = 'Иммунитет к направленным пси-атакам'
 STAT_LABELS['stress_immunity'] = 'Стресс не повышается'
+STAT_LABELS['radiation_sickness_immunity'] = 'Иммунитет к последствиям радиации'
+STAT_LABELS['positive_multiplier'] = 'Множитель положительных эффектов артефакта ×'
 
 
 def is_special_effect(effect):
     return isinstance(effect, dict) and str(effect.get('source') or '').startswith(PREFIX)
+
+
+def _effect_source(item_id, stat):
+    return PREFIX + sha256(str(item_id).encode()).hexdigest()[:24] + ':' + stat
 
 
 def damage_immunity(data, damage_type):
@@ -59,10 +73,12 @@ def damage_immunity(data, damage_type):
                for effect in ((data or {}).get('health') or {}).get('effects') or [])
 
 
-def stat_value(data, stat):
+def stat_value(data, stat, *, item_id=None):
+    source = _effect_source(item_id, stat) if item_id is not None else None
     return sum(float(effect.get('value') or 0)
                for effect in ((data or {}).get('health') or {}).get('effects') or []
                if is_special_effect(effect) and effect.get('active', True) and effect.get('artifact_stat') == stat
+               and (source is None or effect.get('source') == source)
                and _number(effect.get('remaining_seconds', effect.get('remaining'))) > 0
                and type(effect.get('value')) in (int, float) and math.isfinite(effect['value']))
 
@@ -122,7 +138,8 @@ def status(data, item):
     worn = _number(state.get('worn_seconds'))
     used = _number(state.get('used'))
     cooldown = _number(state.get('cooldown_seconds'))
-    supported = item.get('name') in HEALING or item.get('name') in BUFFS
+    fall_reaction = item.get('name') == FALL_ARTIFACT
+    supported = item.get('name') in HEALING or item.get('name') in BUFFS or fall_reaction
     reason = None
     if not capacity:
         reason = 'Нужно Выживание не ниже 9'
@@ -137,7 +154,10 @@ def status(data, item):
     return {'item_id': item.get('id'), 'name': item.get('name'), 'supported': supported,
             'worn_seconds': worn, 'required_seconds': required, 'cooldown_seconds': cooldown,
             'capacity': capacity, 'remaining_uses': max(0, capacity - used),
-            'action_points': 1 if level >= 15 else 2, 'available': reason is None, 'reason': reason}
+            'action_points': 1 if level >= 15 else 2, 'available': reason is None, 'reason': reason,
+            'power_cost': 50 if item.get('name') == 'Горелка' else None,
+            'fall_reaction': fall_reaction, 'armed': fall_reaction and
+            (data.get(STATE_KEY) or {}).get('fall_item_id') == item.get('id')}
 
 
 def snapshot(data):
@@ -148,7 +168,10 @@ def _identity(payload):
     identity = payload.get('operation_id')
     if not isinstance(identity, str) or not 1 <= len(identity) <= 100:
         raise ValidationError('Нужен идентификатор применения артефакта')
-    signature = sha256(json.dumps({'item_id': payload.get('item_id')}, sort_keys=True).encode()).hexdigest()
+    choice = {'item_id': payload.get('item_id')}
+    if 'power' in payload:
+        choice['power'] = payload['power']
+    signature = sha256(json.dumps(choice, sort_keys=True).encode()).hexdigest()
     return identity, signature
 
 
@@ -166,11 +189,22 @@ def prepare(actor, data, payload, user_id):
         raise ValidationError('Выберите один активный артефакт на броне или поясе')
     item = items[0]
     state = status(data, item)
+    if state['fall_reaction']:
+        raise ValidationError('Сфера притяжения применяется в момент падения')
     if not state['available']:
         raise ValidationError(state['reason'])
     if item.get('name') in HEALING and _number((data.get('health') or {}).get('radiation')) <= 0:
         raise ValidationError('Нет радиации для восстановления здоровья')
-    return {'item': item, 'state': state, 'action_points': state['action_points']}
+    plan = {'item': item, 'state': state, 'action_points': state['action_points']}
+    if state['power_cost']:
+        power = payload.get('power')
+        if type(power) is not int or not 1 <= power <= 5:
+            raise ValidationError('Выберите снижение штрафа от 1 до 5')
+        cost = power * state['power_cost']
+        if _number((data.get('health') or {}).get('current')) < cost:
+            raise ValidationError(f'Недостаточно ОЗ для применения: требуется {cost}')
+        plan.update(power=power, health_cost=cost)
+    return plan
 
 
 def execute(actor, data, payload, user_id, combat=None):
@@ -190,12 +224,21 @@ def execute(actor, data, payload, user_id, combat=None):
         health['current'] = min(_number(health.get('max', 700)), before + healing_amount(data, radiation * rate))
     else:
         duration, modifiers = BUFFS[item['name']]
+        if plan.get('health_cost'):
+            health['current'] = before - plan['health_cost']
+            modifiers = {'movement_penalty': -plan['power']}
+        duration_label = f'{duration // 3600} ч' if duration >= 3600 and duration % 3600 == 0 else f'{duration} сек.'
         effects = health.setdefault('effects', [])
         for stat, amount in modifiers.items():
-            source = PREFIX + sha256(str(item['id']).encode()).hexdigest()[:24] + ':' + stat
+            source = _effect_source(item['id'], stat)
+            label = STAT_LABELS[stat]
+            if stat == 'positive_multiplier':
+                label += f'{amount:g}'
+            elif not (stat.startswith('immune_') or stat.endswith('_immunity')):
+                label += f' {amount:+g}'
             effects[:] = [effect for effect in effects if effect.get('source') != source]
             effects.append({'id': source, 'source': source, 'type': 'custom', 'name': f"{item['name']}: особое свойство",
-                            'note': f"{STAT_LABELS[stat]}{'' if stat.startswith('immune_') or stat.endswith('_immunity') else f' {amount:+g}'} на {duration} сек.",
+                            'note': f'{label} на {duration_label}',
                             'artifact_stat': stat, 'value': amount, 'active': True, 'tick': 'time_elapsed',
                             'time_unit': 'second', 'remaining': duration, 'remaining_seconds': duration})
             if item['name'] == 'Сердце грозы' and stat == 'movement_penalty':
@@ -204,26 +247,86 @@ def execute(actor, data, payload, user_id, combat=None):
                     'time_unit': 'minute', 'tick': 'time_elapsed'}]
         if item['name'] == 'Огненная вена' and hasattr(actor, 'strenuous_movement_blocked_until_round'):
             actor.strenuous_movement_blocked_until_round = 0
-        if item['name'] == 'Дар пламени':
+        if item['name'] in RADIATION_AMPLIFIER_COST:
+            from app.services.combat import CombatService
+            health['radiation'] = _number(health.get('radiation')) + RADIATION_AMPLIFIER_COST[item['name']]
+            CombatService._apply_radiation_threshold_states(health)
+        if item['name'] in {'Дар пламени', 'Ядро мысли', 'Сердце Эха'}:
             # Каждое применение оплачивается отдельно, даже при обновлении самого бонуса.
-            source = PREFIX + sha256(f"{item['id']}\0{payload['operation_id']}".encode()).hexdigest()[:24] + ':health-cost'
-            effects.append({'id': source, 'source': source, 'type': 'delayed_adjustment',
-                'name': 'Цена Дара пламени', 'note': 'Потеря 250 ОЗ через 18 сек.',
-                'active': True, 'tick': 'time_elapsed', 'time_unit': 'second', 'remaining': 18, 'remaining_seconds': 18,
-                'adjustments': [{'field': 'current', 'delta': -250, 'min': 0}]})
+            source = _effect_source(f"{item['id']}\0{payload['operation_id']}", 'delayed-cost')
+            cost = {'id': source, 'source': source, 'type': 'custom', 'name': f"Цена: {item['name']}",
+                    'active': True, 'tick': 'time_elapsed', 'time_unit': 'second',
+                    'remaining': duration, 'remaining_seconds': duration}
+            if item['name'] == 'Сердце Эха':
+                cost.update(note='Через минуту штраф перемещения +3 на 10 минут.', activate_effects=[{
+                    'type': 'custom', 'source': _effect_source(item['id'], 'echo-movement-cost'),
+                    'name': 'Штраф после Сердца Эха', 'artifact_stat': 'movement_penalty', 'value': 3,
+                    'tick': 'time_elapsed', 'time_unit': 'second', 'remaining': 600, 'remaining_seconds': 600}])
+            else:
+                hp = 250 if item['name'] == 'Дар пламени' else 150
+                cost.update(type='delayed_adjustment', note=f'Потеря {hp} ОЗ через {duration_label}',
+                            adjustments=[{'field': 'current', 'delta': -hp, 'min': 0}])
+            effects.append(cost)
     sync_health_derived_statuses(health)
-    ledger = data.setdefault(STATE_KEY, {})
-    progress = ledger.setdefault('items', {}).setdefault(str(item['id']), {})
-    if not _number(progress.get('cooldown_seconds')):
-        progress['cooldown_seconds'] = DAY
-    progress['used'] = _number(progress.get('used')) + 1
+    ledger = _spend(data, item['id'])
     result = {'name': f"Особое свойство: {item['name']}", 'item_id': item['id'], 'radiation_removed': radiation,
-              'healed': health['current'] - before, 'action_points': plan['action_points'] if combat else 0,
+              'healed': max(0, _number(health.get('current')) - before), 'action_points': plan['action_points'] if combat else 0,
               'roll_required': False, 'replayed': False}
+    if plan.get('health_cost'):
+        result['health_spent'] = plan['health_cost']
     identity, signature = _identity(payload)
     ledger['receipts'] = [*ledger.get('receipts', [])[-127:],
                           {'id': identity, 'signature': signature, 'result': deepcopy(result)}]
     return result
+
+
+def _spend(data, item_id):
+    ledger = data.setdefault(STATE_KEY, {})
+    progress = ledger.setdefault('items', {}).setdefault(str(item_id), {})
+    if not _number(progress.get('cooldown_seconds')):
+        progress['cooldown_seconds'] = DAY
+    progress['used'] = _number(progress.get('used')) + 1
+    return ledger
+
+
+def _configure_fall(data, payload):
+    item_id, armed = payload.get('item_id'), payload.get('arm_fall')
+    items = [item for item in _equipped(data) if item['id'] == item_id and item['name'] == FALL_ARTIFACT
+             and item.get('quantity', 1) == 1]
+    if type(armed) is not bool or len(items) != 1:
+        raise ValidationError('Выберите активную Сферу притяжения')
+    state = status(data, items[0])
+    if armed and not state['available']:
+        raise ValidationError(state['reason'])
+    ledger = data.setdefault(STATE_KEY, {})
+    if armed:
+        ledger['fall_item_id'] = item_id
+    elif ledger.get('fall_item_id') == item_id:
+        ledger.pop('fall_item_id')
+    return {'item_id': item_id, 'armed': armed, 'action_points': 0}
+
+
+def prevent_fall(actor, data):
+    item_id = (data.get(STATE_KEY) or {}).get('fall_item_id')
+    if item_id is None:
+        return False
+    items = [item for item in _equipped(data) if item['id'] == item_id and item['name'] == FALL_ARTIFACT
+             and item.get('quantity', 1) == 1]
+    if len(items) != 1:
+        return False
+    state = status(data, items[0])
+    from app.services.combat import CombatService
+    if not state['available'] or CombatService._character_condition(data)['state'] != 'active':
+        return False
+    combat = LocationCombatState.query.filter_by(location_id=actor.location_id, status='active').first()
+    if combat:
+        cost = state['action_points']
+        if (actor.action_points_current or 0) < cost:
+            return False
+        actor.action_points_current -= cost
+    _spend(data, item_id).pop('fall_item_id')
+    flag_modified(actor.character, 'data')
+    return True
 
 
 @atomic_operation
@@ -236,6 +339,13 @@ def operate(character_id, user_id, payload):
         raise NotFoundError('Персонаж не найден')
     CharacterService.check_access(character, user_id, edit=True)
     data = deepcopy(character.data or {})
+    if 'arm_fall' in payload:
+        if payload.get('character_revision') != character.revision:
+            raise ConflictError('Лист изменился')
+        result = _configure_fall(data, payload)
+        character.data = data
+        flag_modified(character, 'data')
+        return character, result
     plan = prepare(None, data, payload, user_id)
     if plan.get('prior'):
         return character, {**deepcopy(plan['prior']['result']), 'replayed': True, 'action_points': 0}

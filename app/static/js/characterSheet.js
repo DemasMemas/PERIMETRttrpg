@@ -5675,22 +5675,32 @@ function renderArtifactSpecial(item) {
     if(!state)return '';
     const combat=window.locationCombatState?.status==='active';
     const hint=state.reason||`Доступно: ${state.remaining_uses}/${state.capacity}`;
+    const powerOptions=state.power_cost?`<select data-artifact-power aria-label="Снижение штрафа перемещения" ${!currentCharacterCanEdit||!state.available?'disabled':''}>
+        ${[1,2,3,4,5].map(value=>`<option value="${value}">−${value} к штрафу · ${value*state.power_cost} ОЗ</option>`).join('')}
+        </select>`:'';
     return `<div style="flex-basis:100%;font-size:.8rem;margin-top:5px;overflow-wrap:anywhere;">
-        <span>${escapeHtml(hint)}</span>
+        <span>${escapeHtml(hint)}</span>${powerOptions}
         ${state.supported?`<button type="button" class="btn btn-sm" data-artifact-special="${escapeHtml(String(state.item_id))}"
-            onclick="window.activateArtifactSpecial(this.dataset.artifactSpecial)" ${!currentCharacterCanEdit||!state.available?'disabled':''}>
-            Применить${combat?` · ${state.action_points} ОД`:''}</button>`:''}
+            onclick="window.activateArtifactSpecial(this.dataset.artifactSpecial,this.parentElement.querySelector('[data-artifact-power]')?.value)" ${!currentCharacterCanEdit||!state.available&&!state.armed?'disabled':''}>
+            ${state.armed?'Отменить применение при падении':state.fall_reaction?'Применить при следующем падении':'Применить'}${combat&&!state.armed?` · ${state.action_points} ОД`:''}</button>`:''}
     </div>`;
 }
-window.activateArtifactSpecial = async function(itemId) {
+window.activateArtifactSpecial = async function(itemId,power) {
     if(medicalOperationInProgress||!currentCharacterCanEdit)return;
     const characterId=currentCharacterId;let locked=false;
     try {
         await forceSyncCharacter();await Server.waitForCharacterSave(characterId);
         if(currentCharacterId!==characterId||sheetSaveBlocked||medicalOperationInProgress)return;
         medicalOperationInProgress=locked=true;medicalRemoteUpdate=null;
+        const state=(currentCharacterData?._artifact_specials||[]).find(entry=>String(entry.item_id)===itemId);
+        if(state?.fall_reaction){
+            const response=await Server.activateArtifactSpecial(characterId,{item_id:state.item_id,
+                arm_fall:!state.armed,character_revision:currentCharacterData._revision});
+            if(currentCharacterId===characterId)currentCharacterData=response.data;
+            return;
+        }
         const {runController}=await import('./itemControllers.js');
-        await runController(characterId,{item_id:itemId},data=>{
+        await runController(characterId,{item_id:itemId,...(power===undefined?{}:{power:Number(power)})},data=>{
             if(currentCharacterId===characterId)currentCharacterData=data;
         },{actionKey:'artifact_special',send:Server.activateArtifactSpecial});
     }catch(error){showNotification(error.message||'Не удалось применить артефакт','system');}

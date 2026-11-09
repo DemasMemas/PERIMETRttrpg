@@ -2147,7 +2147,8 @@ if (socket) {
         if (data.slip_stopped) showNotification('Оставшихся ОП хватило только на часть маршрута ходьбой.', 'system');
         if (data.fall) {
             const damage = (data.fall.legs || []).reduce((sum,leg)=>sum+Number(leg.damage || 0),0);
-            showNotification(`Падение с ${Number(data.fall.height).toFixed(1)} м · урон ногам: ${damage}`, 'system');
+            const outcome = data.fall.artifact ? `${data.fall.artifact} погасила удар` : `урон ногам: ${damage}`;
+            showNotification(`Падение с ${Number(data.fall.height).toFixed(1)} м · ${outcome}`, 'system');
         }
     });
     socket.on('movement_rejected', (data) => {

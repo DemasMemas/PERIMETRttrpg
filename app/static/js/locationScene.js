@@ -5795,7 +5795,8 @@ async function resolveCombatPointSelection(clientX, clientY) {
             setCombatState(result.state);
             const labels={success:'успех',midpoint:'приземление на середине',unstable_edge:'неустойчивое положение на краю'};
             const check=result.jump.check;
-            showNotification(`Прыжок: ${check.total} против СЛ${check.difficulty} · ${labels[result.jump.outcome]}`,'system');
+            const protection=result.jump.fall?.artifact;
+            showNotification(`Прыжок: ${check.total} против СЛ${check.difficulty} · ${labels[result.jump.outcome]}${protection?` · ${protection} погасила удар`:''}`,'system');
             if(pendingCombatAction===action)clearPendingCombatAction();
             return true;
         }

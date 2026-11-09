@@ -111,7 +111,7 @@ def _radiation_value(text, *, positive):
 def _conditional_value(text, pattern, radiation):
     total = 0
     matches = list(re.finditer(
-        pattern + r'\s*([+-]\d+),?\s*Если накоплено хотя бы\s*(\d+)\s*Радиаци',
+        pattern + r'\s*([+-]\d+)%?,?\s*Если накоплено хотя бы\s*(\d+)\s*Радиаци',
         text,
         re.IGNORECASE,
     ))
@@ -140,7 +140,11 @@ def artifact_passive_profile(character_data):
     }
     health = character_data.get('health') if isinstance(character_data, dict) else {}
     radiation_level = float((health or {}).get('radiation') or 0)
+    from app.services.artifact_special import is_special_effect, stat_value
     for artifact in equipped_artifacts(character_data):
+        multiplier = 1
+        if artifact.get('id') and artifact.get('name') in {'Хозяин свечения', 'Реактор', 'Ядро мысли', 'Сердце Эха'}:
+            multiplier = max(1, stat_value(character_data, 'positive_multiplier', item_id=artifact['id']))
         attrs = artifact.get('attributes') if isinstance(artifact.get('attributes'), dict) else {}
         positive = str(attrs.get('positive_effect') or '')
         negative = str(attrs.get('negative_effect') or '')
@@ -166,15 +170,15 @@ def artifact_passive_profile(character_data):
                 rf'Защита от {label}(?: урона)?',
                 radiation_level,
             )
-        result['skill_physical'] += _signed(text, r'Физические навыки')
-        result['skill_other'] += _signed(text, r'Прочие навыки')
+        result['skill_physical'] += _signed(text, r'Физические навыки') * multiplier
+        result['skill_other'] += _signed(text, r'Прочие навыки') * multiplier
         result['skill_strength'] += _signed(text, r'Бонус Силы')
         result['skill_will'] += _signed(text, r'Воля')
         result['skill_awareness'] += _signed(text, r'Внимательность')
         result['skill_stealth'] += _signed(text, r'Скрытность')
         result['accuracy'] += _signed(text, r'Точность') + conditional_accuracy
         result['movement_penalty'] += (
-            _signed(text, r'Штраф перемещения') + conditional_movement
+            _signed(text, r'Штраф перемещения') + conditional_movement * multiplier
         )
         result['melee_damage_percent'] += _percent(text, r'Урон в ближнем бою')
         result['incoming_physical_percent'] += _percent(text, r'Входящий физический урон')
@@ -209,14 +213,13 @@ def artifact_passive_profile(character_data):
         healing = re.search(r'Восстановление здоровья из любых источников\s*([\d.,]+)х', text, re.IGNORECASE)
         if healing:
             result['healing_multiplier'] *= float(healing.group(1).replace(',', '.'))
-        all_protection = _percent(text, r'Все защиты') + conditional_all_protection
+        all_protection = _percent(text, r'Все защиты') + conditional_all_protection * multiplier
         for key, label in protection_names.items():
             result['protection'][key] += all_protection + conditional_protection[key]
             result['protection'][key] += _percent(
                 text, rf'Защита от {label}(?: урона)?',
             )
     owners={_clock_source(item,REACTION_PREFIX) for item in equipped_artifacts(character_data)}
-    from app.services.artifact_special import is_special_effect
     for effect in (health or {}).get('effects') or []:
         special=is_special_effect(effect)
         if not (is_reaction(effect) or special) or effect.get('active',True) is False:continue

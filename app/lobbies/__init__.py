@@ -4821,6 +4821,9 @@ def apply_location_gm_event(lobby_id, location_id, lobby):
     if event_type == 'fall':
         for item in changed:
             result = item.get('fall') or {}
+            if result.get('artifact'):
+                fall_lines.append(f"{item['name'] or 'Персонаж'}: {result['artifact']} погасила удар")
+                continue
             outcome = 'успех' if result.get('success') else 'провал'
             fall_lines.append(
                 f"{item['name'] or 'Персонаж'}: d20 {result.get('roll')} "

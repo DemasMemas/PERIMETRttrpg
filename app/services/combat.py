@@ -5653,6 +5653,9 @@ class CombatService:
 
     @staticmethod
     def _apply_radiation_threshold_states(health):
+        from app.services.artifact_special import stat_value
+        if stat_value({'health': health}, 'radiation_sickness_immunity') > 0:
+            return {'critical': False, 'death': False, 'changed': False}
         radiation = max(0.0, CombatService._coerce_float(health.get('radiation'), 0))
         active_effects = normalize_effect_list(health.get('effects') or [])
         had_critical = any(
@@ -5710,7 +5713,9 @@ class CombatService:
     def _apply_world_radiation_consequences(character_data):
         """Apply one ten-minute radiation sickness interval before world travel."""
         health = apply_health_maximums(character_data)
-        radiation = max(0.0, CombatService._coerce_float(health.get('radiation'), 0))
+        dose = max(0.0, CombatService._coerce_float(health.get('radiation'), 0))
+        from app.services.artifact_special import stat_value
+        radiation = 0 if stat_value(character_data, 'radiation_sickness_immunity') > 0 else dose
         damage = 0
         bleeding_stage = None
         bleeding_count = 0
@@ -5770,7 +5775,7 @@ class CombatService:
         sync_health_derived_statuses(health)
         active_effects = normalize_effect_list(health.get('effects') or [])
         return {
-            'radiation_at_start': radiation,
+            'radiation_at_start': dose,
             'damage': damage,
             'health_before': before_health,
             'health_after': max(
@@ -7808,6 +7813,13 @@ class CombatService:
         """Resolve impact damage from a fall using the table from the combat rules."""
         height = max(0.0, CombatService._coerce_float(height_meters, 0))
         classified_height = math.floor(height)
+        attacker_data = target.character.data if target and target.character else {}
+        from app.services.artifact_special import prevent_fall
+        if height > 0 and prevent_fall(target, attacker_data):
+            return {'height': height, 'classified_height': classified_height, 'artifact': 'Сфера притяжения',
+                    'difficulty': None, 'roll': None, 'agility_bonus': None, 'total': None, 'success': True,
+                    'base_damage': 0, 'unscaled_damage': 0, 'damage_multiplier': 0,
+                    'legs': [], 'shock': False, 'fracture_both_legs': False}
         fall_table = (
             (1, 4, 0, 5, False, False),
             (4, 8, 0, 30, False, False),
@@ -7823,7 +7835,6 @@ class CombatService:
         for upper_bound, difficulty, success_damage, failure_damage, success_shock, failure_shock in fall_table:
             if classified_height < upper_bound:
                 break
-        attacker_data = target.character.data if target and target.character else {}
         agility_bonus = CombatService._skill_modifier(
             attacker_data, 'skills.physical.agility'
         )
@@ -10708,6 +10719,8 @@ class CombatService:
             )
             result['fall'] = fall
             result['damage'] = sum(item.get('damage', 0) for item in fall.get('legs', []))
+            if fall.get('artifact'):
+                apply_category_effect = False
         elif damage > 0 and fraction > 0:
             character_data = (
                 loc_char.character.data

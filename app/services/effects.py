@@ -1460,8 +1460,11 @@ def advance_timed_effects(
         apply_effect_to_health(health, effect,character_data=character_data)
     if character_data:
         from app.services.artifact_effects import needs_clocks,sync_clocks
-        if needs_clocks(character_data):
+        from app.services.artifact_special import stat_value
+        has_clocks = needs_clocks(character_data)
+        if has_clocks:
             health['effects']=sync_clocks(character_data,health['effects'])
+        if has_clocks or stat_value({'health': {'effects': initial_effects}}, 'radiation_sickness_immunity') > 0:
             from app.services.combat import CombatService
             CombatService._apply_radiation_threshold_states(health)
     sync_health_derived_statuses(health)

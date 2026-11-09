@@ -121,6 +121,109 @@ def test_actual_healing_multiplier_and_no_gubka_damage_for_other_radiation_remov
     assert data['health']['current'] == 150
 
 
+@pytest.mark.parametrize('dose,condition', [(85, 'critical_condition'), (105, 'death')])
+def test_sponge_blocks_new_radiation_sickness_until_four_hours_even_after_removal(dose, condition):
+    data = ready(name='Чернобыльская губка')
+    health = data['health']
+    health.update(current=700, radiation=0)
+    use(data)
+    data['equipment'] = {}
+    health['effects'] = advance_timed_effects(health, health['effects'], 4*3600-1, character_data=data)
+    exposure = CombatService._apply_incoming_radiation(data, dose)
+    assert exposure['after'] == dose and not exposure['critical'] and not exposure['death']
+    interval = CombatService._apply_world_radiation_consequences(data)
+    assert interval['radiation_at_start'] == dose and not interval['applied']
+    assert health['current'] == 700 and not any(e.get('source') == 'radiation_sickness' for e in health['effects'])
+    health['effects'] = advance_timed_effects(health, health['effects'], 1, character_data=data)
+    assert any(e['type'] == condition and e['source'] == 'radiation_sickness' for e in health['effects'])
+
+
+def test_sponge_immunity_keeps_its_own_radiation_removal_cost():
+    data = ready(name='Чернобыльская губка')
+    health = data['health']
+    health.update(current=700, radiation=3)
+    use(data)
+    health['effects'] = advance_timed_effects(health, health['effects'], 60, character_data=data)
+    assert health['radiation'] == 0 and health['current'] == 670
+    assert any(e.get('artifact_stat') == 'radiation_sickness_immunity' for e in health['effects'])
+
+
+@pytest.mark.parametrize('name,threshold,cost,protection,multiplier', [
+    ('Хозяин свечения', 30, 20, 10, 2), ('Реактор', 40, 50, 20, 3),
+])
+def test_radiation_amplifier_doubles_or_triples_only_its_ready_positive_bonuses(name, threshold, cost, protection, multiplier):
+    from app.services.artifact_effects import artifact_passive_profile
+    data = ready(name=name)
+    second = equipped(name)['equipment']['armor']['containers'][0]
+    second['item']['id'] = 'second-artifact'
+    data['equipment']['armor']['containers'].append(second)
+    health = data['health']
+    health['radiation'] = threshold-1
+    baseline = artifact_passive_profile(data)
+    assert baseline['movement_penalty'] == baseline['protection']['physical'] == 0
+    use(data)
+    assert health['radiation'] == threshold-1+cost
+    enhanced = artifact_passive_profile(data)
+    assert enhanced['movement_penalty'] == -2*(multiplier+1)
+    assert all(value == protection*(multiplier+1) for value in enhanced['protection'].values())
+    assert enhanced['radiation_per_movement'] == baseline['radiation_per_movement']
+    assert use(data)['replayed'] and health['radiation'] == threshold-1+cost
+    health['radiation'] = threshold-1
+    assert not artifact_passive_profile(data)['protection']['physical']
+    health['radiation'] = threshold
+    health['effects'] = advance_timed_effects(health, health['effects'], 60, character_data=data)
+    assert artifact_passive_profile(data)['protection']['physical'] == protection*2
+
+
+@pytest.mark.parametrize('name,other,physical', [('Ядро мысли', 5, 3), ('Сердце Эха', 8, 4)])
+def test_psi_amplifier_improves_skills_without_enhancing_passive_cost(name, other, physical):
+    from app.services.artifact_effects import artifact_passive_profile
+    data = ready(name=name)
+    health = data['health']
+    health['current'] = 700
+    baseline = artifact_passive_profile(data)
+    use(data)
+    enhanced = artifact_passive_profile(data)
+    assert enhanced['skill_other'] == other*2 and enhanced['skill_physical'] == physical*2
+    assert enhanced['pain_per_movement'] == baseline['pain_per_movement']
+    assert enhanced['health_per_movement'] == baseline['health_per_movement']
+    health['effects'] = advance_timed_effects(health, health['effects'], 59, character_data=data)
+    assert health['current'] == 700 and artifact_passive_profile(data)['skill_other'] == other*2
+    health['effects'] = advance_timed_effects(health, health['effects'], 1, character_data=data)
+    assert artifact_passive_profile(data)['skill_other'] == other
+    if name == 'Ядро мысли':
+        assert health['current'] == 550
+    else:
+        assert health['current'] == 700 and artifact_passive_profile(data)['movement_penalty'] == 3
+        health['effects'] = advance_timed_effects(health, health['effects'], 600, character_data=data)
+        assert artifact_passive_profile(data)['movement_penalty'] == 0
+
+
+def test_burner_pays_exact_health_for_selected_penalty_and_expires():
+    from app.services.artifact_effects import artifact_passive_profile
+    data = ready(name='Горелка')
+    health = data['health']
+    payload = {'item_id': 'reactive-artifact', 'operation_id': 'burner-test', 'power': 5}
+    for power in (None, True, 0, 6, 3.5):
+        with pytest.raises(ValidationError):
+            execute(None, data, {**payload, 'power': power}, 1)
+    before = deepcopy(data)
+    with pytest.raises(ValidationError, match='Недостаточно ОЗ'):
+        execute(None, data, payload, 1)
+    assert data == before
+    health['current'] = 700
+    baseline = artifact_passive_profile(data)['movement_penalty']
+    execute(None, data, payload, 1)
+    assert health['current'] == 450 and artifact_passive_profile(data)['movement_penalty'] == baseline-5
+    assert execute(None, data, payload, 1)['replayed'] and health['current'] == 450
+    with pytest.raises(ConflictError):
+        execute(None, data, {**payload, 'power': 4}, 1)
+    health['effects'] = advance_timed_effects(health, health['effects'], 599, character_data=data)
+    assert artifact_passive_profile(data)['movement_penalty'] == baseline-5
+    health['effects'] = advance_timed_effects(health, health['effects'], 1, character_data=data)
+    assert health['current'] == 450 and artifact_passive_profile(data)['movement_penalty'] == baseline
+
+
 def test_unready_unsupported_or_zero_radiation_does_not_spend():
     for data in [value(), ready(name='Ферромагнит'), ready()]:
         if data['health']['radiation'] == 10 and snapshot(data)[0]['available']:
@@ -613,6 +716,56 @@ def test_second_fire_gift_refreshes_bonus_but_does_not_erase_first_health_cost()
     assert health['current'] == 450
     health['effects'] = advance_timed_effects(health, health['effects'], 6, character_data=data)
     assert health['current'] == 200
+
+
+@pytest.mark.parametrize('in_combat,ap,protected', [(False, 0, True), (True, 1, False), (True, 2, True)])
+def test_gravity_sphere_is_optional_and_spent_only_on_impact(grenade_game, monkeypatch, in_combat, ap, protected):
+    actor = grenade_game['actor_location']
+    user_id = grenade_game['actor_user']['id']
+    actor.character.data = ready(level=9, name='Сфера притяжения')
+    actor.character.data['health']['current'] = 700
+    actor.action_points_current = ap
+    if not in_combat:
+        LocationCombatState.query.filter_by(location_id=actor.location_id).first().status = 'ended'
+    db.session.commit()
+
+    def arm(value):
+        return operate(actor.character_id, user_id, {'item_id': 'reactive-artifact', 'arm_fall': value,
+                                                   'character_revision': actor.character.revision})[1]
+
+    assert arm(True)['armed'] and not arm(False)['armed']
+    assert arm(True)['action_points'] == 0
+    data = actor.character.data
+    assert snapshot(data)[0]['remaining_uses'] == 1
+    assert snapshot(data)[0]['cooldown_seconds'] == 0
+    assert actor.action_points_current == ap
+    before = deepcopy(data['health'])
+    monkeypatch.setattr('app.services.combat.random.randint', lambda low, high: low)
+    result = CombatService.resolve_fall(actor, 16)
+    if protected:
+        assert result['artifact'] == 'Сфера притяжения' and result['roll'] is None
+        assert result['legs'] == [] and not result['shock'] and not result['fracture_both_legs']
+        assert actor.character.data['health'] == before and actor.posture != 'prone'
+        assert actor.action_points_current == 0
+        state = snapshot(actor.character.data)[0]
+        assert not state['armed'] and state['remaining_uses'] == 0 and state['cooldown_seconds'] == DAY
+        result = CombatService.resolve_fall(actor, 16)
+    else:
+        assert snapshot(actor.character.data)[0]['remaining_uses'] == 1
+        assert actor.action_points_current == ap
+    assert not result.get('artifact') and result['shock'] and result['fracture_both_legs']
+
+
+@pytest.mark.parametrize('key', ['batut', 'kacheli'])
+def test_gravity_sphere_prevents_bleeding_from_anomaly_fall(grenade_game, key):
+    actor = grenade_game['actor_location']
+    actor.character.data = ready(name='Сфера притяжения')
+    db.session.commit()
+    operate(actor.character_id, grenade_game['actor_user']['id'], {'item_id': 'reactive-artifact', 'arm_fall': True,
+                                                                  'character_revision': actor.character.revision})
+    result = CombatService._apply_anomaly_exposure(actor, {'key': key})
+    assert result['fall']['artifact'] == 'Сфера притяжения' and result['damage'] == 0
+    assert not actor.character.data['health']['effects']
 
 
 def test_fire_gift_cost_survives_removal_and_cannot_be_forged_removed_or_reduced_by_healing_modifier():
