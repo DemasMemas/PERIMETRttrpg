@@ -1,0 +1,124 @@
+const assert = require('node:assert/strict');
+
+module.exports = async ({page, request, token, api, loc}) => {
+    const {global: templates} = await request(api + '/templates', null, token, 'GET');
+    const template = name => {
+        const result = templates.find(item => item.name === name);
+        assert.ok(result, 'Каталожный шаблон: ' + name);
+        return result;
+    };
+    const item = (name, id, overrides = {}) => {
+        const t = template(name);
+        return {id, name, templateId: t.id, category: t.category, attributes: t.attributes, quantity: 1,
+            weight: t.weight, volume: t.volume, uses: t.attributes?.uses, maxUses: t.attributes?.uses, ...overrides};
+    };
+    const actor = await request(api + '/characters', {name: 'Проверка рецептов', data: {
+        health: {current: 700, max: 700, effects: []},
+        skills: {other: {engineering: {base: 20}, survival: {base: 20}}},
+        features: {specialTraits: [{name: 'Мастер на все руки'}]},
+        inventory: {pockets: [item('Металлические детали', 'recipe-metal')], backpack: []},
+    }}, token);
+    await request(loc + '/spawn_character', {character_id: actor.id, tile_x: 41, tile_y: 48}, token);
+    await request(loc + '/objects', {name: 'Печь', type: 'household_workbench', tile_x: 42, tile_y: 48,
+        properties: {craft_workbench: 'Печь', level: 0}}, token);
+    const url = '/lobbies/characters/' + actor.id;
+    const read = () => request(url, null, token, 'GET');
+    const state = `(async()=>{const {Server}=await import('/static/js/api.js');return (await Server.getCharacter(${actor.id})).data`;
+    const waitState = (expression, label) => page.until(`(async()=>{const data=await ${state}})();return ${expression};})()`, label);
+    const button = label => `[...document.querySelectorAll('#crafting-modal button')].find(b=>b.textContent===${JSON.stringify(label)})`;
+    const click = async label => {
+        await page.until(`Boolean(${button(label)} && !${button(label)}.disabled)`, label);
+        await page.evaluate(`${button(label)}.click();true`);
+    };
+    const selectRecipe = async id => {
+        await page.until("document.querySelector('#crafting-modal select[aria-label=Рецепт]')", 'Загружено создание');
+        await page.evaluate(`(()=>{const select=document.querySelector('#crafting-modal select[aria-label=Рецепт]');
+            select.value=${JSON.stringify(id)};select.dispatchEvent(new Event('change'));return true})()`);
+    };
+    const openSheetCrafting = async () => {
+        await page.evaluate(`window.openCharacterSheet(${actor.id},'equipment').then(()=>true)`);
+        await page.until("document.querySelector('#character-crafting-open')", 'Лист с кнопкой создания');
+        await page.evaluate("document.querySelector('#character-crafting-open').click();true");
+    };
+    const closeCrafting = () => page.evaluate(
+        "document.querySelector('#crafting-modal .block-header button').click();window.closeCharacterSheet?.();true");
+    const replacePockets = async pockets => {
+        const {data} = await read();
+        data.inventory.pockets = pockets;
+        await request(url, {data}, token, 'PUT');
+    };
+    const advance = async minutes => {
+        const clock = await request(api, null, token, 'GET');
+        const end = clock.game_time_minutes + minutes;
+        await request(api + '/time', {game_day: clock.game_day + Math.floor(end / 1440),
+            game_time_minutes: end % 1440}, token, 'PATCH');
+        await click('Обновить');
+    };
+    const finish = async minutes => {
+        await page.until(`Boolean(${button('Завершить · к100')}?.disabled)`, 'До окончания срока кнопка заблокирована');
+        await advance(minutes);
+        await click('Завершить · к100');
+        await waitState('!data.crafting?.current', 'Работа завершена');
+    };
+    const checkOutput = async (name, amount) => {
+        const {data} = await read();
+        const entries = data.inventory.pockets.filter(i => i.templateId === template(name).id);
+        assert.equal(entries.reduce((sum, entry) => sum + entry.quantity, 0), amount);
+        assert.ok(data.crafting.history.at(-1).success);
+        return entries;
+    };
+
+    await openSheetCrafting();
+    await selectRecipe('recipe-m27');
+    await page.until("document.querySelector('#crafting-modal .crafting-recipe-detail')?.innerText.includes('Результат: Отмычка × 2')",
+        'Котировка показывает две отмычки');
+    await click('Начать создание');
+    await finish(40);
+    await checkOutput('Отмычка', 2);
+    await closeCrafting();
+
+    for (const water of ['Дождевая вода', 'Болотная вода']) {
+        await replacePockets([item(water, 'recipe-water', {uses: 2}),
+            item('Хлорные таблетки (10 штук)', 'recipe-chlorine')]);
+        await openSheetCrafting();
+        await selectRecipe('recipe-aa10');
+        await page.until(`[...document.querySelectorAll('#crafting-modal .crafting-recipe-detail p')].some(p=>
+            p.textContent.includes('Дождевая вода') && p.textContent.includes('Болотная вода') &&
+            p.textContent.includes(${JSON.stringify(water + ' 2/2')}))`, 'Окно показывает оба варианта очистки');
+        await click('Начать создание');
+        await waitState("data.crafting?.current?.recipe_id==='recipe-aa10'", 'Компоненты очистки зарезервированы');
+        assert.equal((await read()).data.inventory.pockets.find(i => i.id === 'recipe-chlorine').uses, 9);
+        await finish(1);
+        await checkOutput('Радиоактивная вода', 1);
+        await closeCrafting();
+    }
+
+    const aera = await request(loc + '/objects', {name: 'Аэрационная установка', type: 'station_aeration',
+        tile_x: 41, tile_y: 49, properties: {portable_station: 'recipe-m34', aeration_unit: true,
+            visual_asset: 'station_aeration', level: 0, dimensions: {width: .9, depth: .8, height: 2}}}, token);
+    const filter = (id, durability) => {
+        const entry = item('Фильтр для противогаза', id, {durability});
+        entry.attributes = {...entry.attributes, durability};
+        return entry;
+    };
+    await replacePockets([item('Радиоактивная вода', 'recipe-radioactive', {quantity: 4, uses: 1}),
+        filter('recipe-filter-6', 6), filter('recipe-filter-7', 7)]);
+    await page.until(`(async()=>{const L=await import('/static/js/locationScene.js');
+        const roots=L.sceneGraphicsForTest().roots;
+        return roots.some(r=>r.userData.locationObjectId===${aera.id})})()`, 'Аэрационная установка появилась в Припяти');
+    await page.evaluate(`(async()=>{const L=await import('/static/js/locationScene.js');
+        window.currentLocationCharacterId=${actor.id};L.showObjectContextMenu(650,350,${JSON.stringify(aera)});return true})()`);
+    await page.until("[...document.querySelectorAll('button')].some(b=>b.textContent==='Очистка воды')",
+        'Действие очистки доступно у установки');
+    await page.evaluate("[...document.querySelectorAll('button')].find(b=>b.textContent==='Очистка воды').click();true");
+    await page.until("document.querySelector('#crafting-modal .crafting-recipe-detail')?.innerText.includes('Результат: Вода × 8')",
+        'Действие открывает рецепт аэрации');
+    await click('Начать создание');
+    await waitState("data.crafting?.current?.recipe_id==='recipe-aa12'", 'Вода и заряды зарезервированы');
+    assert.deepEqual((await read()).data.inventory.pockets.map(i => [i.id, i.durability]), [['recipe-filter-7', 3]]);
+    await finish(30);
+    const cleanWater = await checkOutput('Вода', 3);
+    assert.deepEqual(cleanWater.map(i => [i.quantity, i.uses, i.maxUses]), [[3, 2, 3]]);
+    await closeCrafting();
+    console.log(JSON.stringify({lockpick_recipe:true, chlorine_rain_and_swamp:true, aeration_from_scene:true, clean_water_portions:8}));
+};

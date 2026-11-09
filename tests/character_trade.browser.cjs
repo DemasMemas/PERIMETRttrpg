@@ -510,5 +510,6 @@ module.exports=async({page,request,token,lobby,base,connect,debugPort,safeSessio
     assert.ok(generatedCharacters.some(character=>character.name===generatedName
         &&character.data?.npcGenerator?.name_source==='author_name_parts'));
     console.log(JSON.stringify({author_npc_name_ui:true,reroll:true,created:true}));
+    await require('./crafting_recipe_boundaries.browser.cjs')({page,request,token,api,loc});
     await require('./world_factions_ready.browser.cjs')({page,request,token,safeSession});
 };

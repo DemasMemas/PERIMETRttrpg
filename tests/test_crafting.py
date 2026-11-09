@@ -902,15 +902,18 @@ def test_failed_molotov_loses_only_reserved_half_liter(client,workshop,auth_head
     assert sum(item['quantity'] for item in fuel)==.5
 
 
-def test_water_purification_spends_one_tablet_from_chlorine_packet(client,workshop,auth_headers):
+@pytest.mark.parametrize('water_name', ['Дождевая вода', 'Болотная вода'])
+def test_water_purification_spends_one_tablet_from_chlorine_packet(client,workshop,auth_headers,water_name):
+    from app.services.character_starting_purchase import item_from_template
+
+    water = item_from_template(catalog_template(water_name))
+    water['uses'] = 2
+    chlorine = item_from_template(catalog_template('Хлорные таблетки (10 штук)'))
+    output = catalog_template('Радиоактивная вода')
     data=deepcopy(workshop['actor_character'].data)
     data['skills']['other']['survival']={'base':13,'bonus':0}
-    data['inventory']['pockets']=[
-        {'name':'Дождевая вода','category':'consumable','quantity':2},
-        {'name':'Хлорные таблетки (10 штук)','category':'misc','quantity':1},
-    ]
+    data['inventory']['pockets'] = [water, chlorine]
     workshop['actor_character'].data=data
-    db.session.add(ItemTemplate(name='Радиоактивная вода',category='consumable',price=0))
     db.session.commit()
     quoted=call(client,workshop,auth_headers,'quote',recipe_id='recipe-aa10')
     assert quoted.status_code==200 and quoted.json['result']['missing']==[],quoted.json
@@ -918,11 +921,17 @@ def test_water_purification_spends_one_tablet_from_chlorine_packet(client,worksh
     assert started.status_code==200,started.json
     packet=next(item for item in started.json['data']['inventory']['pockets'] if item['name']=='Хлорные таблетки (10 штук)')
     assert packet['uses']==9 and packet['maxUses']==10 and packet['quantity']==1
-    workshop['lobby'].game_time_minutes+=1;db.session.commit()
+    job = started.json['result']
+    assert {entry['item']['name']: entry['amount'] for entry in job['escrow']} == {
+        water_name: 2, chlorine['name']: 1,
+    }
+    assert_recipe_wait(client, workshop, auth_headers, job, 1, chosen_loss=[])
     finished=call(client,workshop,auth_headers,'finish',job_id=started.json['result']['id'],chosen_loss=[])
     assert finished.status_code==200,finished.json
     assert units(finished.json['data'],'Хлорные таблетки (10 штук)')==9
-    assert units(finished.json['data'],'Радиоактивная вода')==1
+    assert finished.json['result']['success']
+    assert [item['quantity'] for item in finished.json['data']['inventory']['pockets']
+            if item.get('templateId') == output.id] == [1]
 
 
 def test_cancel_water_purification_restores_chlorine_tablet(client,workshop,auth_headers):
@@ -937,6 +946,8 @@ def test_cancel_water_purification_restores_chlorine_tablet(client,workshop,auth
     cancelled=call(client,workshop,auth_headers,'cancel',job_id=started.json['result']['id'])
     assert cancelled.status_code==200,cancelled.json
     assert units(cancelled.json['data'],'Хлорные таблетки (10 штук)')==10
+    assert units(cancelled.json['data'],'Дождевая вода')==2
+    assert units(cancelled.json['data'],'Радиоактивная вода')==0
 
 
 def test_empty_chlorine_packet_cannot_satisfy_water_recipe(app):
@@ -968,6 +979,8 @@ def test_aeration_spends_charges_across_filters_and_produces_eight_water_portion
         item['attributes']['durability']=remaining
         filters.append(item)
     radioactive=item_from_template(templates['Радиоактивная вода'],4)
+    radioactive['uses'] = 1
+    assert _available_uses(radioactive) == 10
     data['inventory']['pockets']=[radioactive,*filters]
     workshop['actor_character'].data=data
     placement=LocationCharacter.query.filter_by(character_id=workshop['actor_character'].id).first()
@@ -978,20 +991,29 @@ def test_aeration_spends_charges_across_filters_and_produces_eight_water_portion
     started=call(client,workshop,auth_headers,'start',recipe_id='recipe-aa12')
     assert started.status_code==200,started.json
     inventory=started.json['data']['inventory']['pockets']
-    assert sum(filter_charges(i) for i in inventory if i['name']=='Фильтр для противогаза')==3
-    assert units(started.json['data'],'Радиоактивная вода')==2
+    assert [(i['id'], filter_charges(i)) for i in inventory if i['name']=='Фильтр для противогаза'] == [(filters[1]['id'], 3)]
+    job = started.json['result']
+    assert units(started.json['data'],'Радиоактивная вода')==0
+    assert sum(entry['amount'] for entry in job['escrow'] if entry.get('filter_charges')) == 10
     if cancel:
         result=call(client,workshop,auth_headers,'cancel',job_id=started.json['result']['id'])
         assert result.status_code==200,result.json
         inventory=result.json['data']['inventory']['pockets']
         assert sum(filter_charges(i) for i in inventory if i['name']=='Фильтр для противогаза')==13
-        assert units(result.json['data'],'Радиоактивная вода')==12
+        assert units(result.json['data'],'Радиоактивная вода')==10
+        assert units(result.json['data'],'Вода')==0
     else:
-        workshop['lobby'].game_time_minutes+=30;db.session.commit()
+        assert_recipe_wait(client, workshop, auth_headers, job, 30, chosen_loss=[])
         result=call(client,workshop,auth_headers,'finish',job_id=started.json['result']['id'],chosen_loss=[])
         assert result.status_code==200,result.json
         assert units(result.json['data'],'Вода')==8
-        assert units(result.json['data'],'Радиоактивная вода')==2
+        assert units(result.json['data'],'Радиоактивная вода')==0
+        produced = [item for item in result.json['data']['inventory']['pockets']
+                    if item.get('templateId') == templates['Вода'].id]
+        assert [(item['quantity'], item['uses'], item['maxUses']) for item in produced] == [(3, 2, 3)]
+        replay = call(client, workshop, auth_headers, 'finish', job_id=job['id'], chosen_loss=[])
+        assert replay.status_code == 200 and replay.json['result']['replayed'], replay.json
+        assert replay.json['data']['inventory']['pockets'] == result.json['data']['inventory']['pockets']
 
 
 def test_grenade_recipe_chain_accepts_catalog_names_and_smoke_output(app):
@@ -1145,25 +1167,49 @@ def test_depleted_workbench_does_not_satisfy_recipe_requirement(client,workshop,
     assert 'Нужны: Станок Электрика' not in charged.json['result']['missing']
 
 
-def test_lockpick_recipe_creates_two_catalog_items(client,workshop,auth_headers,monkeypatch):
+@pytest.mark.parametrize('outcome', ['success', 'cancel', 'failure'])
+def test_lockpick_recipe_creates_two_catalog_items(client,workshop,auth_headers,monkeypatch,outcome):
     data=deepcopy(workshop['actor_character'].data)
     data['basic']={'background':{'name':'Полевой учёный'}}
-    data['inventory']['pockets'].append({'name':'Печь','category':'tool','quantity':1,'uses':1,'maxUses':50})
     workshop['actor_character'].data=data
-    output=ItemTemplate(name='Отмычка',category='misc',price=150,weight=.1,volume=.2)
-    db.session.add(output);db.session.commit()
+    output = catalog_template('Отмычка')
+    actor = workshop['actor_location']
+    db.session.add(LocationObject(location_id=actor.location_id, name='Печь', type='household_workbench',
+        tile_x=actor.pos_x, tile_y=actor.pos_y, properties={'craft_workbench':'Печь'}))
+    db.session.commit()
     quoted=call(client,workshop,auth_headers,'quote',recipe_id='recipe-m27')
     assert quoted.status_code==200,quoted.json
     assert quoted.json['result']['output_id']==output.id
     assert not quoted.json['result']['missing']
     started=call(client,workshop,auth_headers,'start',recipe_id='recipe-m27')
     assert started.status_code==200,started.json
-    workshop['lobby'].game_time_minutes+=40;db.session.commit()
-    monkeypatch.setattr('app.services.crafting.resolve_creation',lambda quote:{'success':True,'roll':100,'automatic':False})
+    job = started.json['result']
+    assert [(entry['item']['name'], entry['amount']) for entry in job['escrow']] == [('Металлические детали', 1)]
+    if outcome == 'cancel':
+        cancelled = call(client, workshop, auth_headers, 'cancel', job_id=job['id'])
+        assert cancelled.status_code == 200 and cancelled.json['result']['cancelled'], cancelled.json
+        assert units(cancelled.json['data'], 'Металлические детали') == 2
+        assert units(cancelled.json['data'], 'Отмычка') == 0
+        return
+    assert_recipe_wait(client, workshop, auth_headers, job, 40, chosen_loss=[0])
+    roll = 100 if outcome == 'success' else 1
+    monkeypatch.setattr('app.services.crafting.resolve_creation', lambda quote: resolve_creation(quote, roll=roll))
     finished=call(client,workshop,auth_headers,'finish',job_id=started.json['result']['id'],chosen_loss=[0])
     assert finished.status_code==200,finished.json
-    assert finished.json['result']['output_count']==2
-    assert units(finished.json['data'],'Отмычка')==2
+    assert units(finished.json['data'], 'Металлические детали') == 1
+    result = finished.json['result']
+    items = [item for item in finished.json['data']['inventory']['pockets'] if item.get('templateId') == output.id]
+    if outcome == 'failure':
+        assert not result['success'] and result['roll'] == 1 and not items
+        assert result['lost_items'] == [{'name': 'Металлические детали', 'amount': 1}]
+        return
+    assert result['success'] and result['output_count'] == 2
+    assert [(i['quantity'], i['weight'], i['volume'], i['price']) for i in items] == [
+        (2, output.weight, output.volume, output.price),
+    ]
+    replay = call(client, workshop, auth_headers, 'finish', job_id=job['id'], chosen_loss=[0])
+    assert replay.status_code == 200 and replay.json['result']['replayed'], replay.json
+    assert replay.json['data']['inventory']['pockets'] == finished.json['data']['inventory']['pockets']
 
 
 @pytest.mark.parametrize('recipe_id,catalog_name',[
