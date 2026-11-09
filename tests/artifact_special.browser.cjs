@@ -499,6 +499,22 @@ module.exports=async({page,request,token,lobby,loc,locationId,rules,safeSession}
     await page.evaluate('window.__artifactUsePromise.then(()=>true)');
     assert.equal((await request(exposedUrl,null,token,'GET')).data.health.current,500);
     assert.equal((await getSponge()).data._artifact_specials[0].remaining_uses,1);
+    const conductor=rules.find(row=>row.name==='Проводник бури'),conductorData=await getSponge();assert.ok(conductor);
+    conductorData.data.equipment.armor.containers=[{item:{id:'native-storm-conductor',name:conductor.name,
+        category:'artifact',quantity:1,attributes:conductor}}];
+    await request(spongeUrl,{data:conductorData.data},token,'PUT');
+    await request('/__testing/artifact-preparation/'+safeSession.runId,{character_id:spongeBearer.id},token);
+    await changeMinutes(1);
+    await page.evaluate(`window.openCharacterSheet(${spongeBearer.id},'equipment').then(()=>true)`);
+    await page.until("document.querySelector('.equipment-panel-tab[data-panel=armor]')",'Броня с Проводником бури');
+    await page.evaluate("document.querySelector('.equipment-panel-tab[data-panel=armor]').click();true");
+    await page.until("document.querySelector('[data-artifact-special=\"native-storm-conductor\"]:not(:disabled)')",'Проводник бури готов');
+    await page.evaluate("document.querySelector('[data-artifact-special=\"native-storm-conductor\"]').click();true");
+    await page.until(targetChoice,'Проводник бури предлагает видимую цель');
+    await page.evaluate(`${targetChoice}.click();true`);
+    await page.evaluate('window.__artifactUsePromise.then(()=>true)');
+    assert.equal((await request(exposedUrl,null,token,'GET')).data.health.current,150);
+    assert.equal((await getSponge()).data._artifact_specials[0].remaining_uses,1);
     fs.writeFileSync(path.join(safeSession.artifacts,'artifact-special.json'),JSON.stringify({scene:'Припять',artifact:rule.name,
         preparedWornSeconds:86394,realRoundSeconds:6,readyAfterRealRound:true,realButtonActivations:2,apPerUse:1,
         first:{radiation:0,hp:200,cooldown:86400},second:{radiation:0,hp:300,cooldown:86394},reopened:true,
@@ -517,7 +533,8 @@ module.exports=async({page,request,token,lobby,loc,locationId,rules,safeSession}
         fieryTear:{realButton:true,nightSun,daySun,seconds:600,otherCharacterRemainsDark:true},
         livingCurrent:{realButton:true,distance:5,jumpAp:2,expiredAfterRounds:2},
         philosophersLeaf:{realButton:true,realAnomaly:'Вспышка',healthBefore:400,healthAfter:600},
-        lightningRod:{realButton:true,targetSelected:true,damage:200,healthAfter:500}},null,2));
+        lightningRod:{realButton:true,targetSelected:true,damage:200,healthAfter:500},
+        stormConductor:{realButton:true,targetSelected:true,damage:350,healthAfter:150}},null,2));
     console.log('Особые свойства: подготовленное ношение+реальный раунд, две кнопки Ядра твари по1ОД без рук, радиация→ОЗ; общий срок после первого, переоткрытие.');
     console.log('Генератор: кнопка без радиации, фактический штраф перемещения−1→−3,600→594секунд за раунд; истечение по игровому времени возвращает−1.');
     console.log('Сердце жара: настоящая кнопка и настоящее горение; первый раунд0урона, после истечения50.');

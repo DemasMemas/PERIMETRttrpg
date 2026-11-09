@@ -810,9 +810,10 @@ def test_area_artifact_outside_location_does_not_spend():
     assert data == before
 
 
-def test_lightning_rod_spends_once_and_applies_electric_protection(grenade_game):
+@pytest.mark.parametrize('name,damage', [('Громоотвод', 100), ('Проводник бури', 175)])
+def test_electric_artifact_spends_once_and_applies_electric_protection(grenade_game, name, damage):
     actor, target = grenade_game['actor_location'], grenade_game['target_location']
-    actor.character.data = ready(name='Громоотвод')
+    actor.character.data = ready(name=name)
     target.pos_x, target.pos_y = actor.pos_x+4, actor.pos_y
     target.character.data = {'health': {'current':700, 'max':700, 'effects':[]},
                              'equipment': {'armor': {'name':'Изолированная броня', 'protection':{'electric':50}}}}
@@ -820,20 +821,24 @@ def test_lightning_rod_spends_once_and_applies_electric_protection(grenade_game)
     payload = {'item_id':'reactive-artifact', 'operation_id':'electric-rod', 'target_id':target.character_id}
     user_id = grenade_game['lobby'].gm_id
     result = CombatService.perform_action(actor.location_id, user_id, actor.id, 'artifact_special', attribute_choice=payload)
-    assert result['narrative_action']['damage'] == 100 and actor.action_points_current == 19
-    assert target.character.data['health']['current'] == 600
+    assert result['narrative_action']['damage'] == damage and actor.action_points_current == 19
+    assert target.character.data['health']['current'] == 700-damage
     repeated = CombatService.perform_action(actor.location_id, user_id, actor.id, 'artifact_special', attribute_choice=payload)
     assert repeated['narrative_action']['replayed'] and actor.action_points_current == 19
-    assert target.character.data['health']['current'] == 600
+    assert target.character.data['health']['current'] == 700-damage
 
 
-@pytest.mark.parametrize('reason', ['distance', 'behind', 'cover', 'hidden', 'floor'])
-def test_lightning_rod_rejects_unseen_or_out_of_range_target_before_cost(grenade_game, monkeypatch, reason):
+@pytest.mark.parametrize('name,reason', [
+    ('Громоотвод', reason) for reason in ('distance', 'behind', 'cover', 'hidden', 'floor')
+] + [('Проводник бури', 'sight')])
+def test_electric_artifact_rejects_unseen_or_out_of_range_target_before_cost(grenade_game, monkeypatch, name, reason):
     actor, target = grenade_game['actor_location'], grenade_game['target_location']
-    actor.character.data = ready(name='Громоотвод')
+    actor.character.data = ready(name=name)
     target.pos_x, target.pos_y = actor.pos_x+4, actor.pos_y
     if reason == 'distance':
         target.pos_x = actor.pos_x+25
+    elif reason == 'sight':
+        target.pos_x = actor.pos_x+28
     elif reason == 'behind':
         target.pos_x = actor.pos_x-1
     elif reason == 'cover':

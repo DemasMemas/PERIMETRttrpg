@@ -7,7 +7,8 @@ from app.services.effects import normalize_effect_list
 from app.services.exceptions import ValidationError
 from app.services.explosion_geometry import distance
 
-ELECTRIC = {'Громоотвод': (25, 200)}
+ELECTRIC = {'Громоотвод': (25, 200), 'Проводник бури': (35, 350)}
+SIGHT_RADIUS = 25
 
 
 def select_electric_target(actor, data, target_id, radius):
@@ -30,6 +31,8 @@ def select_electric_target(actor, data, target_id, radius):
     objects = LocationObject.query.filter_by(location_id=actor.location_id).all()
     if distance(actor.location, objects, actor.pos_x, actor.pos_y, actor.floor_level or 0, target) >= radius:
         raise ValidationError(f'Цель должна быть ближе {radius} м')
+    if math.hypot(target.pos_x - actor.pos_x, target.pos_y - actor.pos_y) > SIGHT_RADIUS:
+        raise ValidationError('Персонаж не видит цель')
     x, y = math.floor(target.pos_x), math.floor(target.pos_y)
     dark_tiles = (actor.location.lighting or {}).get('dark_tiles') or []
     if any(tile.get('x') == x and tile.get('z') == y for tile in dark_tiles):
@@ -38,7 +41,7 @@ def select_electric_target(actor, data, target_id, radius):
         if (not has_daylight_vision(data) and CombatService._is_dark_at_position(actor.location, x, y, objects=objects)
                 and not illumination(target, objects=objects)['lit']):
             raise ValidationError('Персонаж не видит цель')
-    if not CombatService._can_see_location_character(actor, target, max_distance=radius):
+    if not CombatService._can_see_location_character(actor, target, max_distance=SIGHT_RADIUS):
         raise ValidationError('Персонаж не видит цель')
     return target, round_number
 
