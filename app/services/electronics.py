@@ -150,11 +150,11 @@ def electric_protection(data,item):
         and (rule(armor,'electronics_insulation') or any(mod.get('ruleId')=='armor-d14' for mod in installed(armor))))
 
 
-def expose_pdas(data,damage):
+def expose_pdas(data,damage,*,forced=False):
     """Разовый урон электроаномалии до защиты тела; ОЗ устройства не вводятся."""
     from app.services.portable_lights import walk,definition,pda_state
     from app.services.equipment_modifications import installed
-    if damage<=0:return []
+    if damage<=0 and not forced:return []
     result=[]
     for _,item in walk(data):
         if definition(item)!='pda':continue
@@ -162,7 +162,9 @@ def expose_pdas(data,damage):
         if status.get('broken'):continue
         mods={mod['ruleId'] for mod in installed(item)}
         protected=electric_protection(data,item);recharged=False
-        if 'pda-b23' in mods:
+        if forced:
+            broken=not protected
+        elif 'pda-b23' in mods:
             broken=not protected and random.randint(1,100)<=10
             if not broken:status['charge_percent']=100;recharged=True
         else:broken=not protected and damage>200
@@ -177,16 +179,18 @@ def expose_pdas(data,damage):
     return result
 
 
-def expose_devices(data,damage):
+def expose_devices(data,damage,*,forced=False):
     """Порог относится к исходному разовому урону электроаномалии, не защите тела."""
     from app.services.portable_lights import definition,bindings
-    result=expose_pdas(data,damage)
-    if damage<=200:return result
+    result=expose_pdas(data,damage,forced=forced)
+    if damage<=200 and not forced:return result
     for path,item in items(data):
         kind=definition(item);attrs=item.get('attributes') or {};name=str(item.get('name') or '').strip().casefold()
         electronic=(kind in {'hand','improved','head','module','dosimeter'} or item.get('slotType')=='nvg'
             or attrs.get('night_vision') or item.get('category')=='detector' or attrs.get('type') in {'anomaly','artifact','radio'}
-            or attrs.get('device_kind')=='radio' or name in {'рация','радиостанция','радио'})
+            or attrs.get('device_kind')=='radio' or name in {'рация','радиостанция','радио'}
+            or forced and kind!='pda' and (switchable(item) or attrs.get('electronic') is True
+                or attrs.get('device_kind') in {'timer','remote_detonator'}))
         if not electronic or burned(item) or electric_protection(data,item):continue
         item['electronicsState']={'burned':True}
         if kind=='dosimeter':item['deviceState']={**state(item),'on':False}

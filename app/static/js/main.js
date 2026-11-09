@@ -2291,6 +2291,10 @@ if (socket) {
         handleCombatStartRequest(data);
     });
     socket.on('combat_start_request_resolved', handleCombatStartRequestResolved);
+    socket.on('artifact_forecast_requested', ({ actor, artifact, targets }) => {
+        const opponents = targets.length ? targets.join(', ') : 'противников в радиусе нет';
+        showNotification(`${actor} применил «${artifact}». Намерения на следующий ход · ${opponents}`, 'system');
+    });
     socket.on('character_interaction_requested', (data) => {
         import('./locationScene.js').then(module => module.handleCharacterInteractionRequest(data));
     });

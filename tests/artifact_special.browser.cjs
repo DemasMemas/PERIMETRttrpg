@@ -555,6 +555,48 @@ module.exports=async({page,request,token,lobby,loc,locationId,rules,safeSession}
     const magnetStored=(await getSponge()).data.inventory;
     assert.equal(magnetStored.held.length,0);
     assert.ok(magnetStored.pockets.some(item=>item.id===magnetAfter.inventory.held[0].id));
+    const motionData=await getSponge();
+    motionData.data.equipment.armor.containers=['Алхимический веер','Жгут плазмы'].map((name,index)=>{
+        const entry=rules.find(row=>row.name===name);assert.ok(entry);
+        return {item:{id:`native-motion-${index}`,name,category:'artifact',quantity:1,attributes:entry}};
+    });
+    await request(spongeUrl,{data:motionData.data},token,'PUT');
+    await request('/__testing/artifact-preparation/'+safeSession.runId,{character_id:spongeBearer.id},token);
+    await changeMinutes(1);
+    await page.evaluate(`window.openCharacterSheet(${spongeBearer.id},'equipment').then(()=>true)`);
+    await page.until("document.querySelector('.equipment-panel-tab[data-panel=armor]')",'Броня с Алхимическим веером');
+    await page.evaluate("document.querySelector('.equipment-panel-tab[data-panel=armor]').click();true");
+    const motionButton=index=>`document.querySelector('[data-artifact-special="native-motion-${index}"]:not(:disabled)')`;
+    await page.until(motionButton(0),'Веер готов');
+    await page.evaluate(`${motionButton(0)}.click();true`);
+    await page.evaluate('window.__artifactUsePromise.then(()=>true)');
+    const cloud=`L.sceneGraphicsForTest().scene.children.find(node=>node.userData.combatArea?.character_id===${spongeBearer.id})`;
+    await page.until(`${cloud}?.visible`,'Кристаллическое облако видно на сцене');
+    const cloudBefore=await page.evaluate(`${cloud}.position.z`);
+    const target=await page.evaluate(`(()=>{
+        const g=L.sceneGraphicsForTest(), actor=g.characters.get(${spongeBearer.id}).model.position;
+        g.controls.target.set(45.5,actor.y,63.5);g.camera.position.set(50,actor.y+12,68);g.controls.update();g.camera.updateMatrixWorld(true);
+        const rect=g.renderer.domElement.getBoundingClientRect();
+        const point=actor.clone().set(45.5,actor.y,64.5).project(g.camera);
+        return {x:Math.round(rect.left+(point.x+1)*rect.width/2),y:Math.round(rect.top+(1-point.y)*rect.height/2)};
+    })()`);
+    await page.until(motionButton(1),'Жгут плазмы готов');
+    await page.evaluate(`${motionButton(1)}.click();true`);
+    await page.until("document.getElementById('character-sheet-modal').style.visibility==='hidden'",'Выбор точки открыт');
+    await page.call('Input.dispatchMouseEvent',{type:'mousePressed',...target,button:'left',buttons:1,clickCount:1});
+    await page.call('Input.dispatchMouseEvent',{type:'mouseReleased',...target,button:'left',buttons:0,clickCount:1});
+    await page.evaluate('window.__artifactUsePromise.then(()=>true)');
+    await page.until(`${cloud}?.position.z>${cloudBefore+1}`,'Облако переместилось за владельцем');
+    const movedState=await request(loc+'/combat',null,token,'GET');
+    const plasmaOwner=movedState.characters.find(row=>row.character_id===spongeBearer.id);
+    assert.ok(Math.hypot(plasmaOwner.x-45,plasmaOwner.y-64)<.35);
+    assert.equal((await getSponge()).data._artifact_specials.find(row=>row.item_id==='native-motion-1').remaining_uses,1);
+    await page.evaluate('window.closeCharacterSheet();true');
+    await capture('artifact-crystal-cloud');
+    await page.evaluate(`(()=>{const g=L.sceneGraphicsForTest();g.camera.position.set(38,9,59);g.controls.update();return true;})()`);
+    await capture('artifact-crystal-cloud-side');
+    await changeMinutes(1);
+    await page.until(`!(${cloud})`,'Облако исчезло по игровому времени');
     fs.writeFileSync(path.join(safeSession.artifacts,'artifact-special.json'),JSON.stringify({scene:'Припять',artifact:rule.name,
         preparedWornSeconds:86394,realRoundSeconds:6,readyAfterRealRound:true,realButtonActivations:2,apPerUse:1,
         first:{radiation:0,hp:200,cooldown:86400},second:{radiation:0,hp:300,cooldown:86394},reopened:true,
@@ -575,7 +617,9 @@ module.exports=async({page,request,token,lobby,loc,locationId,rules,safeSession}
         philosophersLeaf:{realButton:true,realAnomaly:'Вспышка',healthBefore:400,healthAfter:600},
         lightningRod:{realButton:true,targetSelected:true,damage:200,healthAfter:500},
         stormConductor:{realButton:true,targetSelected:true,damage:350,healthAfter:150},
-        ferromagnet:{realButton:true,metalSelected:true,glassExcluded:true,oneUnitInHand:true,movedToPocket:true,remainingUses:1}},null,2));
+        ferromagnet:{realButton:true,metalSelected:true,glassExcluded:true,oneUnitInHand:true,movedToPocket:true,remainingUses:1},
+        crystalCloud:{realButton:true,visible:true,movedWithBearer:true,expired:true},
+        plasmaCord:{realButton:true,groundClick:true,position:[plasmaOwner.x,plasmaOwner.y],remainingUses:1}},null,2));
     console.log('Особые свойства: подготовленное ношение+реальный раунд, две кнопки Ядра твари по1ОД без рук, радиация→ОЗ; общий срок после первого, переоткрытие.');
     console.log('Генератор: кнопка без радиации, фактический штраф перемещения−1→−3,600→594секунд за раунд; истечение по игровому времени возвращает−1.');
     console.log('Сердце жара: настоящая кнопка и настоящее горение; первый раунд0урона, после истечения50.');

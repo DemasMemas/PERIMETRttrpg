@@ -810,6 +810,213 @@ def test_area_artifact_outside_location_does_not_spend():
     assert data == before
 
 
+@pytest.mark.parametrize('damaged', [False, True])
+def test_second_skin_suppresses_pain_and_heals_only_without_damage(grenade_game, damaged):
+    actor = grenade_game['actor_location']
+    data = ready(name='Вторая кожа')
+    data['health'].update(current=400, painLevel=4, max=700, radiation=0)
+    actor.character.data = data
+    use(data)
+    path = 'skills.physical.agility'
+    assert CombatService._health_roll_modifier(data, path) == 0
+    if damaged:
+        CombatService._apply_general_damage(actor, 20, round_number=1)
+    data = actor.character.data
+    health = data['health']
+    health['effects'] = advance_timed_effects(health, health['effects'], 17, character_data=data)
+    assert health['current'] == (380 if damaged else 400)
+    health['effects'] = advance_timed_effects(health, health['effects'], 1, character_data=data)
+    assert health['current'] == (380 if damaged else 550)
+    assert CombatService._health_roll_modifier(data, path) == -4
+
+
+def test_crystal_cloud_follows_owner_and_reduces_real_incoming_damage(grenade_game):
+    actor, target = grenade_game['actor_location'], grenade_game['target_location']
+    target.pos_x, target.pos_y = actor.pos_x + 3, actor.pos_y
+    actor.character.data = ready(name='Алхимический веер')
+    target.character.data = {'health':{'current':700,'max':700,'radiation':0}}
+    db.session.commit()
+    use(actor.character.data)
+    assert CombatService._apply_general_damage(target, 100, damage_type='chemical')['damage'] == 50
+    assert CombatService._apply_incoming_radiation(target.character.data, 10, target=target)['received'] == 5
+    target.pos_x += .1
+    assert CombatService._apply_general_damage(target, 100, damage_type='chemical')['damage'] == 100
+    actor.pos_x += 1
+    assert CombatService._apply_general_damage(target, 100, damage_type='chemical')['damage'] == 50
+    health = actor.character.data['health']
+    health['effects'] = advance_timed_effects(health, health['effects'], 18, character_data=actor.character.data)
+    assert CombatService._apply_general_damage(target, 100, damage_type='chemical')['damage'] == 100
+
+
+def test_storm_burns_nearby_electronics_and_preserves_resistant_and_owned_items(grenade_game):
+    actor, target = grenade_game['actor_location'], grenade_game['target_location']
+    actor.character.data = ready(name='Штормовой камень')
+    actor.character.data['inventory'] = {'pockets':[{'id':'own','name':'КПК','category':'device'}]}
+    target.pos_x, target.pos_y = actor.pos_x + 2, actor.pos_y
+    target.character.data = {'health':{'current':700,'max':700},'inventory':{'pockets':[
+        {'id':'pda','name':'КПК','category':'device'},
+        {'id':'guarded','name':'КПК','category':'device','attributes':{'anomaly_immunities':['electric']}},
+    ]}}
+    near = LocationObject(location_id=actor.location_id, tile_x=4, tile_y=5, type='device', properties={'electronic':True})
+    far = LocationObject(location_id=actor.location_id, tile_x=20, tile_y=20, type='device', properties={'electronic':True})
+    floor = LocationObject(location_id=actor.location_id, tile_x=3, tile_y=5, type='ground_item',
+                           properties={'contents':[{'id':'radio','name':'Рация','category':'device'}]})
+    db.session.add_all([near, far, floor]); db.session.commit()
+    payload = {'item_id':'reactive-artifact', 'operation_id':'storm'}
+    result = execute(actor, actor.character.data, payload, grenade_game['lobby'].gm_id)
+    assert result['_affected_character_ids'] == [target.character_id]
+    assert result['_object_changes'] == {near.id:'updated', floor.id:'updated'}
+    pda, guarded = target.character.data['inventory']['pockets']
+    assert pda['pdaState']['broken'] and not guarded.get('electronicsState')
+    assert near.properties['electronicsState']['burned'] and not far.properties.get('electronicsState')
+    assert floor.properties['contents'][0]['electronicsState']['burned']
+    assert not actor.character.data['inventory']['pockets'][0].get('electronicsState')
+
+
+@pytest.mark.parametrize('name,penalty', [('Тень чужого',3),('Лик чужого',5)])
+def test_forecast_targets_only_reasonable_opponents_and_uses_separate_timers(grenade_game, monkeypatch, name, penalty):
+    from app.extensions import socketio
+    from app.services.artifact_area import publish
+    from app.services.artifact_special import forecast_accuracy, stat_value
+    actor, target = grenade_game['actor_location'], grenade_game['target_location']
+    actor.character.data = ready(name=name)
+    target.pos_x, target.pos_y = actor.pos_x + 8, actor.pos_y
+    target.character.data = {'health':{'current':700,'max':700}}
+    if name == 'Лик чужого':
+        from app.services.world_rules import mutant_character_data, mutant_profile
+        target.character.data = mutant_character_data(mutant_profile('Псионик'), 'Разумный Псионик')
+    db.session.commit()
+    payload = {'item_id':'reactive-artifact', 'operation_id':'forecast'}
+    result = execute(actor, actor.character.data, payload, grenade_game['lobby'].gm_id)
+    assert result['_gm_forecast']['targets'] == [target.character.name]
+    assert '_gm_forecast' not in actor.character.data[STATE_KEY]['receipts'][-1]['result']
+    notices = []
+    monkeypatch.setattr(socketio, 'emit', lambda event, payload, room: notices.append((event, payload, room)))
+    publish(result)
+    assert len(notices) == 1 and notices[0][0] == 'artifact_forecast_requested'
+    assert notices[0][1]['targets'] == [target.character.name] and notices[0][2] == f"user_{grenade_game['lobby'].gm_id}"
+    assert stat_value(actor.character.data,'movement_penalty') == penalty
+    expected = 4 if name == 'Лик чужого' else 0
+    assert forecast_accuracy(actor.character.data, target.character_id) == expected
+    assert forecast_accuracy(actor.character.data, actor.character_id) == 0
+    data = actor.character.data
+    health = data['health']
+    health['effects'] = advance_timed_effects(health, health['effects'], 18, character_data=data)
+    assert stat_value(data,'movement_penalty') == 0 and forecast_accuracy(data, target.character_id) == expected
+    health['effects'] = advance_timed_effects(health, health['effects'], 42, character_data=data)
+    assert forecast_accuracy(data, target.character_id) == 0
+
+
+def test_heavy_attack_pays_ap_when_armed_and_only_spends_on_melee_hit(grenade_game, monkeypatch):
+    actor, target = grenade_game['actor_location'], grenade_game['target_location']
+    actor.character.data = ready(name='Тяжесть')
+    target.character.data = {'health':{'current':700, 'max':700}}
+    db.session.commit()
+    monkeypatch.setattr(CombatService, '_target_armor', lambda *args, **kwargs: (60, []))
+    action = {'item_id':'reactive-artifact', 'operation_id':'prepare-heavy'}
+    result = CombatService.perform_action(actor.location_id, grenade_game['lobby'].gm_id, actor.id, 'artifact_special', attribute_choice=action)
+    assert result['narrative_action']['action_points'] == 1 and actor.action_points_current == 19
+    assert snapshot(actor.character.data)[0]['remaining_uses'] == 2
+    miss = CombatService._resolve_attack(target, actor, {'hit_difficulty':12}, melee=True, attack_type='Удар кулаком', forced_roll=1)
+    assert not miss['hit'] and snapshot(actor.character.data)[0]['remaining_uses'] == 2
+    hit = CombatService._resolve_attack(target, actor, {'hit_difficulty':12}, melee=True, attack_type='Удар кулаком', aimed_zone='chest', forced_roll=20)
+    assert hit['hit'] and hit['ignores_armor'] and hit['armor'] == 0
+    assert snapshot(actor.character.data)[0]['remaining_uses'] == 1
+
+
+@pytest.mark.parametrize('blocked', [False, True])
+def test_plasma_cord_teleports_to_visible_point_without_opportunity_attacks(grenade_game, blocked):
+    actor = grenade_game['actor_location']
+    grenade_game['lobby'].game_time_minutes = 720
+    actor.character.data = ready(name='Жгут плазмы')
+    if blocked:
+        db.session.add(LocationObject(location_id=actor.location_id, tile_x=4, tile_y=5, type='wall',
+            properties={'dimensions':{'width':1,'depth':1,'height':3}}))
+    db.session.commit()
+    x, y = actor.pos_x + 4, actor.pos_y
+    payload = {'item_id':'reactive-artifact','operation_id':'plasma', 'point':{'x':x,'y':y,'floor_level':0}}
+    if blocked:
+        with pytest.raises(ValidationError):
+            CombatService.perform_action(actor.location_id, grenade_game['lobby'].gm_id, actor.id, 'artifact_special', attribute_choice=payload)
+        assert actor.pos_x == 2.1 and actor.action_points_current == 20
+        assert snapshot(actor.character.data)[0]['remaining_uses'] == 2
+    else:
+        result = CombatService.perform_action(actor.location_id, grenade_game['lobby'].gm_id, actor.id, 'artifact_special', attribute_choice=payload)
+        assert (actor.pos_x, actor.pos_y) == (x,y) and actor.action_points_current == 19
+        assert result['narrative_action']['_moves'][0]['character_id'] == actor.character_id
+        assert not result.get('opportunity_attacks')
+        assert snapshot(actor.character.data)[0]['remaining_uses'] == 1
+
+
+def test_horizon_pull_moves_five_metres_towards_owner(grenade_game):
+    actor, target = grenade_game['actor_location'], grenade_game['target_location']
+    actor.character.data = ready(name='Глаз горизонта')
+    target.pos_x, target.pos_y = actor.pos_x+8, actor.pos_y
+    target.character.data = {'health':{'current':700,'max':700}}
+    db.session.commit()
+    result = execute(actor, actor.character.data, {'item_id':'reactive-artifact','operation_id':'pull',
+                     'target_id':target.character_id}, grenade_game['lobby'].gm_id)
+    assert target.pos_x == pytest.approx(actor.pos_x+3) and target.pos_y == actor.pos_y
+    assert result['_moves'][0]['character_id'] == target.character_id
+    assert target.character.data['health']['current'] == 700
+
+
+@pytest.mark.parametrize('name,damage', [('Железное сердце',75),('Свет горизонта',50),('Ядро возгорания',0)])
+def test_waves_stop_at_wall_and_apply_their_own_effects(grenade_game, name, damage):
+    actor, target = grenade_game['actor_location'], grenade_game['target_location']
+    actor.character.data = ready(name=name)
+    actor.character.data['health']['effects'] = [{'type':'burning','remaining':3,'source':'test-fire'}]
+    target.pos_x, target.pos_y = 4, actor.pos_y
+    target.character.data = {'health':{'current':700,'max':700,'zones':{'chest':{'current':150,'max':150}}}}
+    db.session.add(LocationObject(location_id=actor.location_id, tile_x=8, tile_y=5, type='wall',
+        properties={'dimensions':{'width':1,'depth':1,'height':3}}))
+    db.session.commit()
+    result = execute(actor, actor.character.data, {'item_id':'reactive-artifact','operation_id':'wave'}, grenade_game['lobby'].gm_id)
+    assert 4 < target.pos_x < 8 and target.pos_y == actor.pos_y
+    assert target.character.data['health']['current'] == 700-damage
+    assert target.character.data['health']['zones']['chest']['current'] == 150-damage
+    assert result['_moves'][0]['character_id'] == target.character_id
+    assert any(effect['type'] == 'burning' for effect in actor.character.data['health']['effects']) == bool(damage)
+
+
+def test_world_wave_hits_only_other_members_of_group_without_relocation(grenade_game):
+    from app.models import WorldGroup
+    actor, target = grenade_game['actor_location'], grenade_game['target_location']
+    actor.character.data = ready(name='Свет горизонта')
+    target.character.data = {'health':{'current':700,'max':700,'zones':{'chest':{'current':150,'max':150}}}}
+    group = WorldGroup(lobby_id=actor.character.lobby_id, name='Группа', tile_x=0, tile_y=0,
+        member_character_ids=[actor.character_id,target.character_id], created_by=grenade_game['lobby'].gm_id)
+    db.session.add(group); db.session.commit()
+    before = target.pos_x, target.pos_y
+    result = execute(SimpleNamespace(character=actor.character), actor.character.data,
+        {'item_id':'reactive-artifact','operation_id':'world-wave'}, grenade_game['lobby'].gm_id)
+    assert result['hits'] == [{'character_id':target.character_id,'damage':50}]
+    assert not result['_moves'] and (target.pos_x,target.pos_y) == before
+    assert target.character.data['health']['zones']['chest']['current'] == 100
+
+
+@pytest.mark.parametrize('name', ['Пиявка','Кристалл статики'])
+def test_world_area_effects_apply_to_group_with_owner_exceptions(grenade_game, name):
+    from app.models import WorldGroup
+    actor, target = grenade_game['actor_location'], grenade_game['target_location']
+    actor.character.data = ready(name=name)
+    target.character.data = {'health':{'current':700,'max':700,'radiation':15}}
+    group = WorldGroup(lobby_id=actor.character.lobby_id, name='Группа', tile_x=0, tile_y=0,
+        member_character_ids=[actor.character_id,target.character_id], created_by=grenade_game['lobby'].gm_id)
+    db.session.add(group); db.session.commit()
+    result = execute(SimpleNamespace(character=actor.character), actor.character.data,
+        {'item_id':'reactive-artifact','operation_id':'world-area'}, grenade_game['lobby'].gm_id)
+    assert result['_affected_character_ids'] == [target.character_id]
+    if name == 'Пиявка':
+        assert actor.character.data['health']['radiation'] == target.character.data['health']['radiation'] == 0
+    else:
+        assert not any(effect['type']=='blindness' for effect in actor.character.data['health']['effects'])
+        health = target.character.data['health']
+        blindness, = [effect for effect in health['effects'] if effect['type']=='blindness']
+        assert blindness['value'] == 100
+        assert not advance_timed_effects(health, health['effects'], 30, character_data=target.character.data)
+
+
 @pytest.mark.parametrize('name,damage', [('Громоотвод', 100), ('Проводник бури', 175)])
 def test_electric_artifact_spends_once_and_applies_electric_protection(grenade_game, name, damage):
     actor, target = grenade_game['actor_location'], grenade_game['target_location']

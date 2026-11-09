@@ -15,7 +15,7 @@ from app.models.templates import ItemTemplate
 from app.services.exceptions import NotFoundError, PermissionDenied, ValidationError
 from app.services.effects import health_blocks_new_stress, advance_timed_effects, apply_effect_to_health, apply_expired_effects_to_health, apply_periodic_effects_to_health, normalize_character_effects, normalize_effect_list, sync_health_derived_statuses, tick_effects
 from app.services.artifact_effects import artifact_passive_profile,incoming_thermal_damage
-from app.services.artifact_special import has_daylight_vision
+from app.services.artifact_special import consume_heavy_hit, effective_pain, forecast_accuracy, has_daylight_vision, record_damage
 from app.services.magazine import validate_magazine_selection, install_magazine
 from app.services.deferred_action import (
     durable_combat_action, snapshot_action_arguments, remember_action,
@@ -1804,7 +1804,7 @@ class CombatService:
             modifier+=facial_profile(character_data).get(skill_path.rsplit('.',1)[-1],0)
         if include_pain:
             properties=character_passives(character_data)
-            modifier -= max(0,CombatService._coerce_int(health.get('painLevel'), 0)-properties['pain_ignored']-properties['pain_penalty_reduction'])
+            modifier -= max(0,int(effective_pain(health))-properties['pain_ignored']-properties['pain_penalty_reduction'])
         exhaustion = CombatService._coerce_int(health.get('exhaustion'), 0)
         modifier -= {1: 1, 2: 2, 3: 4}.get(exhaustion, 6 if exhaustion >= 4 else 0)
         if include_blood:
@@ -1989,7 +1989,7 @@ class CombatService:
         )
         if threshold_disadvantage:
             return True
-        pain = CombatService._coerce_int(health.get('painLevel'), 0)
+        pain = effective_pain(health)
         wounded = CombatService._coerce_float(health.get('current'), health.get('max', 700)) < CombatService._coerce_float(health.get('max'), 700)
         for effect in normalize_effect_list(health.get('effects') or []):
             disadvantage_skills = effect.get('disadvantage_skills') or []
@@ -5562,7 +5562,7 @@ class CombatService:
         return total
 
     @staticmethod
-    def _apply_incoming_radiation(character_data, incoming, *, binary=False,target=None,lobby=None):
+    def _apply_incoming_radiation(character_data, incoming, *, binary=False,target=None,lobby=None,character=None):
         incoming = max(0.0, CombatService._coerce_float(incoming, 0))
         original_incoming=incoming
         weather=weather_at(getattr(target,'location',None),target) if target is not None else weather_profile(lobby.weather_settings) if lobby is not None else {}
@@ -5584,6 +5584,10 @@ class CombatService:
             'changed': False,
         }
         received = filter_result['received']
+        if received:
+            from app.services.artifact_area import fan_protects
+            if fan_protects(character_data, target, character=character):
+                received *= .5
         before = max(0.0, CombatService._coerce_float(health.get('radiation'), 0))
         after = before + received
         if received:
@@ -5750,6 +5754,7 @@ class CombatService:
         )
         if damage:
             health['current'] = max(0.0, before_health - damage)
+            record_damage(health)
         created_bleedings = []
         for index in range(bleeding_count):
             apply_effect_to_health(health, {
@@ -6237,6 +6242,7 @@ class CombatService:
         if damage <= 0:
             return
         health = character_data.setdefault('health', {})
+        record_damage(health)
         meta = health.setdefault('combatMeta', {})
         if meta.get('damagePainRound') != round_number:
             meta['damagePainRound'] = round_number
@@ -6299,6 +6305,7 @@ class CombatService:
         precision_attacker=None,
         limb_hit=None,
         stop_layer_context=None,
+        ignore_armor=False,
         neck_brace_context=None,
         damage_type='physical',
         anomaly_damage=False,
@@ -6320,7 +6327,11 @@ class CombatService:
         if stoic_active:damage=max(0,damage*.9)
         damage=incoming_thermal_damage(data,damage,damage_type)
         stop_layer=None
-        if zone=='head' and damage>10:
+        if damage > 0 and damage_type == 'chemical':
+            from app.services.artifact_area import fan_protects
+            if fan_protects(data, target):
+                damage *= .5
+        if zone=='head' and damage>10 and not ignore_armor:
             from app.services.equipment_modifications import stop_layer_candidate,consume_stop_layer
             visor=stop_layer_context if stop_layer_context is not None else stop_layer_candidate(data,head_impact)
             if visor is not None:
@@ -7215,6 +7226,10 @@ class CombatService:
         if CombatService._combat_background_active(target,'Стойкий'):damage*=.9
         damage=incoming_thermal_damage(data,damage,damage_type)
         previous_condition = CombatService._character_condition(data)['state']
+        if damage > 0 and damage_type == 'chemical':
+            from app.services.artifact_area import fan_protects
+            if fan_protects(data, target):
+                damage *= .5
         health = apply_health_maximums(data)
         if source == 'anomaly':
             restored = CombatService._convert_anomaly_damage(target, data, health, damage)
@@ -8502,6 +8517,7 @@ class CombatService:
             else:
                 profile, _ = CombatService._ranged_damage_profile(weapon)
             difficulty = attack_details['hit_difficulty']
+            difficulty -= forecast_accuracy(attacker_data, target_character_id)
             difficulty+=evasion_penalty(target_data)
             from app.services.character_traits import selected_weapon_accuracy
             difficulty-=selected_weapon_accuracy(attacker_data,weapon,target_data)
@@ -8755,9 +8771,15 @@ class CombatService:
                     for slot in (pouch.get('attributes') or {}).get('slots') or [])
                 for pouch in vest.get('pouches') or []):
                 plate_kwargs={'plate_side':'back' if CombatService._is_behind(attacker,target) else 'front'}
-        armor, armor_layers = CombatService._target_armor(armor_target_data, zone,
-            **({'limb_hit':limb_hit} if limb_hit else {}),**({'target':target} if background_is(armor_target_data,'Стойкий') else {}),
-            **plate_kwargs)
+        ignores_armor = melee and consume_heavy_hit(attacker_data)
+        if ignores_armor:
+            armor, armor_layers = 0, []
+            flag_modified(attacker.character, 'data')
+            result['ignores_armor'] = True
+        else:
+            armor, armor_layers = CombatService._target_armor(armor_target_data, zone,
+                **({'limb_hit':limb_hit} if limb_hit else {}),**({'target':target} if background_is(armor_target_data,'Стойкий') else {}),
+                **plate_kwargs)
         from app.services.equipment_modifications import stop_layer_candidate
         stop_layer_context=stop_layer_candidate(target_data,head_impact) if zone=='head' else None
         from app.services.equipment_care import neck_brace_ready
@@ -8771,7 +8793,7 @@ class CombatService:
             if zone in {'chest', 'abdomen'}
             else None
         )
-        if back_protection is not None and CombatService._is_behind(attacker, target):
+        if not ignores_armor and back_protection is not None and CombatService._is_behind(attacker, target):
             armor = back_protection
             for layer in armor_layers:
                 if layer.get('slot') == 'mutant':
@@ -8893,6 +8915,7 @@ class CombatService:
             head_impact=head_impact,
             armor_penetrated=armor_penetrated,
             stop_layer_context=stop_layer_context,
+            ignore_armor=ignores_armor,
             neck_brace_context=neck_brace_context,
             prepared_trauma_rolls=(
                 [head_impact_roll] if head_impact_roll is not None else None
@@ -10237,7 +10260,7 @@ class CombatService:
             return None
         data = character.data
         health = data.get('health') if isinstance(data.get('health'), dict) else {}
-        pain_level = max(0, CombatService._coerce_int(health.get('painLevel'), 0))
+        pain_level = effective_pain(health)
         if pain_level < character_passives(data)['pain_shock_threshold'] or CombatService._character_condition(data)['state'] != 'active':
             return None
         meta = health.setdefault('combatMeta', {})
@@ -12679,6 +12702,7 @@ class CombatService:
     @staticmethod
     def _serialize_state(location, state):
         from app.services.cloud_geometry import refresh
+        from app.services.artifact_special import stat_value
         refresh(state)
         characters = CombatService._unique_location_characters(
             LocationCharacter.query.filter_by(location_id=location.id).all()
@@ -12725,6 +12749,9 @@ class CombatService:
             },
             'pending_explosives': list(state.pending_explosives or []),
             'area_effects': list(state.area_effects or []),
+            'artifact_clouds': [{'character_id': item.character_id, 'radius': 3, 'type': 'crystal_cloud',
+                'x':item.pos_x, 'y':item.pos_y, 'floor_level':item.floor_level or 0}
+                for item in characters if item.character and not item.gm_hidden and stat_value(item.character.data, 'crystal_cloud')],
             'ground_lights': ground_sources(location.id,scene_objects),
             'current_character': CombatService._serialize_character(
                 current_character,

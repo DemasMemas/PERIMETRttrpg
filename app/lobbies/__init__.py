@@ -1070,6 +1070,7 @@ def move_world_group(lobby_id, group_id, lobby, participant):
             destination_radiation,
             binary=True,
             lobby=lobby,
+            character=character,
         )
         pain_recovery = CombatService._recover_world_travel_pain(character_data)
         # Переход не вызывает свойства артефактов: они тикают с общим игровым временем.

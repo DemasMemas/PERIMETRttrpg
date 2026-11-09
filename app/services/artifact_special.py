@@ -1,17 +1,20 @@
 """Особые свойства: личное время ношения и общий запас применений физического артефакта."""
 from copy import deepcopy
 from hashlib import sha256
+import hmac
 import json
 import math
 from types import SimpleNamespace
 
 from sqlalchemy.orm.attributes import flag_modified
+from flask import current_app
 
 from app.extensions import db
 from app.models import LobbyCharacter, LocationCharacter, LocationCombatState
-from app.services.artifact_area import AREA_EFFECTS, apply as apply_area
+from app.services.artifact_area import AREA_EFFECTS, FAN, apply as apply_area
 from app.services.artifact_magnet import MAGNET
-from app.services.artifact_targets import ELECTRIC, electric_damage, select_electric_target
+from app.services.artifact_motion import PULL, TELEPORT, WAVES
+from app.services.artifact_targets import ELECTRIC, SIGHT_RADIUS, electric_damage, select_electric_target
 from app.services.exceptions import ConflictError, NotFoundError, ValidationError
 from app.services.transaction import atomic_operation
 
@@ -19,6 +22,8 @@ STATE_KEY = 'artifactSpecial'
 DAY = 86400
 HEALING = {'Ядро твари': (50, 10), 'Звезда гнили': (100, 5)}
 FALL_ARTIFACT = 'Сфера притяжения'
+HEAVY_HIT = 'Тяжесть'
+FORECASTS = {'Тень чужого': 10, 'Лик чужого': 20}
 RADIATION_AMPLIFIER_COST = {'Хозяин свечения': 20, 'Реактор': 50}
 PREFIX = 'artifact-special:'
 BUFFS = {
@@ -47,6 +52,10 @@ BUFFS = {
     'Огненная слеза': (600, {'daylight_vision': 1}),
     'Живой ток': (12, {'movement_penalty': -10, 'extended_jump': 1}),
     'Философский лист': (30, {'anomaly_healing': 1}),
+    'Вторая кожа': (18, {'second_skin': 1}),
+    FAN: (18, {'crystal_cloud': 1}),
+    'Тень чужого': (18, {'movement_penalty': 3}),
+    'Лик чужого': (18, {'movement_penalty': 5}),
 }
 STAT_LABELS = {'movement_penalty': 'Штраф перемещения', 'skill_strength': 'Сила',
                'physical_protection': 'Защита от физического урона', 'chemical_protection': 'Защита от химического урона',
@@ -62,6 +71,8 @@ STAT_LABELS['positive_multiplier'] = 'Множитель положительн�
 STAT_LABELS['daylight_vision'] = 'Видимость в темноте как днём'
 STAT_LABELS['extended_jump'] = 'Прыжки до 5 м за 2 ОД'
 STAT_LABELS['anomaly_healing'] = 'Урон аномалий восстанавливает общие ОЗ'
+STAT_LABELS['second_skin'] = 'Боль подавлена; +150 общих ОЗ по окончании, если не было урона'
+STAT_LABELS['crystal_cloud'] = 'Кристаллическое облако · 3 м · химический урон и радиация ×0,5'
 
 
 def is_special_effect(effect):
@@ -92,8 +103,70 @@ def stat_value(data, stat, *, item_id=None):
                and type(effect.get('value')) in (int, float) and math.isfinite(effect['value']))
 
 
+def _forecast_key(target_id):
+    secret = str(current_app.config['SECRET_KEY']).encode()
+    return hmac.digest(secret, f'artifact-forecast:{target_id}'.encode(), 'sha256').hex()
+
+
+def forecast_accuracy(data, target_id):
+    for effect in (data.get('health') or {}).get('effects') or []:
+        if (target_id is not None and is_special_effect(effect) and effect.get('active', True)
+                and effect.get('artifact_stat') == 'forecast_accuracy' and _number(effect.get('remaining_seconds')) > 0
+                and _forecast_key(target_id) in effect.get('target_keys', ())):
+            return 4
+    return 0
+
+
+def _forecast(actor, data, item):
+    from app.services.artifact_area import location_members
+    from app.services.character_rules import allied_ids
+    from app.services.combat import CombatService
+    if not isinstance(actor, LocationCharacter):
+        raise ValidationError('Для этого особого свойства нужна подлокация')
+    people = location_members(actor, FORECASTS[item['name']])
+    allies = allied_ids(actor, people=people)
+    def reasonable(person):
+        target_data = person.character.data or {}
+        basic = target_data.get('basic') or {}
+        return (not CombatService._is_mutant_character(target_data) or basic.get('intelligent') is True
+                or str(basic.get('mutant_variant') or '').casefold().startswith('разумн'))
+    targets = [person for person in people if CombatService._are_opponents(actor, person)
+        and person.character_id not in allies and CombatService._character_condition(person.character.data)['state'] != 'dead'
+        and reasonable(person)]
+    if item['name'] == 'Лик чужого':
+        source = _effect_source(item['id'], 'forecast_accuracy')
+        effects = data['health'].setdefault('effects', [])
+        effects[:] = [effect for effect in effects if effect.get('source') != source]
+        effects.append({'id':source, 'source':source, 'type':'custom', 'name':'Лик чужого · предвидение',
+            'note':'Точность +4 по выбранным при активации противникам', 'artifact_stat':'forecast_accuracy',
+            'value':4, 'target_keys':[_forecast_key(person.character_id) for person in targets], 'tick':'time_elapsed',
+            'time_unit':'second', 'remaining':60, 'remaining_seconds':60})
+    return {'gm_id':actor.location.lobby.gm_id, 'actor':actor.character.name, 'artifact':item['name'],
+            'targets':[person.character.name for person in targets]}
+
+
 def has_daylight_vision(data):
     return stat_value(data, 'daylight_vision') > 0
+
+
+def effective_pain(health):
+    if stat_value({'health': health}, 'second_skin'):
+        return 0
+    return _number(health.get('painLevel'))
+
+
+def record_damage(health):
+    for effect in health.get('effects') or []:
+        if is_special_effect(effect) and effect.get('artifact_stat') == 'second_skin':
+            effect['damage_taken'] = True
+
+
+def second_skin_expiry(effect, health, data):
+    if is_special_effect(effect) and effect.get('active', True) and effect.get('artifact_stat') == 'second_skin' and not effect.get('damage_taken'):
+        from app.services.artifact_effects import healing_amount
+        current = _number(health.get('current'))
+        if current > 0:
+            health['current'] = min(_number(health.get('max', 700)), current + healing_amount(data, 150))
 
 
 def _number(value):
@@ -154,7 +227,11 @@ def status(data, item):
     fall_reaction = item.get('name') == FALL_ARTIFACT
     electric = ELECTRIC.get(item.get('name'))
     magnet_target = item.get('name') == MAGNET
-    supported = item.get('name') in HEALING or item.get('name') in BUFFS or item.get('name') in AREA_EFFECTS or bool(electric) or fall_reaction or magnet_target
+    heavy_hit = item.get('name') == HEAVY_HIT
+    heavy_item_id = (data.get(STATE_KEY) or {}).get('heavy_item_id')
+    heavy_armed = heavy_hit and heavy_item_id is not None and any(
+        active.get('id') == heavy_item_id and active.get('name') == HEAVY_HIT for active in _equipped(data))
+    supported = item.get('name') in HEALING or item.get('name') in BUFFS or item.get('name') in AREA_EFFECTS or bool(electric) or fall_reaction or magnet_target or heavy_hit or item.get('name') in {TELEPORT, PULL, *WAVES}
     reason = None
     if not capacity:
         reason = 'Нужно Выживание не ниже 9'
@@ -164,6 +241,8 @@ def status(data, item):
         reason = f'Перезарядка: осталось {math.ceil(cooldown / 3600)} ч'
     elif not supported:
         reason = 'Применение этого свойства ещё не реализовано'
+    elif heavy_armed:
+        reason = 'Подготовлена до первого попадания в ближнем бою'
     elif item.get('name') in HEALING and _number((data.get('health') or {}).get('radiation')) <= 0:
         reason = 'Нет радиации для восстановления здоровья'
     return {'item_id': item.get('id'), 'name': item.get('name'), 'supported': supported,
@@ -171,8 +250,10 @@ def status(data, item):
             'capacity': capacity, 'remaining_uses': max(0, capacity - used),
             'action_points': 1 if level >= 15 else 2, 'available': reason is None, 'reason': reason,
             'power_cost': 50 if item.get('name') == 'Горелка' else None,
-            'target_range': electric[0] if electric else None,
+            'target_range': electric[0] if electric else SIGHT_RADIUS + 1e-6 if item.get('name') == PULL else None,
             'magnet_target': magnet_target,
+            'map_point': item.get('name') == TELEPORT,
+            'heavy_hit': heavy_hit,
             'fall_reaction': fall_reaction, 'armed': fall_reaction and
             (data.get(STATE_KEY) or {}).get('fall_item_id') == item.get('id')}
 
@@ -186,7 +267,7 @@ def _identity(payload):
     if not isinstance(identity, str) or not 1 <= len(identity) <= 100:
         raise ValidationError('Нужен идентификатор применения артефакта')
     choice = {'item_id': payload.get('item_id')}
-    for key in ('power', 'target_id', 'magnet_target'):
+    for key in ('power', 'target_id', 'magnet_target', 'point'):
         if key in payload:
             choice[key] = payload[key]
     signature = sha256(json.dumps(choice, sort_keys=True).encode()).hexdigest()
@@ -219,6 +300,9 @@ def prepare(actor, data, payload, user_id):
     if state['magnet_target'] and actor is not None:
         from app.services.artifact_magnet import select
         plan['magnet_source'] = select(actor, data, payload.get('magnet_target'))
+    if state['map_point'] and actor is not None:
+        from app.services.artifact_motion import prepare_teleport
+        plan['teleport'] = prepare_teleport(actor, data, payload.get('point'))
     if state['power_cost']:
         power = payload.get('power')
         if type(power) is not int or not 1 <= power <= 5:
@@ -249,7 +333,7 @@ def execute(actor, data, payload, user_id, combat=None):
         health['radiation'] = _number(health.get('radiation')) - radiation
         health['current'] = min(_number(health.get('max', 700)), before + healing_amount(data, radiation * rate))
     elif item['name'] in AREA_EFFECTS:
-        radiation, affected = apply_area(actor, data, item['name'])
+        radiation, affected, extra = apply_area(actor, data, item['name'])
     elif item['name'] in ELECTRIC:
         target = plan['target']
         dealt = electric_damage(target, ELECTRIC[item['name']][1], plan['round_number'])
@@ -257,6 +341,31 @@ def execute(actor, data, payload, user_id, combat=None):
     elif item['name'] == MAGNET:
         from app.services.artifact_magnet import apply
         extra = apply(actor, data, plan['magnet_source'])
+    elif item['name'] == HEAVY_HIT:
+        if combat is None:
+            raise ValidationError('Подготовка Тяжести требует оплаты ОД в бою')
+        data.setdefault(STATE_KEY, {})['heavy_item_id'] = item['id']
+    elif item['name'] == TELEPORT:
+        from app.services.artifact_motion import teleport
+        extra = teleport(actor, data, plan['teleport'])
+        health = data.setdefault('health', {})
+    elif item['name'] == PULL:
+        from app.services.artifact_motion import pull
+        actor.character.data = data
+        extra = pull(actor, plan['target'])
+        if actor.character.data is not data:
+            data.clear()
+            data.update(actor.character.data)
+        health = data.setdefault('health', {})
+    elif item['name'] in WAVES:
+        from app.services.artifact_motion import wave
+        if getattr(actor, 'character', None):
+            actor.character.data = data
+        extra = wave(actor, data, item['name'])
+        if actor.character.data is not data:
+            data.clear()
+            data.update(actor.character.data)
+        health = data.setdefault('health', {})
     else:
         duration, modifiers = BUFFS[item['name']]
         if plan.get('health_cost'):
@@ -270,9 +379,12 @@ def execute(actor, data, payload, user_id, combat=None):
             if stat == 'positive_multiplier':
                 label += f'{amount:g}'
             elif not (stat.startswith('immune_') or stat.endswith('_immunity') or
-                      stat in {'daylight_vision', 'extended_jump', 'anomaly_healing'}):
+                      stat in {'daylight_vision', 'extended_jump', 'anomaly_healing', 'second_skin', 'crystal_cloud'}):
                 label += f' {amount:+g}'
-            effects[:] = [effect for effect in effects if effect.get('source') != source]
+            if stat != 'second_skin':
+                effects[:] = [effect for effect in effects if effect.get('source') != source]
+            else:
+                source = _effect_source(f"{item['id']}\0{payload['operation_id']}", stat)
             effects.append({'id': source, 'source': source, 'type': 'custom', 'name': f"{item['name']}: особое свойство",
                             'note': f'{label} на {duration_label}',
                             'artifact_stat': stat, 'value': amount, 'active': True, 'tick': 'time_elapsed',
@@ -303,8 +415,10 @@ def execute(actor, data, payload, user_id, combat=None):
                 cost.update(type='delayed_adjustment', note=f'Потеря {hp} ОЗ через {duration_label}',
                             adjustments=[{'field': 'current', 'delta': -hp, 'min': 0}])
             effects.append(cost)
+    if item['name'] in FORECASTS:
+        extra['_gm_forecast'] = _forecast(actor, data, item)
     sync_health_derived_statuses(health)
-    ledger = _spend(data, item['id'])
+    ledger = data[STATE_KEY] if item['name'] == HEAVY_HIT else _spend(data, item['id'])
     result = {'name': f"Особое свойство: {item['name']}", 'item_id': item['id'], 'radiation_removed': radiation,
               'healed': max(0, _number(health.get('current')) - before), 'action_points': plan['action_points'] if combat else 0,
               'roll_required': False, 'replayed': False, **extra}
@@ -314,11 +428,11 @@ def execute(actor, data, payload, user_id, combat=None):
         result['_affected_character_ids'] = affected
     if dealt is not None:
         result['damage'] = dealt
-    if item['name'] == 'Огненная слеза' and isinstance(actor, LocationCharacter):
+    if item['name'] in {'Огненная слеза', FAN} and isinstance(actor, LocationCharacter):
         result['_vision_location_id'] = actor.location_id
     identity, signature = _identity(payload)
-    ledger['receipts'] = [*ledger.get('receipts', [])[-127:],
-                          {'id': identity, 'signature': signature, 'result': deepcopy(result)}]
+    ledger['receipts'] = [*ledger.get('receipts', [])[-127:], {'id': identity, 'signature': signature,
+                          'result': deepcopy({key:value for key,value in result.items() if not key.startswith('_')})}]
     return result
 
 
@@ -329,6 +443,19 @@ def _spend(data, item_id):
         progress['cooldown_seconds'] = DAY
     progress['used'] = _number(progress.get('used')) + 1
     return ledger
+
+
+def consume_heavy_hit(data):
+    ledger = data.get(STATE_KEY) or {}
+    item_id = ledger.get('heavy_item_id')
+    if item_id is None:
+        return False
+    ledger.pop('heavy_item_id')
+    item = next((item for item in _equipped(data) if item['id'] == item_id and item['name'] == HEAVY_HIT), None)
+    if item is None or not status(data, item)['available']:
+        return False
+    _spend(data, item_id)
+    return True
 
 
 def _configure_fall(data, payload):
@@ -399,9 +526,9 @@ def operate(character_id, user_id, payload):
         raise ValidationError('Персонаж не может действовать')
     if payload.get('character_revision') != character.revision:
         raise ConflictError('Лист изменился')
-    if (plan['item']['name'] in AREA_EFFECTS or plan['state']['target_range'] or plan['state']['magnet_target']) and not payload.get('location_id'):
+    if (plan['state']['target_range'] or plan['state']['magnet_target'] or plan['state']['map_point'] or plan['item']['name'] in FORECASTS) and not payload.get('location_id'):
         raise ValidationError('Для этого особого свойства нужна подлокация')
-    actor = _context(character, payload.get('location_id')) or SimpleNamespace(character=character)
+    actor = _context(character, payload['location_id']) if payload.get('location_id') else SimpleNamespace(character=character)
     result = execute(actor, data, payload, user_id)
     character.data = data
     flag_modified(character, 'data')

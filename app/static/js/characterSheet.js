@@ -5757,7 +5757,7 @@ function renderArtifactSpecial(item) {
         <span>${escapeHtml(hint)}</span>${powerOptions}
         ${state.supported?`<button type="button" class="btn btn-sm" data-artifact-special="${escapeHtml(String(state.item_id))}"
             onclick="window.activateArtifactSpecial(this.dataset.artifactSpecial,this.parentElement.querySelector('[data-artifact-power]')?.value)" ${!currentCharacterCanEdit||!state.available&&!state.armed?'disabled':''}>
-            ${state.armed?'Отменить применение при падении':state.fall_reaction?'Применить при следующем падении':state.target_range?'Выбрать цель':state.magnet_target?'Выбрать предмет':'Применить'}${combat&&!state.armed?` · ${state.action_points} ОД`:''}</button>`:''}
+            ${state.armed?'Отменить применение при падении':state.fall_reaction?'Применить при следующем падении':state.target_range?'Выбрать цель':state.magnet_target?'Выбрать предмет':state.map_point?'Выбрать точку':state.heavy_hit?'Подготовить удар':'Применить'}${combat&&!state.armed?` · ${state.action_points} ОД`:''}</button>`:''}
     </div>`;
 }
 window.activateArtifactSpecial = async function(itemId,power) {
@@ -5776,6 +5776,17 @@ window.activateArtifactSpecial = async function(itemId,power) {
         }
         const {runController}=await import('./itemControllers.js');
         const payload={item_id:itemId,...(power===undefined?{}:{power:Number(power)})};
+        if(state?.map_point){
+            const sheet=document.getElementById('character-sheet-modal');
+            const locationId=window.currentLocationId;
+            const {chooseArtifactPoint}=await import('./locationScene.js');
+            const visibility=sheet.style.visibility;
+            try {
+                sheet.style.visibility='hidden';
+                payload.point=await chooseArtifactPoint(characterId);
+            } finally {sheet.style.visibility=visibility;}
+            if(!payload.point||currentCharacterId!==characterId||window.currentLocationId!==locationId)return;
+        }
         if(state?.magnet_target){
             if(!window.isLocationActive)throw new Error('Откройте подлокацию с этим персонажем');
             const locationId=window.currentLocationId;

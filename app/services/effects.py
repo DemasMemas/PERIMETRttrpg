@@ -697,7 +697,8 @@ def sync_health_derived_statuses(health: Dict[str, Any]) -> Dict[str, Any]:
             "source": death_source,
             "tick": "manual",
         }))
-    if _to_int(health.get("painLevel", 0), 0) >= 10 and not any(
+    from app.services.artifact_special import effective_pain
+    if effective_pain(health) >= 10 and not any(
         effect.get("type") == "shock" and effect.get("active", True)
         for effect in effects
     ):
@@ -1154,6 +1155,8 @@ def apply_expired_effects_to_health(health: Dict[str, Any], effects: Iterable[An
         if effect.get("remaining") is None or _to_int(effect.get("remaining"), 0) > 1:
             continue
         _activate_timed_modifiers(health, effect)
+        from app.services.artifact_special import second_skin_expiry
+        second_skin_expiry(effect, health, character_data)
         if effect.get('type')=='temporary_organ_health':
             restore_organ_health(health)
         radiation_before_expiry = _to_float(health.get("radiation"), 0)
@@ -1358,6 +1361,8 @@ def advance_timed_effects(
             continue
 
         _activate_timed_modifiers(health, effect)
+        from app.services.artifact_special import second_skin_expiry
+        second_skin_expiry(effect, health, character_data)
         if effect.get('type')=='temporary_organ_health':
             from app.services.health import restore_organ_health
             restore_organ_health(health)

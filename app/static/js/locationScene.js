@@ -458,6 +458,7 @@ const tileInstanceTransform = new THREE.Object3D();
 let objectMeshes = [];
 let anomalyEffectMeshes = [];
 let combatAreaMeshes = [];
+const crystalCloudMeshes = new Map();
 let locationObjectMeshes = [];
 let roofMeshes = [];
 let locationRoofsVisible = true;
@@ -1199,21 +1200,24 @@ function syncCombatAreaVisuals(state) {
         disposeObject(mesh);
     });
     combatAreaMeshes = [];
-    if (!scene || state?.status !== 'active') return;
+    crystalCloudMeshes.clear();
+    if (!scene || !state) return;
 
-    (state.area_effects || []).forEach((area) => {
+    const combatAreas = state.status === 'active' ? state.area_effects || [] : [];
+    [...combatAreas, ...(state.artifact_clouds || [])].forEach((area) => {
         const radius = Math.max(0.2, Number(area.radius) || 0);
         const type = String(area.type || '');
+        const crystal = type === 'crystal_cloud';
         const color = type.startsWith('smoke')
             ? 0x727872
-            : (type === 'gas' ? 0x879c43 : 0xe46d24);
-        const height = type.startsWith('smoke') ? 2.4 : 0.35;
+            : (crystal ? 0xa2ccc7 : type === 'gas' ? 0x879c43 : 0xe46d24);
+        const height = type.startsWith('smoke') ? 2.4 : crystal ? 0.8 : 0.35;
         const mesh = new THREE.Mesh(
             area.cells?combatCloudGeometry(area,height):new THREE.CylinderGeometry(radius, radius, height, 48),
             new THREE.MeshBasicMaterial({
                 color,
                 transparent: true,
-                opacity: type.startsWith('smoke') ? 0.42 : 0.3,
+                opacity: type.startsWith('smoke') ? 0.42 : crystal ? 0.2 : 0.3,
                 depthWrite: false,
                 side: THREE.DoubleSide,
             }),
@@ -1224,10 +1228,12 @@ function syncCombatAreaVisuals(state) {
             Number(area.y) + 0.5,
         );
         mesh.userData.combatArea = area;
+        if (crystal) crystalCloudMeshes.set(Number(area.character_id), mesh);
         scene.add(mesh);
         combatAreaMeshes.push(mesh);
     });
 
+    if (state.status !== 'active') return;
     (state.pending_explosives || []).forEach((event) => {
         const marker = new THREE.Mesh(
             new THREE.RingGeometry(0.18, 0.28, 32),
@@ -8345,6 +8351,34 @@ function refreshSniperCoverMarks(){
 
 export function registerTraitDeferredAction(id,payload){registerDeferredCombatAction(id,payload);}
 
+export function chooseArtifactPoint(characterId){
+    if(!renderer||!currentLocationData||!getLocationCharacterById(characterId)||!canControlCharacter(characterId)){
+        return Promise.reject(new Error('Откройте подлокацию с этим персонажем'));
+    }
+    const canvas=renderer.domElement;
+    cancelScoutPointSelection?.();
+    return new Promise(resolve=>{
+        const finish=value=>{
+            canvas.removeEventListener('pointerdown',pick,true);
+            window.removeEventListener('keydown',cancel,true);
+            cancelScoutPointSelection=null;
+            resolve(value);
+        };
+        const cancel=event=>{if(event.key==='Escape'){event.preventDefault();event.stopImmediatePropagation();finish(null);}};
+        const pick=event=>{
+            event.preventDefault();event.stopImmediatePropagation();
+            if(event.button===2){finish(null);return;}
+            if(event.button!==0)return;
+            const point=localMapToolPoint(event.clientX,event.clientY);
+            if(point)finish({x:point.x-.5,y:point.z-.5,floor_level:point.floor_level});
+        };
+        cancelScoutPointSelection=()=>finish(null);
+        canvas.addEventListener('pointerdown',pick,true);
+        window.addEventListener('keydown',cancel,true);
+        showNotification('Выберите видимую точку до 5 м. Esc или ПКМ отменяет выбор.','system');
+    });
+}
+
 export function chooseScoutObservationPoint(){
     if(!window.isGM||!renderer||!currentLocationData)return Promise.reject(new Error('Точку осмотра выбирает ГМ в открытой подлокации'));
     const canvas=renderer.domElement;
@@ -8757,6 +8791,14 @@ export function initLocationScene(containerId) {
         updateRoofVisibility();
         const roofVisibilityMs = profiling ? performance.now() - roofStartedAt : 0;
         animateAnomalyEffects(anomalyEffectMeshes, frameTime);
+        for (const [characterId, cloud] of crystalCloudMeshes) {
+            const entry = getCharacterModelEntry(characterId);
+            cloud.visible = Boolean(entry?.model.visible && (entry.renderFloorLevel ?? entry.floorLevel) === locationViewLevel);
+            if (cloud.visible) {
+                cloud.position.copy(entry.model.position);
+                cloud.position.y += .44;
+            }
+        }
         for(const root of locationObjectMeshes)if(root.visible&&root.userData.locationObject?.type==='anomaly')animateAnomalyEffects([root],frameTime);
         updateAnomalyLabelVisibility(frameTime);
         animateFireObjectModels(locationObjectMeshes, frameTime);
@@ -14325,7 +14367,7 @@ function syncArtifactDaylightVision() {
 }
 
 export async function refreshArtifactDaylightVision() {
-    if (!currentLocationData || !combatState?.characters?.some(character => character.artifact_daylight_vision)) return;
+    if (!currentLocationData || !(combatState?.artifact_clouds?.length || combatState?.characters?.some(character => character.artifact_daylight_vision))) return;
     const locationId = getCurrentLocationId();
     const previous = combatState;
     const state = await Server.getLocationCombatState(window.currentLobbyId, locationId).catch(() => null);
@@ -20036,6 +20078,7 @@ export function destroyLocationScene() {
         objectMeshes = [];
         anomalyEffectMeshes = [];
         combatAreaMeshes = [];
+        crystalCloudMeshes.clear();
         locationObjectMeshes = [];
         roofMeshes = [];
         darknessEditorOverlay = null;

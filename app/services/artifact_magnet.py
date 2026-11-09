@@ -191,4 +191,4 @@ def apply(actor, data, selection):
     destination = 'в руке' if caught else 'под ногами'
     return {'name': f'Ферромагнит · {name} {destination}', 'attracted_item': name,
             'at_feet': not caught, '_affected_character_ids': affected,
-            '_magnet_ground_changes': changes, '_vision_location_id': actor.location_id}
+            '_object_changes': changes, '_vision_location_id': actor.location_id}
