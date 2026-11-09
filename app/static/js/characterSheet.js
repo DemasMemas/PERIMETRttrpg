@@ -91,7 +91,7 @@ export function setCurrentLobbyId(id) {
         views: characterWidgetViews,
         legacyPda: (data, old) => {
             const previousId = old.binding?.identity?.id;
-            const devices = collectInventoryEntries(data, item => item?.category === 'misc' && item.name === 'КПК'
+            const devices = collectInventoryEntries(data, item => isInventoryPda(item)
                 && (previousId == null || item.id === previousId));
             if (devices.length !== 1 || !devices[0].item.id || Number(devices[0].item.quantity ?? 1) !== 1) return null;
             const path = devices[0].path.join('.');
@@ -10453,6 +10453,10 @@ window.reloadGrenadeLauncher = async function(weaponIndex) {
     modal.style.display = 'flex';
 };
 
+function isInventoryPda(item) {
+    return item?.category === 'misc' && item.name === 'КПК';
+}
+
 // Использование предмета из инвентаря (для расходников, гранат и т.д.)
 async function useItem(item, itemPath, options = {}) {
     if(['remote_detonator','timer'].includes(item.attributes?.device_kind)||['Дистанционный взрыватель','Таймер'].includes(item.name)){
@@ -10462,12 +10466,12 @@ async function useItem(item, itemPath, options = {}) {
         const {openDosimeter}=await import('./dosimeter.js');
         return openDosimeter({characterId:currentCharacterId,itemId:item.id,itemPath,operate:payload=>window.operatePortableLight(payload)});
     }
-    if (item.category === 'misc' && item.name === 'КПК') {
+    if (isInventoryPda(item)) {
         const blocked=currentCharacterData?._artifact_profile?.blocked_devices?.electronics;
         if (blocked?.length) {showNotification(`КПК не работает: влияние артефакта «${blocked[0]}»`, 'system');return;}
         return openPdaShell({item, findItem: id => id
                 ? findInventoryItemById(currentCharacterData, id)
-                : (getItemByPath(itemPath)?.name === 'КПК' ? {item: getItemByPath(itemPath), path: itemPath} : null),
+                : (isInventoryPda(getItemByPath(itemPath)) ? {item: getItemByPath(itemPath), path: itemPath} : null),
             getData: () => currentCharacterData, operate: payload => window.operatePortableLight(payload),
             canEdit: currentCharacterCanEdit, characterId: currentCharacterId,
             onSaved: async data => {
@@ -16633,7 +16637,7 @@ function renderBackpackItem(item, index, parentPath, parentContainer, allTemplat
 
     // --- Ячейка названия (drag zone) ---
     let nameCell;
-    if (item.templateId) {
+    if (item.templateId || isInventoryPda(item)) {
         nameCell = document.createElement('strong');
         nameCell.textContent = item.name;
     } else {
@@ -16951,8 +16955,7 @@ function renderBackpackItem(item, index, parentPath, parentContainer, allTemplat
         controllerButton.onclick=event=>{event.stopPropagation();void openItemController(item,itemPath);};actionsDiv.append(controllerButton);
     }
     const isBattery = (item.category === 'device' && item.subcategory === 'battery');
-    if ((usableCategories.includes(item.category) || item.attributes?.usable ||
-        (item.category === 'misc' && item.name === 'КПК')) && !isBattery) {
+    if ((usableCategories.includes(item.category) || item.attributes?.usable || isInventoryPda(item)) && !isBattery) {
         const useBtn = document.createElement('button');
         useBtn.dataset.widgetKey = 'use';
         useBtn.type = 'button';
@@ -16990,7 +16993,8 @@ function renderBackpackItem(item, index, parentPath, parentContainer, allTemplat
         const throwButton = document.createElement('button');
         throwButton.type = 'button';
         throwButton.className = 'btn btn-sm btn-secondary';
-        throwButton.textContent = '↗';
+        throwButton.dataset.widgetKey = 'throw';
+        throwButton.textContent = 'Метнуть';
         throwButton.title = 'Метнуть предмет';
         throwButton.onclick = async event => {
             event.stopPropagation();

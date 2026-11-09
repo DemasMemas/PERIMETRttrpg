@@ -60,6 +60,12 @@ module.exports = async ({ page, request, token, lobby, login, profile, base, con
     }
     const physicalPdaId = 'widget-physical-pda-qa';
     const physicalPdaPath = '[data-path="inventory,pockets,2"]';
+    assert.equal(await page.evaluate(`(()=>{
+        const pda=document.querySelector('${physicalPdaPath}');
+        return pda.querySelector('.item-name strong')?.textContent==='КПК'
+            && !pda.querySelector('input[data-widget-key=name]')
+            && Boolean(pda.querySelector('[data-widget-key=use]'));
+    })()`),true,'У КПК без ссылки на шаблон есть подпись и кнопка использования');
     await pinBlock('inventory-item', physicalPdaPath);
     const physicalPdaPreference = (await prefs()).find(pin => pin.characterId === character.id
         && pin.references.length === 1 && pin.references[0].block === 'inventory-item'

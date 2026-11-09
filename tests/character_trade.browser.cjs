@@ -348,7 +348,16 @@ module.exports=async({page,request,token,lobby,base,connect,debugPort,safeSessio
     await page.evaluate(`window.closeCharacterSheet();true`);
     console.log(JSON.stringify({armorEquipButtonVisible:true,catalogArmorEquipped:true,
         itemMoved:true,modificationPreserved:true,armorAfterReload:true}));
-    const throwOwner=await read(a.id);
+    let throwOwner=await read(a.id);
+    const heldTorch=(throwOwner.data.health.combatMeta.portableLights||[]).find(binding=>binding.mount==='hand');
+    if(heldTorch){
+        const index=throwOwner.data.inventory.pockets.findIndex(item=>item.id===heldTorch.id);
+        assert.ok(index>=0);
+        await request('/lobbies/characters/'+a.id+'/portable-lights',{operation:'stow',source_id:heldTorch.id,
+            path:['inventory','pockets',index],character_revision:throwOwner.data._revision},token);
+        throwOwner=await read(a.id);
+    }
+    await request(loc+'/characters/'+a.id+'/facing',{facing_x:0,facing_y:1},token,'PATCH');
     throwOwner.data.inventory.pockets.push(
         {id:'throw-light-object',name:'Лёгкий предмет для броска',category:'misc',weight:.3,quantity:1},
         {id:'throw-heavy-armor',name:'Слишком тяжёлая броня',category:'armor',weight:16,quantity:1},
@@ -367,9 +376,45 @@ module.exports=async({page,request,token,lobby,base,connect,debugPort,safeSessio
         return names.map(name=>Boolean(rows.find(row=>row.querySelector('input[data-widget-key="name"]')?.value===name)
             ?.querySelector('button[title="Метнуть предмет"]')));})()`);
     assert.deepEqual(throwButtons,[true,false,false,false,false]);
-    await page.evaluate(`window.closeCharacterSheet();true`);
+    const throwControl=`[...document.querySelectorAll('#pockets-container [data-path]')]
+        .find(row=>row.querySelector('input[data-widget-key="name"]')?.value==='Лёгкий предмет для броска')
+        ?.querySelector('[data-widget-key="throw"]')`;
+    await page.until(`${throwControl}?.textContent==='Метнуть'`,'Метание подписано в строке предмета');
+    await page.evaluate(`${throwControl}.scrollIntoView({block:'center'});true`);
+    fs.writeFileSync(path.join(safeSession.artifacts,'inventory-throw.png'),
+        Buffer.from((await page.call('Page.captureScreenshot',{format:'png'})).data,'base64'));
+    await page.evaluate(`${throwControl}.click();true`);
+    await page.until("[...document.querySelectorAll('.notification')].some(el=>el.textContent.includes('выберите свободную точку'))",
+        'Кнопка открывает выбор точки без боя');
+    const throwPoint=await page.evaluate(`(async()=>{
+        const L=await import('/static/js/locationScene.js'),g=L.sceneGraphicsForTest();
+        const fetch=window.fetch;window.__throwResponse=null;
+        window.fetch=async(...args)=>{
+            const response=await fetch(...args);
+            if(String(args[0]).includes('/combat/action')&&String(args[1]?.body||'').includes('throw_item')){
+                window.__throwResponse={status:response.status,body:await response.clone().json()};
+                window.fetch=fetch;
+            }
+            return response;
+        };
+        const origin=g.characters.get(${a.id}).model.position;
+        const point=origin.clone().set(41.5,origin.y,49.5);
+        g.controls.target.copy(point);g.camera.position.set(45,origin.y+12,55);
+        g.controls.update();g.camera.updateMatrixWorld(true);point.project(g.camera);
+        const rect=g.renderer.domElement.getBoundingClientRect();
+        return {x:Math.round(rect.left+(point.x+1)*rect.width/2),y:Math.round(rect.top+(1-point.y)*rect.height/2)};
+    })()`);
+    for(const type of ['mousePressed','mouseReleased'])await page.call('Input.dispatchMouseEvent',
+        {type,...throwPoint,button:'left',buttons:type==='mousePressed'?1:0,clickCount:1});
+    await page.until('window.__throwResponse','Сервер ответил на бросок после выбора точки');
+    const throwResponse=await page.evaluate('window.__throwResponse');
+    assert.equal(throwResponse.status,200,JSON.stringify(throwResponse.body.error||throwResponse.body.message));
+    assert.equal(throwResponse.body.thrown_item.item_name,'Лёгкий предмет для броска');
+    assert.equal((await request(loc+'/combat',null,token,'GET')).status==='active',false);
+    assert.equal((await read(a.id)).data.inventory.pockets.some(item=>item.id==='throw-light-object'),false);
+    assert.ok((await request(loc,null,token,'GET')).objects.some(object=>object.properties.contents?.some(item=>item.id==='throw-light-object')));
     console.log(JSON.stringify({throwActionVisibility:true,allowedItem:true,
-        hiddenHeavyArmor:true,hiddenGrenadeAndKnife:true,hiddenMissingWeight:true}));
+        hiddenHeavyArmor:true,hiddenGrenadeAndKnife:true,hiddenMissingWeight:true,thrownOutsideCombat:true}));
     const helmetCatalog=await request(api+'/templates?category=helmet',null,token,'GET');
     const maskCatalog=await request(api+'/templates?category=gas_mask',null,token,'GET');
     const helmetTemplate=helmetCatalog.global.find(template=>template.name.startsWith('Шлем ')
