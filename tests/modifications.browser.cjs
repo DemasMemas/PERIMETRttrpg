@@ -58,8 +58,8 @@ module.exports=async({peer,request,recipient,token,api,read})=>{
             modifications:[{name:'Старое покрытие',description:'Сохранённый эффект покрытия'}]}]}};
     await request('/lobbies/characters/'+recipient.id,{data:saved},token,'PUT');
     await peer.evaluate(`window.openCharacterSheet(${recipient.id},'equipment').then(()=>true)`);
-    await peer.until("document.querySelector('.equipment-panel-tab[data-panel=helmet]')",'Экипировка загружена');
-    await peer.evaluate("document.querySelector('.equipment-panel-tab[data-panel=helmet]').click();true");
+    await peer.until("document.querySelector('.loadout-slot[data-equipment-open=helmet]')",'Экипировка загружена');
+    await peer.evaluate("document.querySelector('.loadout-slot[data-equipment-open=helmet]').click();true");
     await peer.until("document.querySelector('#sheet-tab-equipment button[onclick^=openVisorModificationsModal]')",
         'В экипировке доступен просмотр забрала');
     await peer.evaluate("document.querySelector('#sheet-tab-equipment button[onclick^=openVisorModificationsModal]').click();true");

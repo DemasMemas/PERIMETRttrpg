@@ -141,6 +141,12 @@ module.exports=async({page,request,token,lobby,base,connect,debugPort,safeSessio
     const excessive=pouchCatalog.global.find(template=>template.volume>8&&template.subcategory!=='Медицинский');
     assert.ok(medical&&excessive);
     const vestBefore=await read(b.id),vestTemplate=readyVests[0],nextVest=readyVests[1];
+    const modular=vestCatalog.global.find(template=>template.attributes?.modular&&template.attributes.discount_pouch_type==='Медицинский'&&template.attributes.total_capacity===8);
+    assert.ok(modular);
+    for(const [id,template] of [['next-vest',nextVest],['modular-vest',modular]]){
+        vestBefore.data.inventory.pockets.push({id,templateId:template.id,name:template.name,
+            category:'vest',quantity:1,weight:template.weight,volume:template.volume,attributes:template.attributes});
+    }
     vestBefore.data.inventory.backpack.push(
         {id:'medical-pouch-owned',templateId:medical.id,type:medical.id,name:medical.name,category:'pouch',subcategory:medical.subcategory,quantity:1,volume:medical.volume,weight:medical.weight,attributes:medical.attributes,capacity:medical.attributes.capacity,contents:[],isContainer:true},
         {id:'oversize-pouch-owned',templateId:excessive.id,type:excessive.id,name:excessive.name,category:'pouch',subcategory:excessive.subcategory,quantity:1,volume:excessive.volume,weight:excessive.weight,attributes:excessive.attributes,capacity:excessive.attributes.capacity,contents:[],isContainer:true}
@@ -152,16 +158,23 @@ module.exports=async({page,request,token,lobby,base,connect,debugPort,safeSessio
         pouches,attributes:vestTemplate.attributes,totalCapacity:vestTemplate.attributes.total_capacity||0};
     await request('/lobbies/characters/'+b.id,{data:vestBefore.data},token,'PUT');
     await page.evaluate(`(async()=>{await window.openCharacterSheet(${b.id},'inventory');return true})()`);
-    await page.until(`document.querySelector('select[name="equipment.vest.model"]')`,'Разгрузка видна в обычном листе');
+    await page.until(`document.querySelector('[data-widget-block="vest"] button[onclick="unequipVest()"]')`,'Разгрузка видна в обычном листе');
+    assert.equal(await page.evaluate(`Boolean(document.querySelector('select[name="equipment.vest.model"]'))`),false);
     assert.equal(await page.evaluate(`document.querySelector('.vest-pouch-name').textContent`),pouches[0].name,'Готовый подсумок подписан вместо пустого списка');
-    await page.evaluate(`(()=>{const select=document.querySelector('select[name="equipment.vest.model"]');select.value='${nextVest.id}';select.dispatchEvent(new Event('change',{bubbles:true}));return true})()`);
-    await page.until(`(async()=>{const {Server}=await import('/static/js/api.js');const c=await Server.getCharacter(${b.id});return c.data.equipment.vest?.templateId===${nextVest.id}&&c.data.inventory.backpack?.some(item=>item.id==='vest-preserved-bandage'&&item.quantity===4)})()`,'Смена модели сохранила подсумок в реальном сохранении');
+    const equipVest=async(id)=>{
+        const selector=`#pockets-container [data-item-template-id="${id}"] [data-widget-key=equip]`;
+        await page.until(`document.querySelector(${JSON.stringify(selector)})`,'Разгрузка есть в инвентаре');
+        await page.evaluate(`document.querySelector(${JSON.stringify(selector)}).click();true`);
+    };
+    await page.evaluate(`document.querySelector('[data-widget-block="vest"] button[onclick="unequipVest()"]').click();true`);
+    await page.until(`(async()=>{const {Server}=await import('/static/js/api.js');const c=await Server.getCharacter(${b.id});return !c.data.equipment.vest?.templateId&&c.data.inventory.backpack?.some(item=>item.id==='own-vest'&&item.pouches[0].contents[0].id==='vest-preserved-bandage')})()`,'Снятая разгрузка сохранила содержимое');
+    await equipVest(nextVest.id);
+    await page.until(`(async()=>{const {Server}=await import('/static/js/api.js');const c=await Server.getCharacter(${b.id});return c.data.equipment.vest?.id==='next-vest'})()`,'Надета другая физическая разгрузка');
     const afterVest=await read(b.id);
-    assert.equal(afterVest.data.equipment.vest.id,'own-vest');
-    assert.equal(afterVest.data.inventory.backpack.filter(item=>item.id==='vest-preserved-bandage').length,1);
-    const modular=vestCatalog.global.find(template=>template.attributes?.modular&&template.attributes.discount_pouch_type==='Медицинский'&&template.attributes.total_capacity===8);
-    assert.ok(modular);
-    await page.evaluate(`(()=>{const select=document.querySelector('select[name="equipment.vest.model"]');select.value='${modular.id}';select.dispatchEvent(new Event('change',{bubbles:true}));return true})()`);
+    const removedVest=afterVest.data.inventory.backpack.find(item=>item.id==='own-vest');
+    assert.equal(removedVest.pouches[0].contents[0].quantity,4);
+    assert.equal(afterVest.data.inventory.backpack.some(item=>item.id==='vest-preserved-bandage'),false);
+    await equipVest(modular.id);
     await page.until(`document.querySelector('.vest-mount-usage')&&document.querySelector('button[onclick="addVestPouch()"]')`,'Каталожная модульная разгрузка позволяет добавлять подсумки');
     await page.evaluate(`document.querySelector('button[onclick="addVestPouch()"]').click();true`);
     await page.until(`document.querySelector('#pouch-select-modal select')`,'Открыт выбор подсумка из инвентаря');
@@ -180,7 +193,7 @@ module.exports=async({page,request,token,lobby,base,connect,debugPort,safeSessio
     await page.until(`(async()=>{const {Server}=await import('/static/js/api.js');const c=await Server.getCharacter(${b.id});return !c.data.equipment.vest?.pouches?.length&&c.data.inventory.backpack?.some(item=>item.id==='medical-pouch-owned')})()`,'Снятый подсумок вернулся в инвентарь');
     console.log(JSON.stringify({trade:true,items_and_money:true,money_only:true,merchant_configuration:true,merchant_net_purchase:125,filtered_selection_preserved:true,narrow_width:480}));
     console.log(JSON.stringify({npc_loot:true,filters:true,saved_profile:true,budget:80,idempotent:true}));
-    console.log(JSON.stringify({vest_model_change:true,contents_preserved:true,quantity:4,normal_sheet_save:true}));
+    console.log(JSON.stringify({physicalVestReplacement:true,contentsPreservedInsideRemovedVest:true,quantity:4,normal_sheet_save:true}));
     console.log(JSON.stringify({modular_vest:true,pouch_volume_discount:.5,volume_limit_enforced:true,ready_pouch_names:true}));
     await page.evaluate(`window.closeCharacterSheet?.();true`);
     const competitor=await make('Второй покупатель',1000,[],43);

@@ -2761,6 +2761,7 @@ input[type="number"] {
 .loadout-resources span { padding: 6px 10px; border: 1px solid var(--loadout-line); border-radius: 20px; color: var(--loadout-accent); font-size: 12px; }
 #sheet-tab-equipment .equipment-detail { margin: 8px 0; border: 1px solid var(--panel-border); border-radius: 9px; background: rgba(255, 255, 255, .025); }
 #sheet-tab-equipment .equipment-panels > .equipment-detail > summary { display: none; }
+#sheet-tab-equipment [data-equipment-panel="protection"] { padding: 0 8px; }
 #sheet-tab-equipment .equipment-detail > summary,
 #sheet-tab-equipment .loadout-weapon-details > summary { padding: 11px 14px; cursor: pointer; font-weight: 700; }
 #sheet-tab-equipment .equipment-detail[open] > summary,

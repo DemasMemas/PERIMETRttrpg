@@ -33,29 +33,34 @@ module.exports=async({page,request,token,lobby,safeSession})=>{
         assert.ok(point,'Кнопка доступна после обновления листа: '+selector);
         for(const type of ['mousePressed','mouseReleased'])await page.call('Input.dispatchMouseEvent',{type,...point,button:'left',buttons:type==='mousePressed'?1:0,clickCount:1});
     };
-    const set=async(selector,value)=>page.evaluate(`(()=>{const e=document.querySelector(${JSON.stringify(selector)});e.value=${JSON.stringify(String(value))};e.dispatchEvent(new Event('change',{bubbles:true}))})()`);
     const waitSaved=async predicate=>{
         for(let i=0;i<100;i++){const s=await read();if(predicate(s.data))return s.data;await pause(100);}
         throw Error('Ожидаемое состояние оружия не сохранено');
     };
     await page.evaluate(`window.openCharacterSheet(${character.id},'equipment')`);
     await page.until('document.querySelector("#sheet-tab-equipment .equipment-panel-nav .equipment-panel-tab[data-panel=weapons]") && document.querySelector("#weapons-container")','лист экипировки загружен');
-    await click('#sheet-tab-equipment .equipment-panel-tab[data-panel="weapons"]');
-    await click('#sheet-tab-equipment [onclick="addWeapon()"]');
-    await page.until('document.getElementById("weapon-model-select-0")','выбор модели');
-    await set('#weapon-model-select-0',gun.id+1000000);
-    // Дожидаемся также обновления после автосохранения добавленного пустого оружия.
-    await waitSaved(d=>d.weapons?.length===1);await pause(1200);
-    assert.equal(await page.evaluate('document.getElementById("weapon-model-select-0").value'),String(gun.id+1000000),'Выбор пережил автосохранение');
+    const addToPockets=async template=>{
+        const templateId=template.id+1000000;
+        await click('.equipment-panel-tab[data-panel="inventory"]');
+        await click('#sheet-tab-inventory button[onclick="openInventoryTemplatePicker()"]');
+        await page.evaluate(`(()=>{const search=document.getElementById('inventory-template-picker-search');
+            search.value=${JSON.stringify(template.name)};search.dispatchEvent(new Event('input',{bubbles:true}))})()`);
+        await click(`#inventory-template-picker-modal button[data-item-template-id="${templateId}"]`);
+        const data=await waitSaved(d=>d.inventory.pockets.some(item=>item.templateId===templateId));
+        await click('#inventory-template-picker-modal .close');
+        return data.inventory.pockets.find(item=>item.templateId===templateId);
+    };
+    const equipFromPockets=template=>click(`#pockets-container [data-item-template-id="${template.id+1000000}"] [data-widget-key="equip"]`);
+    const ownedGun=await addToPockets(gun);
+    await equipFromPockets(gun);
+    await waitSaved(d=>d.weapons[0]?.id===ownedGun.id&&!d.inventory.pockets.some(item=>item.id===ownedGun.id));
+    assert.equal(await page.evaluate('Boolean(document.querySelector("[id^=weapon-model-select-]"))'),false);
     const remote=(await read()).data;
     remote.basic={...(remote.basic||{}),tags:['Проверка синхронизации']};
     remote.weapons[0].customNote='Внешнее обновление оружия';
     await request(`/lobbies/characters/${character.id}`,{data:remote},token,'PUT');
     await page.until('document.querySelector("#sheet-tab-basic")?.textContent.includes("Проверка синхронизации")','внешнее обновление доставлено в лист');
-    await page.until(`document.getElementById("weapon-model-select-0")?.value===${JSON.stringify(String(gun.id+1000000))}`,'незавершённый выбор восстановлен после внешнего обновления');
-    assert.equal(await page.evaluate('document.getElementById("weapon-model-select-0").value'),String(gun.id+1000000),'Выбор пережил внешнее обновление');
-    await click('[onclick="selectWeaponModel(0)"]');
-    await waitSaved(d=>d.weapons[0]?.templateId===gun.id+1000000);
+    await waitSaved(d=>d.weapons[0]?.id===ownedGun.id&&d.weapons[0].customNote==='Внешнее обновление оружия');
     const openStats=async()=>{
         await click('#sheet-tab-equipment .equipment-panel-tab[data-panel="weapons"]');
         for(const selector of ['[data-equipment-panel="weapon-0"]',
@@ -96,12 +101,12 @@ module.exports=async({page,request,token,lobby,safeSession})=>{
     const returned=detached.inventory.backpack.find(i=>i.id==='owned-module-2');
     assert.equal(returned.loadedGrenade.id,'smoke-round');assert.equal(returned.loaded,true);assert.equal(returned.durability,73);assert.equal(returned.weight,.5);
     // У гранатомёта тот же интерфейс показывает только два разрешённых слота.
-    await click('#sheet-tab-equipment [onclick="addWeapon()"]');
-    await page.until('document.getElementById("weapon-model-select-1")','вторая модель');
+    const ownedLauncher=await addToPockets(launcher);
+    await equipFromPockets(launcher);
+    await waitSaved(d=>d.weapons[1]?.id===ownedLauncher.id);
+    await click('.loadout-slot[data-equipment-open="weapon-1"]');
     assert.deepEqual(await page.evaluate(`[...document.querySelectorAll('.loadout-weapon-details[open]')].map(p=>p.dataset.equipmentPanel)`),
-        ['weapon-1'],'Новое оружие раскрыто сразу, остальные карточки свёрнуты');
-    await set('#weapon-model-select-1',launcher.id+1000000);await click('[onclick="selectWeaponModel(1)"]');
-    await waitSaved(d=>d.weapons[1]?.templateId===launcher.id+1000000);
+        ['weapon-1'],'Щелчок по слоту раскрывает только выбранное оружие');
     assert.equal(await page.evaluate('Boolean(document.querySelector(`[onclick="equipModuleToWeapon(1, \'barrel\')"]`))'),false);
     // Проверяем установку каждого встроенного модуля обычными кнопками листа.
     const catalog=(await request(`/lobbies/${lobby.id}/templates?category=weapon_module`,null,token,'GET')).global.filter(t=>t.attributes?.moduleRuleId);

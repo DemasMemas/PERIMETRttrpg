@@ -137,7 +137,7 @@ module.exports = async ({ page, request, token, lobby, login, profile, base, con
         'Старый переход открывает новый раздел инвентаря');
     assert.deepEqual(await page.evaluate(`(()=>{
         const nav=[...document.querySelectorAll('.equipment-panel-tab')].map(tab=>tab.textContent);
-        return [Boolean(document.querySelector('#sheet-tabs [data-tab=inventory]')),nav[nav.indexOf('Броня')+1],nav.includes('Приборы')];
+        return [Boolean(document.querySelector('#sheet-tabs [data-tab=inventory]')),nav[nav.indexOf('Защита')+1],nav.includes('Приборы')];
     })()`),[false,'Инвентарь',true]);
     for (const [width,height] of [[1366,768],[1920,1080]]) {
         await page.call('Emulation.setDeviceMetricsOverride',{width,height,deviceScaleFactor:1,mobile:false});
@@ -307,7 +307,16 @@ module.exports = async ({ page, request, token, lobby, login, profile, base, con
     await page.evaluate(`document.querySelector('.loadout-slot[data-equipment-open="weapon-0"]').click()`);
     assert.deepEqual(await page.evaluate(`[...document.querySelectorAll('.loadout-weapon-details')].filter(node=>node.open).map(node=>node.dataset.equipmentPanel)`),
         ['weapon-0'],'слот основного оружия сворачивает остальные карточки');
-    await page.evaluate(`document.querySelector('.equipment-panel-tab[data-panel="helmet"]').click()`);
+    await page.evaluate(`document.querySelector('.loadout-slot[data-equipment-open="helmet"]').click()`);
+    const protectionSections = `[...document.querySelectorAll('.loadout-protection-details[open]')].map(p=>p.dataset.equipmentPanel)`;
+    assert.deepEqual(await page.evaluate(protectionSections),['helmet']);
+    assert.equal(await page.evaluate(`document.querySelector('.equipment-panel-tab[data-panel="protection"]').getAttribute('aria-selected')`),'true');
+    assert.equal(await page.evaluate(`Boolean(document.querySelector('select[name="equipment.helmet.templateId"]'))`),false);
+    await page.evaluate(`document.querySelector('[data-equipment-panel="gasMask"] > summary').click()`);
+    assert.deepEqual(await page.evaluate(protectionSections),['helmet','gasMask']);
+    await page.evaluate(`document.querySelector('.loadout-slot[data-equipment-open="armor"]').click()`);
+    assert.deepEqual(await page.evaluate(protectionSections),['armor']);
+    await page.evaluate(`document.querySelector('.loadout-slot[data-equipment-open="helmet"]').click()`);
     const helmetLayout = await page.evaluate(`(()=>{
         const tab=document.querySelector('#sheet-tab-equipment');
         const fields=tab.querySelector('.helmet-main-block .fields-container');
@@ -315,6 +324,7 @@ module.exports = async ({ page, request, token, lobby, login, profile, base, con
             noVerticalScroll:tab.scrollHeight<=tab.clientHeight+2};
     })()`);
     assert.deepEqual(helmetLayout,{noHorizontalScroll:true,noVerticalScroll:true},'1920×1080: весь раздел шлема виден без прокрутки');
+    fs.writeFileSync(path.join(artifactDir, 'equipment-protection-1920.png'), Buffer.from((await page.call('Page.captureScreenshot', {format:'png'})).data,'base64'));
     await page.evaluate(`document.querySelector('.equipment-panel-tab[data-panel="weapons"]').click()`);
     await page.call('Emulation.clearDeviceMetricsOverride');
     await page.evaluate(`document.querySelector('[data-equipment-panel="cosmetic"]').open=true;document.querySelector('[data-equipment-group="cosmetic"]').scrollIntoView({block:'center'})`);
@@ -331,7 +341,7 @@ module.exports = async ({ page, request, token, lobby, login, profile, base, con
     const collisions = await page.evaluate(`(()=>{
         const failures=[];
         for(const key of ['gasMask','armor']){
-            document.querySelector('[data-equipment-panel="'+key+'"]').open=true;
+            document.querySelector('.loadout-slot[data-equipment-open="'+key+'"]').click();
             const names=['equipment:'+key,'protection:'+key,...(key==='armor'?['coverage:'+key]:[])];
             const rects=names.map(name=>document.querySelector('.sheet-pin[data-pin-block="'+name+'"]').getBoundingClientRect());
             for(let i=0;i<rects.length;i++)for(let j=i+1;j<rects.length;j++){

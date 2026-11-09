@@ -7,7 +7,7 @@ async function rules(){
 
 test('окно забрала показывает установленные улучшения без бесплатного добавления и удаления',()=>{
     const source=fs.readFileSync(path.join(__dirname,'../app/static/js/characterSheet.js'),'utf8');
-    const begin=source.indexOf('window.openVisorModificationsModal ='),end=source.indexOf('window.selectWeaponModel =',begin);
+    const begin=source.indexOf('window.openVisorModificationsModal ='),end=source.indexOf('function resetEquipmentPreset(',begin);
     const visor={slotType:'visor',modifications:[{name:'Старая модификация',description:'Сохранена'},
         {ruleId:'armor-g25',name:'Крепление ПНВ',level:1,description:'Крепление ПНВ'}]};
     const helmet={installedModules:[visor]};

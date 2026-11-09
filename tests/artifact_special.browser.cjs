@@ -25,8 +25,8 @@ module.exports=async({page,request,token,lobby,loc,locationId,rules,safeSession}
     await request('/__testing/artifact-preparation/'+safeSession.runId,{character_id:character.id},token);
     const open=async()=>{
         await page.evaluate(`window.openCharacterSheet(${character.id},'equipment').then(()=>true)`);
-        await page.until("document.querySelector('.equipment-panel-tab[data-panel=armor]')",'Вкладка брони доступна');
-        await page.evaluate("document.querySelector('.equipment-panel-tab[data-panel=armor]').click();true");
+        await page.until("document.querySelector('.loadout-slot[data-equipment-open=armor]')",'Вкладка брони доступна');
+        await page.evaluate("document.querySelector('.loadout-slot[data-equipment-open=armor]').click();true");
         await page.until("document.querySelector('[data-artifact-special=\"native-special-artifact\"]')",'Кнопка особого свойства в экипировке');
     };
     await open();assert.equal((await get()).data._artifact_specials[0].worn_seconds,86394);
@@ -69,8 +69,8 @@ module.exports=async({page,request,token,lobby,loc,locationId,rules,safeSession}
     await request(loc+'/combat/end_turn',{location_character_id:placed.location_character_id},token);
     const generatorBefore=await get();assert.equal(generatorBefore.data._artifact_profile.movement_penalty,-1);
     await page.evaluate(`window.openCharacterSheet(${character.id},'equipment').then(()=>true)`);
-    await page.until("document.querySelector('.equipment-panel-tab[data-panel=armor]')",'Броня после замены артефакта');
-    await page.evaluate("document.querySelector('.equipment-panel-tab[data-panel=armor]').click();true");
+    await page.until("document.querySelector('.loadout-slot[data-equipment-open=armor]')",'Броня после замены артефакта');
+    await page.evaluate("document.querySelector('.loadout-slot[data-equipment-open=armor]').click();true");
     await page.until("document.querySelector('[data-artifact-special=\"native-generator\"]')&&!document.querySelector('[data-artifact-special=\"native-generator\"]').disabled",'Генератор доступен без радиации');
     await page.evaluate("document.querySelector('[data-artifact-special=\"native-generator\"]').click();true");
     let generatorActive;
@@ -99,8 +99,8 @@ module.exports=async({page,request,token,lobby,loc,locationId,rules,safeSession}
         tick:'round_end',source:'native-heat-immunity',damage_per_round:50});
     await request(url,{data:burning.data},token,'PUT');
     await page.evaluate(`window.openCharacterSheet(${character.id},'equipment').then(()=>true)`);
-    await page.until("document.querySelector('.equipment-panel-tab[data-panel=armor]')",'Броня с Сердцем жара');
-    await page.evaluate("document.querySelector('.equipment-panel-tab[data-panel=armor]').click();true");
+    await page.until("document.querySelector('.loadout-slot[data-equipment-open=armor]')",'Броня с Сердцем жара');
+    await page.evaluate("document.querySelector('.loadout-slot[data-equipment-open=armor]').click();true");
     await page.until("document.querySelector('[data-artifact-special=\"native-heat-heart\"]')&&!document.querySelector('[data-artifact-special=\"native-heat-heart\"]').disabled",'Сердце жара готово');
     const heatBefore=(await get()).data.health.current;
     await page.evaluate("document.querySelector('[data-artifact-special=\"native-heat-heart\"]').click();true");
@@ -124,8 +124,8 @@ module.exports=async({page,request,token,lobby,loc,locationId,rules,safeSession}
     await request('/__testing/artifact-preparation/'+safeSession.runId,{character_id:character.id,breathlessness:true},token);
     assert.equal((await request(loc+'/combat',null,token,'GET')).current_character.strenuous_movement_blocked_until_round,1000);
     await page.evaluate(`window.openCharacterSheet(${character.id},'equipment').then(()=>true)`);
-    await page.until("document.querySelector('.equipment-panel-tab[data-panel=armor]')",'Броня с Огненной веной');
-    await page.evaluate("document.querySelector('.equipment-panel-tab[data-panel=armor]').click();true");
+    await page.until("document.querySelector('.loadout-slot[data-equipment-open=armor]')",'Броня с Огненной веной');
+    await page.evaluate("document.querySelector('.loadout-slot[data-equipment-open=armor]').click();true");
     await page.until("document.querySelector('[data-artifact-special=\"native-fiery-vein\"]')&&!document.querySelector('[data-artifact-special=\"native-fiery-vein\"]').disabled",'Огненная вена готова');
     await page.evaluate("document.querySelector('[data-artifact-special=\"native-fiery-vein\"]').click();true");
     await page.evaluate('window.__artifactUsePromise.then(()=>true)');
@@ -149,8 +149,8 @@ module.exports=async({page,request,token,lobby,loc,locationId,rules,safeSession}
     await request('/__testing/artifact-preparation/'+safeSession.runId,{character_id:character.id,breathlessness:true},token);
     assert.equal((await request(loc+'/combat',null,token,'GET')).current_character.strenuous_movement_blocked_until_round,1000);
     await page.evaluate(`window.openCharacterSheet(${character.id},'equipment').then(()=>true)`);
-    await page.until("document.querySelector('.equipment-panel-tab[data-panel=armor]')",'Броня с Сердцем грозы');
-    await page.evaluate("document.querySelector('.equipment-panel-tab[data-panel=armor]').click();true");
+    await page.until("document.querySelector('.loadout-slot[data-equipment-open=armor]')",'Броня с Сердцем грозы');
+    await page.evaluate("document.querySelector('.loadout-slot[data-equipment-open=armor]').click();true");
     await page.until("document.querySelector('[data-artifact-special=\"native-storm-heart\"]')&&!document.querySelector('[data-artifact-special=\"native-storm-heart\"]').disabled",'Сердце грозы готово');
     await page.evaluate("document.querySelector('[data-artifact-special=\"native-storm-heart\"]').click();true");
     await page.evaluate('window.__artifactUsePromise.then(()=>true)');
@@ -182,8 +182,8 @@ module.exports=async({page,request,token,lobby,loc,locationId,rules,safeSession}
         tick:'round_end',source:'native-shell-burning',damage_per_round:50});
     await request(url,{data:shellBurning.data},token,'PUT');
     await page.evaluate(`window.openCharacterSheet(${character.id},'equipment').then(()=>true)`);
-    await page.until("document.querySelector('.equipment-panel-tab[data-panel=armor]')",'Броня с Панцирем');
-    await page.evaluate("document.querySelector('.equipment-panel-tab[data-panel=armor]').click();true");
+    await page.until("document.querySelector('.loadout-slot[data-equipment-open=armor]')",'Броня с Панцирем');
+    await page.evaluate("document.querySelector('.loadout-slot[data-equipment-open=armor]').click();true");
     await page.until("document.querySelector('[data-artifact-special=\"native-shell\"]')&&!document.querySelector('[data-artifact-special=\"native-shell\"]').disabled",'Панцирь готов');
     await page.evaluate("document.querySelector('[data-artifact-special=\"native-shell\"]').click();true");
     await page.evaluate('window.__artifactUsePromise.then(()=>true)');
@@ -214,8 +214,8 @@ module.exports=async({page,request,token,lobby,loc,locationId,rules,safeSession}
         await request(loc+'/combat/start',{location_character_ids:[placed.location_character_id,psionPlaced.location_character_id],
             initiator_location_character_id:placed.location_character_id,initiator_first:true},token);
         await page.evaluate(`window.openCharacterSheet(${character.id},'equipment').then(()=>true)`);
-        await page.until("document.querySelector('.equipment-panel-tab[data-panel=armor]')",'Броня с пси-защитой');
-        await page.evaluate("document.querySelector('.equipment-panel-tab[data-panel=armor]').click();true");
+        await page.until("document.querySelector('.loadout-slot[data-equipment-open=armor]')",'Броня с пси-защитой');
+        await page.evaluate("document.querySelector('.loadout-slot[data-equipment-open=armor]').click();true");
         await page.until(`document.querySelector('[data-artifact-special="${identity}"]')&&!document.querySelector('[data-artifact-special="${identity}"]').disabled`,name+' готов');
         await page.evaluate(`document.querySelector('[data-artifact-special="${identity}"]').click();true`);
         await page.evaluate('window.__artifactUsePromise.then(()=>true)');
@@ -254,8 +254,8 @@ module.exports=async({page,request,token,lobby,loc,locationId,rules,safeSession}
         initiator_location_character_id:placed.location_character_id,initiator_first:true},token);
     await request(loc+'/combat/end_turn',{location_character_id:placed.location_character_id},token);
     await page.evaluate(`window.openCharacterSheet(${character.id},'equipment').then(()=>true)`);
-    await page.until("document.querySelector('.equipment-panel-tab[data-panel=armor]')",'Броня с Даром пламени');
-    await page.evaluate("document.querySelector('.equipment-panel-tab[data-panel=armor]').click();true");
+    await page.until("document.querySelector('.loadout-slot[data-equipment-open=armor]')",'Броня с Даром пламени');
+    await page.evaluate("document.querySelector('.loadout-slot[data-equipment-open=armor]').click();true");
     await page.until("document.querySelector('[data-artifact-special=\"native-fire-gift\"]')&&!document.querySelector('[data-artifact-special=\"native-fire-gift\"]').disabled",'Дар пламени готов');
     await page.evaluate("document.querySelector('[data-artifact-special=\"native-fire-gift\"]').click();true");
     await page.evaluate('window.__artifactUsePromise.then(()=>true)');
@@ -287,8 +287,8 @@ module.exports=async({page,request,token,lobby,loc,locationId,rules,safeSession}
         tick:'round_end',source:'native-shield-burning',damage_per_round:50});
     await request(url,{data:shieldBurning.data},token,'PUT');
     await page.evaluate(`window.openCharacterSheet(${character.id},'equipment').then(()=>true)`);
-    await page.until("document.querySelector('.equipment-panel-tab[data-panel=armor]')",'Броня с Живым щитом');
-    await page.evaluate("document.querySelector('.equipment-panel-tab[data-panel=armor]').click();true");
+    await page.until("document.querySelector('.loadout-slot[data-equipment-open=armor]')",'Броня с Живым щитом');
+    await page.evaluate("document.querySelector('.loadout-slot[data-equipment-open=armor]').click();true");
     await page.until("document.querySelector('[data-artifact-special=\"native-live-shield\"]:not(:disabled)')",'Живой щит готов');
     await page.evaluate("document.querySelector('[data-artifact-special=\"native-live-shield\"]').click();true");
     await page.evaluate('window.__artifactUsePromise.then(()=>true)');
@@ -318,8 +318,8 @@ module.exports=async({page,request,token,lobby,loc,locationId,rules,safeSession}
         initiator_location_character_id:placed.location_character_id,initiator_first:true},token);
     await endShieldRound();
     await page.evaluate(`window.openCharacterSheet(${character.id},'equipment').then(()=>true)`);
-    await page.until("document.querySelector('.equipment-panel-tab[data-panel=armor]')",'Броня со Сферой притяжения');
-    await page.evaluate("document.querySelector('.equipment-panel-tab[data-panel=armor]').click();true");
+    await page.until("document.querySelector('.loadout-slot[data-equipment-open=armor]')",'Броня со Сферой притяжения');
+    await page.evaluate("document.querySelector('.loadout-slot[data-equipment-open=armor]').click();true");
     await page.until("document.querySelector('[data-artifact-special=\"native-gravity-sphere\"]:not(:disabled)')",'Сфера притяжения готова');
     await page.evaluate("document.querySelector('[data-artifact-special=\"native-gravity-sphere\"]').click();true");
     await page.evaluate('window.__artifactUsePromise.then(()=>true)');
@@ -345,8 +345,8 @@ module.exports=async({page,request,token,lobby,loc,locationId,rules,safeSession}
     await request('/__testing/artifact-preparation/'+safeSession.runId,{character_id:spongeBearer.id},token);
     await changeMinutes(1);
     await page.evaluate(`window.openCharacterSheet(${spongeBearer.id},'equipment').then(()=>true)`);
-    await page.until("document.querySelector('.equipment-panel-tab[data-panel=armor]')",'Броня с Чернобыльской губкой');
-    await page.evaluate("document.querySelector('.equipment-panel-tab[data-panel=armor]').click();true");
+    await page.until("document.querySelector('.loadout-slot[data-equipment-open=armor]')",'Броня с Чернобыльской губкой');
+    await page.evaluate("document.querySelector('.loadout-slot[data-equipment-open=armor]').click();true");
     await page.until("document.querySelector('[data-artifact-special=\"native-sponge\"]:not(:disabled)')",'Чернобыльская губка готова');
     await page.evaluate("document.querySelector('[data-artifact-special=\"native-sponge\"]').click();true");
     await page.evaluate('window.__artifactUsePromise.then(()=>true)');
@@ -368,8 +368,8 @@ module.exports=async({page,request,token,lobby,loc,locationId,rules,safeSession}
     await request('/__testing/artifact-preparation/'+safeSession.runId,{character_id:spongeBearer.id},token);
     await changeMinutes(1);
     await page.evaluate(`window.openCharacterSheet(${spongeBearer.id},'equipment').then(()=>true)`);
-    await page.until("document.querySelector('.equipment-panel-tab[data-panel=armor]')",'Броня с Горелкой');
-    await page.evaluate("document.querySelector('.equipment-panel-tab[data-panel=armor]').click();true");
+    await page.until("document.querySelector('.loadout-slot[data-equipment-open=armor]')",'Броня с Горелкой');
+    await page.evaluate("document.querySelector('.loadout-slot[data-equipment-open=armor]').click();true");
     await page.until("document.querySelector('[data-artifact-power]:not(:disabled)')",'Горелка готова');
     await page.evaluate("document.querySelector('[data-artifact-power]').value='3';document.querySelector('[data-artifact-special=\"native-burner\"]').click();true");
     await page.evaluate('window.__artifactUsePromise.then(()=>true)');
@@ -389,8 +389,8 @@ module.exports=async({page,request,token,lobby,loc,locationId,rules,safeSession}
     await request('/__testing/artifact-preparation/'+safeSession.runId,{character_id:spongeBearer.id},token);
     await changeMinutes(1);
     await page.evaluate(`window.openCharacterSheet(${spongeBearer.id},'equipment').then(()=>true)`);
-    await page.until("document.querySelector('.equipment-panel-tab[data-panel=armor]')",'Броня с Пиявкой');
-    await page.evaluate("document.querySelector('.equipment-panel-tab[data-panel=armor]').click();true");
+    await page.until("document.querySelector('.loadout-slot[data-equipment-open=armor]')",'Броня с Пиявкой');
+    await page.evaluate("document.querySelector('.loadout-slot[data-equipment-open=armor]').click();true");
     await page.until("document.querySelector('[data-artifact-special=\"native-leech\"]:not(:disabled)')",'Пиявка готова');
     await page.evaluate("document.querySelector('[data-artifact-special=\"native-leech\"]').click();true");
     await page.evaluate('window.__artifactUsePromise.then(()=>true)');
@@ -416,8 +416,8 @@ module.exports=async({page,request,token,lobby,loc,locationId,rules,safeSession}
     await camera(50,57);
     const nightSun=await page.evaluate(sun);await capture('fiery-tear-night');
     await page.evaluate(`window.openCharacterSheet(${spongeBearer.id},'equipment').then(()=>true)`);
-    await page.until("document.querySelector('.equipment-panel-tab[data-panel=armor]')",'Броня с Огненной слезой');
-    await page.evaluate("document.querySelector('.equipment-panel-tab[data-panel=armor]').click();true");
+    await page.until("document.querySelector('.loadout-slot[data-equipment-open=armor]')",'Броня с Огненной слезой');
+    await page.evaluate("document.querySelector('.loadout-slot[data-equipment-open=armor]').click();true");
     await page.until("document.querySelector('[data-artifact-special=\"native-fiery-tear\"]:not(:disabled)')",'Огненная слеза готова');
     await page.evaluate("document.querySelector('[data-artifact-special=\"native-fiery-tear\"]').click();true");
     await page.evaluate('window.__artifactUsePromise.then(()=>true)');
@@ -443,8 +443,8 @@ module.exports=async({page,request,token,lobby,loc,locationId,rules,safeSession}
     await request(loc+'/combat/start',{location_character_ids:[secondBearer.location_character_id],
         initiator_location_character_id:secondBearer.location_character_id,initiator_first:true},token);
     await page.evaluate(`window.openCharacterSheet(${spongeBearer.id},'equipment').then(()=>true)`);
-    await page.until("document.querySelector('.equipment-panel-tab[data-panel=armor]')",'Броня с Живым током');
-    await page.evaluate("document.querySelector('.equipment-panel-tab[data-panel=armor]').click();true");
+    await page.until("document.querySelector('.loadout-slot[data-equipment-open=armor]')",'Броня с Живым током');
+    await page.evaluate("document.querySelector('.loadout-slot[data-equipment-open=armor]').click();true");
     await page.until("document.querySelector('[data-artifact-special=\"native-living-current\"]:not(:disabled)')",'Живой ток готов');
     await page.evaluate("document.querySelector('[data-artifact-special=\"native-living-current\"]').click();true");
     await page.evaluate('window.__artifactUsePromise.then(()=>true)');
@@ -471,8 +471,8 @@ module.exports=async({page,request,token,lobby,loc,locationId,rules,safeSession}
     await request(loc+'/combat/start',{location_character_ids:[secondBearer.location_character_id],
         initiator_location_character_id:secondBearer.location_character_id,initiator_first:true},token);
     await page.evaluate(`window.openCharacterSheet(${spongeBearer.id},'equipment').then(()=>true)`);
-    await page.until("document.querySelector('.equipment-panel-tab[data-panel=armor]')",'Броня с Философским листом');
-    await page.evaluate("document.querySelector('.equipment-panel-tab[data-panel=armor]').click();true");
+    await page.until("document.querySelector('.loadout-slot[data-equipment-open=armor]')",'Броня с Философским листом');
+    await page.evaluate("document.querySelector('.loadout-slot[data-equipment-open=armor]').click();true");
     await page.until("document.querySelector('[data-artifact-special=\"native-philosophers-leaf\"]:not(:disabled)')",'Философский лист готов');
     await page.evaluate("document.querySelector('[data-artifact-special=\"native-philosophers-leaf\"]').click();true");
     await page.evaluate('window.__artifactUsePromise.then(()=>true)');
@@ -489,8 +489,8 @@ module.exports=async({page,request,token,lobby,loc,locationId,rules,safeSession}
     await request(loc+'/spawn_character',{character_id:spongeBearer.id,tile_x:45,tile_y:62,force_relocate:true},token);
     await request(loc+'/spawn_character',{character_id:exposed.id,tile_x:45,tile_y:67,force_relocate:true},token);
     await page.evaluate(`window.openCharacterSheet(${spongeBearer.id},'equipment').then(()=>true)`);
-    await page.until("document.querySelector('.equipment-panel-tab[data-panel=armor]')",'Броня с Громоотводом');
-    await page.evaluate("document.querySelector('.equipment-panel-tab[data-panel=armor]').click();true");
+    await page.until("document.querySelector('.loadout-slot[data-equipment-open=armor]')",'Броня с Громоотводом');
+    await page.evaluate("document.querySelector('.loadout-slot[data-equipment-open=armor]').click();true");
     await page.until("document.querySelector('[data-artifact-special=\"native-lightning-rod\"]:not(:disabled)')",'Громоотвод готов');
     await page.evaluate("document.querySelector('[data-artifact-special=\"native-lightning-rod\"]').click();true");
     const targetChoice="[...document.querySelectorAll('#consumable-application-modal .consumable-application-list button')].find(button=>button.textContent==='Цель Пиявки')";
@@ -506,8 +506,8 @@ module.exports=async({page,request,token,lobby,loc,locationId,rules,safeSession}
     await request('/__testing/artifact-preparation/'+safeSession.runId,{character_id:spongeBearer.id},token);
     await changeMinutes(1);
     await page.evaluate(`window.openCharacterSheet(${spongeBearer.id},'equipment').then(()=>true)`);
-    await page.until("document.querySelector('.equipment-panel-tab[data-panel=armor]')",'Броня с Проводником бури');
-    await page.evaluate("document.querySelector('.equipment-panel-tab[data-panel=armor]').click();true");
+    await page.until("document.querySelector('.loadout-slot[data-equipment-open=armor]')",'Броня с Проводником бури');
+    await page.evaluate("document.querySelector('.loadout-slot[data-equipment-open=armor]').click();true");
     await page.until("document.querySelector('[data-artifact-special=\"native-storm-conductor\"]:not(:disabled)')",'Проводник бури готов');
     await page.evaluate("document.querySelector('[data-artifact-special=\"native-storm-conductor\"]').click();true");
     await page.until(targetChoice,'Проводник бури предлагает видимую цель');
@@ -528,8 +528,8 @@ module.exports=async({page,request,token,lobby,loc,locationId,rules,safeSession}
             {id:'glass',name:'Стекло',category:'material',quantity:1,weight:.2,volume:.1},
         ]}},token);
     await page.evaluate(`window.openCharacterSheet(${spongeBearer.id},'equipment').then(()=>true)`);
-    await page.until("document.querySelector('.equipment-panel-tab[data-panel=armor]')",'Броня с Ферромагнитом');
-    await page.evaluate("document.querySelector('.equipment-panel-tab[data-panel=armor]').click();true");
+    await page.until("document.querySelector('.loadout-slot[data-equipment-open=armor]')",'Броня с Ферромагнитом');
+    await page.evaluate("document.querySelector('.loadout-slot[data-equipment-open=armor]').click();true");
     const magnetButton='document.querySelector(\'[data-artifact-special="native-ferromagnet"]:not(:disabled)\')';
     await page.until(magnetButton,'Ферромагнит готов');
     await page.evaluate(`${magnetButton}.click();true`);
@@ -564,8 +564,8 @@ module.exports=async({page,request,token,lobby,loc,locationId,rules,safeSession}
     await request('/__testing/artifact-preparation/'+safeSession.runId,{character_id:spongeBearer.id},token);
     await changeMinutes(1);
     await page.evaluate(`window.openCharacterSheet(${spongeBearer.id},'equipment').then(()=>true)`);
-    await page.until("document.querySelector('.equipment-panel-tab[data-panel=armor]')",'Броня с Алхимическим веером');
-    await page.evaluate("document.querySelector('.equipment-panel-tab[data-panel=armor]').click();true");
+    await page.until("document.querySelector('.loadout-slot[data-equipment-open=armor]')",'Броня с Алхимическим веером');
+    await page.evaluate("document.querySelector('.loadout-slot[data-equipment-open=armor]').click();true");
     const motionButton=index=>`document.querySelector('[data-artifact-special="native-motion-${index}"]:not(:disabled)')`;
     await page.until(motionButton(0),'Веер готов');
     await page.evaluate(`${motionButton(0)}.click();true`);
@@ -606,8 +606,8 @@ module.exports=async({page,request,token,lobby,loc,locationId,rules,safeSession}
     };
     const clickSpecial=async(id)=>{
         await page.evaluate(`window.openCharacterSheet(${spongeBearer.id},'equipment').then(()=>true)`);
-        await page.until("document.querySelector('.equipment-panel-tab[data-panel=armor]')",'Броня с проверяемым артефактом');
-        await page.evaluate("document.querySelector('.equipment-panel-tab[data-panel=armor]').click();true");
+        await page.until("document.querySelector('.loadout-slot[data-equipment-open=armor]')",'Броня с проверяемым артефактом');
+        await page.evaluate("document.querySelector('.loadout-slot[data-equipment-open=armor]').click();true");
         const button=`document.querySelector('[data-artifact-special="${id}"]:not(:disabled)')`;
         await page.until(button,'Артефакт готов');
         await page.evaluate(`${button}.click();true`);
@@ -703,8 +703,8 @@ module.exports=async({page,request,token,lobby,loc,locationId,rules,safeSession}
     sharedSightSheet.data.health.current=500;
     await request(exposedUrl,{data:sharedSightSheet.data},token,'PUT');
     await page.evaluate(`window.openCharacterSheet(${spongeBearer.id},'equipment').then(()=>true)`);
-    await page.until("document.querySelector('.equipment-panel-tab[data-panel=armor]')",'Броня с Проводником бури');
-    await page.evaluate("document.querySelector('.equipment-panel-tab[data-panel=armor]').click();true");
+    await page.until("document.querySelector('.loadout-slot[data-equipment-open=armor]')",'Броня с Проводником бури');
+    await page.evaluate("document.querySelector('.loadout-slot[data-equipment-open=armor]').click();true");
     const sharedButton='document.querySelector(\'[data-artifact-special="native-conductor-shared-sight"]:not(:disabled)\')';
     await page.until(sharedButton,'Проводник готов к применению');
     await page.evaluate(`${sharedButton}.click();true`);
@@ -726,8 +726,8 @@ module.exports=async({page,request,token,lobby,loc,locationId,rules,safeSession}
         initiator_location_character_id:sharedSightActor.location_character_id,initiator_first:true},token);
     const forecastBefore=(await liveState()).current_character.action_points_current;
     await page.evaluate(`window.openCharacterSheet(${spongeBearer.id},'equipment').then(()=>true)`);
-    await page.until("document.querySelector('.equipment-panel-tab[data-panel=armor]')",'Броня с Тенью чужого');
-    await page.evaluate("document.querySelector('.equipment-panel-tab[data-panel=armor]').click();true");
+    await page.until("document.querySelector('.loadout-slot[data-equipment-open=armor]')",'Броня с Тенью чужого');
+    await page.evaluate("document.querySelector('.loadout-slot[data-equipment-open=armor]').click();true");
     const forecastButton='document.querySelector(\'[data-artifact-forecast="native-forecast-one"]:not(:disabled)\')';
     await page.until(forecastButton,'Предвидение доступно без времени ношения');
     await page.evaluate(`${forecastButton}.click();true`);
