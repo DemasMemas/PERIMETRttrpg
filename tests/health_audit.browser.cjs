@@ -119,7 +119,8 @@ module.exports=async({page,request,token,lobby,base,connect,debugPort,safeSessio
             }
             return page.evaluate(`(()=>{const t=document.querySelector('#delayed-item-tooltip'),a=document.querySelector(${JSON.stringify(selector)}).closest('[data-item-template-id],[data-item-tooltip],.loadout-slot');const r=t.getBoundingClientRect(),s=a.getBoundingClientRect();return{text:t.innerText,within:r.left>=0&&r.right<=innerWidth&&r.top>=0&&r.bottom<=innerHeight,separate:r.right<=s.left||r.left>=s.right||r.bottom<=s.top||r.top>=s.bottom}})()`);
         };
-        await click(page,'[data-tab="inventory"]');
+        await click(page,'[data-tab="equipment"]');
+        await click(page,'.equipment-panel-tab[data-panel="inventory"]');
         const medTooltip=await hover('[data-item-template-id="'+meds[1].templateId+'"] strong');assert.ok(medTooltip.within&&medTooltip.separate);assert.ok(medTooltip.text.includes('Боль: -1'));assert.ok(!medTooltip.text.includes('pain_delta'));await screenshot('inventory-medicine-tooltip');
         const longState=await read();
         longState.data.inventory.pockets.push({id:'audit-no-template',name:'Предмет с подробным описанием',category:'misc',weight:.1,volume:.1,quantity:1,description:'Дополнительные сведения. '.repeat(90)+'Конец длинного описания'});

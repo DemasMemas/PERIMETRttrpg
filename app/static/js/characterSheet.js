@@ -21,7 +21,7 @@ import { passiveTraits, traitCount, backgroundIs, addLearningXp, backpackItemVol
  * 3. Вкладка "Основное" (renderBasicTab) + предыстория, контейнеры
  * 4. Вкладка "Навыки" (renderSkillsTab) + особые черты
  * 5. Вкладка "Экипировка" (renderEquipmentTab) + оружие, броня, шлем, противогаз
- * 6. Вкладка "Инвентарь" (renderInventoryTab) + карманы, пояс, разгрузка, рюкзак
+ * 6. Раздел «Инвентарь» в экипировке (renderInventoryTab) + карманы, пояс, разгрузка, рюкзак
  * 7. Вкладка "Заметки" (renderNotesTab)
  * 8. Вкладка "Настройки" (renderSettingsTab) + видимость, удаление
  * 9. Публичные функции (openCharacterSheet, closeCharacterSheet, export/import)
@@ -1343,7 +1343,9 @@ async function applyRemoteSheetData(remoteData, characterId = currentCharacterId
         || touches('features')
     ) tasks.push(renderSkillsTab(remoteData));
     if (touches('equipment') || touches('weapons') || touches('activeWeaponIndex') || touches('inventory')
-        || touches('health.prostheses') || touches('health.combatMeta.portableLights')) {
+        || touches('health.prostheses') || touches('health.combatMeta.portableLights')
+        || ['heldWaterItem','heldPda','pdaDynamo','weaponGripHands','weaponPrimaryHand','secondaryWeaponId']
+            .some(key => touches(`health.combatMeta.${key}`))) {
         tasks.push(renderEquipmentTab(remoteData));
     }
     if (
@@ -2368,7 +2370,6 @@ async function renderCharacterSheet(characterName, data) {
         { id: 'basic', title: 'Основное' },
         { id: 'skills', title: 'Навыки' },
         { id: 'equipment', title: 'Экипировка' },
-        { id: 'inventory', title: 'Инвентарь' },
         { id: 'settings', title: 'Настройки' },
         { id: 'notes', title: 'Заметки' }
     ];
@@ -2388,6 +2389,12 @@ async function renderCharacterSheet(characterName, data) {
         contentContainer.appendChild(contentDiv);
     });
 
+    const inventory = document.createElement('div');
+    inventory.id = 'sheet-tab-inventory';
+    inventory.className = 'equipment-group equipment-inventory';
+    inventory.dataset.equipmentGroup = 'inventory';
+    document.getElementById('sheet-tab-equipment').append(inventory);
+
     await renderBasicTab(data);
     renderSkillsTab(data);
     await renderEquipmentTab(data);
@@ -2404,6 +2411,11 @@ async function renderCharacterSheet(characterName, data) {
 }
 
 function switchSheetTab(tabId) {
+    if (tabId === 'inventory') {
+        switchSheetTab('equipment');
+        document.querySelector('.equipment-panel-tab[data-panel="inventory"]')?.click();
+        return;
+    }
     document.querySelectorAll('#sheet-tabs .tab-btn').forEach(btn => {
         btn.classList.toggle('active', btn.dataset.tab === tabId);
     });
@@ -4921,12 +4933,16 @@ async function renderEquipmentTab(data, { focusWeaponIndex = null } = {}) {
     `;
 
     const viewState = captureSheetViewState();
+    const inventory = document.getElementById('sheet-tab-inventory');
     container.innerHTML = html;
+    if (inventory) container.append(inventory);
     await renderWeapons(weapons, weaponTemplates, weaponModuleTemplates, weaponModTemplates);
+    if (renderVersion !== equipmentRenderVersion) return;
     renderEquipmentLoadout(container, data, weaponTemplates, helmetTemplates, gasMaskTemplates, armorTemplates,
         { focusWeaponIndex, restoreWeaponPanels });
     const loadout = container.querySelector('.equipment-loadout') || container;
-    await renderPortableLights(loadout,currentCharacterId,data,window.operatePortableLight,
+    const devices = container.querySelector('[data-equipment-group="detector"]');
+    if (devices) await renderPortableLights(devices,currentCharacterId,data,window.operatePortableLight,
         ()=>renderVersion===equipmentRenderVersion,currentCharacterCanEdit&&!medicalOperationInProgress).catch(error=>console.warn('Не удалось загрузить фонари:',error));
     if(renderVersion===equipmentRenderVersion)renderProstheses(loadout,data,window.operateProsthesis,currentCharacterCanEdit&&!medicalOperationInProgress,currentCharacterId);
     if(renderVersion===equipmentRenderVersion){
@@ -5142,9 +5158,42 @@ function renderEquipmentFigure(equipment, armorTemplates, helmetTemplates, gasMa
     </div>`;
 }
 
+function equipmentHandsContents(data) {
+    const meta = data.health?.combatMeta || {};
+    const weapons = data.weapons || [];
+    const actor = window.isLocationActive && window.locationCombatState?.characters?.find(
+        entry => Number(entry.character_id) === Number(currentCharacterId));
+    const primary = weapons[actor ? actor.drawn_weapon_index : data.activeWeaponIndex];
+    const secondary = actor ? weapons[actor.secondary_weapon_index] : weapons.find(
+        weapon => meta.secondaryWeaponId != null && weapon.id === meta.secondaryWeaponId);
+    const left = meta.weaponPrimaryHand === 'left';
+    const grip = actor?.weapon_grip_hands ?? meta.weaponGripHands;
+    const rows = [];
+    if (primary) rows.push([secondary || grip === 1 ? left ? 'Левая рука' : 'Правая рука' : 'Обе руки',primary.name]);
+    if (secondary) rows.push([left ? 'Правая рука' : 'Левая рука',secondary.name]);
+    const held = data.inventory?.held || [];
+    for (const item of held) rows.push(['В руке',item.name]);
+    const heldIds = new Set(held.map(item => item.id));
+    for (const id of [meta.heldPda?.id, meta.pdaDynamo?.id,
+        ...(meta.portableLights || []).filter(binding => binding.mount === 'hand').map(binding => binding.id)]) {
+        if (id == null || heldIds.has(id)) continue;
+        const item = findInventoryItemById(data,id)?.item;
+        if (item) { rows.push(['В руке',item.name]); heldIds.add(id); }
+    }
+    if (meta.heldWaterItem?.name && !heldIds.has(meta.heldWaterItem.id)) rows.push(['В руке',meta.heldWaterItem.name]);
+    return rows.length ? rows.map(([side,name]) => `<span>${side} <strong>${escapeHtml(name || 'Предмет')}</strong></span>`).join('')
+        : '<span>Руки свободны</span>';
+}
+
 function renderEquipmentLoadout(container, data, weaponTemplates, helmetTemplates, gasMaskTemplates, armorTemplates,
     { focusWeaponIndex, restoreWeaponPanels }) {
-    const groups = [...container.querySelectorAll(':scope > .equipment-group[data-equipment-group]')];
+    const panelLabels = {
+        weapons: 'Оружие и действия', helmet: 'Шлем', gasMask: 'Противогаз',
+        armor: 'Броня', inventory: 'Инвентарь', detector: 'Приборы', cosmetic: 'Косметика', pda: 'Модификации КПК',
+    };
+    const groups = Object.keys(panelLabels)
+        .map(key => container.querySelector(`:scope > .equipment-group[data-equipment-group="${key}"]`))
+        .filter(Boolean);
     if (groups.length < 6) return;
     const equipment = data.equipment || {};
     const weapons = data.weapons || [];
@@ -5176,8 +5225,6 @@ function renderEquipmentLoadout(container, data, weaponTemplates, helmetTemplate
     ];
     const extraWeapons = [...ranged.slice(2), ...melee.slice(1)];
     const statusLines = equipmentStatusLines(equipment, helmetTemplates, gasMaskTemplates);
-    const held = data.inventory?.held || [];
-    if (held.length) statusLines.push(`В руках: ${held.map(item => item.name || 'Предмет').join(', ')}`);
     const filterStatus = item => {
         const filter = equipmentModule(item, 'filter');
         return filter ? `Фильтр ${filter.durability ?? filter.attributes?.durability ?? 0}/${filter.maxDurability ?? filter.attributes?.max_durability ?? '?'}` : '';
@@ -5207,6 +5254,10 @@ function renderEquipmentLoadout(container, data, weaponTemplates, helmetTemplate
         ${extraWeapons.length ? `<div class="loadout-extra"><span>Дополнительное оружие</span>${extraWeapons.map(entry => weaponSlot('Оружие', entry, 'О', 'weapons')).join('')}</div>` : ''}
         <div class="loadout-cosmetics"><span class="loadout-section-label">Косметика</span><div class="loadout-cosmetics-grid">${cosmetics.map(([label, key, code]) => slot(label, equipment[key]?.templateId ? equipment[key] : null, 'cosmetic', code)).join('')}</div></div>
         ${statusLines.length ? `<div class="loadout-resources">${statusLines.map(line => `<span>${escapeHtml(line)}</span>`).join('')}</div>` : ''}
+        <div class="equipment-hands">
+            <h4>В руках</h4>
+            <div id="equipment-hands-items">${equipmentHandsContents(data)}</div>
+        </div>
     </section>`);
     const loadout = container.querySelector(':scope > .equipment-loadout');
     const workspace = document.createElement('div');
@@ -5216,10 +5267,6 @@ function renderEquipmentLoadout(container, data, weaponTemplates, helmetTemplate
     loadout.before(workspace);
     workspace.append(loadout, panels);
 
-    const panelLabels = {
-        weapons: 'Оружие и действия', helmet: 'Шлем', gasMask: 'Противогаз',
-        armor: 'Броня', detector: 'Детектор', cosmetic: 'Косметика', pda: 'Модификации КПК',
-    };
     const navigation = document.createElement('div');
     navigation.className = 'equipment-panel-nav';
     navigation.setAttribute('role', 'tablist');
@@ -5240,6 +5287,7 @@ function renderEquipmentLoadout(container, data, weaponTemplates, helmetTemplate
         button.type = 'button';
         button.className = 'equipment-panel-tab';
         button.dataset.panel = key;
+        button.setAttribute('data-sheet-control', '');
         button.setAttribute('role', 'tab');
         button.textContent = panelLabels[key] || key;
         navigation.append(button);
@@ -5282,8 +5330,8 @@ function renderEquipmentLoadout(container, data, weaponTemplates, helmetTemplate
         button.addEventListener('click', () => {
             const key = button.dataset.equipmentOpen;
             if (key === 'inventory') {
-                switchSheetTab('inventory');
-                document.getElementById('sheet-tab-inventory')?.scrollTo({ top: 0, behavior: 'smooth' });
+                selectPanel('inventory');
+                container.scrollTo({ top: 0, behavior: 'smooth' });
                 return;
             }
             const weaponPanel = key.startsWith('weapon-')
@@ -10197,6 +10245,11 @@ function refreshCombatSensitiveSheetTabs() {
     if (!modal || modal.style.display === 'none') return;
     const activeTab = document.querySelector('#sheet-tabs .tab-btn.active')?.dataset.tab;
     if (activeTab === 'equipment') {
+        if (equipmentActivePanel === 'inventory') {
+            const hands = document.getElementById('equipment-hands-items');
+            if (hands) hands.innerHTML = equipmentHandsContents(currentCharacterData);
+            return;
+        }
         renderEquipmentTab(currentCharacterData);
     }
 }
@@ -14559,7 +14612,7 @@ async function renderInventoryTab(data) {
         ${held.length ? '<section><h4>В руках</h4><div id="held-items-container"></div></section>' : ''}
         <section data-widget-block="pockets"><h4>Карманы</h4>
         <div style="margin-bottom:10px;">Заполнено: <span id="pocket-fill-display">${pocketFill}</span> / <span id="pocket-capacity-display">${pocketMaxVolume}</span></div>
-        <div style="display: grid; grid-template-columns: 2fr 1fr 1fr 1fr auto; gap: 5px; font-weight: bold; margin-bottom: 5px; align-items: center;">
+        <div class="inventory-item-grid inventory-item-heading">
             <div>Название</div><div>Вес</div><div>Объём</div><div>Кол-во</div><div></div>
         </div>
         <div id="pockets-container"></div>
@@ -14694,7 +14747,7 @@ async function renderInventoryTab(data) {
                 <button type="button" class="btn btn-sm btn-danger" onclick="unequipBackpack()">Снять</button>
             ` : `<span style="opacity:0.7;">${backpack.length ? 'Разложите эти вещи по карманам, подсумкам или наденьте рюкзак.' : 'Рюкзак не экипирован.'}</span>`}
         </div>
-        <div style="display: grid; grid-template-columns: 2fr 1fr 1fr 1fr auto; gap: 5px; font-weight: bold; margin-bottom: 5px; align-items: center;">
+        <div class="inventory-item-grid inventory-item-heading">
             <div>Название</div><div>Вес</div><div>Объём</div><div>Кол-во</div><div></div>
         </div>
         <div id="backpack-container"></div>
@@ -16576,10 +16629,7 @@ function renderBackpackItem(item, index, parentPath, parentContainer, allTemplat
     }
 
     const row = document.createElement('div');
-    row.style.display = 'grid';
-    row.style.gridTemplateColumns = '2fr 1fr 1fr 1fr auto';
-    row.style.gap = '5px';
-    row.style.alignItems = 'center';
+    row.className = 'inventory-item-grid';
 
     // --- Ячейка названия (drag zone) ---
     let nameCell;
@@ -16717,6 +16767,7 @@ function renderBackpackItem(item, index, parentPath, parentContainer, allTemplat
 
     // --- Количество ---
     const qtyCell = document.createElement('div');
+    qtyCell.className = 'inventory-item-quantity';
     qtyCell.style.display = 'flex';
     qtyCell.style.alignItems = 'center';
     qtyCell.style.gap = '4px';
@@ -17542,6 +17593,7 @@ export async function openCharacterAttackSheet(characterId) {
     const tab = document.getElementById('sheet-tab-equipment');
     const weaponsPanel = tab?.querySelector('[data-equipment-panel="weapons"]');
     if (!weaponsPanel) return;
+    tab.querySelector('.equipment-panel-tab[data-panel="weapons"]')?.click();
     weaponsPanel.open = true;
 
     const combatCharacter = window.locationCombatState?.status === 'active'

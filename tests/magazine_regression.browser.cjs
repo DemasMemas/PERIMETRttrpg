@@ -145,7 +145,8 @@ module.exports=async({page,request,token,lobby,base,connect,debugPort,safeSessio
         };
         const snapshot=client=>client.evaluate(sheetExpression());
         const showInventory=async(entry,installed)=>{
-            await click(entry.client,'#sheet-tabs [data-tab="inventory"]');
+            await click(entry.client,'#sheet-tabs [data-tab="equipment"]');
+            await click(entry.client,'.equipment-panel-tab[data-panel="inventory"]');
             await entry.client.until(`(()=>{const s=${sheetExpression()};return s.sheetVisible&&s.inventoryVisible&&s.inventoryRows.length===${installed?0:1}${installed?'':'&&s.inventoryRows[0].visible'}})()`,'Инвентарь показывает правильное число магазинов');
             const ui=await snapshot(entry.client);assert.equal(ui.inventoryRows.length,installed?0:1);
             if(!installed)assert.equal(ui.inventoryRows[0].id,MAGAZINE_ID);

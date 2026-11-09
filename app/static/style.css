@@ -2456,11 +2456,68 @@ input[type="number"] {
 .equipment-workspace .loadout-cosmetics-grid .loadout-slot { min-height: 48px; }
 .equipment-workspace .loadout-resources { margin-top: 8px; }
 .equipment-workspace .loadout-resources span { padding: 4px 7px; }
-.equipment-workspace .equipment-loadout > .portable-lights,
+.equipment-hands,
 .equipment-workspace .equipment-loadout > .prostheses {
   margin-top: 10px;
   padding-top: 8px;
   border-top: 1px solid var(--loadout-line);
+}
+.equipment-hands h4 { margin: 0 0 4px; font-size: 13px; }
+.equipment-hands #equipment-hands-items { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 12px; }
+.equipment-hands strong { overflow-wrap: anywhere; }
+#sheet-tab-equipment.active:has(.equipment-detail[data-equipment-panel="inventory"]:not([hidden])) {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+#sheet-tab-equipment.active:has(.equipment-detail[data-equipment-panel="inventory"]:not([hidden])) > #character-crafting-open {
+  align-self: flex-start;
+  flex-shrink: 0;
+}
+#sheet-tab-equipment.active:has(.equipment-detail[data-equipment-panel="inventory"]:not([hidden])) .equipment-workspace {
+  flex: 1;
+  min-height: 0;
+}
+.equipment-panels:has(> .equipment-detail[data-equipment-panel="inventory"]:not([hidden])) {
+  display: flex;
+  flex-direction: column;
+  align-self: stretch;
+  min-height: 0;
+}
+.equipment-panels:has(> .equipment-detail[data-equipment-panel="inventory"]:not([hidden])) .equipment-panel-nav {
+  flex-shrink: 0;
+}
+.equipment-workspace .equipment-detail[data-equipment-panel="inventory"] {
+  min-height: 0;
+  overflow: auto;
+}
+.equipment-workspace .equipment-inventory { min-width: 0; overflow-wrap: anywhere; }
+#sheet-tab-inventory .inventory-item-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 56px 56px 96px;
+  gap: 5px;
+  align-items: center;
+}
+#sheet-tab-inventory .inventory-item-heading { font-weight: 700; margin-bottom: 5px; }
+#sheet-tab-inventory .inventory-item-heading > :last-child { display: none; }
+#sheet-tab-inventory .inventory-item-grid > .number-input { width: 100%; min-width: 0; }
+#sheet-tab-inventory .inventory-item-grid .inventory-item-quantity { min-width: 0; }
+#sheet-tab-inventory .inventory-item-quantity .number-input { width: 40px; min-width: 0 !important; }
+#sheet-tab-inventory .inventory-item-quantity .btn { width: 24px !important; flex: 0 0 24px; }
+#sheet-tab-inventory .inventory-item-grid .item-name,
+#sheet-tab-inventory .inventory-item-grid .item-name > div { min-width: 0; flex-wrap: wrap; max-width: 100%; }
+#sheet-tab-inventory .inventory-item-grid .item-name input { min-width: 0; max-width: 100%; }
+#sheet-tab-inventory .inventory-item-grid > .inventory-item-actions { grid-column: 1 / -1; flex-wrap: wrap; }
+#sheet-tab-inventory .inventory-item-grid > .inventory-item-actions:empty { display: none !important; }
+@container equipment-actions (min-width: 790px) {
+  #sheet-tab-inventory .inventory-item-grid { grid-template-columns: minmax(0, 1fr) 56px 56px 96px 180px; }
+  #sheet-tab-inventory .inventory-item-heading > :last-child { display: block; }
+  #sheet-tab-inventory .inventory-item-grid > .inventory-item-actions { grid-column: auto; }
+}
+.equipment-workspace [data-equipment-group="detector"] > .portable-lights {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid var(--panel-border);
 }
 .equipment-workspace .portable-lights > h4 { margin: 0 0 4px; font-size: 13px; line-height: 1.2; }
 .equipment-workspace .portable-light-row { padding: 4px 0; gap: 5px; }
@@ -2479,9 +2536,8 @@ input[type="number"] {
   .equipment-workspace .loadout-slot-text small { font-size: 10px; line-height: 1.1; }
   .equipment-workspace .loadout-cosmetics-grid .loadout-slot { min-height: 40px; }
   .equipment-workspace .loadout-cosmetics { margin-top: 6px; padding-top: 5px; }
-  .equipment-workspace .equipment-loadout > .portable-lights,
+  .equipment-hands,
   .equipment-workspace .equipment-loadout > .prostheses { margin-top: 6px; padding-top: 5px; }
-  .equipment-workspace .equipment-loadout > .portable-lights { margin-top:4px; padding-top:3px; }
   .equipment-workspace .portable-lights > h4 { font-size:12px; margin-bottom:3px; }
   .equipment-workspace .portable-light-row { padding:1px 0; gap:3px; }
   .equipment-workspace .portable-light-row strong { font-size:11px; flex-basis:150px; }
@@ -2496,7 +2552,11 @@ input[type="number"] {
   .equipment-workspace .loadout-slot-mark { flex-basis: 21px; }
 }
 .equipment-panel-nav { display:grid; grid-template-columns:minmax(126px,1.8fr) repeat(5,minmax(0,1fr)); gap:4px; margin:0 0 6px; }
+.equipment-panel-nav:has([data-panel="inventory"]) { grid-template-columns:minmax(110px,1.65fr) repeat(6,minmax(0,1fr)); }
 .equipment-panel-tab { min-width:0; padding:7px 6px; font-size:12px; border:1px solid var(--panel-border); border-radius:8px; background:var(--panel-bg); color:var(--text-color); font-weight:600; cursor:pointer; }
+@container equipment-actions (max-width: 600px) {
+  .equipment-panel-nav:has([data-panel="inventory"]) .equipment-panel-tab { padding-inline: 3px; font-size: 11px; }
+}
 .equipment-panel-tab[aria-selected="true"] { border-color:var(--loadout-accent, #c8ad68); color:var(--loadout-accent, #c8ad68); background:rgba(200,173,104,.1); }
 .equipment-panel-tab:focus-visible { outline:2px solid var(--loadout-accent, #c8ad68); outline-offset:2px; }
 .loadout-heading,

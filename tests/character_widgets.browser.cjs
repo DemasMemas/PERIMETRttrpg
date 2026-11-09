@@ -117,6 +117,90 @@ module.exports = async ({ page, request, token, lobby, login, profile, base, con
     await saveDevices(pockets=>[...pockets,originalPda],[]);
     await page.until(`document.querySelector('${legacyPanel} .widget-inventory-name')`,'После возврата исходного КПК виджет снова доступен');
     await page.evaluate(`document.querySelector('${legacyPanel} .panel-header button').click()`);
+
+    const lampId='inventory-reflow-light';
+    const nestedId='inventory-reflow-pouch';
+    const lamp={id:lampId,name:'Фонарик',category:'misc',quantity:1,weight:.2,volume:.25,
+        attributes:{portable_light:'hand'},lightPower:{uses_left:6,elapsed_seconds:40}};
+    const pouch={id:nestedId,name:'Подсумок для проверки',category:'pouch',quantity:1,weight:.2,volume:.2,
+        attributes:{capacity:2},contents:[{id:'inventory-reflow-content',name:'Тестовые детали',
+            category:'material',quantity:2,weight:.1,volume:.1}]};
+    await saveDevices(pockets=>[...pockets,lamp,pouch],[]);
+    await page.evaluate(`window.openCharacterSheet(${character.id},'inventory').then(()=>true)`);
+    await page.until("document.querySelector('.equipment-panel-tab[data-panel=inventory]')?.getAttribute('aria-selected')==='true'",
+        'Старый переход открывает новый раздел инвентаря');
+    assert.deepEqual(await page.evaluate(`(()=>{
+        const nav=[...document.querySelectorAll('.equipment-panel-tab')].map(tab=>tab.textContent);
+        return [Boolean(document.querySelector('#sheet-tabs [data-tab=inventory]')),nav[nav.indexOf('Броня')+1],nav.includes('Приборы')];
+    })()`),[false,'Инвентарь',true]);
+    for (const [width,height] of [[1366,768],[1920,1080]]) {
+        await page.call('Emulation.setDeviceMetricsOverride',{width,height,deviceScaleFactor:1,mobile:false});
+        assert.equal(await page.evaluate(`(()=>{
+            const figure=document.querySelector('.loadout-figure').getBoundingClientRect();
+            const pack=document.querySelector('[data-equipment-panel=inventory]').getBoundingClientRect();
+            return figure.height>0&&figure.bottom<=innerHeight&&pack.left>figure.right&&pack.right<=innerWidth;
+        })()`),true,`Инвентарь и силуэт помещаются при ${width}×${height}`);
+        const columnWidths=await page.evaluate(`(()=>{
+            const row=document.querySelector('#pockets-container .inventory-item-grid');
+            return ['weight','volume','quantity'].map(key=>row.querySelector('[data-widget-key='+key+']').getBoundingClientRect().width);
+        })()`);
+        assert.ok(columnWidths[0]<=57&&columnWidths[1]<=57&&columnWidths[2]<=41,
+            `Компактные числовые поля при ${width}×${height}: ${columnWidths.join(', ')}`);
+        fs.writeFileSync(path.join(artifactDir,`equipment-inventory-${width}.png`),
+            Buffer.from((await page.call('Page.captureScreenshot',{format:'png'})).data,'base64'));
+    }
+    await page.call('Emulation.setDeviceMetricsOverride',{width:1366,height:768,deviceScaleFactor:1,mobile:false});
+    assert.equal(await page.evaluate(`(()=>{
+        const figure=document.querySelector('.loadout-figure'),sheet=document.querySelector('#sheet-tab-equipment');
+        const inventory=document.querySelector('[data-equipment-panel=inventory]'),top=figure.getBoundingClientRect().top;
+        inventory.scrollTop=inventory.scrollHeight;
+        const pinned=inventory.scrollTop>0&&sheet.scrollTop===0&&figure.getBoundingClientRect().top===top;
+        inventory.scrollTop=0;
+        return pinned;
+    })()`),true,'При прокрутке инвентаря левая схема и вкладки остаются на месте');
+    await page.call('Emulation.setDeviceMetricsOverride',{width:1920,height:1080,deviceScaleFactor:1,mobile:false});
+    await page.evaluate(`import('/static/js/characterSheet.js').then(module=>module.openCharacterAttackSheet(${character.id})).then(()=>true)`);
+    assert.equal(await page.evaluate("document.querySelector('.equipment-panel-tab[data-panel=weapons]').getAttribute('aria-selected')"),'true');
+    await page.evaluate("document.querySelector('.equipment-panel-tab[data-panel=inventory]').click()");
+    assert.equal(await page.evaluate(`(()=>{
+        const row=[...document.querySelectorAll('#pockets-container [draggable=true][data-widget-identity]')]
+            .find(el=>JSON.parse(el.dataset.widgetIdentity).id===${JSON.stringify(lampId)});
+        const input=row.querySelector('input[data-widget-key=name]'),transfer=new DataTransfer();
+        input.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,button:0}));
+        const drag=new DragEvent('dragstart',{bubbles:true,cancelable:true,dataTransfer:transfer});
+        row.dispatchEvent(drag);
+        document.dispatchEvent(new PointerEvent('pointerup',{bubbles:true,button:0}));
+        return drag.defaultPrevented&&row.draggable&&transfer.types.length===0;
+    })()`),true,'Нажатие на поле названия оставляет выделение текста');
+    await page.evaluate(`(()=>{
+        const source=[...document.querySelectorAll('#pockets-container [draggable=true][data-widget-identity]')]
+            .find(el=>JSON.parse(el.dataset.widgetIdentity).id===${JSON.stringify(lampId)});
+        const transfer=new DataTransfer();
+        source.dispatchEvent(new DragEvent('dragstart',{bubbles:true,dataTransfer:transfer}));
+        document.querySelector('#backpack-container').dispatchEvent(new DragEvent('drop',{bubbles:true,cancelable:true,dataTransfer:transfer}));
+        return true;
+    })()`);
+    await page.until(`[...document.querySelectorAll('#backpack-container [data-widget-identity]')].some(el=>JSON.parse(el.dataset.widgetIdentity).id===${JSON.stringify(lampId)})`,
+        'В пустой рюкзак положен фонарь перетаскиванием');
+    await page.evaluate(`import('/static/js/api.js').then(({Server})=>Server.waitForCharacterSave(${character.id})).then(()=>true)`);
+    const movedLamp=(await request(widgetSheet,null,token,'GET')).data.inventory;
+    assert.equal(movedLamp.backpack[0].id,lampId);
+    assert.equal(movedLamp.backpack[0].lightPower.uses_left,6);
+    assert.equal(movedLamp.backpack[0].lightPower.elapsed_seconds,40);
+    assert.equal(movedLamp.pockets.some(item=>item.id===lampId),false);
+    assert.deepEqual(movedLamp.pockets.find(item=>item.id===nestedId).contents.map(item=>[item.id,item.quantity]),
+        [['inventory-reflow-content',2]]);
+
+    await page.evaluate("document.querySelector('.equipment-panel-tab[data-panel=detector]').click()");
+    const lightRow=`[data-equipment-panel="detector"] [data-light-id="${lampId}"]`;
+    await page.until(`document.querySelector('${lightRow} [data-light-operation=prepare]:not(:disabled)')`,'Фонарём можно управлять из Приборов');
+    await page.evaluate(`document.querySelector('${lightRow} [data-light-operation=prepare]').click()`);
+    await page.until("document.querySelector('#equipment-hands-items')?.textContent.includes('Фонарик')",'Фонарь показан в руках');
+    await page.until(`document.querySelector('${lightRow} [data-light-operation=stow]:not(:disabled)')`,'Фонарь можно убрать');
+    await page.evaluate(`document.querySelector('${lightRow} [data-light-operation=stow]').click()`);
+    await page.until("document.querySelector('#equipment-hands-items')?.textContent.includes('Руки свободны')",'Освобождение руки обновилось');
+    await page.evaluate('window.closeCharacterSheet()');
+    await saveDevices(pockets=>pockets.filter(item=>item.id!==nestedId),[]);
     await page.evaluate(`window.openCharacterSheet(${character.id})`);
     await page.until(`document.body.classList.contains('character-sheet-open') && document.querySelectorAll('#sheet-content .sheet-pin').length>10`, 'sheet restored after physical PDA probe');
 
@@ -194,6 +278,7 @@ module.exports = async ({ page, request, token, lobby, login, profile, base, con
         await page.until(`(()=>{const t=document.getElementById('delayed-item-tooltip');return t && getComputedStyle(t).display!=='none' && getComputedStyle(t).visibility==='visible' && t.textContent.includes(${JSON.stringify(expected)})})()`, 'visible hover tooltip');
     };
     await page.evaluate(`document.querySelector('[data-tab="equipment"]').click()`);
+    await page.evaluate(`document.querySelector('.equipment-panel-tab[data-panel="weapons"]').click()`);
     await page.call('Emulation.setDeviceMetricsOverride', { width: 1920, height: 1080, deviceScaleFactor: 1, mobile: false });
     const loadoutLayout = await page.evaluate(`(()=>{
         const tab=document.querySelector('#sheet-tab-equipment');tab.scrollTop=0;
@@ -204,7 +289,7 @@ module.exports = async ({ page, request, token, lobby, login, profile, base, con
             noVerticalScroll:tab.scrollHeight<=tab.clientHeight+2};
     })()`);
     assert.deepEqual(loadoutLayout,{allSlotsVisible:true,figureVisible:true,noVerticalScroll:true},'1920×1080: все слоты и силуэт видны без прокрутки');
-    await page.until(`document.querySelector('.equipment-loadout .portable-light-row')`, 'КПК в левой панели экипировки');
+    await page.until(`document.querySelector('[data-equipment-panel="detector"] .portable-light-row')`, 'КПК в разделе Приборы');
     const leftHeight = await page.evaluate(`document.querySelector('.equipment-loadout').getBoundingClientRect().height`);
     await page.evaluate(`document.querySelector('[data-equipment-panel="weapon-0"]').open=false`);
     const collapsedHeight = await page.evaluate(`document.querySelector('.equipment-loadout').getBoundingClientRect().height`);
@@ -250,7 +335,7 @@ module.exports = async ({ page, request, token, lobby, login, profile, base, con
     })()`);
     assert.deepEqual(collisions, [], 'equipment, protection and coverage pin buttons do not overlap');
     await hover('#sheet-content .loadout-slot[data-equipment-open="weapon-0"]', 'Widget pistol');
-    await page.evaluate(`document.querySelector('[data-tab="inventory"]').click()`);
+    await page.evaluate(`document.querySelector('.equipment-panel-tab[data-panel="inventory"]').click()`);
     await hover('#sheet-tab-inventory [data-item-template-id="' + (medicine.id + 1000000) + '"] strong', 'Описание проверочного предмета');
     fs.writeFileSync(path.join(artifactDir, 'inventory-hover-tooltip.png'), Buffer.from((await page.call('Page.captureScreenshot', { format: 'png' })).data, 'base64'));
     console.log('PASS: agreed block catalogue, damaged organs only, melee, effect edit, inventory quantity/transfer and visible equipment/item hover tooltips');
@@ -352,7 +437,7 @@ module.exports = async ({ page, request, token, lobby, login, profile, base, con
         await page.evaluate(`window.openCharacterSheet(${character.id})`);
         await page.until(`document.body.classList.contains('character-sheet-open')&&document.getElementById('character-sheet-name').textContent==='Виджеты — первый'`,'лист после reload');
         await checkUI('перезагрузка');
-        await page.evaluate(`document.querySelector('[data-tab="inventory"]').click()`);
+        await page.evaluate(`document.querySelector('[data-tab="equipment"]').click();document.querySelector('.equipment-panel-tab[data-panel="inventory"]').click()`);
         await hover('#sheet-tab-inventory [data-item-template-id="'+(medicine.id+1000000)+'"] strong','Описание проверочного предмета');
         assert.ok([...((await readCharacter()).data.inventory.backpack),...((await readCharacter()).data.inventory.pockets)].some(item=>item.id===legacy.id),'тот же старый экземпляр после reload');
         if(regressionPeer){

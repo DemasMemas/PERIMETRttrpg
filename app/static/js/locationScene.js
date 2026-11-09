@@ -5606,7 +5606,7 @@ async function resolveCombatTargetSelection(targetCharacterId) {
         hideStructureInteraction();
         if (reopenEquipment) {
             const sheet = await import('./characterSheet.js');
-            await sheet.openCharacterSheet(action.actorCharacterId, 'equipment');
+            await sheet.openCharacterAttackSheet(action.actorCharacterId);
         }
         return true;
     } catch (error) {
