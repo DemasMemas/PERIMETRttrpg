@@ -89,6 +89,34 @@ module.exports = async ({ page, request, token, lobby, login, profile, base, con
     assert.equal(physicalPdaWidget?.name, 'КПК');
     assert.equal(physicalPdaWidget?.reference?.binding?.identity?.id, physicalPdaId);
     assert.equal(physicalPdaUnpinned, true, 'КПК откреплён штатной кнопкой виджета');
+    const legacyPdaPin = {id:'legacy-pda-qa',characterId:character.id,title:'Модификации КПК',
+        references:[{kind:'block',block:'equipment:pda',title:'Модификации КПК'}]};
+    const widgetSheet = `/lobbies/characters/${character.id}`;
+    const originalPda = (await request(widgetSheet,null,token,'GET')).data.inventory.pockets[2];
+    const extraPda = {...originalPda,id:'another-physical-pda-qa'};
+    const saveDevices = async (pockets, backpack) => {
+        const fresh = await request(widgetSheet,null,token,'GET');
+        if (pockets) fresh.data.inventory.pockets = pockets(fresh.data.inventory.pockets);
+        fresh.data.inventory.backpack = backpack;
+        await request(widgetSheet,{data:fresh.data},token,'PUT');
+    };
+    await saveDevices(null,[extraPda]);
+    await page.evaluate(`(()=>{const key=${JSON.stringify(key)},pins=JSON.parse(localStorage.getItem(key)||'[]');
+        const newValue=JSON.stringify([...pins,${JSON.stringify(legacyPdaPin)}]);
+        localStorage.setItem(key,newValue);window.dispatchEvent(new StorageEvent('storage',{key,newValue}));return true;})()`);
+    const legacyPanel = '#character-widget-legacy-pda-qa';
+    await page.until(`document.querySelector('${legacyPanel}')?.textContent.includes('Закрепите нужный КПК')`,
+        'При двух КПК старый виджет предлагает выбрать нужный');
+    assert.equal((await prefs()).find(pin=>pin.id===legacyPdaPin.id).references[0].block,'equipment:pda');
+    await saveDevices(null,[]);
+    await page.until(`document.querySelector('${legacyPanel} .widget-inventory-name')`,'Единственный КПК привязан к старому виджету');
+    assert.equal((await prefs()).find(pin=>pin.id===legacyPdaPin.id).references[0].binding.identity.id,physicalPdaId);
+    await saveDevices(pockets=>pockets.filter(item=>item.id!==physicalPdaId),[extraPda]);
+    await page.until(`document.querySelector('${legacyPanel}')?.textContent.includes('предмет недоступен')`,
+        'Виджет не переключается на другое устройство после исчезновения первого');
+    await saveDevices(pockets=>[...pockets,originalPda],[]);
+    await page.until(`document.querySelector('${legacyPanel} .widget-inventory-name')`,'После возврата исходного КПК виджет снова доступен');
+    await page.evaluate(`document.querySelector('${legacyPanel} .panel-header button').click()`);
     await page.evaluate(`window.openCharacterSheet(${character.id})`);
     await page.until(`document.body.classList.contains('character-sheet-open') && document.querySelectorAll('#sheet-content .sheet-pin').length>10`, 'sheet restored after physical PDA probe');
 

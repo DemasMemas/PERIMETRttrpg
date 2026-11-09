@@ -200,6 +200,21 @@ export function initCharacterWidgets(lobbyId, bridge) {
             const record = await Server.getCharacter(id);
             records.set(id, record);
             await serialize(async () => {
+                const legacy = pins.filter(pin => pin.characterId === id && pin.references.length === 1
+                    && pin.references[0].block === 'equipment:pda');
+                for (const pin of legacy) {
+                    const reference = bridge.legacyPda(record.data || {}, pin.references[0]);
+                    if (!reference) continue;
+                    const identity = widgetReferenceIdentity(reference);
+                    if (pins.some(other => other.characterId === id && other.references.length === 1
+                        && widgetReferenceIdentity(other.references[0]) === identity)) {
+                        pins = pins.filter(other => other !== pin);
+                    } else {
+                        pin.references = [reference];
+                        pin.title = reference.title;
+                    }
+                    save();
+                }
                 const selected = pins.filter(pin => pin.characterId === id);
                 const version = JSON.stringify([record.data, record.can_edit, selected.map(pin => pin.id), window.locationCombatState, Boolean(window.isLocationActive)]);
                 if (viewVersions.get(id) === version) return;
@@ -235,7 +250,6 @@ export function initCharacterWidgets(lobbyId, bridge) {
             let panel = [...host.children].find(element => element.dataset.pinId === pin.id);
             if (!panel) {
                 panel = document.createElement('section'); panel.className = 'draggable-panel character-widget';
-                if (pin.references.some(ref => /^(inventory-(item|container|magazine)|pockets|belt|vest|backpack)$/.test(ref.block))) panel.classList.add('character-widget-inventory');
                 panel.id = `character-widget-${pin.id}`; panel.dataset.pinId = pin.id; panel.dataset.layoutPending = 'true';
                 panel.style.left = `${285 + index % 3 * 24}px`; panel.style.top = `${100 + index % 8 * 44}px`;
                 const header = document.createElement('div'); header.className = 'panel-header';
@@ -250,6 +264,10 @@ export function initCharacterWidgets(lobbyId, bridge) {
                 const content = document.createElement('div'); content.className = 'panel-content';
                 panel.append(header, content); host.appendChild(panel);
             }
+            panel.classList.toggle('character-widget-inventory',
+                pin.references.some(ref => /^(inventory-(item|container|magazine)|pockets|belt|vest|backpack)$/.test(ref.block)));
+            panel.querySelector('.panel-header > span').textContent = pin.title;
+            panel.querySelector('.panel-header > button').setAttribute('aria-label', `Открепить: ${pin.title}`);
             const content = panel.querySelector('.panel-content');
             const record = records.get(pin.characterId);
             // Preserve an input currently being edited during a remote refresh.
@@ -260,6 +278,11 @@ export function initCharacterWidgets(lobbyId, bridge) {
             name.onclick = () => window.openCharacterSheet(pin.characterId);
             content.appendChild(name);
             pin.references.forEach(original => {
+                if (original.block === 'equipment:pda') {
+                    const message = document.createElement('span');
+                    message.textContent = 'Закрепите нужный КПК из инвентаря';
+                    content.appendChild(message); return;
+                }
                 const reference = resolveWidgetReference(original, record.data || {});
                 if (!reference) {
                     const message = document.createElement('span'); message.textContent = `${original.title}: предмет недоступен`;

@@ -39,7 +39,7 @@ import { diffCharacterData, pathTouches } from './characterSheetSync.js';
 import { isWorldDarkTime } from './darknessRules.js';
 import { copyProfileComponent, profileComponentOptions, renderConsumableProfileTree } from './consumableProfileEditor.js';
 import { applyEffectToHealth, createEffectDraft, effectSummary, effectDurationLabel, effectConsequences, getEffectTypeOptions, isAlcoholConsumable, normalizeCharacterEffects, normalizeEffectList, getEffectImpact, syncHealthDerivedStatuses } from './effects.js';
-import { initCharacterWidgets, getWidgetSource, resolveWidgetReference, parseWidgetAction } from './characterWidgets.js';
+import { initCharacterWidgets, getWidgetSource, resolveWidgetReference, parseWidgetAction, itemBinding } from './characterWidgets.js';
 import { characterWidgetBlocks, findWidgetBlock, projectWidgetBlock, widgetBlockControl } from './characterWidgetBlocks.js';
 
 // ========== 1. СОСТОЯНИЕ И УТИЛИТЫ ==========
@@ -89,6 +89,16 @@ export function setCurrentLobbyId(id) {
         ammoCount: getWeaponAmmoCount,
         run: runCharacterWidget,
         views: characterWidgetViews,
+        legacyPda: (data, old) => {
+            const previousId = old.binding?.identity?.id;
+            const devices = collectInventoryEntries(data, item => item?.category === 'misc' && item.name === 'КПК'
+                && (previousId == null || item.id === previousId));
+            if (devices.length !== 1 || !devices[0].item.id || Number(devices[0].item.quantity ?? 1) !== 1) return null;
+            const path = devices[0].path.join('.');
+            const binding = itemBinding(data, path);
+            if (binding?.identity?.id !== devices[0].item.id) return null;
+            return {kind: 'block', block: 'inventory-item', path, binding, title: 'КПК'};
+        },
     });
 }
 
