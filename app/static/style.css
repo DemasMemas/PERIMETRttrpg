@@ -3287,6 +3287,25 @@ body.light-theme #sheet-tab-equipment .loadout-weapon-details[open] > summary { 
   #sheet-tab-equipment .modifications-block h5 { margin:6px 0 4px !important; font-size:12px !important; }
   #sheet-tab-equipment .installed-rule-modification { font-size:12px; line-height:1.25; margin:4px 0; }
 }
+@media (max-height:760px) {
+  #sheet-tab-equipment .loadout-protection-details { margin-block: 5px; }
+  #sheet-tab-equipment .loadout-protection-details > summary { padding-block: 7px; }
+  #sheet-tab-equipment .loadout-protection-details > .equipment-group { padding: 6px; }
+  #sheet-tab-equipment [data-equipment-group="helmet"] .equipment-row { gap: 5px !important; margin-bottom: 4px !important; }
+  #sheet-tab-equipment [data-equipment-group="helmet"] .block-header {
+    min-height: 24px !important;
+    margin-bottom: 3px !important;
+    padding-bottom: 2px !important;
+  }
+  #sheet-tab-equipment [data-equipment-group="helmet"] .equipment-main-block,
+  #sheet-tab-equipment [data-equipment-group="helmet"] .equipment-protection-block,
+  #sheet-tab-equipment [data-equipment-group="helmet"] .equipment-zones-block { padding: 5px !important; }
+  #sheet-tab-equipment .helmet-main-block .fields-container { row-gap: 4px !important; }
+  #sheet-tab-equipment .helmet-main-block .field-group { grid-template-rows: minmax(0, 1fr) minmax(26px, auto); }
+  #sheet-tab-equipment .helmet-main-block .field-name > strong { min-height: 26px; }
+  #sheet-tab-equipment .helmet-main-block .field-group .form-control,
+  #sheet-tab-equipment [data-equipment-group="helmet"] .protection-grid input { height: 26px !important; }
+}
 .equipment-main-block .field-number input,
 .equipment-main-block .field-select select,
 .equipment-main-block .field-name select,
@@ -3379,7 +3398,7 @@ body.light-theme #sheet-tab-equipment .loadout-weapon-details[open] > summary { 
   padding-top: 12px !important;
   border-top: 1px solid var(--panel-border) !important;
 }
-.auto-injector-controls { display:flex; align-items:center; flex-wrap:wrap; gap:6px; margin-top:6px; }
+.auto-injector-controls { display:flex; align-items:center; flex-wrap:wrap; gap:6px; margin-bottom:8px; }
 .modifications-block h5 {
   font-size: 0.9rem !important;
   margin-bottom: 8px !important;

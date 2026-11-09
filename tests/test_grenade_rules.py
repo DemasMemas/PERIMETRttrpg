@@ -456,23 +456,30 @@ def test_close_explosion_requires_actual_positive_damage_for_shock(grenade_game,
     assert entry['extra_fragment_traumas']==[],'Граната без осколков не создаёт дополнительные осколки'
 
 
-@pytest.mark.parametrize('direction,protection,blast_damage',[(1,35,65),(-1,50,50)])
-def test_explosion_uses_plate_facing_epicenter(grenade_game,monkeypatch,direction,protection,blast_damage):
+@pytest.mark.parametrize('direction,plate_name,protection,blast_damage',[
+    (1,'Передняя плита',35,65),(-1,'Задняя плита',50,50),
+])
+def test_explosion_uses_plate_facing_epicenter(grenade_game,monkeypatch,direction,plate_name,protection,blast_damage):
     quiet_explosion(monkeypatch)
     actor=grenade_game['actor_location']
     data=deepcopy(actor.character.data)
-    def pouch(value):return {'attributes':{'slots':[{'type':'armor_plate'}]},'installedModules':[
-        {'name':'Бронеплита','category':'armor_plate','slotType':'armor_plate','durability':20,
+    def pouch(name,value):return {'attributes':{'slots':[{'type':'armor_plate'}]},'installedModules':[
+        {'name':name,'category':'armor_plate','slotType':'armor_plate','durability':20,
+         'stage':1,'stageDurability':1000,'currentStageDurability':1000,
          'attributes':{'protection':{'physical':value},'max_durability':20}}]}
-    data['equipment']={'vest':{'pouches':[pouch(35),pouch(50)]}}
+    data['equipment']={'vest':{'pouches':[pouch('Передняя плита',35),pouch('Задняя плита',50)]}}
     actor.character.data=data;db.session.commit()
     result=CombatService.resolve_explosion(grenade_game['location'].id,actor.pos_x+direction,actor.pos_y,
-        profile(blast_base=100))
+        profile(blast_base=100,fragment=100))
     entry=next(row for row in result['targets'] if row['character_id']==actor.character_id)
     assert entry['blast_armor']==protection
     assert entry['armor']==protection
     assert entry['blast_damage']==blast_damage
-    assert any(row['name']=='Бронеплита' for row in entry['blast_armor_damage'])
+    assert entry['fragment_zone']=='chest'
+    assert [row['name'] for row in entry['blast_armor_damage']]==[plate_name]
+    assert [row['name'] for row in entry['fragment_armor_damage']]==[plate_name]
+    plates=[pouch['installedModules'][0] for pouch in actor.character.data['equipment']['vest']['pouches']]
+    assert all((plate['currentStageDurability']<1000)==(plate['name']==plate_name) for plate in plates)
 
 
 def test_full_cover_blocks_wave_but_passes_penetrating_fragments(grenade_game,monkeypatch):

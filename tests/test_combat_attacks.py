@@ -118,26 +118,33 @@ def test_armor_plates_protect_only_the_selected_torso_side_and_wear():
     assert CombatService._target_armor(data,'chest',plate_side='back')[0]==20
 
 
-def test_torso_attack_selects_front_or_back_plate(monkeypatch):
+@pytest.mark.parametrize('attacker_y,zone,stage,durability,expected,plate_wears',[
+    (1,'chest',1,10,35,True),(-1,'chest',1,10,50,True),
+    (1,'abdomen',1,10,35,True),(-1,'abdomen',1,10,50,True),
+    (1,'left_arm',1,10,10,False),(-1,'chest',4,10,40,True),
+    (-1,'chest',1,0,20,False),
+])
+def test_ranged_attack_selects_and_wears_only_eligible_plate(monkeypatch,attacker_y,zone,stage,durability,expected,plate_wears):
     monkeypatch.setattr(CombatService,'_ranged_damage_profile',lambda weapon:({
         'damage':20,'armor_piercing':0,'bleeding':'','effective_range':20,
         'damage_type':'bullet'},None))
     monkeypatch.setattr(CombatService,'_apply_attack_damage',lambda *args,**kwargs:{
-        'current':700,'zones':{'chest':{'current':150}}})
-    def plate(value):
-        return {'name':'Бронеплита','category':'armor_plate','slotType':'armor_plate',
-            'durability':10,'maxDurability':10,'attributes':{'protection':{'physical':value}}}
-    def pouch(value):return {'attributes':{'slots':[{'type':'armor_plate'}]},'installedModules':[plate(value)]}
-    for attacker_y,expected in [(1,35),(-1,50)]:
-        data={'equipment':{'vest':{'pouches':[pouch(35),pouch(50)]}},
-            'health':{'current':700,'zones':{'chest':{'current':150}}}}
-        attacker=SimpleNamespace(pos_x=0,pos_y=attacker_y,character=SimpleNamespace(data={'weapons':[{}]}))
-        target=SimpleNamespace(pos_x=0,pos_y=0,facing_x=0,facing_y=1,
-            character=SimpleNamespace(data=data),hp_zones={})
-        result=CombatService._resolve_attack(target,attacker,{'weapon_index':0,'hit_difficulty':1,
-            'fire_mode':'single','round_number':1},aimed_zone='chest',forced_roll=20)
-        assert result['armor']==expected
-        assert any(entry['name']=='Бронеплита' for entry in result['armor_damage'])
+        'current':700,'zones':{zone:{'current':150}}})
+    def pouch(name,value,stage=1,durability=10):
+        plate={'name':name,'category':'armor_plate','slotType':'armor_plate','stage':stage,
+            'durability':durability,'maxDurability':10,'attributes':{'protection':{'physical':value}}}
+        return {'attributes':{'slots':[{'type':'armor_plate'}]},'installedModules':[plate]}
+    data={'equipment':{'armor':{'name':'Броня','category':'armor','protection':{'physical':20},
+        'stage':1,'durability':10},'vest':{'pouches':[pouch('Передняя плита',35),pouch('Задняя плита',50,stage,durability)]}},
+        'health':{'current':700,'zones':{zone:{'current':150}}}}
+    attacker=SimpleNamespace(pos_x=0,pos_y=attacker_y,character=SimpleNamespace(data={'weapons':[{}]}))
+    target=SimpleNamespace(pos_x=0,pos_y=0,facing_x=0,facing_y=1,
+        character=SimpleNamespace(data=data),hp_zones={})
+    result=CombatService._resolve_attack(target,attacker,{'weapon_index':0,'hit_difficulty':1,
+        'fire_mode':'single','round_number':1},aimed_zone=zone,forced_roll=20)
+    assert result['armor']==expected
+    worn_plates=[entry['name'] for entry in result['armor_damage'] if entry['name'] in {'Передняя плита','Задняя плита'}]
+    assert worn_plates==(['Передняя плита' if attacker_y>0 else 'Задняя плита'] if plate_wears else [])
 
 
 def test_improved_reflexes_only_discount_first_attack_of_round(monkeypatch):

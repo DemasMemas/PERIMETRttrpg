@@ -4660,6 +4660,17 @@ async function renderEquipmentTab(data, { focusWeaponIndex = null } = {}) {
 
         <!-- Броня -->
         <div class="equipment-group" data-equipment-group="armor">
+            ${armor.modifications?.some(mod=>['armor-a15','armor-a31'].includes(mod?.ruleId))?`
+                <div class="auto-injector-controls" data-auto-injector>
+                    <strong>Автоинъектор:</strong>
+                    ${(()=>{const index=(armor.installedModules||[]).findIndex(item=>item?.slotType==='auto_injector');
+                        const combat=window.locationCombatState?.status==='active';
+                        return index<0?`<span>Пусто</span><button type="button" class="btn btn-sm" onclick="window.loadAutoInjector()">Загрузить препарат${combat?' · 5 ОД':''}</button>`
+                        :`<span>${escapeHtml(armor.installedModules[index].name)}</span>
+                            <button type="button" class="btn btn-sm" onclick="window.useAutoInjector('action')">Применить${combat?' · 1 ОД':''}</button>
+                            ${combat?`<button type="button" class="btn btn-sm" onclick="window.useAutoInjector('free')">Применить · 1 СД</button>`:''}
+                            <button type="button" class="btn btn-sm btn-secondary" onclick="window.unloadAutoInjector()">Извлечь${combat?' · 3 ОД':''}</button>`;})()}
+                </div>`:''}
             <div class="equipment-row" style="display: flex; gap: 10px;">
                 <div class="equipment-main-block" style="flex: 2;">
                     <div class="block-header">
@@ -4726,17 +4737,6 @@ async function renderEquipmentTab(data, { focusWeaponIndex = null } = {}) {
                     </div>
                 </div>
             </div>
-            ${armor.modifications?.some(mod=>['armor-a15','armor-a31'].includes(mod?.ruleId))?`
-                <div class="auto-injector-controls" data-auto-injector>
-                    <strong>Автоинъектор:</strong>
-                    ${(()=>{const index=(armor.installedModules||[]).findIndex(item=>item?.slotType==='auto_injector');
-                        const combat=window.locationCombatState?.status==='active';
-                        return index<0?`<span>Пусто</span><button type="button" class="btn btn-sm" onclick="window.loadAutoInjector()">Загрузить препарат${combat?' · 5 ОД':''}</button>`
-                        :`<span>${escapeHtml(armor.installedModules[index].name)}</span>
-                            <button type="button" class="btn btn-sm" onclick="window.useAutoInjector('action')">Применить${combat?' · 1 ОД':''}</button>
-                            ${combat?`<button type="button" class="btn btn-sm" onclick="window.useAutoInjector('free')">Применить · 1 СД</button>`:''}
-                            <button type="button" class="btn btn-sm btn-secondary" onclick="window.unloadAutoInjector()">Извлечь${combat?' · 3 ОД':''}</button>`;})()}
-                </div>`:''}
             <!-- Слоты брони всегда занимают отдельную строку. -->
                 ${renderSlotsUniversal(armor, ['equipment', 'armor']) ? `
                     <div class="equipment-slots-row">
