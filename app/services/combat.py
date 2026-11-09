@@ -1361,9 +1361,13 @@ class CombatService:
         running = movement_mode in {'run', 'sprint'}
         strength_modifier = CombatService._base_skill_modifier(character_data, 'skills.physical.strength')
         base_distance = max(0, 2 + .2 * strength_modifier)
+        max_distance = base_distance * (2 if running else 1)
+        from app.services.artifact_special import stat_value
+        if stat_value(character_data, 'extended_jump') > 0:
+            max_distance = max(max_distance, 5)
         return {
             'base_distance': round(base_distance, 10),
-            'max_distance': round(base_distance * (2 if running else 1), 10),
+            'max_distance': round(max_distance, 10),
             'strength_modifier': strength_modifier,
             'agility_modifier': CombatService._skill_modifier(character_data, 'skills.physical.agility'),
             'difficulty': 6 if running else 10,
@@ -6291,6 +6295,7 @@ class CombatService:
         stop_layer_context=None,
         neck_brace_context=None,
         damage_type='physical',
+        anomaly_damage=False,
     ):
         character = target.character
         data = dict(character.data or {})
@@ -6320,6 +6325,13 @@ class CombatService:
             neck_brace=consume_neck_brace(neck_brace_context);damage=0;allow_bleeding=False;bleeding_result=None;trauma_checks=0
         previous_condition = CombatService._character_condition(data)['state']
         health = apply_health_maximums(data)
+        if anomaly_damage or stress_trigger == 'anomaly':
+            restored = CombatService._convert_anomaly_damage(target, data, health, damage)
+            if restored is not None:
+                health['_attackOutcome'] = {'applied_damage': 0, 'anomaly_healing': restored,
+                                            'bleedings': [], 'additional_traumas': [],
+                                            'death': previous_condition == 'dead'}
+                return health
         before_health=deepcopy(health)
         if damage > 0:
             active_effects = normalize_effect_list(health.get('effects') or [])
@@ -7174,6 +7186,23 @@ class CombatService:
         return {'difficulty': difficulty, 'posture': posture, 'obstacle': obstacle}
 
     @staticmethod
+    def _convert_anomaly_damage(target, data, health, damage):
+        from app.services.artifact_special import stat_value
+        if stat_value(data, 'anomaly_healing') <= 0:
+            return None
+        from app.services.artifact_effects import healing_amount
+        maximum = CombatService._coerce_float(health.get('max'), 700)
+        before = CombatService._coerce_float(health.get('current'), maximum)
+        restored = 0
+        if CombatService._character_condition(data)['state'] != 'dead':
+            restored = min(max(0, maximum - before), healing_amount(data, max(0, damage)))
+            health['current'] = before + restored
+        sync_health_derived_statuses(health)
+        target.character.data = data
+        flag_modified(target.character, 'data')
+        return restored
+
+    @staticmethod
     def _apply_general_damage(target, damage, *, round_number=0, source='explosion',cause_stress=True,damage_type='physical'):
         damage = max(0, round(CombatService._coerce_float(damage, 0)))
         data = dict(target.character.data or {})
@@ -7181,6 +7210,13 @@ class CombatService:
         damage=incoming_thermal_damage(data,damage,damage_type)
         previous_condition = CombatService._character_condition(data)['state']
         health = apply_health_maximums(data)
+        if source == 'anomaly':
+            restored = CombatService._convert_anomaly_damage(target, data, health, damage)
+            if restored is not None:
+                return {'damage': 0, 'anomaly_healing': restored, 'tough_nut': None,
+                        'health_before_state': previous_condition,
+                        'health_state': CombatService._character_condition(data)['state'],
+                        'current_health': health.get('current')}
         before_health=deepcopy(health)
         maximum = CombatService._coerce_float(health.get('max'), 700)
         health['current'] = max(
@@ -7812,7 +7848,7 @@ class CombatService:
         return affected
 
     @staticmethod
-    def resolve_fall(target, height_meters, *, round_number=0, damage_multiplier=1.0):
+    def resolve_fall(target, height_meters, *, round_number=0, damage_multiplier=1.0, anomaly_damage=False):
         """Resolve impact damage from a fall using the table from the combat rules."""
         height = max(0.0, CombatService._coerce_float(height_meters, 0))
         classified_height = math.floor(height)
@@ -7870,12 +7906,15 @@ class CombatService:
                 allow_bleeding=False,
                 trauma_checks=0,
                 stress_trigger='indirect_damage',
+                anomaly_damage=anomaly_damage,
                 **({'limb_hit':limb_hit} if limb_hit else {}),
             )
             leg_results.append({
                 'area': leg,
                 'protection': round(protection),
                 'damage': (health.get('_attackOutcome') or {}).get('applied_damage',damage),
+                **({'anomaly_healing': health['_attackOutcome']['anomaly_healing']}
+                   if 'anomaly_healing' in (health.get('_attackOutcome') or {}) else {}),
                 **({'prosthesis_damage':(health.get('_attackOutcome') or {}).get('prosthesis_damage'),
                     'mechanical':limb_hit['mechanical']} if limb_hit else {}),
                 'current': health.get('zones', {}).get(
@@ -10719,9 +10758,12 @@ class CombatService:
                 profile['fall_height'],
                 round_number=round_number,
                 damage_multiplier=fraction,
+                anomaly_damage=True,
             )
             result['fall'] = fall
             result['damage'] = sum(item.get('damage', 0) for item in fall.get('legs', []))
+            if any('anomaly_healing' in item for item in fall['legs']):
+                result['anomaly_healing'] = sum(item.get('anomaly_healing', 0) for item in fall['legs'])
             if fall.get('artifact'):
                 apply_category_effect = False
         elif damage > 0 and fraction > 0:
@@ -10752,6 +10794,8 @@ class CombatService:
                     damage_type=protection_type or 'physical',
                 )
                 result['damage'] = (zone_health.get('_attackOutcome') or {}).get('applied_damage',raw_damage)
+                if 'anomaly_healing' in (zone_health.get('_attackOutcome') or {}):
+                    result['anomaly_healing'] = zone_health['_attackOutcome']['anomaly_healing']
                 result['zone'] = profile['zone']
                 result['zone_health'] = (zone_health.get('zones') or {}).get(profile['zone'])
             else:
@@ -10760,6 +10804,8 @@ class CombatService:
                     loc_char, damage_after_protection, round_number=round_number, source='anomaly',damage_type=protection_type or 'physical',
                 )
                 result['damage'] = result['damage_result']['damage']
+                if 'anomaly_healing' in result['damage_result']:
+                    result['anomaly_healing'] = result['damage_result']['anomaly_healing']
                 result['protection'] = protection
 
         data = loc_char.character.data if isinstance(loc_char.character.data, dict) else {}

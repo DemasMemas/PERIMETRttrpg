@@ -826,6 +826,24 @@ def test_fiery_tear_removes_darkness_penalties_for_exactly_ten_minutes(monkeypat
     assert visual()['equipment_modifier'] == shooting()['equipment_modifier'] == -5
 
 
+@pytest.mark.parametrize('key,restored', [('vspishka', 200), ('varevo', 150), ('glukhar', 10), ('batut', 140)])
+def test_philosophers_leaf_converts_real_anomaly_damage_only_to_common_health(grenade_game, monkeypatch, key, restored):
+    actor = grenade_game['actor_location']
+    actor.character.data = ready(name='Философский лист')
+    actor.character.data['health']['current'] = 300
+    use(actor.character.data)
+    monkeypatch.setattr('app.services.combat.random.randint', lambda low, high: high)
+    result = CombatService._apply_anomaly_exposure(actor, {'key': key}, apply_category_effect=False)
+    assert result['damage'] == 0 and result['anomaly_healing'] == restored
+    health = actor.character.data['health']
+    assert health['current'] == 300+restored
+    assert CombatService._apply_general_damage(actor, 50, damage_type='electric')['damage'] == 50
+    health = actor.character.data['health']
+    health['effects'] = advance_timed_effects(health, health['effects'], 30, character_data=actor.character.data)
+    outcome = CombatService._apply_anomaly_exposure(actor, {'key': 'vspishka'}, apply_category_effect=False)
+    assert outcome['damage'] == 200 and 'anomaly_healing' not in outcome
+
+
 def test_fire_gift_cost_survives_removal_and_cannot_be_forged_removed_or_reduced_by_healing_modifier():
     data = ready(name='Дар пламени')
     use(data)

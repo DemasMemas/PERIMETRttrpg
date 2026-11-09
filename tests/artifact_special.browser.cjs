@@ -333,15 +333,15 @@ module.exports=async({page,request,token,lobby,loc,locationId,rules,safeSession}
     assert.equal(sphereUsed.data._artifact_specials[0].armed,false);
     assert.equal(sphereUsed.data._artifact_specials[0].remaining_uses,1);
     assert.equal(sphereUsed.data._artifact_specials[0].cooldown_seconds,86400);
-    assert.ok((await fall()).characters[0].fall.base_damage>0,'Повторное падение без выбора проходит обычно');
     await request(loc+'/combat/end',{},token);
+    assert.ok((await fall()).characters[0].fall.base_damage>0,'Повторное падение без выбора проходит обычно');
     const sponge=rules.find(row=>row.name==='Чернобыльская губка');assert.ok(sponge);
     const spongeBearer=await request('/lobbies/'+lobby.id+'/characters',{name:'Проверка особого свойства',data:{
         skills:{other:{survival:{base:15}}},equipment:{armor:{id:'sponge-test-armor',name:'Броня для проверки',
             containers:[{item:{id:'native-sponge',name:sponge.name,category:'artifact',quantity:1,attributes:sponge}}]}},
         health:{current:700,max:700,radiation:0,effects:[]}}},token);
     const spongeUrl='/lobbies/characters/'+spongeBearer.id,getSponge=()=>request(spongeUrl,null,token,'GET');
-    await request(loc+'/spawn_character',{character_id:spongeBearer.id,tile_x:43,tile_y:46},token);
+    const secondBearer=await request(loc+'/spawn_character',{character_id:spongeBearer.id,tile_x:43,tile_y:46},token);
     await request('/__testing/artifact-preparation/'+safeSession.runId,{character_id:spongeBearer.id},token);
     await changeMinutes(1);
     await page.evaluate(`window.openCharacterSheet(${spongeBearer.id},'equipment').then(()=>true)`);
@@ -434,6 +434,53 @@ module.exports=async({page,request,token,lobby,loc,locationId,rules,safeSession}
     await page.until(`${sun}<.15`,'Через десять минут вид носителя снова ночной');
     assert.equal(await page.evaluate('window.lobbyGameTimeMinutes'),130);
     await capture('fiery-tear-expired');
+    const current=rules.find(row=>row.name==='Живой ток'),currentData=await getSponge();assert.ok(current);
+    currentData.data.equipment.armor.containers=[{item:{id:'native-living-current',name:current.name,category:'artifact',quantity:1,attributes:current}}];
+    await request(spongeUrl,{data:currentData.data},token,'PUT');
+    await request('/__testing/artifact-preparation/'+safeSession.runId,{character_id:spongeBearer.id},token);
+    await changeMinutes(1);
+    await request(loc+'/spawn_character',{character_id:spongeBearer.id,tile_x:45,tile_y:62,force_relocate:true},token);
+    await request(loc+'/combat/start',{location_character_ids:[secondBearer.location_character_id],
+        initiator_location_character_id:secondBearer.location_character_id,initiator_first:true},token);
+    await page.evaluate(`window.openCharacterSheet(${spongeBearer.id},'equipment').then(()=>true)`);
+    await page.until("document.querySelector('.equipment-panel-tab[data-panel=armor]')",'Броня с Живым током');
+    await page.evaluate("document.querySelector('.equipment-panel-tab[data-panel=armor]').click();true");
+    await page.until("document.querySelector('[data-artifact-special=\"native-living-current\"]:not(:disabled)')",'Живой ток готов');
+    await page.evaluate("document.querySelector('[data-artifact-special=\"native-living-current\"]').click();true");
+    await page.evaluate('window.__artifactUsePromise.then(()=>true)');
+    const liveState=()=>request(loc+'/combat',null,token,'GET');
+    const liveBefore=(await liveState()).current_character;
+    assert.equal(liveBefore.jump_preview.max_distance,5);
+    const preview=await request(loc+'/movement-preview',{character_id:spongeBearer.id,special_action:'jump',x:45,y:67},token);
+    assert.equal(preview.jump.max_distance,5);assert.equal(preview.route.distance,5);
+    const liveJump=await request(loc+'/combat/action',{location_character_id:secondBearer.location_character_id,action_key:'jump',target_x:45,target_y:67},token);
+    assert.equal(liveJump.jump.distance,5);
+    assert.equal(liveJump.character.action_points_current,liveBefore.action_points_current-2);
+    for(let round=0;round<2;round++)await request(loc+'/combat/end_turn',{location_character_id:secondBearer.location_character_id},token);
+    const liveAfter=(await liveState()).current_character;
+    assert.ok(liveAfter.jump_preview.max_distance<5);
+    await request(loc+'/combat/end',{},token);
+    const leaf=rules.find(row=>row.name==='Философский лист'),leafData=await getSponge();assert.ok(leaf);
+    leafData.data.equipment.armor.containers=[{item:{id:'native-philosophers-leaf',name:leaf.name,category:'artifact',quantity:1,attributes:leaf}}];
+    leafData.data.skills.physical.agility={base:30};leafData.data.health.current=400;
+    await request(spongeUrl,{data:leafData.data},token,'PUT');
+    await request('/__testing/artifact-preparation/'+safeSession.runId,{character_id:spongeBearer.id},token);
+    await changeMinutes(1);
+    await request(loc+'/spawn_character',{character_id:spongeBearer.id,tile_x:45,tile_y:62,force_relocate:true},token);
+    await request(loc+'/objects',{name:'Вспышка',type:'anomaly',tile_x:45,tile_y:63,properties:{anomaly_key:'vspishka'}},token);
+    await request(loc+'/combat/start',{location_character_ids:[secondBearer.location_character_id],
+        initiator_location_character_id:secondBearer.location_character_id,initiator_first:true},token);
+    await page.evaluate(`window.openCharacterSheet(${spongeBearer.id},'equipment').then(()=>true)`);
+    await page.until("document.querySelector('.equipment-panel-tab[data-panel=armor]')",'Броня с Философским листом');
+    await page.evaluate("document.querySelector('.equipment-panel-tab[data-panel=armor]').click();true");
+    await page.until("document.querySelector('[data-artifact-special=\"native-philosophers-leaf\"]:not(:disabled)')",'Философский лист готов');
+    await page.evaluate("document.querySelector('[data-artifact-special=\"native-philosophers-leaf\"]').click();true");
+    await page.evaluate('window.__artifactUsePromise.then(()=>true)');
+    const intoFlash=await request(loc+'/combat/action',{location_character_id:secondBearer.location_character_id,action_key:'jump',target_x:45,target_y:63},token);
+    assert.equal(intoFlash.jump.outcome,'success');
+    await request(loc+'/combat/end_turn',{location_character_id:secondBearer.location_character_id},token);
+    assert.equal((await getSponge()).data.health.current,600,'Вспышка исцеляет на 200 ОЗ');
+    await request(loc+'/combat/end',{},token);
     fs.writeFileSync(path.join(safeSession.artifacts,'artifact-special.json'),JSON.stringify({scene:'Припять',artifact:rule.name,
         preparedWornSeconds:86394,realRoundSeconds:6,readyAfterRealRound:true,realButtonActivations:2,apPerUse:1,
         first:{radiation:0,hp:200,cooldown:86400},second:{radiation:0,hp:300,cooldown:86394},reopened:true,
@@ -449,7 +496,9 @@ module.exports=async({page,request,token,lobby,loc,locationId,rules,safeSession}
         sponge:{realButton:true,seconds:14400,radiationBefore:3,radiationAfter:0,ownCost:30,expired:true},
         burner:{realButton:true,power:3,seconds:600,healthSpent:150,movementDuring:-5,movementAfter:-2},
         leech:{realButton:true,radius:3,ownerRadiation:0,neighborRadiation:0},
-        fieryTear:{realButton:true,nightSun,daySun,seconds:600,otherCharacterRemainsDark:true}},null,2));
+        fieryTear:{realButton:true,nightSun,daySun,seconds:600,otherCharacterRemainsDark:true},
+        livingCurrent:{realButton:true,distance:5,jumpAp:2,expiredAfterRounds:2},
+        philosophersLeaf:{realButton:true,realAnomaly:'Вспышка',healthBefore:400,healthAfter:600}},null,2));
     console.log('Особые свойства: подготовленное ношение+реальный раунд, две кнопки Ядра твари по1ОД без рук, радиация→ОЗ; общий срок после первого, переоткрытие.');
     console.log('Генератор: кнопка без радиации, фактический штраф перемещения−1→−3,600→594секунд за раунд; истечение по игровому времени возвращает−1.');
     console.log('Сердце жара: настоящая кнопка и настоящее горение; первый раунд0урона, после истечения50.');
@@ -464,4 +513,6 @@ module.exports=async({page,request,token,lobby,loc,locationId,rules,safeSession}
     console.log('Горелка: выбор −3 и 150 ОЗ в интерфейсе; общий штраф −5 возвращается к −2 через 10 минут.');
     console.log('Пиявка: реальная кнопка убирает всю радиацию владельца и второго персонажа на расстоянии двух метров.');
     console.log('Огненная слеза: личный дневной вид ночью, переключение на второго персонажа и восстановление ночного вида через 10 минут.');
+    console.log('Живой ток: настоящая кнопка и прыжок на 5 м за 2 ОД. Через два раунда возвращается обычная дальность.');
+    console.log('Философский лист: настоящая кнопка, прыжок во Вспышку, завершение хода и 400→600 общих ОЗ.');
 };

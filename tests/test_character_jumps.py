@@ -49,6 +49,32 @@ def test_jump_uses_real_roll_cost_and_exact_landing(client,jumping,auth_headers,
     assert bool(r.json['character']['unstable_jump'])==(outcome=='unstable_edge')
 
 
+def test_living_current_extends_actual_jump_without_changing_its_price(client, jumping, auth_headers, monkeypatch):
+    from app.services.artifact_special import DAY, advance
+    from app.services.effects import advance_timed_effects
+    from test_artifact_reactions import equipped
+    actor = jumping['actor_location']
+    data = deepcopy(actor.character.data)
+    data['equipment'] = equipped('Живой ток')['equipment']
+    data['skills']['other'] = {'survival': {'base': 15}}
+    advance(data, DAY)
+    actor.character.data = data
+    db.session.commit()
+    monkeypatch.setattr('app.services.combat.random.randint', lambda *_: 20)
+    assert jump(client, jumping, auth_headers, target_x=7).status_code == 400
+    result = jump(client, jumping, auth_headers, action_key='artifact_special',
+                  attribute_choice={'item_id': 'reactive-artifact', 'operation_id': 'living-current'})
+    assert result.status_code == 200 and actor.action_points_current == 4
+    assert jump(client, jumping, auth_headers, target_x=7.01).status_code == 400
+    result = jump(client, jumping, auth_headers, target_x=7)
+    assert result.status_code == 200 and result.json['jump']['profile']['max_distance'] == 5
+    assert actor.pos_x == 7 and actor.action_points_current == 2
+    data = actor.character.data
+    health = data['health']
+    health['effects'] = advance_timed_effects(health, health['effects'], 12, character_data=data)
+    assert CombatService._jump_profile(data)['max_distance'] == 2
+
+
 @pytest.mark.parametrize('mode',['run','sprint'])
 @pytest.mark.parametrize('roll,x,outcome',[(6,5.5,'success'),(5,3.75,'midpoint'),(1,3.75,'midpoint')])
 def test_running_jump_needs_no_metres_and_any_failure_uses_exact_midpoint(client,jumping,auth_headers,monkeypatch,mode,roll,x,outcome):

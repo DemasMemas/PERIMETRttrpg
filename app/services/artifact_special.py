@@ -43,6 +43,8 @@ BUFFS = {
     'Сердце Эха': (60, {'positive_multiplier': 2}),
     'Горелка': (600, {}),
     'Огненная слеза': (600, {'daylight_vision': 1}),
+    'Живой ток': (12, {'movement_penalty': -10, 'extended_jump': 1}),
+    'Философский лист': (30, {'anomaly_healing': 1}),
 }
 STAT_LABELS = {'movement_penalty': 'Штраф перемещения', 'skill_strength': 'Сила',
                'physical_protection': 'Защита от физического урона', 'chemical_protection': 'Защита от химического урона',
@@ -56,6 +58,8 @@ STAT_LABELS['stress_immunity'] = 'Стресс не повышается'
 STAT_LABELS['radiation_sickness_immunity'] = 'Иммунитет к последствиям радиации'
 STAT_LABELS['positive_multiplier'] = 'Множитель положительных эффектов артефакта ×'
 STAT_LABELS['daylight_vision'] = 'Видимость в темноте как днём'
+STAT_LABELS['extended_jump'] = 'Прыжки до 5 м за 2 ОД'
+STAT_LABELS['anomaly_healing'] = 'Урон аномалий восстанавливает общие ОЗ'
 
 
 def is_special_effect(effect):
@@ -244,7 +248,8 @@ def execute(actor, data, payload, user_id, combat=None):
             label = STAT_LABELS[stat]
             if stat == 'positive_multiplier':
                 label += f'{amount:g}'
-            elif not (stat.startswith('immune_') or stat.endswith('_immunity') or stat == 'daylight_vision'):
+            elif not (stat.startswith('immune_') or stat.endswith('_immunity') or
+                      stat in {'daylight_vision', 'extended_jump', 'anomaly_healing'}):
                 label += f' {amount:+g}'
             effects[:] = [effect for effect in effects if effect.get('source') != source]
             effects.append({'id': source, 'source': source, 'type': 'custom', 'name': f"{item['name']}: особое свойство",
