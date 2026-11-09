@@ -922,6 +922,23 @@ def test_magnet_takes_drawn_weapon_and_drops_it_by_owner_when_hands_are_full(gre
     assert ground.properties['contents'] == [pistol]
 
 
+def test_magnet_takes_a_device_held_from_an_equipment_pouch(grenade_game):
+    from app.services.artifact_magnet import targets
+    actor, target = magnet_scene(grenade_game)
+    lamp = {'id':'lamp', 'name':'Фонарик', 'weight':.5, 'attributes':{'material':'Алюминий'}}
+    target.character.data = {'health':{'current':700, 'max':700,
+        'combatMeta':{'portableLights':[{'id':'lamp','mount':'hand','on':True}]}},
+        'equipment':{'vest':{'pouches':[{'contents':[lamp]}]}}}
+    db.session.commit()
+    choice, = targets(actor, actor.character.data)
+    result = CombatService.perform_action(actor.location_id, grenade_game['lobby'].gm_id, actor.id, 'artifact_special',
+        attribute_choice={'item_id':'reactive-artifact', 'operation_id':'take-lamp', 'magnet_target':choice['id']})
+    assert not result['narrative_action']['at_feet']
+    assert actor.character.data['inventory']['held'][0]['id'] == 'lamp'
+    assert not target.character.data['equipment']['vest']['pouches'][0]['contents']
+    assert not target.character.data['health']['combatMeta']['portableLights']
+
+
 @pytest.mark.parametrize('blocked_by', ['wall', 'smoke', 'night', 'hidden', 'floor', 'turned', 'stale'])
 def test_magnet_rechecks_visibility_and_item_state_before_spending(grenade_game, blocked_by):
     from app.services.artifact_magnet import targets

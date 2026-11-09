@@ -69,7 +69,7 @@ def _hands(actor, data):
     ids.discard(None)
     if ids:
         for path, item in walk(data, all_items=True):
-            if path[0] == 'inventory' and path[1] != 'held' and item.get('id') in ids:
+            if path[0] in {'inventory', 'equipment'} and path[:2] != ['inventory', 'held'] and item.get('id') in ids:
                 yield path, item
 
 
