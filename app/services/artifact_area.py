@@ -60,13 +60,15 @@ def fan_protects(data, target=None, *, character=None):
     return any(stat_value(member.data, 'crystal_cloud') for member in carriers)
 
 
-def _storm(actor, characters, objects):
+def destroy_electronics(actor, characters, objects, *, radius, ignore_protection=False):
+    from sqlalchemy import inspect
+    from app.models import LocationTrap
     from app.services.electronics import expose_devices
     from app.services.location_navigation import level_of, pose
     affected, changes = [], {}
     for character in characters:
         data = deepcopy(character.data or {})
-        if expose_devices(data, 0, forced=True):
+        if expose_devices(data, 0, forced=True, ignore_protection=ignore_protection):
             character.data = data
             flag_modified(character, 'data')
             affected.append(character.id)
@@ -77,7 +79,7 @@ def _storm(actor, characters, objects):
             continue
         x, y, *_ = pose(obj)
         point = SimpleNamespace(pos_x=x-.5, pos_y=y-.5, floor_level=level_of(obj))
-        if distance(actor.location, objects, actor.pos_x, actor.pos_y, actor.floor_level or 0, point) > 3 + 1e-9:
+        if distance(actor.location, objects, actor.pos_x, actor.pos_y, actor.floor_level or 0, point) > radius + 1e-9:
             continue
         updated = deepcopy(props)
         items = updated.get('contents') or []
@@ -85,12 +87,25 @@ def _storm(actor, characters, objects):
             items = [*items, updated['device']]
         elif stationary:
             items = [*items, updated]
-            updated['category'] = 'device'
-        if expose_devices({'inventory': {'pockets': items}}, 0, forced=True):
+            updated['electronic'] = True
+        if expose_devices({'inventory': {'pockets': items}}, 0, forced=True, ignore_protection=ignore_protection):
             obj.properties = updated
             changes[obj.id] = 'updated'
-    extra = {'_object_changes': changes, '_vision_location_id': actor.location_id} if objects else {}
-    return 0, affected, extra
+    trap_ids = []
+    if isinstance(actor, LocationCharacter) and inspect(db.session.connection()).has_table('location_traps'):
+        for trap in LocationTrap.query.filter_by(location_id=actor.location_id):
+            item = (trap.data or {}).get('item')
+            if not isinstance(item, dict) or not item.get('controllerState'):
+                continue
+            point = SimpleNamespace(pos_x=trap.x, pos_y=trap.y, floor_level=trap.level)
+            if distance(actor.location, objects, actor.pos_x, actor.pos_y, actor.floor_level or 0, point) > radius + 1e-9:
+                continue
+            root = deepcopy(trap.data)
+            if expose_devices({'inventory': {'pockets': [root['item']]}}, 0, forced=True, ignore_protection=ignore_protection):
+                trap.data = root
+                flag_modified(trap, 'data')
+                trap_ids.append(trap.id)
+    return affected, changes, trap_ids
 
 
 def apply(actor, data, name):
@@ -102,7 +117,9 @@ def apply(actor, data, name):
     characters = [target.character for target in models] if local else group_characters(owner)
     targets = [character for character in characters if character.id != owner.id]
     if name == STORM:
-        return _storm(actor, targets, objects)
+        affected, changes, trap_ids = destroy_electronics(actor, targets, objects, radius=3)
+        extra = {'_object_changes': changes, '_vision_location_id': actor.location_id, '_trap_ids':trap_ids} if local else {}
+        return 0, affected, extra
     targets = [character for character in targets if CombatService._character_condition(character.data)['state'] != 'dead']
     if name == FLASH and local:
         results = CombatService._resolve_flash(actor.location_id, actor.pos_x, actor.pos_y,
@@ -136,12 +153,22 @@ def apply(actor, data, name):
     return removed, affected, {}
 
 
+def publish_moves(location_id, moves):
+    from app.extensions import socketio
+    from app.services.traps import publish as publish_traps
+    for moved in moves:
+        publish_traps(location_id, moved.pop('trap_ids', []))
+        if not moved.pop('gm_hidden'):
+            socketio.emit('character_moved', {'location_id':location_id, **moved}, room=f'location_{location_id}')
+
+
 def publish(result):
     from app.services.character_events import emit_character_update
     ids = result.pop('_affected_character_ids', [])
     ground_changes = result.pop('_object_changes', {})
     forecast = result.pop('_gm_forecast', None)
     moves = result.pop('_moves', [])
+    trap_ids = result.pop('_trap_ids', [])
     if result.get('replayed'):
         return
     if forecast:
@@ -149,13 +176,10 @@ def publish(result):
         gm_id = forecast.pop('gm_id')
         socketio.emit('artifact_forecast_requested', forecast, room=f'user_{gm_id}')
     if moves:
-        from app.extensions import socketio
+        publish_moves(result['_vision_location_id'], moves)
+    if trap_ids:
         from app.services.traps import publish as publish_traps
-        location_id = result['_vision_location_id']
-        for moved in moves:
-            publish_traps(location_id, moved.pop('trap_ids', []))
-            if not moved.pop('gm_hidden'):
-                socketio.emit('character_moved', {'location_id':location_id, **moved}, room=f'location_{location_id}')
+        publish_traps(result['_vision_location_id'], trap_ids)
     if ids:
         for character in LobbyCharacter.query.filter(LobbyCharacter.id.in_(ids)).all():
             emit_character_update({'character_id': character.id, 'updates': {'data': character.data_snapshot()},

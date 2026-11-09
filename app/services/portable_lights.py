@@ -183,10 +183,10 @@ def pda_state(item):
         **({'broken':True} if stored.get('broken') else {})}
 
 
-def pda_ready(data):
+def pda_ready(data, *, jammed_by=None):
     from app.services.artifact_effects import device_block_reason
     return any(pda_state(item)['on'] and pda_state(item)['charge_percent']>0
-        and not device_block_reason(data,item) for _,item in walk(data) if definition(item)=='pda')
+        and not device_block_reason(data,item,jammed_by=jammed_by) for _,item in walk(data) if definition(item)=='pda')
 
 
 def advance_pda(data,seconds):
@@ -352,15 +352,19 @@ def advance_lobby(lobby,seconds):
     return list(updated.values())
 
 
-def ready_sources(actor,*,objects=None):
+def ready_sources(actor,*,objects=None,jammers=None):
     from app.services.combat import CombatService
-    data=(actor.character.data if actor.character else {}) or {};paths={item.get('id'):path for path,item in walk(data)};items={item.get('id'):item for _,item in walk(data)}
+    from app.services.artifact_effects import device_block_reason
+    from app.services.artifact_jamming import for_actor
+    data=(actor.character.data if actor.character else {}) or {}
+    active=[binding for binding in bindings(data) if binding.get('on')]
+    if not active:return []
+    jammed_by=for_actor(actor,sources=jammers,objects=objects)
+    paths={item.get('id'):path for path,item in walk(data)};items={item.get('id'):item for _,item in walk(data)}
     result=[];weapons=data.get('weapons') or [];primary=actor.drawn_weapon_index
-    for binding in bindings(data):
+    for binding in active:
         item=items.get(binding.get('id'))
-        if not item or not binding.get('on'):continue
-        from app.services.artifact_effects import device_block_reason
-        if device_block_reason(data,item):continue
+        if not item or device_block_reason(data,item,jammed_by=jammed_by):continue
         if glow(item):
             if (item.get('glowState') or {}).get('remaining_seconds',0)<=0:continue
         elif (item.get('lightPower') or {}).get('uses_left',10)<=0:continue
@@ -422,9 +426,9 @@ def active_his_sources(location_id):
     return result
 
 
-def covers(actor,target,*,wide=False,objects=None):
+def covers(actor,target,*,wide=False,objects=None,jammers=None):
     from app.services.combat import CombatService
-    sources=ready_sources(actor,objects=objects)
+    sources=ready_sources(actor,objects=objects,jammers=jammers)
     if not sources or actor.id==target.id:return []
     # Проверка тела и перекрытий использует действующую геометрию света/взрывов.
     dx=target.pos_x-actor.pos_x;dz=target.pos_y-actor.pos_y
@@ -439,13 +443,16 @@ def covers(actor,target,*,wide=False,objects=None):
         dot>=math.cos(math.pi/4 if wide else math.atan(source['end_width']/2/source['range']))-1e-9)]
 
 
-def illumination(target,*,actors=None,objects=None):
+def illumination(target,*,actors=None,objects=None,jammers=None):
     from app.services.combat import CombatService
     if not getattr(target,'location_id',None) or not getattr(target,'location',None):
         return {'lit':False,'penalty':None,'base_dark':False}
     lights=[]
-    actors=actors if actors is not None else LocationCharacter.query.filter_by(location_id=target.location_id).all()
-    for actor in actors:lights.extend(covers(actor,target,objects=objects))
+    if actors is None:
+        from app.services.artifact_jamming import local_sources
+        actors=LocationCharacter.query.filter_by(location_id=target.location_id).all()
+        jammers=local_sources(target.location_id,actors) if jammers is None else jammers
+    for actor in actors:lights.extend(covers(actor,target,objects=objects,jammers=jammers))
     from app.services.lighting_rules import _light_path_open
     scene_objects=objects if objects is not None else LocationObject.query.filter_by(location_id=target.location_id).all()
     for source in ground_sources(target.location_id,scene_objects):
@@ -459,25 +466,29 @@ def illumination(target,*,actors=None,objects=None):
 def shooting(actor,target,fire_mode):
     from app.services.combat import CombatService
     from app.services.weapon_modules import uses_nvg
-    nvg=uses_nvg(actor.character.data or {});bonus=0;improved=False
-    for source in LocationCharacter.query.filter_by(location_id=actor.location_id).all():
-        lit=covers(source,target)
+    from app.services.artifact_jamming import for_actor,local_sources
+    people=LocationCharacter.query.filter_by(location_id=actor.location_id).all()
+    jammers=local_sources(actor.location_id,people)
+    scene_objects=LocationObject.query.filter_by(location_id=actor.location_id).all()
+    jammed_by=for_actor(actor,sources=jammers,objects=scene_objects)
+    nvg=uses_nvg(actor.character.data or {},jammed_by=jammed_by);bonus=0;improved=False
+    for source in people:
+        lit=covers(source,target,objects=scene_objects,jammers=jammers)
         if lit:bonus=2;improved=improved or any(item['improved'] for item in lit)
     from app.services.lighting_rules import _light_path_open
-    scene_objects=LocationObject.query.filter_by(location_id=actor.location_id).all()
     if any(source['floor_level']==(target.floor_level or 0)
             and math.hypot(source['x']-target.pos_x-.5,source['z']-target.pos_y-.5)<=source['range']
             and _light_path_open((source['x'],source['z']),
                 (target.pos_x+.5,target.pos_y+.5),scene_objects)
             for source in ground_sources(actor.location_id,scene_objects)):
         bonus=2;improved=True
-    facing=[source for source in covers(target,actor,wide=True) if not source.get('radial')]
+    facing=[source for source in covers(target,actor,wide=True,objects=scene_objects,jammers=jammers) if not source.get('radial')]
     penalty=(1 if fire_mode=='aimed' else 3) if facing else 0
     from app.services.lighting_rules import world_is_dark
     dark=world_is_dark(actor.location.lobby.game_time_minutes) or CombatService._is_dark_at_character(actor.location,actor) or CombatService._is_dark_at_character(actor.location,target)
     if not dark:bonus=penalty=0
     return {'accuracy':(bonus-penalty)*(2 if nvg else 1), 'lit':bool(bonus), 'improved':improved,
-        'aimed_blocked':bool(dark and nvg and facing and fire_mode=='aimed')}
+        'aimed_blocked':bool(dark and nvg and facing and fire_mode=='aimed'), 'jammed_by':jammed_by}
 
 
 def ergonomics(actor,weapon):
@@ -538,7 +549,8 @@ def operate(character_id,user_id,payload):
         or operation=='pda_toggle' and pda_state(selected)['on']
         or operation=='toggle' and (binding and binding.get('on') or any(item is selected for _,item in nvg_items(data)) and nvg_on(selected)))
     if not switching_off and operation not in {'prepare','stow','battery','dosimeter_battery','pda_battery','pda_hold','pda_stow','pda_dynamo_stop'}:
-        require_device_available(data,selected)
+        from app.services.artifact_jamming import for_character
+        require_device_available(data,selected,jammed_by=for_character(character,actor=actor))
     if definition(selected)=='dosimeter':
         if selected.get('quantity',1)!=1:raise ValidationError('Разделите стопку дозиметров')
         from app.services.electronics import state as device_state,DOSIMETER_SECONDS

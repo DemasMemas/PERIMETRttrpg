@@ -3466,7 +3466,8 @@ def spawn_character_in_location(lobby_id, location_id):
                 'location_id': location_id,
                 'updates': [{'x': x, 'z': y, 'objects': location.tiles_data[y][x].get('objects', [])}],
             }, room=f'location_{location_id}')
-    if existing:
+    from app.services.artifact_jamming import local_sources
+    if existing or local_sources(location_id):
         socketio.emit(
             'combat_state_updated', CombatService.get_state(location_id, user_id),
             room=f"location_{location_id}",
@@ -3556,6 +3557,8 @@ def remove_character_from_location(
                 combat_state.current_location_character_id
             )
 
+    from app.services.artifact_jamming import aura
+    removed_jammer = any(item.character and aura(item.character.data)[1] for item in location_characters)
     for location_character in location_characters:
         db.session.delete(location_character)
     db.session.commit()
@@ -3568,10 +3571,10 @@ def remove_character_from_location(
         },
         room=f"location_{location_id}",
     )
-    if combat_state:
+    if combat_state or removed_jammer:
         socketio.emit(
             'combat_state_updated',
-            CombatService._serialize_state(location, combat_state),
+            CombatService.get_state(location_id, lobby.gm_id),
             room=f"location_{location_id}",
         )
 
@@ -5257,7 +5260,8 @@ def radiation_access(lobby_id,lobby,participant):
     if location_id and not LocationCharacter.query.filter_by(location_id=location_id,character_id=character.id).first():
         return jsonify({'can_read':False}),200
     from app.services.electronics import active
-    return jsonify({'can_read':active(character.data or {})}),200
+    from app.services.artifact_jamming import for_character
+    return jsonify({'can_read':active(character.data or {},jammed_by=for_character(character,location_id=location_id))}),200
 
 
 @lobbies_bp.route('/characters/<int:character_id>/portable-lights', methods=['GET','POST'])
@@ -5271,13 +5275,15 @@ def portable_lights(character_id):
     if request.method=='GET':
         items=[]
         from app.services.artifact_effects import device_block_reason
+        from app.services.artifact_jamming import for_character
         from app.services.equipment_modifications import visor_light_mount,helmet_module_available
         from app.services.electronics import burned
+        jammed_by=for_character(character)
         for path,item in walk(character.data or {}):
             if definition(item)=='dosimeter':continue
             binding=next((binding for binding in bindings(character.data) if binding.get('id')==item.get('id')),None)
             items.append({'path':path,'id':item.get('id'),'name':item.get('name'),'kind':definition(item),'binding':binding,
-                'blocked_reason':device_block_reason(character.data or {},item),'burned':burned(item),
+                'blocked_reason':device_block_reason(character.data or {},item,jammed_by=jammed_by),'burned':burned(item),
                 'uses_left':(item.get('lightPower') or {}).get('uses_left',10),'visor_mount':visor_light_mount(character.data,path),
                 'belt_mount':belt_light_mount(character.data,path,item),
                 'mount_available':(not (binding and binding.get('mount')=='head' and item.get('slotType')=='light') or visor_light_mount(character.data,path))
@@ -5288,7 +5294,7 @@ def portable_lights(character_id):
         for path,item in nvg_items(character.data or {}):
             if path[:3]!=['equipment','helmet','installedModules']:continue
             items.append({'path':path,'id':item.get('id'),'name':item.get('name') or 'ПНВ','kind':'nvg',
-                'blocked_reason':device_block_reason(character.data or {},item),'burned':burned(item),
+                'blocked_reason':device_block_reason(character.data or {},item,jammed_by=jammed_by),'burned':burned(item),
                 'binding':{'mount':'nvg','on':bool(nvg_on(item))},'uses_left':(item.get('lightPower') or {}).get('uses_left',10),
                 'mount_available':helmet_module_available(character.data,path)})
         batteries=[{'path':path,'name':item.get('name')} for path,item in walk(character.data or {},True)
@@ -5650,6 +5656,10 @@ def perform_location_combat_action(lobby_id, location_id, lobby, participant):
     while pending_nodes:
         node = pending_nodes.pop()
         if isinstance(node, dict):
+            displacement = node.pop('_artifact_displacement', None)
+            if displacement:
+                from app.services.artifact_area import publish_moves
+                publish_moves(location_id, [displacement])
             revealed = node.get('revealed_anomaly')
             if isinstance(revealed,dict):
                 if revealed.get('object_id'):

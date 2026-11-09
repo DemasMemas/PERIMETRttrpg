@@ -55,10 +55,10 @@ def unarmed_damage(data, strength_bonus):
     return max(25, 15 * strength_bonus) if wrapped else max(10, 10 * strength_bonus)
 
 
-def night_vision_modifier(data, stat):
+def night_vision_modifier(data, stat, *, jammed_by=None):
     from app.services.combat import CombatService
     from app.services.weapon_modules import active_nvg_module
-    module = active_nvg_module(data)
+    module = active_nvg_module(data,jammed_by=jammed_by)
     if module is None:
         return 0
     attrs = CombatService._template_attributes(module)
@@ -67,12 +67,12 @@ def night_vision_modifier(data, stat):
     return -abs(CombatService._coerce_float(value, 0))
 
 
-def darkness_modifier(data, stat):
+def darkness_modifier(data, stat, *, jammed_by=None):
     """Численный штраф темноты; слух и прочие причины помехи не затрагиваются."""
     from app.services.combat import CombatService, character_passives
     from app.services.weapon_modules import uses_nvg
     if character_passives(data)['no_darkness_penalty']:return 0
-    if uses_nvg(data):return night_vision_modifier(data,stat)
+    if uses_nvg(data,jammed_by=jammed_by):return night_vision_modifier(data,stat,jammed_by=jammed_by)
     bonus_stat='darkness_awareness' if stat=='awareness_penalty' else 'darkness_accuracy'
     return -5+CombatService._consumable_stat_value_bonus(data,bonus_stat)
 

@@ -161,11 +161,13 @@ def _receiver(host):
 
 def _radio(character,pda,host,location_id=None,*,source_position=None,devices=None):
     from app.services.pda_network import registry,blocked,distance,mods
+    from app.services.artifact_jamming import for_position,lobby_sources
     source=source_position if source_position is not None else _position(character,location_id);target=_receiver(host)
     if not source or not target:return False
     devices=devices if devices is not None else registry(character.lobby_id,location_id)
-    sender={'character':character,'item':pda,'position':source,'mods':mods(pda)}
-    receiver={'character':character,'item':{},'position':target,'mods':set()}
+    jammers=lobby_sources(character.lobby_id)
+    sender={'character':character,'item':pda,'position':source,'mods':mods(pda),'jammed_by':for_position(source,jammers)}
+    receiver={'character':character,'item':{'electronic':True},'position':target,'mods':set(),'jammed_by':for_position(target,jammers)}
     return not blocked(sender,devices) and not blocked(receiver,devices) and distance(source,target)<=250+1e-7
 
 
@@ -206,7 +208,9 @@ def prepare(actor,data,payload,user_id):
     character=actor.character
     if operation!='disarm':
         from app.services.artifact_effects import require_device_available
-        require_device_available(data,{'name':'Электронное устройство управления','attributes':{'device_kind':'timer'}})
+        from app.services.artifact_jamming import for_character
+        require_device_available(data,{'name':'Электронное устройство управления','attributes':{'device_kind':'timer'}},
+            jammed_by=for_character(character,actor=actor if getattr(actor,'location_id',None) else None))
     if operation=='disarm' and payload.get('attachment_id'):
         host,path,item=_find(character.lobby_id,payload['attachment_id']);local=host['local']
         if host['carrier']:
@@ -232,6 +236,9 @@ def prepare(actor,data,payload,user_id):
         if not _radio(character,pda,host,getattr(actor,'location_id',None)):raise ValidationError('Нет связи с зарядом: дальность до 250 м, возможны помехи')
         return {'operation':operation,'action_points':cost,'host':host,'path':path,'item':item}
     item=_get(data,payload.get('item_path'),payload.get('item_id'))
+    if operation!='disarm':
+        from app.services.artifact_effects import require_device_available
+        require_device_available(data,item)
     if operation=='bind':
         if kind(item,character.lobby_id)!='remote_detonator':raise ValidationError('Выберите дистанционный взрыватель')
         pda=_get(data,payload.get('pda_path'),payload.get('pda_id'))
@@ -242,6 +249,7 @@ def prepare(actor,data,payload,user_id):
         if not is_explosive and (kind(item,character.lobby_id) or not switchable(item)):raise ValidationError('Выберите взрывчатку, гранату или включаемый прибор')
         if item.get('controllerState',{}).get('kind') in {'remote_detonator','timer'}:raise ValidationError('Взрыватель уже установлен')
         controller=_get(data,payload.get('controller_path'),payload.get('controller_id'));controller_kind=kind(controller,character.lobby_id)
+        require_device_available(data,controller)
         if not controller_kind:raise ValidationError('Выберите дистанционный взрыватель или таймер')
         if controller_kind=='remote_detonator' and not is_explosive:raise ValidationError('Дистанционный взрыватель устанавливается на взрывчатку')
         if controller_kind=='remote_detonator' and not (controller.get('controllerState') or {}).get('paired_pda_id'):
@@ -421,20 +429,31 @@ def operate(character_id,user_id,payload):
     return character,result
 
 
+def _running_timers(lobby_id,location_id=None):
+    from app.services.artifact_jamming import for_position,lobby_sources
+    from app.services.electronics import burned
+    jammers=None
+    for host in _host_items(lobby_id):
+        timers=[item for _,item in host['items'] if (item.get('controllerState') or {}).get('kind')=='timer'
+                and item['controllerState'].get('armed') and not burned(item)]
+        if not timers:continue
+        if jammers is None:jammers=lobby_sources(lobby_id)
+        position=_receiver(host) if location_id or jammers else None
+        if location_id and (not position or position['location_id']!=location_id):continue
+        if for_position(position,jammers):continue
+        yield host,timers
+
+
 def advance(lobby_id,seconds,location_id=None):
     """Время устройства идёт у всех хозяев, независимо от участия персонажа в ходе."""
     if seconds<=0 or not enabled():return []
     due=[]
-    for host in _host_items(lobby_id):
-        position=_receiver(host)
-        if location_id and (not position or position['location_id']!=location_id):continue
-        changed=False
-        for path,item in host['items']:
-            state=item.get('controllerState') or {}
-            if state.get('kind')!='timer' or not state.get('armed'):continue
-            state['remaining_seconds']=max(0,state.get('remaining_seconds',0)-seconds);changed=True
+    for host,timers in _running_timers(lobby_id,location_id):
+        for item in timers:
+            state=item['controllerState']
+            state['remaining_seconds']=max(0,state.get('remaining_seconds',0)-seconds)
             if state['remaining_seconds']==0:due.append(state['id'])
-        if changed:_save(host)
+        _save(host)
     db.session.flush()
     results=[]
     for identity in due:
@@ -444,8 +463,8 @@ def advance(lobby_id,seconds,location_id=None):
 
 def next_due(lobby_id,seconds):
     if not enabled():return seconds
-    return min([seconds,*[max(.001,item['controllerState'].get('remaining_seconds',0)) for host in _host_items(lobby_id)
-        for _,item in host['items'] if (item.get('controllerState') or {}).get('kind')=='timer' and item['controllerState'].get('armed')]])
+    return min([seconds,*[max(.001,item['controllerState'].get('remaining_seconds',0))
+        for _,timers in _running_timers(lobby_id) for item in timers]])
 
 
 def publish(lobby_id,result,*,after_commit=False):

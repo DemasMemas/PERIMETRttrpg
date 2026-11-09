@@ -125,18 +125,22 @@ def run(character_id,user_id,payload):
         weather=at_character(active.location,active) if active else weather_profile(actor.lobby.weather_settings)
         darkness=CombatService._is_dark_at_character(active.location,active) if active and path in {'skills.physical.awareness.visual','skills.physical.shooting','skills.other.stealth'} else world_is_dark(actor.lobby.game_time_minutes)
         light_modifier=0
+        jammed_by=None
+        if path in {'skills.physical.awareness.visual','skills.physical.shooting'}:
+            from app.services.artifact_jamming import for_character
+            jammed_by=for_character(actor,actor=active)
         if active and path in {'skills.physical.awareness.visual','skills.physical.shooting'}:
             from app.services.portable_lights import illumination
             from app.services.weapon_modules import uses_nvg
             light=illumination(active)
             if light['lit']:
                 darkness=False
-                if light['base_dark'] and not uses_nvg(data):
+                if light['base_dark'] and not uses_nvg(data,jammed_by=jammed_by):
                     light_modifier=-(light['penalty'] or 0)
                     roll_bonus+=light_modifier
         if light_modifier:modifiers['rules'].append(f'Переносной свет: {light_modifier:+d}')
         check=CombatService._narrative_skill_check(data,path,advantage=modifiers['advantage'],forced_disadvantage=modifiers['disadvantage'],
-            charisma_level_delta=modifiers['charisma_level'],roll_bonus=roll_bonus,darkness=darkness,weather=weather)
+            charisma_level_delta=modifiers['charisma_level'],roll_bonus=roll_bonus,darkness=darkness,weather=weather,jammed_by=jammed_by)
         check['illumination_modifier']=light_modifier
         if check.get('weather_modifier'):modifiers['rules'].append(f"Погода на улице: {check['weather_modifier']:+d}")
         if check.get('weather_disadvantage'):modifiers['rules'].append('Ливень: Помеха')

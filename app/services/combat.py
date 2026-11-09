@@ -15,7 +15,7 @@ from app.models.templates import ItemTemplate
 from app.services.exceptions import NotFoundError, PermissionDenied, ValidationError
 from app.services.effects import health_blocks_new_stress, advance_timed_effects, apply_effect_to_health, apply_expired_effects_to_health, apply_periodic_effects_to_health, normalize_character_effects, normalize_effect_list, sync_health_derived_statuses, tick_effects
 from app.services.artifact_effects import artifact_passive_profile,incoming_thermal_damage
-from app.services.artifact_special import consume_heavy_hit, effective_pain, forecast_accuracy, has_daylight_vision, record_damage
+from app.services.artifact_special import GRAVITY_HIT, HEAVY_HIT, consume_prepared_hit, effective_pain, forecast_accuracy, has_daylight_vision, record_damage
 from app.services.magazine import validate_magazine_selection, install_magazine
 from app.services.deferred_action import (
     durable_combat_action, snapshot_action_arguments, remember_action,
@@ -2422,7 +2422,7 @@ class CombatService:
         )
 
     @staticmethod
-    def _narrative_skill_check(character_data, skill_path, advantage=False, darkness=False,roll_bonus=0,forced_disadvantage=False,charisma_level_delta=0,weather=None):
+    def _narrative_skill_check(character_data, skill_path, advantage=False, darkness=False,roll_bonus=0,forced_disadvantage=False,charisma_level_delta=0,weather=None, *, jammed_by=None):
         if skill_path not in CombatService.NARRATIVE_SKILLS:
             raise ValidationError("Unknown skill")
         from app.services.brigadier_order import consume
@@ -2484,10 +2484,10 @@ class CombatService:
                     equipment_modifier += CombatService._consumable_stat_value_bonus(character_data,'light_awareness')
         from app.services.weapon_modules import uses_nvg
         from app.services.equipment_passives import darkness_modifier
-        nvg = uses_nvg(character_data)
+        nvg = uses_nvg(character_data,jammed_by=jammed_by)
         if darkness and (awareness_mode == 'visual' or skill_path == 'skills.physical.shooting'):
             equipment_modifier += darkness_modifier(character_data,
-                'awareness_penalty' if awareness_mode == 'visual' else 'accuracy_penalty')
+                'awareness_penalty' if awareness_mode == 'visual' else 'accuracy_penalty',jammed_by=jammed_by)
         weather=weather or {}
         weather_modifier=weather.get('visual_awareness' if awareness_mode=='visual' else 'awareness',0) if skill_path=='skills.physical.awareness' else weather.get('accuracy',0) if skill_path=='skills.physical.shooting' else 0
         weather_disadvantage=weather.get('awareness_disadvantage',False) if skill_path=='skills.physical.awareness' else weather.get('accuracy_disadvantage',False) if skill_path=='skills.physical.shooting' else False
@@ -8746,6 +8746,13 @@ class CombatService:
             result.update(zone=zone,base_damage=0,damage=0,armor_damage=[],
                           bleeding_check=None,bleedings=[],additional_traumas=[],non_damaging_round=True)
             return result
+        prepared_hit = consume_prepared_hit(attacker_data) if melee else None
+        if prepared_hit:
+            flag_modified(attacker.character, 'data')
+            result['artifact_hit'] = prepared_hit
+        if prepared_hit == GRAVITY_HIT:
+            zone = 'chest'
+            profile = {'damage':100, 'melee_damage_type':'crushing', 'armor_piercing':0, 'weight':profile.get('weight', 0)}
         head_impact_roll = random.randint(1, 20) if zone == 'head' else None
         from app.services.prostheses import hit_part
         limb_hit=hit_part(target_data,zone)
@@ -8771,10 +8778,9 @@ class CombatService:
                     for slot in (pouch.get('attributes') or {}).get('slots') or [])
                 for pouch in vest.get('pouches') or []):
                 plate_kwargs={'plate_side':'back' if CombatService._is_behind(attacker,target) else 'front'}
-        ignores_armor = melee and consume_heavy_hit(attacker_data)
+        ignores_armor = prepared_hit == HEAVY_HIT
         if ignores_armor:
             armor, armor_layers = 0, []
-            flag_modified(attacker.character, 'data')
             result['ignores_armor'] = True
         else:
             armor, armor_layers = CombatService._target_armor(armor_target_data, zone,
@@ -8979,7 +8985,7 @@ class CombatService:
                 health.get('zones') or {}
             ).get({'left_arm': 'leftArm', 'right_arm': 'rightArm', 'left_leg': 'leftLeg', 'right_leg': 'rightLeg'}.get(zone, zone), {}).get('current'),
         })
-        if melee and result.get('hit') and not (limb_hit and limb_hit['mechanical']):
+        if melee and prepared_hit != GRAVITY_HIT and result.get('hit') and not (limb_hit and limb_hit['mechanical']):
             CombatService._apply_mutant_melee_hit_effects(
                 attacker, target, attack_type, final_damage, result,
             )
@@ -8987,6 +8993,11 @@ class CombatService:
         if not melee:
             result.update(shotgun_effects(attacker,target,weapon,profile,zone,zone_before,final_damage))
         after_kill(attacker,target,was_alive)
+        if prepared_hit == GRAVITY_HIT:
+            from app.services.artifact_motion import push
+            displacement = push(attacker, target)
+            if displacement:
+                result['_artifact_displacement'] = displacement
         if not melee and 'live_shield_result' in locals() and live_shield_result:
             result.update({
                 'live_shield_hit': True,
@@ -11655,7 +11666,7 @@ class CombatService:
         return loc_char
 
     @staticmethod
-    def _serialize_character(loc_char, current_turn_id=None, combat_state=None, *, scene_objects=None, light_actors=None):
+    def _serialize_character(loc_char, current_turn_id=None, combat_state=None, *, scene_objects=None, light_actors=None, jammers=None):
         from app.services.character_rules import allied_ids
         from app.services.character_jump import balance_state
         from app.services.weapon_grip import hands as grip_hands,secondary_index
@@ -11842,9 +11853,9 @@ class CombatService:
             'drawn_weapon_index': loc_char.drawn_weapon_index,
             'weapon_grip_hands': grip_hands(data),
             'secondary_weapon_index': secondary_index(loc_char),
-            'portable_lights': ready_sources(loc_char,objects=scene_objects),
+            'portable_lights': ready_sources(loc_char,objects=scene_objects,jammers=jammers),
             'artifact_daylight_vision': has_daylight_vision(data),
-            'portable_illumination': illumination(loc_char,actors=light_actors,objects=scene_objects),
+            'portable_illumination': illumination(loc_char,actors=light_actors,objects=scene_objects,jammers=jammers),
             'aimed_target_character_id': loc_char.aimed_target_character_id,
             'aimed_weapon_index': loc_char.aimed_weapon_index,
             'aim_accuracy_bonus': max(0, CombatService._coerce_int(loc_char.aim_accuracy_bonus, 0)),
@@ -12734,7 +12745,9 @@ class CombatService:
         # Один снимок геометрии на сборку ответа, без кеша между действиями.
         scene_objects=LocationObject.query.filter_by(location_id=location.id).all()
         from app.services.portable_lights import bindings, ground_sources
+        from app.services.artifact_jamming import local_sources
         light_actors=[item for item in characters if item.character and bindings(item.character.data)]
+        jammers=local_sources(location.id,characters)
 
         return {
             'location_id': location.id,
@@ -12757,14 +12770,14 @@ class CombatService:
                 current_character,
                 current_turn_id=state.current_location_character_id,
                 combat_state=state,
-                scene_objects=scene_objects,light_actors=light_actors,
+                scene_objects=scene_objects,light_actors=light_actors,jammers=jammers,
             ) if current_character else None,
             'characters': [
                 CombatService._serialize_character(
                     item,
                     current_turn_id=state.current_location_character_id,
                     combat_state=state,
-                    scene_objects=scene_objects,light_actors=light_actors,
+                    scene_objects=scene_objects,light_actors=light_actors,jammers=jammers,
                 )
                 for item in ordered_characters
             ],
@@ -14855,9 +14868,11 @@ class CombatService:
                 difficulty += CombatService._equipment_accuracy_penalty(data)
                 from app.services.weapon_modules import uses_nvg
                 from app.services.equipment_passives import darkness_modifier
+                from app.services.artifact_jamming import for_actor
+                jammed_by=for_actor(character)
                 darkness = not has_daylight_vision(data) and CombatService._is_dark_at_position(location, impact_x, impact_y)
                 if darkness:
-                    difficulty -= darkness_modifier(data, 'accuracy_penalty')
+                    difficulty -= darkness_modifier(data, 'accuracy_penalty',jammed_by=jammed_by)
                 difficulty += launcher_strength['accuracy_penalty']
                 difficulty += CombatService._coerce_int(
                     launcher_jam.get('accuracy_penalty') if launcher_jam else 0,
@@ -14874,7 +14889,7 @@ class CombatService:
                     or launcher_movement['disadvantage']
                     or CombatService._has_roll_disadvantage(
                         data, 'skills.physical.shooting',
-                        darkness=not uses_nvg(data) and darkness,
+                        darkness=not uses_nvg(data,jammed_by=jammed_by) and darkness,
                     )
                     or (launcher_jam and launcher_jam.get('shooting_disadvantage'))
                 )
@@ -16266,6 +16281,12 @@ class CombatService:
             movement_modifiers['difficulty_penalty'] += CombatService._target_evasion_trait_penalty(range_target)
             from app.services.portable_lights import shooting as portable_shooting
             portable_profile=portable_shooting(character,range_target,fire_mode) if range_target else {'lit':False,'accuracy':0,'aimed_blocked':False}
+            if range_target:
+                jammed_by=portable_profile.get('jammed_by')
+            else:
+                from app.services.artifact_jamming import for_actor
+                jammed_by=for_actor(character)
+            nvg_active=uses_nvg(data,jammed_by=jammed_by)
             if portable_profile['aimed_blocked']:
                 raise ValidationError('Нельзя прицельно стрелять через ПНВ в направленный на вас свет')
             daylight_vision = has_daylight_vision(data)
@@ -16273,11 +16294,11 @@ class CombatService:
             base_shooting_disadvantage = (
                 CombatService._has_roll_disadvantage(
                     data, 'skills.physical.shooting',
-                    darkness=not portable_profile['lit'] and not uses_nvg(data) and target_in_darkness,
+                    darkness=not portable_profile['lit'] and not nvg_active and target_in_darkness,
                 )
                 or movement_modifiers['disadvantage']
             )
-            if fire_mode=='aimed' and installed(weapon,'night_scope') and not uses_nvg(data):
+            if fire_mode=='aimed' and not jammed_by and installed(weapon,'night_scope') and not nvg_active:
                 # Прицел снимает только темноту, остальные причины помехи сохраняются.
                 base_shooting_disadvantage=(CombatService._has_roll_disadvantage(data,'skills.physical.shooting',darkness=False)
                                             or movement_modifiers['disadvantage'])
@@ -16402,7 +16423,7 @@ class CombatService:
                 weapon.get('accuracy', (weapon.get('attributes') or {}).get('accuracy')), 0
             )
             module_accuracy=conditional_accuracy(weapon,character_data=data,fire_mode=fire_mode,distance=target_distance,
-                                                 posture=CombatService._posture_key(character),nvg=uses_nvg(data))
+                                                 posture=CombatService._posture_key(character),nvg=nvg_active,jammed_by=jammed_by)
             weapon_accuracy=weapon_stat(weapon,'accuracy',weapon_accuracy)+module_accuracy
             if fire_mode=='aimed':weapon_accuracy+=modification_rule(weapon,'aimed_accuracy')
             if attack_details.get('weapon_braced') or strength_profile.get('ignored_by_bipod') or attack_details.get('aim_accuracy_bonus'):
@@ -16418,15 +16439,15 @@ class CombatService:
                 attack_details['shooting_disadvantage']=attack_details['base_shooting_disadvantage']=True
             if not daylight_vision:
                 hit_difficulty-=portable_profile['accuracy']
-            if portable_profile['lit'] and target_in_darkness and not uses_nvg(data):
+            if portable_profile['lit'] and target_in_darkness and not nvg_active:
                 hit_difficulty+=0 if portable_profile.get('improved') else 3
             attack_details['portable_light']=portable_profile
             hit_difficulty -= weapon_accuracy_bonus(data,weapon)
             hit_difficulty += CombatService._equipment_accuracy_penalty(data)
             if not portable_profile['lit'] and target_in_darkness:
                 from app.services.equipment_passives import darkness_modifier
-                if not (fire_mode=='aimed' and installed(weapon,'night_scope') and not uses_nvg(data)):
-                    hit_difficulty -= darkness_modifier(data, 'accuracy_penalty')
+                if not (fire_mode=='aimed' and not jammed_by and installed(weapon,'night_scope') and not nvg_active):
+                    hit_difficulty -= darkness_modifier(data, 'accuracy_penalty',jammed_by=jammed_by)
             hit_difficulty += strength_profile['accuracy_penalty']
             from app.services.weapon_grip import firearm_penalty
             pair_penalty=firearm_penalty(character,weapon)
@@ -17201,6 +17222,7 @@ class CombatService:
                 flag_modified(character.character, 'data')
             if action_key == 'narrative_action' and narrative_action_details:
                 if narrative_action_details['roll_required']:
+                    from app.services.artifact_jamming import for_actor
                     help_bonus = CombatService._consume_help_advantage(
                         character, narrative_action_details['skill_path']
                     )
@@ -17211,6 +17233,7 @@ class CombatService:
                         darkness=CombatService._is_dark_at_character(location, character),
                         roll_bonus=CombatService._coerce_int((help_bonus or {}).get('roll_bonus'),0),
                         weather=weather_at(location,character),
+                        jammed_by=for_actor(character),
                     )
                     if help_bonus:
                         narrative_action_details['help'] = help_bonus
@@ -18328,7 +18351,7 @@ class CombatService:
                 CombatService.end_turn(location_id,user_id,location_character_id=character.id)
             state_payload = (
                 CombatService._serialize_state(location, state) if state else
-                CombatService.get_state(location_id, user_id) if anomaly_changed else None
+                CombatService._movement_idle_snapshot(location_id, user_id, anomaly_changed)
             )
             return character, climb_cost, state_payload
 
@@ -18660,11 +18683,18 @@ class CombatService:
 
         state_payload = (
             CombatService._serialize_state(location, state) if state else
-            CombatService.get_state(location_id, user_id) if anomaly_changed or transported_body else None
+            CombatService._movement_idle_snapshot(location_id, user_id, anomaly_changed or transported_body)
         )
         if getattr(character,'_trap_end_turn',False) and state and state.status=='active' and state.current_location_character_id==character.id:
             state_payload=CombatService.end_turn(location_id,user_id,location_character_id=character.id)
         return character, cost, state_payload
+
+    @staticmethod
+    def _movement_idle_snapshot(location_id, user_id, changed):
+        from app.services.artifact_jamming import local_sources
+        if changed or local_sources(location_id):
+            return CombatService.get_state(location_id, user_id)
+        return None
 
     @staticmethod
     @journaled

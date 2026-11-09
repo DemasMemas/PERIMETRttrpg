@@ -16,15 +16,17 @@ from app.services.exceptions import ValidationError
 from app.services.held_items import items as held_items
 from app.services.item_template_lookup import resolve_item_template
 from app.services.location_navigation import level_of, pose
+from app.services.explosion_geometry import distance
 
 MAGNET = 'Ферромагнит'
+POLE = 'Полюс'
 METAL_NAMES = {'металлические детали', 'метательный нож', 'метательные ножи', 'нож', 'молоток', 'кастет', 'томагавк',
                'лопатка саперная', 'кортик', 'меч', 'мультитул', 'ножницы', 'плоскогубцы', 'напильник'}
 # В исходном каталоге этим ручным гранатам не указали массу. Они входят в примеры свойства.
 LIGHT_METAL_GRENADES = {'ргд-5', 'ф-1', 'ргн', 'рго'}
 
 
-def _eligible(item, lobby_id):
+def _eligible(item, lobby_id, *, limit=1, whole_stack=False):
     from app.services.combat import CombatService
     from app.services.trade import _contains_individual_items
     if not isinstance(item, dict):
@@ -42,7 +44,7 @@ def _eligible(item, lobby_id):
     if metallic is not True or item.get('naturalWeapon') or attrs.get('natural_weapon'):
         return False
     quantity = item.get('quantity', 1)
-    if type(quantity) is not int or quantity < 1 or quantity > 1 and _contains_individual_items(item):
+    if type(quantity) is not int or quantity < 1 or quantity > 1 and not whole_stack and _contains_individual_items(item):
         return False
     single = {**item, 'category': category, 'quantity': 1}
     if single.get('weight') is None and template:
@@ -51,7 +53,7 @@ def _eligible(item, lobby_id):
     for key in ('installedMagazine', 'loadedGrenade'):
         weight += CombatService._item_total_weight(single.get(key))
     weight += sum(CombatService._item_total_weight(ammo) for ammo in single.get('fixedAmmo') or [])
-    return 0 < weight <= 1 or light_grenade and weight == 0 and single.get('weight') in (None, 0)
+    return 0 < weight <= limit or light_grenade and weight == 0 and single.get('weight') in (None, 0)
 
 
 def _hands(actor, data):
@@ -143,16 +145,15 @@ def select(actor, data, identity):
     raise ValidationError('Предмет недоступен. Выберите видимый металлический предмет заново')
 
 
-def apply(actor, data, selection):
+def _detach(item, owner, path, changes, *, whole_stack=False):
     from app.services.combat import CombatService
-    from app.services.container_transfer import put_on_ground
     from app.services.weapon_grip import remove_drawn
-    item, owner, path = selection
-    split = item.get('quantity', 1) > 1
-    affected, changes = [], {}
+    quantity = item.get('quantity', 1)
+    amount = quantity if whole_stack else 1
+    split = amount < quantity
     if isinstance(owner, LocationObject):
         props = deepcopy(owner.properties)
-        moved = CombatService._take_inventory_item({'inventory': props}, ['inventory', 'contents', path], 1)
+        moved = CombatService._take_inventory_item({'inventory': props}, ['inventory', 'contents', path], amount)
         if props['contents']:
             owner.properties = props
             changes[owner.id] = 'updated'
@@ -164,7 +165,7 @@ def apply(actor, data, selection):
         if path[0] == 'weapons':
             moved = remove_drawn(owner, target_data, path[1])
         else:
-            moved = CombatService._take_inventory_item(target_data, path, 1)
+            moved = CombatService._take_inventory_item(target_data, path, amount)
             if not split:
                 meta = target_data.setdefault('health', {}).setdefault('combatMeta', {})
                 identity = moved.get('id')
@@ -176,9 +177,18 @@ def apply(actor, data, selection):
                         meta['portableLights'] = [row for row in meta['portableLights'] if row.get('id') != identity]
         owner.character.data = target_data
         flag_modified(owner.character, 'data')
-        affected.append(owner.character_id)
     if split or not isinstance(moved.get('id'), str) or not moved['id']:
         moved['id'] = str(uuid4())
+    return moved
+
+
+def apply(actor, data, selection):
+    from app.services.combat import CombatService
+    from app.services.container_transfer import put_on_ground
+    item, owner, path = selection
+    changes = {}
+    moved = _detach(item, owner, path, changes)
+    affected = [] if isinstance(owner, LocationObject) else [owner.character_id]
     meta = (data.get('health') or {}).get('combatMeta') or {}
     reserved = int(bool(meta.get('bodyTransport') or actor.grapple_target_id))
     caught = CombatService._has_usable_free_hand(actor, reserved_hands=reserved)
@@ -192,3 +202,52 @@ def apply(actor, data, selection):
     return {'name': f'Ферромагнит · {name} {destination}', 'attracted_item': name,
             'at_feet': not caught, '_affected_character_ids': affected,
             '_object_changes': changes, '_vision_location_id': actor.location_id}
+
+
+def apply_pole(actor, data):
+    from app.services.artifact_area import destroy_electronics, group_characters, location_members
+    from app.services.container_transfer import put_items_on_ground
+    owner = actor.character
+    owner.data = data
+    if not isinstance(actor, LocationCharacter):
+        group = group_characters(owner)
+        affected, _, _ = destroy_electronics(actor, group or [owner], [], radius=10, ignore_protection=True)
+        return {'attracted_count':0, '_affected_character_ids':affected}
+
+    objects = LocationObject.query.filter_by(location_id=actor.location_id).all()
+    people = location_members(actor, 10, objects=objects)
+    affected, changes, trap_ids = destroy_electronics(actor, [person.character for person in people], objects,
+                                            radius=10, ignore_protection=True)
+    affected = set(affected)
+    items = []
+    level = actor.floor_level or 0
+    feet = (int(actor.pos_x + .5), int(actor.pos_y + .5), level)
+    for obj in objects:
+        props = obj.properties or {}
+        if not (obj.type == 'ground_item' or props.get('is_ground_item')) or props.get('locked') or props.get('gm_hidden'):
+            continue
+        obj_level = level_of(obj)
+        if (obj.tile_x, obj.tile_y, obj_level) == feet:
+            continue
+        x, y, *_ = pose(obj)
+        point = SimpleNamespace(pos_x=x-.5, pos_y=y-.5, floor_level=obj_level)
+        if distance(actor.location, objects, actor.pos_x, actor.pos_y, level, point) > 10 + 1e-9:
+            continue
+        for index, item in reversed(list(enumerate(props.get('contents') or []))):
+            if _eligible(item, owner.lobby_id, limit=5, whole_stack=True):
+                items.append(_detach(item, obj, index, changes, whole_stack=True))
+    for person in people:
+        while True:
+            source = next(((path,item) for path,item in _hands(person, person.character.data or {})
+                           if _eligible(item, owner.lobby_id, limit=5, whole_stack=True)), None)
+            if source is None:
+                break
+            path, item = source
+            items.append(_detach(item, person, path, changes, whole_stack=True))
+            affected.add(person.character_id)
+    if items:
+        ground, created = put_items_on_ground(actor.location, actor.pos_x, actor.pos_y, level, items)
+        changes[ground.id] = 'created' if created and changes.get(ground.id) != 'deleted' else 'updated'
+    return {'attracted_count':sum(item.get('quantity', 1) for item in items),
+            '_affected_character_ids':sorted(affected), '_object_changes':changes, '_trap_ids':trap_ids,
+            '_vision_location_id':actor.location_id}

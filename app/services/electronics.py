@@ -35,11 +35,11 @@ def state(item):
     return {'on':saved.get('on') is True,'remaining_seconds':max(0,min(DOSIMETER_SECONDS,remaining))}
 
 
-def active(data):
+def active(data, *, jammed_by=None):
     from app.services.portable_lights import walk
     from app.services.artifact_effects import device_block_reason
     return any(is_dosimeter(item) and state(item)['on'] and state(item)['remaining_seconds']>0
-        and not device_block_reason(data,item) for _,item in walk(data,True))
+        and not device_block_reason(data,item,jammed_by=jammed_by) for _,item in walk(data,True))
 
 
 def advance(data,seconds):
@@ -150,7 +150,7 @@ def electric_protection(data,item):
         and (rule(armor,'electronics_insulation') or any(mod.get('ruleId')=='armor-d14' for mod in installed(armor))))
 
 
-def expose_pdas(data,damage,*,forced=False):
+def expose_pdas(data,damage,*,forced=False,ignore_protection=False):
     """Разовый урон электроаномалии до защиты тела; ОЗ устройства не вводятся."""
     from app.services.portable_lights import walk,definition,pda_state
     from app.services.equipment_modifications import installed
@@ -161,7 +161,7 @@ def expose_pdas(data,damage,*,forced=False):
         status=pda_state(item)
         if status.get('broken'):continue
         mods={mod['ruleId'] for mod in installed(item)}
-        protected=electric_protection(data,item);recharged=False
+        protected=not ignore_protection and electric_protection(data,item);recharged=False
         if forced:
             broken=not protected
         elif 'pda-b23' in mods:
@@ -179,20 +179,22 @@ def expose_pdas(data,damage,*,forced=False):
     return result
 
 
-def expose_devices(data,damage,*,forced=False):
+def expose_devices(data,damage,*,forced=False,ignore_protection=False):
     """Порог относится к исходному разовому урону электроаномалии, не защите тела."""
     from app.services.portable_lights import definition,bindings
-    result=expose_pdas(data,damage,forced=forced)
+    from app.services.artifact_effects import is_electronic
+    result=expose_pdas(data,damage,forced=forced,ignore_protection=ignore_protection)
     if damage<=200 and not forced:return result
     for path,item in items(data):
         kind=definition(item);attrs=item.get('attributes') or {};name=str(item.get('name') or '').strip().casefold()
         electronic=(kind in {'hand','improved','head','module','dosimeter'} or item.get('slotType')=='nvg'
             or attrs.get('night_vision') or item.get('category')=='detector' or attrs.get('type') in {'anomaly','artifact','radio'}
             or attrs.get('device_kind')=='radio' or name in {'рация','радиостанция','радио'}
-            or forced and kind!='pda' and (switchable(item) or attrs.get('electronic') is True
-                or attrs.get('device_kind') in {'timer','remote_detonator'}))
-        if not electronic or burned(item) or electric_protection(data,item):continue
+            or forced and kind!='pda' and is_electronic(item))
+        if not electronic or burned(item) or not ignore_protection and electric_protection(data,item):continue
         item['electronicsState']={'burned':True}
+        if (item.get('controllerState') or {}).get('kind') in {'timer','remote_detonator'}:
+            item['controllerState']['armed']=False
         if kind=='dosimeter':item['deviceState']={**state(item),'on':False}
         if item.get('slotType')=='nvg' or attrs.get('night_vision'):item['active']=item['enabled']=False
         if 'isActive' in attrs:attrs['isActive']=False

@@ -81,7 +81,7 @@ def weapon_stat(weapon,stat,base):
     return value
 
 
-def active_nvg_module(data):
+def active_nvg_module(data, *, jammed_by=None):
     from app.services.artifact_effects import device_block_reason
     equipment=(data or {}).get('equipment') or {}
     helmet=equipment.get('helmet') if isinstance(equipment,dict) else None
@@ -94,20 +94,20 @@ def active_nvg_module(data):
     return next((m for m in modules if isinstance(m,dict)
         and (m.get('slotType')=='nvg' or module_attributes(m).get('night_vision'))
         and m.get('active',True) and m.get('enabled',True) and not m.get('raised',False)
-        and (m.get('lightPower') or {}).get('uses_left',10)>0 and not device_block_reason(data,m)),None)
+        and (m.get('lightPower') or {}).get('uses_left',10)>0 and not device_block_reason(data,m,jammed_by=jammed_by)),None)
 
 
-def uses_nvg(data):
-    return active_nvg_module(data) is not None
+def uses_nvg(data, *, jammed_by=None):
+    return active_nvg_module(data,jammed_by=jammed_by) is not None
 
 
-def conditional_accuracy(weapon,*,fire_mode,distance,posture,nvg=False,character_data=None):
+def conditional_accuracy(weapon,*,fire_mode,distance,posture,nvg=False,character_data=None,jammed_by=None):
     from app.services.artifact_effects import device_block_reason
     result=0
     for module in (weapon or {}).get('installedModules') or []:
         attrs=module_attributes(module)
         if fire_mode=='aimed' and distance is not None and distance<10:result+=attrs.get('close_aimed_accuracy',0)
-        if attrs.get('laser') and (fire_mode=='unaimed' or nvg) and not device_block_reason(character_data or {},{**module,'attributes':attrs}):result+=1
+        if attrs.get('laser') and (fire_mode=='unaimed' or nvg) and not device_block_reason(character_data or {},{**module,'attributes':attrs},jammed_by=jammed_by):result+=1
         if posture=='sitting':result+=attrs.get('sitting_accuracy',0)
     return result
 

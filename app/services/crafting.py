@@ -54,7 +54,8 @@ def complete_ready_book(character):
     data=deepcopy(source)
     state=data['crafting']
     from app.services.portable_lights import pda_ready
-    if not pda_ready(data) or not readable_book(character,data,job):
+    from app.services.artifact_jamming import for_character
+    if not pda_ready(data,jammed_by=for_character(character)) or not readable_book(character,data,job):
         return False
     learned={key:job[key] for key in ('book_kind','book_subject','skill_path','name')}
     library=state.setdefault('library',[])
@@ -731,7 +732,8 @@ def operate(character_id,user_id,payload):
         attrs=(template.attributes or {}) if template else {}
         if attrs.get('book_kind') not in {'skill','equipment'}:raise ValidationError('Выберите электронную книгу')
         from app.services.portable_lights import pda_ready
-        if not pda_ready(data):raise ValidationError('Для электронной книги нужен включённый заряженный КПК')
+        from app.services.artifact_jamming import for_character
+        if not pda_ready(data,jammed_by=for_character(character)):raise ValidationError('Для электронной книги нужен работающий заряженный КПК')
         item.setdefault('id',str(uuid4()));path=payload.get('skill_path')
         if attrs['book_kind']=='skill':
             fixed_path=attrs.get('book_skill_path')
@@ -801,7 +803,8 @@ def operate(character_id,user_id,payload):
         if success:
             if not readable_book(character,data,job):raise ConflictError('Книга больше не доступна')
             from app.services.portable_lights import pda_ready
-            if not pda_ready(data):raise ConflictError('КПК выключен или разряжен')
+            from app.services.artifact_jamming import for_character
+            if not pda_ready(data,jammed_by=for_character(character)):raise ConflictError('КПК недоступен')
             learned={key:job[key] for key in ('book_kind','book_subject','skill_path','name')}
             library=state.setdefault('library',[])
             if not any(e['book_kind']==learned['book_kind'] and e.get('skill_path')==learned['skill_path'] and e.get('book_subject')==learned['book_subject'] for e in library):library.append(learned)

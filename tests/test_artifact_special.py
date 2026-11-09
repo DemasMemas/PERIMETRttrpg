@@ -924,6 +924,112 @@ def test_heavy_attack_pays_ap_when_armed_and_only_spends_on_melee_hit(grenade_ga
     assert snapshot(actor.character.data)[0]['remaining_uses'] == 1
 
 
+def test_gravity_hit_prepares_spends_on_hit_and_replaces_attack_with_chest_damage(grenade_game, monkeypatch):
+    actor, target = grenade_game['actor_location'], grenade_game['target_location']
+    actor.character.data = ready(name='Ядро тяготения')
+    target.pos_x, target.pos_y = actor.pos_x + 1, actor.pos_y
+    target.character.data = {'health':{'current':700, 'max':700, 'zones':{'chest':{'current':150,'max':150}}}}
+    db.session.commit()
+    monkeypatch.setattr(CombatService, '_target_armor', lambda *args, **kwargs: (5, []))
+    action = {'item_id':'reactive-artifact', 'operation_id':'prepare-gravity'}
+    result = CombatService.perform_action(actor.location_id, grenade_game['lobby'].gm_id, actor.id, 'artifact_special', attribute_choice=action)
+    assert result['narrative_action']['action_points'] == 1 and actor.action_points_current == 19
+    miss = CombatService._resolve_attack(target, actor, {'hit_difficulty':12}, melee=True, attack_type='Удар кулаком', forced_roll=1)
+    assert not miss['hit'] and snapshot(actor.character.data)[0]['remaining_uses'] == 2
+    old_x = target.pos_x
+    hit = CombatService._resolve_attack(target, actor, {'hit_difficulty':12}, melee=True, attack_type='Удар кулаком', aimed_zone='head', forced_roll=20)
+    assert hit['hit'] and hit['artifact_hit'] == 'Ядро тяготения'
+    assert (hit['zone'], hit['base_damage'], hit['armor']) == ('chest', 100, 5)
+    assert hit['crushing_non_penetration'] and 0 < hit['damage'] <= 100
+    assert target.pos_x == pytest.approx(old_x+5)
+    assert target.character.data['health']['zones']['chest']['current'] == 150-hit['damage']
+    assert snapshot(actor.character.data)[0]['remaining_uses'] == 1
+
+
+def test_pole_pulls_all_exposed_metal_up_to_five_kg_and_burns_electronics(grenade_game):
+    actor, target = grenade_game['actor_location'], grenade_game['target_location']
+    actor.character.data = ready(name='Полюс')
+    actor.character.data['inventory'] = {'pockets':[{'id':'own-pda','name':'КПК','category':'device',
+        'attributes':{'anomaly_immunities':['electric']}}]}
+    target.pos_x, target.pos_y = actor.pos_x + 4, actor.pos_y
+    target.drawn_weapon_index = 0
+    target.character.data = {'health':{'current':700,'max':700},'inventory':{'pockets':[
+        {'id':'pocket-metal','name':'Сталь','weight':1,'metallic':True},
+        {'id':'target-pda','name':'КПК','category':'device'}]},
+        'weapons':[{'id':'held-rifle','name':'Винтовка','category':'weapon','weight':5}], 'activeWeaponIndex':0}
+    pile = LocationObject(location_id=actor.location_id, tile_x=7, tile_y=5, type='ground_item', properties={'contents':[
+        {'id':'stack','name':'Сталь','weight':5,'metallic':True,'quantity':2},
+        {'id':'too-heavy','name':'Тяжёлая сталь','weight':5.01,'metallic':True},
+        {'id':'glass','name':'Стекло','weight':.5,'metallic':False},
+    ]})
+    chest = LocationObject(location_id=actor.location_id, tile_x=8, tile_y=5, type='chest', properties={'locked':True,
+        'contents':[{'id':'in-box','name':'Детали','weight':1,'metallic':True}]})
+    far = LocationObject(location_id=actor.location_id, tile_x=13, tile_y=5, type='ground_item', properties={
+        'contents':[{'id':'far','name':'Железо','weight':1,'metallic':True}]})
+    db.session.add_all([pile,chest,far]); db.session.commit()
+    payload = {'item_id':'reactive-artifact','operation_id':'pole'}
+    result = execute(actor, actor.character.data, payload, grenade_game['lobby'].gm_id)
+    assert result['attracted_count'] == 3 and target.drawn_weapon_index is None
+    ground = LocationObject.query.filter_by(location_id=actor.location_id, tile_x=2, tile_y=5, type='ground_item').one()
+    assert {item['id']:item.get('quantity',1) for item in ground.properties['contents']} == {'stack':2,'held-rifle':1}
+    assert [item['id'] for item in pile.properties['contents']] == ['too-heavy','glass']
+    assert chest.properties['contents'][0]['id'] == 'in-box' and far.properties['contents'][0]['id'] == 'far'
+    metal, device = target.character.data['inventory']['pockets']
+    assert metal['id'] == 'pocket-metal' and device['pdaState']['broken']
+    assert actor.character.data['inventory']['pockets'][0]['pdaState']['broken']
+    assert execute(actor, actor.character.data, payload, grenade_game['lobby'].gm_id)['replayed']
+
+
+@pytest.mark.parametrize('name,radius', [('Железное сердце',5),('Полюс',10)])
+def test_electronic_jamming_follows_worn_artifact_and_is_reversible(grenade_game, client, auth_headers, name, radius):
+    from app.services.pda_devices import powered, registry
+    from app.services.portable_lights import ready_sources
+    actor, target = grenade_game['actor_location'], grenade_game['target_location']
+    actor.character.data = ready(name=name)
+    target.pos_x, target.pos_y = actor.pos_x+radius, actor.pos_y
+    target.character.data = {'health':{'current':700,'max':700,'combatMeta':{'portableLights':[
+        {'id':'lamp','mount':'hand','on':True},{'id':'glow','mount':'hand','on':True}]}}, 'inventory':{'pockets':[
+        {'id':'lamp','name':'Фонарик','attributes':{'portable_light':'hand'}},
+        {'id':'glow','name':'ХИС','glowState':{'remaining_seconds':600}},
+        {'id':'pda','name':'КПК','pdaState':{'on':True,'charge_percent':80}},
+    ]}}
+    db.session.commit()
+    def pda():return next(record for record in registry(actor.character.lobby_id) if record['id']=='pda')
+    assert [item['id'] for item in ready_sources(target)] == ['glow']
+    assert not powered(pda())
+    headers = auth_headers(grenade_game['target_user'])
+    response = client.get(f'/lobbies/characters/{target.character_id}/portable-lights',headers=headers)
+    assert response.status_code == 200
+    assert name in next(item for item in response.get_json()['lights'] if item['id']=='lamp')['blocked_reason']
+    target.pos_x += .05
+    db.session.commit()
+    assert {item['id'] for item in ready_sources(target)} == {'lamp','glow'}
+    assert powered(pda()) and pda()['item']['pdaState']['charge_percent'] == 80
+    target.pos_x -= .05
+    actor.character.data = {'inventory': {'pockets': [actor.character.data['equipment']['armor']['containers'][0]['item']]}}
+    db.session.commit()
+    assert {item['id'] for item in ready_sources(target)} == {'lamp','glow'} and powered(pda())
+
+
+def test_jamming_pauses_electronic_timer_without_resetting_it(grenade_game):
+    from app.services.item_controllers import advance as advance_controllers, next_due
+    actor, target = grenade_game['actor_location'], grenade_game['target_location']
+    actor.character.data = ready(name='Железное сердце')
+    target.pos_x, target.pos_y = actor.pos_x+4, actor.pos_y
+    target.character.data = {'inventory':{'pockets':[{'id':'charge','controllerState':{
+        'id':'timer-id','kind':'timer','armed':True,'remaining_seconds':30}}]}}
+    db.session.commit()
+    lobby_id = actor.character.lobby_id
+    assert next_due(lobby_id,60) == 60
+    advance_controllers(lobby_id,6,actor.location_id)
+    assert target.character.data['inventory']['pockets'][0]['controllerState']['remaining_seconds'] == 30
+    target.pos_x += 2
+    db.session.commit()
+    assert next_due(lobby_id,60) == 30
+    advance_controllers(lobby_id,6,actor.location_id)
+    assert target.character.data['inventory']['pockets'][0]['controllerState']['remaining_seconds'] == 24
+
+
 @pytest.mark.parametrize('blocked', [False, True])
 def test_plasma_cord_teleports_to_visible_point_without_opportunity_attacks(grenade_game, blocked):
     actor = grenade_game['actor_location']

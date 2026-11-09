@@ -41,7 +41,7 @@ def _position(character,location_id,groups,all_models):
     group=next((group for group in groups
         if character.id in {int(value) for value in group.member_character_ids or [] if str(value).isdigit()}),None)
     if not local and group:return {'world_x':(group.tile_x+.5)*TILE_METERS,'world_y':(group.tile_y+.5)*TILE_METERS,
-        'tile_x':group.tile_x,'tile_y':group.tile_y,'height':0,'location_id':None}
+        'tile_x':group.tile_x,'tile_y':group.tile_y,'height':0,'location_id':None,'group_id':group.id}
     local=local or (models[0] if models else None)
     if not local:return None
     from app.services.location_navigation import ground
@@ -59,6 +59,7 @@ def distance(first,last):
 
 
 def registry(lobby_id,location_id=None):
+    from app.services.artifact_jamming import for_position, position_sources
     sessions={row.character_id:account.id for row,account in db.session.query(PdaAccountLogin,PdaAccount).join(
         PdaAccount,PdaAccount.id==PdaAccountLogin.account_id).join(LobbyCharacter,LobbyCharacter.id==PdaAccountLogin.character_id).filter(LobbyCharacter.lobby_id==lobby_id).all()}
     accounts={account.id:account for account in PdaAccount.query.filter_by(lobby_id=lobby_id).all()}
@@ -66,18 +67,22 @@ def registry(lobby_id,location_id=None):
     groups=WorldGroup.query.filter_by(lobby_id=lobby_id).order_by(WorldGroup.id).all()
     all_models=LocationCharacter.query.join(LobbyCharacter,LobbyCharacter.id==LocationCharacter.character_id).filter(
         LobbyCharacter.lobby_id==lobby_id).order_by(LocationCharacter.last_action.desc(),LocationCharacter.id.desc()).all()
+    people=LobbyCharacter.query.filter_by(lobby_id=lobby_id).all()
+    def position_of(character):return _position(character,location_id,groups,all_models)
+    jammers=position_sources(people,position_of)
     result=[]
-    for character in LobbyCharacter.query.filter_by(lobby_id=lobby_id).all():
+    for character in people:
         devices=[(path,item) for path,item in walk(character.data or {}) if definition(item)=='pda'
             and item.get('quantity',1)==1 and pda_state(item)['on'] and pda_state(item)['charge_percent']>0]
         if not devices:continue
-        position=_position(character,location_id,groups,all_models)
+        position=position_of(character)
         if not position:continue
         for path,item in devices:
             account=account_for_device(character,item,accounts=accounts,legacy=sessions)
             rules=mods(item)
             result.append({'character':character,'item':item,'path':path,'position':position,'account':account,
                 'signal_id':signal_id(character,path,item),'mods':rules,
+                'jammed_by':for_position(position,jammers),
                 'range':ENHANCED_RANGE if 'pda-b10' in rules else BASE_RANGE})
     return result
 
@@ -85,14 +90,14 @@ def registry(lobby_id,location_id=None):
 def blocked(device,devices):
     from app.services.artifact_effects import device_block_reason
     character=device.get('character')
-    if character:
-        reason=device_block_reason(getattr(character,'data',None) or {},device.get('item'))
-        if reason:return reason
+    reason=device_block_reason(getattr(character,'data',None) or {},device.get('item'),jammed_by=device.get('jammed_by'))
+    if reason:return reason
     if 'pda-b5' in device['mods']:return None
     weather=device['character'].lobby.weather_settings or {}
     from app.services.weather_rules import profile
     if (weather.get('emission') or {}).get('enabled') or profile(weather)['storm']:return 'Сигнал подавлен погодой'
     if any('pda-b16' in peer['mods'] and (peer['item'].get('pdaNetwork') or {}).get('jammer_on')
+            and not device_block_reason(getattr(peer.get('character'),'data',None) or {},peer['item'],jammed_by=peer.get('jammed_by'))
             and distance(device['position'],peer['position'])<=JAMMER_RANGE+1e-7 for peer in devices):return 'Сигнал подавлен глушилкой'
     return None
 
@@ -124,6 +129,9 @@ def _source(character_id,user_id,payload,edit=False):
     devices=registry(character.lobby_id,location_id)
     source=next((entry for entry in devices if entry['signal_id']==signal_id(character,path,item)),None)
     if not source:raise ValidationError('Нет положения персонажа на карте')
+    if source.get('jammed_by'):
+        from app.services.artifact_effects import require_device_available
+        require_device_available(character.data or {},item,jammed_by=source['jammed_by'])
     return character,item,source,devices
 
 

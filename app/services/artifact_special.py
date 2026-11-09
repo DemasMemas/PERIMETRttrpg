@@ -12,7 +12,7 @@ from flask import current_app
 from app.extensions import db
 from app.models import LobbyCharacter, LocationCharacter, LocationCombatState
 from app.services.artifact_area import AREA_EFFECTS, FAN, apply as apply_area
-from app.services.artifact_magnet import MAGNET
+from app.services.artifact_magnet import MAGNET, POLE
 from app.services.artifact_motion import PULL, TELEPORT, WAVES
 from app.services.artifact_targets import ELECTRIC, SIGHT_RADIUS, electric_damage, select_electric_target
 from app.services.exceptions import ConflictError, NotFoundError, ValidationError
@@ -23,6 +23,8 @@ DAY = 86400
 HEALING = {'Ядро твари': (50, 10), 'Звезда гнили': (100, 5)}
 FALL_ARTIFACT = 'Сфера притяжения'
 HEAVY_HIT = 'Тяжесть'
+GRAVITY_HIT = 'Ядро тяготения'
+PREPARED_HITS = {HEAVY_HIT, GRAVITY_HIT}
 FORECASTS = {'Тень чужого': 10, 'Лик чужого': 20}
 RADIATION_AMPLIFIER_COST = {'Хозяин свечения': 20, 'Реактор': 50}
 PREFIX = 'artifact-special:'
@@ -227,11 +229,11 @@ def status(data, item):
     fall_reaction = item.get('name') == FALL_ARTIFACT
     electric = ELECTRIC.get(item.get('name'))
     magnet_target = item.get('name') == MAGNET
-    heavy_hit = item.get('name') == HEAVY_HIT
+    heavy_hit = item.get('name') in PREPARED_HITS
     heavy_item_id = (data.get(STATE_KEY) or {}).get('heavy_item_id')
     heavy_armed = heavy_hit and heavy_item_id is not None and any(
-        active.get('id') == heavy_item_id and active.get('name') == HEAVY_HIT for active in _equipped(data))
-    supported = item.get('name') in HEALING or item.get('name') in BUFFS or item.get('name') in AREA_EFFECTS or bool(electric) or fall_reaction or magnet_target or heavy_hit or item.get('name') in {TELEPORT, PULL, *WAVES}
+        active.get('id') == heavy_item_id and active.get('name') in PREPARED_HITS for active in _equipped(data))
+    supported = item.get('name') in HEALING or item.get('name') in BUFFS or item.get('name') in AREA_EFFECTS or bool(electric) or fall_reaction or magnet_target or heavy_hit or item.get('name') in {TELEPORT, PULL, POLE, *WAVES}
     reason = None
     if not capacity:
         reason = 'Нужно Выживание не ниже 9'
@@ -242,7 +244,7 @@ def status(data, item):
     elif not supported:
         reason = 'Применение этого свойства ещё не реализовано'
     elif heavy_armed:
-        reason = 'Подготовлена до первого попадания в ближнем бою'
+        reason = 'Удар уже подготовлен до первого попадания в ближнем бою'
     elif item.get('name') in HEALING and _number((data.get('health') or {}).get('radiation')) <= 0:
         reason = 'Нет радиации для восстановления здоровья'
     return {'item_id': item.get('id'), 'name': item.get('name'), 'supported': supported,
@@ -341,9 +343,16 @@ def execute(actor, data, payload, user_id, combat=None):
     elif item['name'] == MAGNET:
         from app.services.artifact_magnet import apply
         extra = apply(actor, data, plan['magnet_source'])
-    elif item['name'] == HEAVY_HIT:
+    elif item['name'] == POLE:
+        from app.services.artifact_magnet import apply_pole
+        extra = apply_pole(actor, data)
+        if actor.character.data is not data:
+            data.clear()
+            data.update(actor.character.data)
+        health = data.setdefault('health', {})
+    elif item['name'] in PREPARED_HITS:
         if combat is None:
-            raise ValidationError('Подготовка Тяжести требует оплаты ОД в бою')
+            raise ValidationError('Подготовка удара требует оплаты ОД в бою')
         data.setdefault(STATE_KEY, {})['heavy_item_id'] = item['id']
     elif item['name'] == TELEPORT:
         from app.services.artifact_motion import teleport
@@ -418,7 +427,7 @@ def execute(actor, data, payload, user_id, combat=None):
     if item['name'] in FORECASTS:
         extra['_gm_forecast'] = _forecast(actor, data, item)
     sync_health_derived_statuses(health)
-    ledger = data[STATE_KEY] if item['name'] == HEAVY_HIT else _spend(data, item['id'])
+    ledger = data[STATE_KEY] if item['name'] in PREPARED_HITS else _spend(data, item['id'])
     result = {'name': f"Особое свойство: {item['name']}", 'item_id': item['id'], 'radiation_removed': radiation,
               'healed': max(0, _number(health.get('current')) - before), 'action_points': plan['action_points'] if combat else 0,
               'roll_required': False, 'replayed': False, **extra}
@@ -445,17 +454,17 @@ def _spend(data, item_id):
     return ledger
 
 
-def consume_heavy_hit(data):
+def consume_prepared_hit(data):
     ledger = data.get(STATE_KEY) or {}
     item_id = ledger.get('heavy_item_id')
     if item_id is None:
-        return False
+        return None
     ledger.pop('heavy_item_id')
-    item = next((item for item in _equipped(data) if item['id'] == item_id and item['name'] == HEAVY_HIT), None)
+    item = next((item for item in _equipped(data) if item['id'] == item_id and item['name'] in PREPARED_HITS), None)
     if item is None or not status(data, item)['available']:
-        return False
+        return None
     _spend(data, item_id)
-    return True
+    return item['name']
 
 
 def _configure_fall(data, payload):

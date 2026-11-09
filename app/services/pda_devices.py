@@ -18,6 +18,7 @@ def token(lobby_id,device_id):return hashlib.sha256(json.dumps([lobby_id,device_
 
 def registry(lobby_id):
     from app.services.pda_network import _position
+    from app.services.artifact_jamming import for_position, position_sources
     from app.services.location_navigation import ground,level_of
     result=[];session=db.session()
     people=list(LobbyCharacter.query.filter_by(lobby_id=lobby_id).all())
@@ -40,13 +41,16 @@ def registry(lobby_id):
     for group in groups:
         for identity in group.member_character_ids or []:
             if str(identity).isdigit():groups_by_member.setdefault(int(identity),group)
+    def position_of(character):
+        placements=[model for model in models if model.character_id==character.id];group=groups_by_member.get(character.id)
+        local=next((model for model in placements if not group or (model.location.world_tile_x,model.location.world_tile_z)==(group.tile_x,group.tile_y)),None)
+        return _position(character,local.location_id if local else None,groups,placements)
+    jammers=position_sources((character for character in people if character not in session.deleted),position_of)
     for character in people:
         if character in session.deleted:continue
         devices=[(path,item) for path,item in walk(character.data or {}) if definition(item)=='pda' and item.get('quantity',1)==1 and isinstance(item.get('id'),str)]
         if not devices:continue
-        placements=[model for model in models if model.character_id==character.id];group=groups_by_member.get(character.id)
-        local=next((model for model in placements if not group or (model.location.world_tile_x,model.location.world_tile_z)==(group.tile_x,group.tile_y)),None)
-        position=_position(character,local.location_id if local else None,groups,placements)
+        position=position_of(character)
         for path,item in devices:
             result.append({'owner':character,'field':'data','character':character,'host':f'character:{character.id}',
                 'item':item,'path':path,'position':position,'lobby_id':lobby_id,'lobby':character.lobby})
@@ -70,7 +74,7 @@ def registry(lobby_id):
     for record in result:counts[record['item']['id']]=counts.get(record['item']['id'],0)+1
     for record in result:
         record.update(id=record['item']['id'],token=token(lobby_id,record['item']['id']),mods=mods(record['item']),
-            ambiguous=counts[record['item']['id']]>1)
+            ambiguous=counts[record['item']['id']]>1,jammed_by=for_position(record['position'],jammers))
         record['range']=ENHANCED_RANGE if 'pda-b10' in record['mods'] else BASE_RANGE
     return result
 
@@ -82,7 +86,8 @@ def powered(record):
     from app.services.artifact_effects import device_block_reason
     state=pda_state(record['item'])
     character=record.get('character')
-    return state['on'] and state['charge_percent']>0 and not device_block_reason(character.data if character else {},record['item'])
+    return state['on'] and state['charge_percent']>0 and not device_block_reason(character.data if character else {},record['item'],
+        jammed_by=record.get('jammed_by'))
 
 
 def cipher(record):

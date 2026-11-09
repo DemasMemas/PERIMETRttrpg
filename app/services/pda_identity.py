@@ -68,13 +68,14 @@ def settings(source):
     has_alias='pda-b21' in source['mods']
     return {'has_alias':has_alias,'sender_name':alias(source['item']) or '',
         'alias_ready':has_alias and enabled(),
-        'alias_blocked':device_block_reason(getattr(source.get('character'),'data',None) or {},source['item']) if has_alias else None}
+        'alias_blocked':device_block_reason(getattr(source.get('character'),'data',None) or {},source['item'],
+            jammed_by=source.get('jammed_by')) if has_alias else None}
 
 
 def change(source,payload):
     if 'pda-b21' not in source['mods']:raise ValidationError('На КПК нет «Замены данных»')
     from app.services.artifact_effects import require_device_available
-    require_device_available(getattr(source.get('character'),'data',None) or {},source['item'])
+    require_device_available(getattr(source.get('character'),'data',None) or {},source['item'],jammed_by=source.get('jammed_by'))
     require_storage()
     text=payload.get('sender_name');identity=payload.get('operation_id')
     if not isinstance(text,str):raise ValidationError('Введите имя или оставьте поле пустым')

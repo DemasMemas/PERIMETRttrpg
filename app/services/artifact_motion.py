@@ -131,6 +131,12 @@ def pull(actor, target):
             '_vision_location_id':actor.location_id}
 
 
+def push(actor, target):
+    if isinstance(target, LocationCharacter) and target.location_id is not None:
+        return _displace(target, actor)
+    return None
+
+
 def _hit_chest(target, incoming, penetration, attack_kind, round_number):
     from app.services.artifact_effects import artifact_passive_profile
     from app.services.combat import CombatService

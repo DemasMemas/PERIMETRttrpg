@@ -597,6 +597,71 @@ module.exports=async({page,request,token,lobby,loc,locationId,rules,safeSession}
     await capture('artifact-crystal-cloud-side');
     await changeMinutes(1);
     await page.until(`!(${cloud})`,'Облако исчезло по игровому времени');
+    const equipSpecial=async(name,id)=>{
+        const special=rules.find(row=>row.name===name),fresh=await getSponge();assert.ok(special);
+        fresh.data.equipment.armor.containers=[{item:{id,name,category:'artifact',quantity:1,attributes:special}}];
+        await request(spongeUrl,{data:fresh.data},token,'PUT');
+        await request('/__testing/artifact-preparation/'+safeSession.runId,{character_id:spongeBearer.id},token);
+        await changeMinutes(1);
+    };
+    const clickSpecial=async(id)=>{
+        await page.evaluate(`window.openCharacterSheet(${spongeBearer.id},'equipment').then(()=>true)`);
+        await page.until("document.querySelector('.equipment-panel-tab[data-panel=armor]')",'Броня с проверяемым артефактом');
+        await page.evaluate("document.querySelector('.equipment-panel-tab[data-panel=armor]').click();true");
+        const button=`document.querySelector('[data-artifact-special="${id}"]:not(:disabled)')`;
+        await page.until(button,'Артефакт готов');
+        await page.evaluate(`${button}.click();true`);
+        await page.evaluate('window.__artifactUsePromise.then(()=>true)');
+    };
+    await equipSpecial('Полюс','native-pole');
+    await request(loc+'/spawn_character',{character_id:spongeBearer.id,tile_x:45,tile_y:62,force_relocate:true},token);
+    const relocateExposed=(x,y)=>request(loc+'/spawn_character',{character_id:exposed.id,tile_x:x,tile_y:y,force_relocate:true},token);
+    await relocateExposed(30,67);
+    const getExposed=()=>request(exposedUrl,null,token,'GET');
+    const lampData=await getExposed();
+    lampData.data.inventory ||= {};
+    lampData.data.inventory.pockets=[{id:'pole-lamp',name:'Фонарик',attributes:{portable_light:'hand'}}];
+    await request(exposedUrl,{data:lampData.data},token,'PUT');
+    for(const operation of ['prepare','toggle']){
+        await request(exposedUrl+'/portable-lights',{operation,mount:'hand',path:['inventory','pockets',0],source_id:'pole-lamp',
+            character_revision:(await getExposed()).data._revision},token);
+    }
+    const lampState=`window.locationCombatState?.characters?.find(row=>row.character_id===${exposed.id})?.portable_lights`;
+    await page.until(`${lampState}?.length===1`,'Фонарь вне радиуса работает');
+    await relocateExposed(45,67);
+    await page.until(`${lampState}?.length===0`,'В зоне Полюса фонарь погас');
+    await relocateExposed(30,67);
+    await page.until(`${lampState}?.length===1`,'За радиусом фонарь снова работает');
+    await relocateExposed(45,67);
+    await request(loc+'/objects',{name:'Пол',type:'ground_item',tile_x:45,tile_y:65,
+        properties:{is_ground_item:true,passable:true,floor_level:0,contents:[
+            {id:'pole-metal',name:'Стальной предмет',category:'material',metallic:true,quantity:1,weight:5},
+        ]}},token);
+    await clickSpecial('native-pole');
+    const locationAfterPole=await request(loc,null,token,'GET');
+    assert.ok(locationAfterPole.objects.some(obj=>obj.tile_x===45&&obj.tile_y===62&&obj.properties.contents?.some(item=>item.id==='pole-metal')));
+    assert.equal((await getExposed()).data.inventory.pockets[0].electronicsState.burned,true);
+    await equipSpecial('Ядро тяготения','native-gravity-hit');
+    await request(loc+'/spawn_character',{character_id:spongeBearer.id,tile_x:45,tile_y:64,force_relocate:true},token);
+    const gravityTarget=await relocateExposed(45,65);
+    const gravityTargetSheet=await getExposed();
+    gravityTargetSheet.data.health.current=700;
+    gravityTargetSheet.data.health.effects=[{type:'sleep',name:'Сон',source:'artifact-target-sleep',tick:'manual',active:true}];
+    await request(exposedUrl,{data:gravityTargetSheet.data},token,'PUT');
+    await request(loc+'/combat/start',{location_character_ids:[secondBearer.location_character_id,gravityTarget.location_character_id],
+        initiator_location_character_id:secondBearer.location_character_id,initiator_first:true},token);
+    const gravityBefore=(await liveState()).current_character.action_points_current;
+    await clickSpecial('native-gravity-hit');
+    assert.equal((await liveState()).current_character.action_points_current,gravityBefore-1);
+    const blow=await request(loc+'/combat/action',{location_character_id:secondBearer.location_character_id,
+        action_key:'attack',attack_type:'unarmed',weapon_index:-1,target_character_id:exposed.id},token);
+    const strike=blow.attack.results.find(hit=>hit.artifact_hit==='Ядро тяготения');
+    assert.ok(strike?.hit&&strike.zone==='chest'&&strike.base_damage===100);
+    const thrownTarget=blow.state.characters.find(row=>row.character_id===exposed.id);
+    assert.ok(thrownTarget.y>65);
+    assert.equal(blow.character.action_points_current,gravityBefore-3);
+    assert.equal((await getSponge()).data._artifact_specials[0].remaining_uses,1);
+    await request(loc+'/combat/end',{},token);
     fs.writeFileSync(path.join(safeSession.artifacts,'artifact-special.json'),JSON.stringify({scene:'Припять',artifact:rule.name,
         preparedWornSeconds:86394,realRoundSeconds:6,readyAfterRealRound:true,realButtonActivations:2,apPerUse:1,
         first:{radiation:0,hp:200,cooldown:86400},second:{radiation:0,hp:300,cooldown:86394},reopened:true,
@@ -619,7 +684,9 @@ module.exports=async({page,request,token,lobby,loc,locationId,rules,safeSession}
         stormConductor:{realButton:true,targetSelected:true,damage:350,healthAfter:150},
         ferromagnet:{realButton:true,metalSelected:true,glassExcluded:true,oneUnitInHand:true,movedToPocket:true,remainingUses:1},
         crystalCloud:{realButton:true,visible:true,movedWithBearer:true,expired:true},
-        plasmaCord:{realButton:true,groundClick:true,position:[plasmaOwner.x,plasmaOwner.y],remainingUses:1}},null,2));
+        plasmaCord:{realButton:true,groundClick:true,position:[plasmaOwner.x,plasmaOwner.y],remainingUses:1},
+        pole:{realButton:true,groundTransfer:true,electronicsDestroyed:true,nearbyLampRestoredOutsideRadius:true},
+        gravityCore:{realButton:true,baseDamage:strike.base_damage,zone:strike.zone,destination:[thrownTarget.x,thrownTarget.y],totalActionPoints:3}},null,2));
     console.log('Особые свойства: подготовленное ношение+реальный раунд, две кнопки Ядра твари по1ОД без рук, радиация→ОЗ; общий срок после первого, переоткрытие.');
     console.log('Генератор: кнопка без радиации, фактический штраф перемещения−1→−3,600→594секунд за раунд; истечение по игровому времени возвращает−1.');
     console.log('Сердце жара: настоящая кнопка и настоящее горение; первый раунд0урона, после истечения50.');

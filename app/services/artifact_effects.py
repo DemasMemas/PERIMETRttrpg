@@ -62,30 +62,44 @@ def device_blocks(character_data):
     return result
 
 
-def device_block_reason(character_data,item):
+def _device_kinds(item):
     from app.services.portable_lights import definition
-    if not isinstance(item,dict):return None
-    from app.services.electronics import burned
-    if burned(item):return f'{item.get("name") or "Прибор"} сгорел: использование и ремонт невозможны'
     attrs=item.get('attributes') or {};name=str(item.get('name') or '').casefold()
-    blocks=device_blocks(character_data);kinds=[]
+    kinds=[]
     if 'компас' in name or attrs.get('device_kind')=='compass':kinds.append('compass')
     if re.search(r'\bраци[яию]',name) or 'радиостанция' in name or name=='радио' or attrs.get('type')=='radio' or attrs.get('device_kind')=='radio':kinds.append('radio')
     if item.get('category')=='detector' or 'детектор' in name or attrs.get('type') in {'anomaly','artifact'}:kinds.append('detector')
     electronic=(definition(item) in {'hand','improved','head','module','pda','dosimeter'}
+        or item.get('electronic') is True or attrs.get('electronic') is True
+        or (item.get('controllerState') or {}).get('kind') in {'timer','remote_detonator'}
         or item.get('slotType')=='nvg' or attrs.get('night_vision') or attrs.get('laser') or attrs.get('power') is not None
         or attrs.get('device_kind') in {'timer','remote_detonator'}
         or any(m.get('slotType')=='battery' for m in item.get('installedModules') or [] if isinstance(m,dict))
         or any(kind in {'radio','detector'} for kind in kinds))
     if electronic:kinds.append('electronics')
+    return kinds
+
+
+def is_electronic(item):
+    return isinstance(item,dict) and 'electronics' in _device_kinds(item)
+
+
+def device_block_reason(character_data,item,*,jammed_by=None):
+    if not isinstance(item,dict):return None
+    from app.services.electronics import burned
+    if burned(item):return f'{item.get("name") or "Прибор"} сгорел: использование и ремонт невозможны'
+    kinds=_device_kinds(item)
+    blocks=device_blocks(character_data)
     for kind in kinds:
         if blocks.get(kind):return f'{item.get("name") or "Прибор"} не работает: влияние артефакта «{blocks[kind][0]}»'
+    if jammed_by and 'electronics' in kinds:
+        return f'{item.get("name") or "Прибор"} не работает: глушение артефактом «{jammed_by}»'
     return None
 
 
-def require_device_available(character_data,item):
+def require_device_available(character_data,item,*,jammed_by=None):
     from app.services.exceptions import ValidationError
-    reason=device_block_reason(character_data,item)
+    reason=device_block_reason(character_data,item,jammed_by=jammed_by)
     if reason:raise ValidationError(reason)
 
 
