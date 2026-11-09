@@ -6640,14 +6640,22 @@ function isCharacterVisibleToPlayer(entry, sources, includeScouted = true) {
     );
 }
 
-export function visibleArtifactTargets(characterId, radius) {
+export function visibleArtifactTargets(characterId, radius, { sharedSight = false } = {}) {
     const observer = getCharacterModelEntry(characterId);
     if (!observer || window.locationScoutView) return [];
-    return [...characterModels.values()].filter(entry => Number(entry.characterId) !== Number(characterId)
+    const models = [...characterModels.values()];
+    const sources = [observer];
+    if (sharedSight && observer.teamName) {
+        sources.push(...models.filter(entry => entry !== observer && entry.teamName === observer.teamName
+            && !entry.gmHidden && !['dead', 'critical'].includes(entry.conditionState)
+            && !entry.effects?.some(effect => effect.type === 'blindness' && effect.active !== false && effect.value >= 100)));
+    }
+    return models.filter(entry => Number(entry.characterId) !== Number(characterId)
+        && (entry.floorLevel || 0) === (observer.floorLevel || 0)
         && Math.hypot(entry.posX - observer.posX, entry.posY - observer.posY,
             (entry.physicalHeight ?? getTileHeight(entry.posX, entry.posY)) -
             (observer.physicalHeight ?? getTileHeight(observer.posX, observer.posY))) < radius
-        && isCharacterVisibleToPlayer(entry, [observer], false))
+        && isCharacterVisibleToPlayer(entry, sources.filter(source => source !== entry), false))
         .map(entry => ({ id: Number(entry.characterId), label: entry.name }));
 }
 
@@ -8156,6 +8164,7 @@ export function setCombatState(state) {
         if (entry) {
             entry.hpZones = character.hp_zones;
             entry.effects = character.effects;
+            entry.conditionState = character.condition?.state;
             entry.artifactDaylightVision = character.artifact_daylight_vision === true;
             entry.ignitionAuraRange = character.portable_lights?.find(source => source.ignition_aura)?.range || 0;
         }

@@ -1168,6 +1168,42 @@ def test_electric_artifact_rejects_unseen_or_out_of_range_target_before_cost(gre
     assert snapshot(actor.character.data)[0]['remaining_uses'] == 2
 
 
+@pytest.mark.parametrize('spotter_state', ['sees', 'turned', 'hidden', 'sleeping', 'other_team'])
+def test_storm_conductor_requires_shared_sight_beyond_25_meters(grenade_game, spotter_state):
+    from app.models import LobbyCharacter, LocationCharacter
+    actor, target = grenade_game['actor_location'], grenade_game['target_location']
+    actor.character.data = ready(name='Проводник бури')
+    actor.team_name = 'Разведка'
+    target.pos_x, target.pos_y = 29.1, actor.pos_y
+    target.character.data = {'health': {'current':700, 'max':700}}
+    spotter_data = {'health': {'effects': []}}
+    if spotter_state == 'sleeping':
+        spotter_data['health']['effects'].append({'type':'sleep','name':'Сон','tick':'manual','active':True})
+    spotter = LobbyCharacter(lobby_id=actor.character.lobby_id, owner_id=actor.character.owner_id,
+                             name='Разведчик', data=spotter_data)
+    db.session.add(spotter)
+    db.session.flush()
+    db.session.add(LocationCharacter(location_id=actor.location_id, character_id=spotter.id,
+        controlled_by=spotter.owner_id, pos_x=26, pos_y=actor.pos_y, floor_level=0,
+        facing_x=-1 if spotter_state=='turned' else 1, facing_y=0, gm_hidden=spotter_state=='hidden',
+        team_name='Другая команда' if spotter_state=='other_team' else actor.team_name))
+    db.session.commit()
+
+    payload = {'item_id':'reactive-artifact','operation_id':'shared-sight','target_id':target.character_id}
+    if spotter_state == 'sees':
+        result=CombatService.perform_action(actor.location_id, grenade_game['lobby'].gm_id, actor.id,
+                                            'artifact_special', attribute_choice=payload)
+        assert result['narrative_action']['damage'] == 350
+        assert actor.action_points_current == 19
+        assert snapshot(actor.character.data)[0]['remaining_uses'] == 1
+    else:
+        with pytest.raises(ValidationError, match='не видит цель'):
+            CombatService.perform_action(actor.location_id, grenade_game['lobby'].gm_id, actor.id,
+                                         'artifact_special', attribute_choice=payload)
+        assert actor.action_points_current == 20
+        assert snapshot(actor.character.data)[0]['remaining_uses'] == 2
+
+
 def magnet_scene(game, level=15):
     actor, target = game['actor_location'], game['target_location']
     actor.character.data = ready(level, 'Ферромагнит')

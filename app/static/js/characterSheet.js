@@ -5799,7 +5799,7 @@ window.activateArtifactSpecial = async function(itemId,power) {
         if(state?.target_range){
             if(!window.isLocationActive)throw new Error('Выберите цель на подлокации');
             const {visibleArtifactTargets}=await import('./locationScene.js');
-            const choices=visibleArtifactTargets(characterId,state.target_range);
+            const choices=visibleArtifactTargets(characterId,state.target_range,{sharedSight:state.name==='Проводник бури'});
             if(!choices.length)throw new Error('В радиусе действия нет видимых целей');
             const target=await chooseConsumableApplication(`Цель: ${state.name}`,choices,{alwaysShow:true});
             if(!target||currentCharacterId!==characterId)return;

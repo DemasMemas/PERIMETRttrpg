@@ -683,6 +683,35 @@ module.exports=async({page,request,token,lobby,loc,locationId,rules,safeSession}
     withoutAura.data.equipment.armor.containers=[];
     await request(spongeUrl,{data:withoutAura.data},token,'PUT');
     await page.until(`!(${auraLight})`,'Снятие артефакта убрало свет');
+
+    await changeMinutes(600);
+    const sharedSightTarget=await relocateExposed(45,67);
+    const sharedSightActor=await request(loc+'/spawn_character',{character_id:spongeBearer.id,tile_x:45,tile_y:39,force_relocate:true},token);
+    const spotter=await request('/lobbies/'+lobby.id+'/characters',{name:'Разведчик Проводника',data:{}},token);
+    const sharedSightSpotter=await request(loc+'/spawn_character',{character_id:spotter.id,tile_x:45,tile_y:66},token);
+    assert.ok(sharedSightTarget.location_character_id);
+    await request(loc+'/characters/'+spotter.id+'/facing',{facing_x:0,facing_y:1},token,'PATCH');
+    const assignTeam=team=>request(loc+'/teams',{assignments:[sharedSightActor,sharedSightSpotter]
+        .map(entry=>({location_character_id:entry.location_character_id,team_name:team}))},token,'PUT');
+    const targetInSharedSight=`L.visibleArtifactTargets(${spongeBearer.id},35,{sharedSight:true}).some(row=>row.id===${exposed.id})`;
+    await assignTeam('');
+    assert.equal(await page.evaluate(targetInSharedSight),false);
+    await assignTeam('Разведка Проводника');
+    await equipSpecial('Проводник бури','native-conductor-shared-sight');
+    await page.until(targetInSharedSight,'Союзник видит цель на расстоянии 28 м от владельца');
+    const sharedSightSheet=await getExposed();
+    sharedSightSheet.data.health.current=500;
+    await request(exposedUrl,{data:sharedSightSheet.data},token,'PUT');
+    await page.evaluate(`window.openCharacterSheet(${spongeBearer.id},'equipment').then(()=>true)`);
+    await page.until("document.querySelector('.equipment-panel-tab[data-panel=armor]')",'Броня с Проводником бури');
+    await page.evaluate("document.querySelector('.equipment-panel-tab[data-panel=armor]').click();true");
+    const sharedButton='document.querySelector(\'[data-artifact-special="native-conductor-shared-sight"]:not(:disabled)\')';
+    await page.until(sharedButton,'Проводник готов к применению');
+    await page.evaluate(`${sharedButton}.click();true`);
+    await page.until(targetChoice,'Дальняя цель появилась в выборе');
+    await page.evaluate(`${targetChoice}.click();true`);
+    await page.evaluate('window.__artifactUsePromise.then(()=>true)');
+    assert.equal((await getExposed()).data.health.current,150);
     fs.writeFileSync(path.join(safeSession.artifacts,'artifact-special.json'),JSON.stringify({scene:'Припять',artifact:rule.name,
         preparedWornSeconds:86394,realRoundSeconds:6,readyAfterRealRound:true,realButtonActivations:2,apPerUse:1,
         first:{radiation:0,hp:200,cooldown:86400},second:{radiation:0,hp:300,cooldown:86394},reopened:true,
@@ -708,7 +737,8 @@ module.exports=async({page,request,token,lobby,loc,locationId,rules,safeSession}
         plasmaCord:{realButton:true,groundClick:true,position:[plasmaOwner.x,plasmaOwner.y],remainingUses:1},
         pole:{realButton:true,groundTransfer:true,electronicsDestroyed:true,nearbyLampRestoredOutsideRadius:true},
         gravityCore:{realButton:true,baseDamage:strike.base_damage,zone:strike.zone,destination:[thrownTarget.x,thrownTarget.y],totalActionPoints:3},
-        ignitionAura:{radius:5,night:true,movedWithBearer:true,removedWithArtifact:true}},null,2));
+        ignitionAura:{radius:5,night:true,movedWithBearer:true,removedWithArtifact:true},
+        stormConductorSharedSight:{realButton:true,distance:28,damage:350}},null,2));
     console.log('Особые свойства: подготовленное ношение+реальный раунд, две кнопки Ядра твари по1ОД без рук, радиация→ОЗ; общий срок после первого, переоткрытие.');
     console.log('Генератор: кнопка без радиации, фактический штраф перемещения−1→−3,600→594секунд за раунд; истечение по игровому времени возвращает−1.');
     console.log('Сердце жара: настоящая кнопка и настоящее горение; первый раунд0урона, после истечения50.');
