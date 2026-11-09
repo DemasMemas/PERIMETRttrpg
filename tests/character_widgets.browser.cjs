@@ -95,6 +95,7 @@ module.exports = async ({ page, request, token, lobby, login, profile, base, con
     const agreed = await page.evaluate(`[...document.querySelectorAll('#sheet-content .sheet-pin')].flatMap(b=>b.dataset.pinBlocks.split(' '))`);
     const legacyPdaAvailable = agreed.includes('equipment:pda');
     fs.writeFileSync(path.join(artifactDir, 'legacy-pda-availability.json'), JSON.stringify({ legacyPdaAvailable, physicalPdaProbe }, null, 2));
+    assert.equal(legacyPdaAvailable, false, 'КПК закрепляется по физическому экземпляру без общей панели модификаций');
     for (const block of ['health-pool', 'health-status', 'blood-check', 'infection', 'needs', 'organs', 'health-summary', 'effects', 'effect', 'addictions', 'zone:head',
         'weapon-mastery:pistols', 'equipment:helmet', 'equipment:gasMask', 'equipment:armor', 'protection:armor', 'coverage:armor', 'modifications:armor',
         'equipment:detector', 'cosmetic:headphones', 'cosmetic:glasses', 'cosmetic:gloves', 'cosmetic:jewelry', 'inventory-weight', 'pockets', 'backpack', 'inventory-item', 'money', 'notes']) {
@@ -339,7 +340,6 @@ module.exports = async ({ page, request, token, lobby, login, profile, base, con
     }
 
     if(focusRegression){
-        assert.equal(legacyPdaAvailable,true,'Старая панель модификаций КПК доступна');
         return;
     }
     await pinField('health.painLevel');
@@ -436,7 +436,6 @@ module.exports = async ({ page, request, token, lobby, login, profile, base, con
     console.log('Map widgets screenshot:', mapScreenshot);
     if (process.env.VTT_WIDGETS_FOCUSED === '1') {
         console.log('PASS: pinned checkmark, cosmetic button placement, separate mastery progress, decimal measurements, actions, realtime and reload persistence');
-        assert.equal(legacyPdaAvailable,true,'Старая панель модификаций КПК доступна');
         return;
     }
     const version = await (await fetch(`http://127.0.0.1:${debugPort}/json/version`)).json();
@@ -498,7 +497,6 @@ module.exports = async ({ page, request, token, lobby, login, profile, base, con
     assert.equal((await prefs()).length, savedCount);
     console.log('PASS: same widgets work in real local scene; sheet masks local controls/FPS and restores them');
     console.log('PASS: individual fields/actions, weapon/status blocks, hidden room UI, multi-character saves, existing skill roll and reload dialog, realtime updates, personal preferences, drag/collapse/reload');
-    assert.equal(legacyPdaAvailable,true,'Старая панель модификаций КПК доступна');
 };
 
 module.exports.skillValuesExpression = WIDGET_SKILL_VALUES_EXPRESSION;
