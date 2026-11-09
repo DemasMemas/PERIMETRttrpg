@@ -128,5 +128,64 @@ module.exports = async ({page, request, token, api, loc}) => {
     const cleanWater = await checkOutput('Вода', 3);
     assert.deepEqual(cleanWater.map(i => [i.quantity, i.uses, i.maxUses]), [[3, 2, 3]]);
     await closeCrafting();
-    console.log(JSON.stringify({lockpick_recipe:true, chlorine_rain_and_swamp:true, aeration_from_scene:true, clean_water_portions:8}));
+
+    const still = await request(loc + '/objects', {name: 'Самогонный аппарат', type: 'station_distillery',
+        tile_x: 42, tile_y: 49, properties: {portable_station: 'recipe-m40', standard_distillery: true,
+            craft_workbench: 'Самогонный Аппарат', level: 0}}, token);
+    const spiritIngredients = prefix => [item('Вода', prefix + '-water', {quantity: 2, uses: 3}),
+        item('Банка пива', prefix + '-beer'), item('Хлеб', prefix + '-bread', {quantity: 2})];
+    await replacePockets(spiritIngredients('recipe-spirit'));
+    await page.evaluate(`(async()=>{const L=await import('/static/js/locationScene.js');
+        window.currentLocationCharacterId=${actor.id};L.showObjectContextMenu(650,350,${JSON.stringify(still)});return true})()`);
+    await page.until("[...document.querySelectorAll('button')].some(b=>b.textContent==='Создание предметов')",
+        'В меню аппарата есть создание');
+    await page.evaluate("[...document.querySelectorAll('button')].find(b=>b.textContent==='Создание предметов').click();true");
+    await selectRecipe('recipe-aa7');
+    await click('Начать подготовку');
+    await page.until("document.querySelector('#crafting-modal')?.innerText.includes('Подготовка · осталось 10 мин')",
+        'У аппарата отображается подготовка');
+    const spiritJob = (await read()).data.crafting.current;
+    assert.equal(spiritJob.station_usage.object_id, still.id);
+    await advance(10);
+    await page.until("document.querySelector('#crafting-modal')?.innerText.includes('Аппарат работает сам · осталось 1440 мин')",
+        'После подготовки начинается суточная выдержка');
+    await relocate(35,48);
+    await advance(1440);
+    const collect = 'Забрать результат · к100';
+    await page.until(`Boolean(${button(collect)}?.disabled) &&
+        document.querySelector('#crafting-modal').innerText.includes('Вернитесь к аппарату за результатом')`,
+        'Готовую партию нельзя забрать издалека');
+    await relocate(41,48);
+    await click('Обновить');
+    await click(collect);
+    await waitState(`!data.crafting?.current && data.crafting?.history.at(-1)?.job_id===${JSON.stringify(spiritJob.id)}`,
+        'После возвращения партия завершена');
+    await closeCrafting();
+
+    await replacePockets(spiritIngredients('recipe-spirit-race'));
+    const competitor = await request(api + '/characters', {name: 'Вторая партия спирта', data: {
+        health: {current: 700, max: 700, effects: []}, skills: {other: {survival: {base: 20}}},
+        inventory: {pockets: spiritIngredients('competing-spirit'), backpack: []},
+    }}, token);
+    await request(loc + '/spawn_character', {character_id: competitor.id, tile_x: 43, tile_y: 49}, token);
+    const results = await page.evaluate(`(async()=>{
+        const {Server}=await import('/static/js/api.js');
+        const ids=${JSON.stringify([actor.id,competitor.id])};
+        const characters=await Promise.all(ids.map(id=>Server.getCharacter(id)));
+        return Promise.all(ids.map((id,index)=>Server.craft(id,{operation:'start',recipe_id:'recipe-aa7',
+            station_id:${still.id},character_revision:characters[index].data._revision,operation_id:'distillery-race'})
+            .then(({result,data})=>({id,status:200,job:result.id,revision:data._revision}),
+                error=>({id,status:error.status,message:error.message}))));
+    })()`);
+    const winner = results.find(result => result.status === 200);
+    const loser = results.find(result => result.id !== winner?.id);
+    assert.equal(results.filter(result => result.status === 200).length, 1, JSON.stringify(results));
+    assert.ok([400,409].includes(loser.status) && loser.message.includes('занят'), JSON.stringify(results));
+    const rejected = await request('/lobbies/characters/' + loser.id, null, token, 'GET');
+    assert.ok(!rejected.data.crafting?.current);
+    assert.equal(rejected.data.inventory.pockets.length, 3);
+    await request('/lobbies/characters/' + winner.id + '/crafting', {operation:'cancel',
+        operation_id:'distillery-race-cancel',character_revision:winner.revision,job_id:winner.job}, token);
+    console.log(JSON.stringify({lockpick_recipe:true, chlorine_rain_and_swamp:true, aeration_from_scene:true,
+        clean_water_portions:8, distillery_phases:true, distillery_concurrent_starts:true}));
 };

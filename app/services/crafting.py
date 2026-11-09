@@ -321,6 +321,7 @@ def _tools(character,data,recipe,option):
 
 def quote(character,data,payload):
     from app.services.combat import CombatService
+    from app.services.distillery import PREPARATION_RECIPES,RECIPES,is_distillery,occupied
     from app.services.equipment_passives import craft_difficulty_modifier
     from app.services.crafting_ammo import chosen_ammo
     recipe=recipe_by_id(payload.get('recipe_id'));option=payload.get('tool_option',0)
@@ -357,20 +358,29 @@ def quote(character,data,payload):
     if tool_output and output and (output.category!='tool' or type((output.attributes or {}).get('uses')) is not int
             or not tool_output[1]<output.attributes['uses']):
         missing.append('Каталожный максимум зарядов инструмента не совпадает с рецептом')
-    if missing_tools:missing.append('Нужны: '+', '.join(missing_tools))
     if recipe.get('duration_seconds') is None:missing.append('В рецепте не задан срок работы')
     from app.services.portable_stations import selected
-    station=selected(character,recipe,option)
+    distilling=recipe['id'] in RECIPES
+    preferred_id=payload.get('station_id') if distilling else None
+    if preferred_id is not None and (type(preferred_id) is not int or preferred_id<=0):
+        raise ValidationError('Выберите самогонный аппарат')
+    station=selected(character,recipe,option,preferred_id=preferred_id)
+    if distilling:
+        if not station:missing.append('Подойдите к размещённому самогонному аппарату с зарядом инструмента')
+        elif occupied(character.lobby_id,station.id):missing.append('Самогонный аппарат уже занят')
+    elif missing_tools:missing.append('Нужны: '+', '.join(missing_tools))
     station_key=(station.properties or {}).get('portable_station') if station else None
+    use_station=bool(station and (station_key or is_distillery(station)))
     return {**result,'recipe':recipe,'allocations':allocations,'missing':missing,
         'component_status':component_status,'other_missing':missing[component_missing_count:],
         'output_id':output.id if output else None,'output_variant':ammo_variant,
         'ammo_template_id':ammo_template.id if ammo_template else None,
         'output_uses':tool_output[1] if tool_output else None,
         'approval_id':approval['id'] if approval else None,'duration_seconds':recipe.get('duration_seconds'),
-        'station_id':station.id if station_key else None,
-        'station_name':station.name if station_key else None,
-        'spoil_chance':15 if station_key and station_key!='recipe-m34' else 0}
+        'preparation_seconds':recipe.get('active_seconds') if recipe['id'] in PREPARATION_RECIPES else None,
+        'station_id':station.id if use_station else None,
+        'station_name':station.name if use_station else None,
+        'spoil_chance':15 if station_key and station_key!='recipe-m34' and not station.properties.get('standard_distillery') else 0}
 
 
 def _escrow(data,allocations):
@@ -485,7 +495,14 @@ def snapshot(character,user_id):
     CharacterService.check_access(character,user_id)
     data=character.data or {};state=deepcopy(data.get('crafting') or {})
     current=state.get('current')
-    if current:current['remaining_seconds']=max(0,current['ready_at']-now(character))
+    if current:
+        if 'preparation_remaining' in current:
+            from app.services.distillery import placement_at
+            current['at_station']=bool(placement_at(character,current['station_usage']['object_id']))
+            preparing=current['preparation_remaining']>0
+            current['remaining_seconds']=current['preparation_remaining'] if preparing else max(0,current['ready_at']-now(character))
+            current['phase']='preparing' if preparing else 'running' if current['remaining_seconds'] else 'ready'
+        else:current['remaining_seconds']=max(0,current['ready_at']-now(character))
     rules=catalog()
     placement=LocationCharacter.query.filter_by(character_id=character.id).order_by(LocationCharacter.last_action.desc().nullslast(),LocationCharacter.id.desc()).first()
     for entry in rules['modifications']:entry['automatic_installation']=supported(entry)
@@ -735,6 +752,7 @@ def operate(character_id,user_id,payload):
             result['remote_source']={key:payload['remote_source'].get(key) for key in ('session_id','source_id')}
         state['current']=result
     elif action=='start':
+        from app.services.distillery import RECIPES,placement_at
         if state.get('current'):raise ConflictError('Сначала завершите или отмените текущую работу')
         for _,item in entries(data):item.setdefault('id',str(uuid4()))
         plan=quote(character,data,payload)
@@ -745,6 +763,8 @@ def operate(character_id,user_id,payload):
             station=LocationObject.query.filter_by(id=plan['station_id']).with_for_update().first()
             if not station:raise ConflictError('Станок недоступен')
             station_usage=consume_for_job(station)
+        if plan['recipe']['id'] in RECIPES and (not station_usage or not placement_at(character,plan['station_id'])):
+            raise ValidationError('Подойдите к самогонному аппарату')
         reserve=_escrow(data,plan['allocations'])
         result={'id':str(uuid4()),'kind':'recipe','recipe_id':plan['recipe']['id'],'name':plan['recipe']['name'],
             'quote':{k:deepcopy(plan[k]) for k in ('difficulty','automatic_success','failure_loss')},
@@ -755,13 +775,22 @@ def operate(character_id,user_id,payload):
             'started_at':now(character),'ready_at':now(character)+plan['duration_seconds']}
         if result['recipe_id']=='recipe-aa12':
             result['collection_station_id']=plan.get('station_id')
+        if plan['preparation_seconds']:
+            result.update(preparation_remaining=plan['preparation_seconds'],
+                processing_seconds=plan['duration_seconds'],ready_at=None)
         state['current']=result
         if plan['approval_id']:
             next(r for r in state['tool_requests'] if r['id']==plan['approval_id'])['used']=True
     elif action in {'finish','cancel'}:
         job=state.get('current')
         if not job or payload.get('job_id')!=job['id']:raise ConflictError('Работа уже завершена или изменена')
+        if action=='finish' and job.get('preparation_remaining',0)>0:
+            raise ValidationError('Сначала завершите подготовку у самогонного аппарата')
         if action=='finish' and now(character)<job['ready_at']:raise ValidationError('Время работы ещё не прошло')
+        if action=='finish' and 'preparation_remaining' in job:
+            from app.services.distillery import placement_at
+            if not placement_at(character,job['station_usage']['object_id']):
+                raise ValidationError('Вернитесь к самогонному аппарату, чтобы забрать результат')
         if action=='finish' and job.get('recipe_id')=='recipe-aa12':
             station_id=job.get('collection_station_id') or (job.get('station_usage') or {}).get('object_id')
             if station_id is not None:
@@ -880,6 +909,8 @@ def operate(character_id,user_id,payload):
         if station_spoil is not None:
             result['station_spoil_roll']=station_spoil
             result['spoiled_by_station']=station_spoil<=job['station_usage']['spoil_chance']
+        if job.get('station_usage'):
+            result['station_usage']=job['station_usage']
         state.pop('current');state.setdefault('history',[]).append(result);state['history']=state['history'][-30:]
     else:raise ValidationError('Неизвестное действие создания')
     state.setdefault('receipts',[]).append({'id':operation_id,'result':deepcopy(result)});state['receipts']=state['receipts'][-50:]

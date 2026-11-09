@@ -33,12 +33,12 @@ TOOL_WORDS = {
 def ready(obj):
     from app.services.general_consumable import _available_uses
     props=obj.properties or {};key=props.get('portable_station')
-    return key in {'recipe-m34','recipe-m41'} or any(_available_uses(item)>0 for item in props.get('station_tools') or [])
+    return key in {'recipe-m34','recipe-m41'} or props.get('standard_distillery') is True or any(_available_uses(item)>0 for item in props.get('station_tools') or [])
 
 
-def nearby(character):
+def nearby(character, *, placement=None):
     from app.services.location_navigation import level_of,pose
-    actor=LocationCharacter.query.filter_by(character_id=character.id).order_by(
+    actor=placement or LocationCharacter.query.filter_by(character_id=character.id).order_by(
         LocationCharacter.last_action.desc().nullslast(),LocationCharacter.id.desc()).first()
     if not actor:return []
     return [obj for obj in LocationObject.query.filter_by(location_id=actor.location_id).all()
@@ -46,8 +46,20 @@ def nearby(character):
         and math.hypot(pose(obj)[0]-actor.pos_x-.5,pose(obj)[1]-actor.pos_y-.5)<=1.5]
 
 
-def selected(character,recipe,option=0):
+def selected(character,recipe,option=0,*,preferred_id=None):
     from app.services.crafting import normalized
+    from app.services.distillery import RECIPES,is_distillery,occupied
+    if recipe['id'] in RECIPES:
+        from app.services.item_controllers import _context
+        placement=_context(character)
+        if not placement:return None
+        apparatus=[]
+        for obj in nearby(character,placement=placement):
+            if not is_distillery(obj) or (preferred_id is not None and obj.id!=preferred_id):continue
+            busy=occupied(character.lobby_id,obj.id)
+            if busy or not (obj.properties or {}).get('portable_station') or ready(obj):
+                apparatus.append((busy,obj.id,obj))
+        return min(apparatus)[2] if apparatus else None
     raw=recipe.get('tools_text') or ''
     if normalized(raw)=='обязателен' and recipe['group']=='Электроника':raw='Станок Электрика'
     if normalized(raw) in {'да','нужна'} and recipe['group']=='Ловушки':raw='Печь'
@@ -70,8 +82,19 @@ def selected(character,recipe,option=0):
 
 def consume_for_job(obj):
     from app.services.general_consumable import _available_uses
-    props=deepcopy(obj.properties or {});key=props.get('portable_station')
+    from app.services.distillery import is_distillery,occupied
+    key=(obj.properties or {}).get('portable_station')
+    if is_distillery(obj):
+        # В SQLite SELECT FOR UPDATE не блокирует строку. Запись сериализует запуск партий.
+        db.session.execute(db.update(LocationObject).where(LocationObject.id==obj.id).values(revision=LocationObject.revision))
+        db.session.refresh(obj)
+        if not is_distillery(obj) or occupied(obj.location.lobby_id,obj.id):
+            raise ConflictError('Самогонный аппарат уже занят или изменился')
+        key=(obj.properties or {}).get('portable_station')
+        if key not in PROFILES or (obj.properties or {}).get('standard_distillery') is True:
+            return {'object_id':obj.id,'name':obj.name,'spoil_chance':0}
     if key not in PROFILES:return None
+    props=deepcopy(obj.properties or {})
     if key not in {'recipe-m34','recipe-m41'}:
         tool=next((item for item in props.get('station_tools') or [] if _available_uses(item)>0),None)
         if not tool:raise ConflictError('В станке закончились заряды инструмента')
@@ -176,10 +199,15 @@ def operate(lobby_id,location_id,user_id,payload):
     # SQLite не поддерживает FOR UPDATE: запись той же величины сериализует размещения.
     db.session.execute(db.update(Location).where(Location.id==location.id).values(updated_at=Location.updated_at))
     if operation=='place':
+        from app.services.crafting import normalized
+        from app.services.distillery import STATION
         path=payload.get('item_path')
         item=next((item for current,item in entries(data) if current==path and item.get('id')==payload.get('item_id')),None)
         template=resolve_item_template(item,lobby_id)
         key=(template.attributes or {}).get('portable_station') if template else None
+        legacy_distillery=bool(item and item.get('category')=='tool' and not key and
+            normalized(template.name if template else item.get('name'))=='самогонный аппарат')
+        if legacy_distillery:key=STATION
         if key not in PROFILES:raise ValidationError('Выберите созданный станок или установку из инвентаря')
         quantity=item.get('quantity',1)
         if type(quantity) is not int or quantity<1 or item.get('contents'):raise ValidationError('Нельзя разместить этот экземпляр')
@@ -194,6 +222,9 @@ def operate(lobby_id,location_id,user_id,payload):
                 'visual_asset':profile[1],'dimensions':dict(zip(('width','depth','height'),profile[3])),
                 'craft_workbench':profile[2],'aeration_unit':key=='recipe-m34','traversal_category':'blocked',
                 'interactions':['move']})
+        if legacy_distillery:
+            obj.name=item['name']
+            obj.properties['standard_distillery']=True
         db.session.add(obj)
     else:
         obj=LocationObject.query.filter_by(id=payload.get('object_id'),location_id=location_id).with_for_update().first()
@@ -205,6 +236,8 @@ def operate(lobby_id,location_id,user_id,payload):
         if level_of(obj)!=(actor.floor_level or 0) or math.hypot(cx-actor.pos_x-.5,cy-actor.pos_y-.5)>1.5:
             raise ValidationError('Подойдите вплотную к устройству на том же этаже')
         if operation=='move':
+            from app.services.distillery import STATION,occupied
+            if key==STATION and occupied(lobby_id,obj.id):raise ConflictError('Сначала завершите или отмените работу в аппарате')
             tx,ty,position=_position(location,actor,PROFILES[key],payload,exclude_id=obj.id)
             obj.tile_x,obj.tile_y=tx,ty;obj.properties={**obj.properties,**position}
         else:

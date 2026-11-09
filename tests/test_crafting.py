@@ -42,7 +42,8 @@ def catalog_template(name):
 
 
 def assert_recipe_wait(client, workshop, auth_headers, job, minutes, **finish_payload):
-    assert job['ready_at'] - job['started_at'] == minutes * 60
+    from app.services.crafting import now
+    assert job['ready_at'] - now(workshop['actor_character']) == minutes * 60
     lobby = workshop['lobby']
 
     def advance(elapsed):
@@ -530,6 +531,25 @@ def test_bark_tincture_spends_catalog_charcoal_tablet(client,workshop,auth_heade
     assert units(finished.json['data'],'Очищенная настойка коры')==1
 
 
+def place_distillery(workshop, *, portable=False):
+    actor=workshop['actor_location']
+    properties={'craft_workbench':'Самогонный Аппарат'}
+    if portable:
+        properties.update(portable_station='recipe-m40',station_tools=[{'name':'Паяльные инструменты','uses':3,'maxUses':3}])
+    station=LocationObject(location_id=actor.location_id,name='Самогонный Аппарат',type='workbench',
+        tile_x=round(actor.pos_x)+1,tile_y=round(actor.pos_y),properties=properties)
+    db.session.add(station);db.session.commit()
+    return station
+
+
+def advance_distillery_clock(client, workshop, auth_headers, minutes):
+    lobby=workshop['lobby']
+    days, minute=divmod(lobby.game_time_minutes+minutes,1440)
+    response=client.patch(f'/lobbies/{lobby.id}/time',headers=auth_headers(workshop['actor_user']),
+        json={'game_day':lobby.game_day+days,'game_time_minutes':minute})
+    assert response.status_code==200,response.json
+
+
 def test_spirit_recipe_accepts_catalog_beer_and_moonshine_still(client,workshop,auth_headers,monkeypatch):
     from app.services.character_starting_purchase import item_from_template
 
@@ -546,6 +566,9 @@ def test_spirit_recipe_accepts_catalog_beer_and_moonshine_still(client,workshop,
     ]
     workshop['actor_character'].data=data
     db.session.commit()
+    packed=call(client,workshop,auth_headers,'quote',recipe_id='recipe-aa7')
+    assert any('размещённому' in text for text in packed.json['result']['missing'])
+    station=place_distillery(workshop,portable=True)
     quoted=call(client,workshop,auth_headers,'quote',recipe_id='recipe-aa7')
     assert quoted.status_code==200 and quoted.json['result']['missing']==[],quoted.json
     started=call(client,workshop,auth_headers,'start',recipe_id='recipe-aa7')
@@ -561,8 +584,24 @@ def test_spirit_recipe_accepts_catalog_beer_and_moonshine_still(client,workshop,
     started = call(client, workshop, auth_headers, 'start', recipe_id='recipe-aa7', operation_id='start-after-cancel')
     assert started.status_code == 200, started.json
     job = started.json['result']
+    assert job['preparation_remaining']==600
+    placement=workshop['actor_location']
+    origin=placement.pos_x
+    advance_distillery_clock(client,workshop,auth_headers,4)
+    placement.pos_x+=4;db.session.commit()
+    advance_distillery_clock(client,workshop,auth_headers,60)
+    assert workshop['actor_character'].data['crafting']['current']['preparation_remaining']==360
+    placement.pos_x=origin;db.session.commit()
+    advance_distillery_clock(client,workshop,auth_headers,6)
+    job=workshop['actor_character'].data['crafting']['current']
+    placement.pos_x+=4;db.session.commit()
     assert_recipe_wait(client, workshop, auth_headers, job, 1440, chosen_loss=[])
+    remote=call(client,workshop,auth_headers,'finish',job_id=job['id'],chosen_loss=[])
+    assert remote.status_code==400 and 'Вернитесь' in str(remote.json)
+    placement.pos_x=origin;db.session.commit()
     monkeypatch.setattr('app.services.crafting.resolve_creation',lambda quote:{'success':True,'roll':100,'automatic':False})
+    from types import SimpleNamespace
+    monkeypatch.setattr('app.services.crafting.random.SystemRandom',lambda:SimpleNamespace(randint=lambda *args:100))
     finished=call(client,workshop,auth_headers,'finish',job_id=started.json['result']['id'],chosen_loss=[])
     assert finished.status_code==200,finished.json
     assert finished.json['result']['success']
@@ -570,7 +609,37 @@ def test_spirit_recipe_accepts_catalog_beer_and_moonshine_still(client,workshop,
     assert sum(item['quantity'] for item in bottles) == 3
     assert all(item['uses'] == item['maxUses'] == 10 for item in bottles)
     assert still in finished.json['data']['inventory']['pockets']
+    assert station.properties['station_tools'][0]['uses']==1
     assert {name: units(finished.json['data'], name) for name in reserved} == dict.fromkeys(reserved, 0)
+
+
+def test_distillery_is_exclusive_until_cancelled_and_other_apparatus_is_independent(client,workshop,auth_headers):
+    station=place_distillery(workshop,portable=True)
+    second_station=place_distillery(workshop,portable=True)
+    catalog_template('Самогон')
+    actor,other=workshop['actor_location'],workshop['target_location']
+    other.pos_x,other.pos_y=actor.pos_x,actor.pos_y
+    for placement in (actor,other):
+        data=deepcopy(placement.character.data)
+        data.setdefault('skills',{}).setdefault('other',{})['medicine']={'base':20}
+        data['inventory']['pockets']=[{'name':'Спирт','quantity':1,'uses':10,'maxUses':10},{'name':'Сахар','quantity':1}]
+        placement.character.data=data
+    db.session.commit()
+    first=call(client,workshop,auth_headers,'start',recipe_id='recipe-aa48',station_id=station.id)
+    assert first.status_code==200,first.json
+    competitor={**workshop,'actor_character':other.character,'actor_user':workshop['target_user']}
+    tincture=call(client,competitor,auth_headers,'quote',recipe_id='recipe-aa29',station_id=station.id)
+    assert 'Самогонный аппарат уже занят' in tincture.json['result']['missing']
+    blocked=call(client,competitor,auth_headers,'start',recipe_id='recipe-aa48',station_id=station.id)
+    assert blocked.status_code in {400,409} and 'занят' in str(blocked.json)
+    assert units(other.character.data,'Спирт')==10
+    separate=call(client,competitor,auth_headers,'start',recipe_id='recipe-aa48',station_id=second_station.id)
+    assert separate.status_code==200,separate.json
+    assert call(client,workshop,auth_headers,'cancel',job_id=first.json['result']['id']).status_code==200
+    assert call(client,competitor,auth_headers,'cancel',job_id=separate.json['result']['id']).status_code==200
+    restart=call(client,competitor,auth_headers,'start',recipe_id='recipe-aa48',station_id=station.id,operation_id='next-batch')
+    assert restart.status_code==200,restart.json
+    assert station.properties['station_tools'][0]['uses']==1
 
 
 def test_beer_recipe_produces_eight_catalog_cans(client,workshop,auth_headers,monkeypatch):
@@ -586,6 +655,7 @@ def test_beer_recipe_produces_eight_catalog_cans(client,workshop,auth_headers,mo
     ]
     workshop['actor_character'].data=data
     db.session.commit()
+    place_distillery(workshop)
     quoted=call(client,workshop,auth_headers,'quote',recipe_id='recipe-aa13')
     assert quoted.status_code==200 and quoted.json['result']['missing']==[],quoted.json
     started=call(client,workshop,auth_headers,'start',recipe_id='recipe-aa13')
@@ -594,6 +664,9 @@ def test_beer_recipe_produces_eight_catalog_cans(client,workshop,auth_headers,mo
     assert {row['item']['name']: row['amount'] for row in job['escrow']} == {
         'Вода': 3, 'Хлеб': 1, 'Сахар': 1, 'Металлические детали': 2,
     }
+    assert job['preparation_remaining']==1800
+    advance_distillery_clock(client,workshop,auth_headers,30)
+    job=workshop['actor_character'].data['crafting']['current']
     assert_recipe_wait(client, workshop, auth_headers, job, 2880, chosen_loss=[])
     monkeypatch.setattr('app.services.crafting.resolve_creation',lambda quote:{'success':True,'roll':100,'automatic':False})
     finished=call(client,workshop,auth_headers,'finish',job_id=started.json['result']['id'],chosen_loss=[])
@@ -619,6 +692,7 @@ def test_moonshine_recipe_spends_five_spirit_uses_and_keeps_still(client,worksho
     ]
     workshop['actor_character'].data=data
     db.session.commit()
+    place_distillery(workshop)
     quoted=call(client,workshop,auth_headers,'quote',recipe_id='recipe-aa48')
     assert quoted.status_code==200 and quoted.json['result']['missing']==[],quoted.json
     started=call(client,workshop,auth_headers,'start',recipe_id='recipe-aa48')
@@ -626,6 +700,9 @@ def test_moonshine_recipe_spends_five_spirit_uses_and_keeps_still(client,worksho
     assert units(started.json['data'],'Спирт')==5
     job = started.json['result']
     assert {row['item']['name']: row['amount'] for row in job['escrow']} == {'Спирт': 5, 'Сахар': 1}
+    assert job['preparation_remaining']==3600
+    advance_distillery_clock(client,workshop,auth_headers,60)
+    job=workshop['actor_character'].data['crafting']['current']
     assert_recipe_wait(client, workshop, auth_headers, job, 1440, chosen_loss=[])
     monkeypatch.setattr('app.services.crafting.resolve_creation',lambda quote:{'success':True,'roll':100,'automatic':False})
     finished=call(client,workshop,auth_headers,'finish',job_id=started.json['result']['id'],chosen_loss=[])

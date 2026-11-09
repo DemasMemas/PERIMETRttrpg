@@ -16626,7 +16626,8 @@ function renderBackpackItem(item, index, parentPath, parentContainer, allTemplat
     actionsDiv.style.alignItems = 'center';
     actionsDiv.style.justifyContent = 'flex-end';
 
-    if(item.attributes?.portable_station||item.attributes?.crafted_cover||item.attributes?.trap_recipe) {
+    if(item.attributes?.portable_station||item.attributes?.crafted_cover||item.attributes?.trap_recipe
+        ||getInventoryItemCategory(item)==='tool'&&item.name?.trim().toLowerCase()==='самогонный аппарат') {
         const placeBtn=document.createElement('button');placeBtn.type='button';placeBtn.className='btn btn-sm btn-primary';
         placeBtn.textContent='Разместить';placeBtn.dataset.widgetKey='place-station';
         placeBtn.onclick=async e=>{

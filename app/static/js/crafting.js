@@ -18,18 +18,24 @@ const recipeLabel=recipe=>{
         :recipe.output_count>1?recipe.output_name:recipe.name;
 };
 
-export async function showCrafting({characterId,lobbyId,onSaved,recipeId=''}){
-    document.getElementById('crafting-modal')?.remove();
+export async function showCrafting({characterId,lobbyId,onSaved,recipeId='',stationId}){
+    document.getElementById('crafting-modal')?.closeCrafting?.();
     const modal=el('div',null,'modal');modal.id='crafting-modal';modal.style.display='flex';
     const panel=el('div',null,'modal-content');panel.style.cssText='max-width:900px;max-height:90vh;overflow:hidden;display:flex;flex-direction:column';
     modal.append(panel);document.body.append(modal);
     const header=el('div',null,'block-header');header.append(el('h3','Создание, модификации и разбор'));
-    const socket=window.socket;let socketUpdateHandler;
-    const close=()=>{document.removeEventListener('keydown',onKey);if(socketUpdateHandler)socket?.off?.('character_data_updated',socketUpdateHandler);modal.remove();};
+    const socket=window.socket;
+    const handlers={};
+    const close=()=>{
+        document.removeEventListener('keydown',onKey);
+        for(const [name,handler] of Object.entries(handlers))socket?.off?.(name,handler);
+        modal.remove();
+    };
+    modal.closeCrafting=close;
     const onKey=event=>{if(event.key==='Escape')close();};document.addEventListener('keydown',onKey);
     header.append(button('×',close));panel.append(header);
     const body=el('div',null,'crafting-body');panel.append(body);
-    let snapshot,busy=false,selectedRecipe=recipeId,searchValue='',generation=0,activeTab='creation',selectedGroup='Все';
+    let snapshot,busy=false,selectedRecipe=recipeId,searchValue='',generation=0,snapshotGeneration=0,activeTab='creation',selectedGroup='Все';
     const modSelection={};
     const act=async(operation,payload={},targetId=characterId,revision=snapshot.revision)=>{
         if(busy)return;busy=true;
@@ -42,13 +48,22 @@ export async function showCrafting({characterId,lobbyId,onSaved,recipeId=''}){
         finally{busy=false;}
     };
     const refresh=async()=>{
-        snapshot=await Server.getCrafting(characterId);if(!modal.isConnected)return;
+        const requested=++snapshotGeneration;
+        const fresh=await Server.getCrafting(characterId);
+        if(requested!==snapshotGeneration||!modal.isConnected)return;
+        snapshot=fresh;
         body.replaceChildren();
         body.append(button('Обновить',refresh));
         if(snapshot.is_gm)body.append(button('Подтверждения условий сцены',showRequests));
         const job=snapshot.state.current;
         if(job){
-            body.append(el('h4',job.name),el('p',job.remaining_seconds>0?`Работа идёт. Осталось ${Math.ceil(job.remaining_seconds/60)} мин игрового времени.`:'Время работы прошло. Можно завершить создание.'));
+            const minutes=Math.ceil(job.remaining_seconds/60);
+            const status=job.phase==='preparing'
+                ? `Подготовка · осталось ${minutes} мин. ${job.at_station?'Побудьте рядом с аппаратом.':'Вернитесь к аппарату, чтобы продолжить.'}`
+                : job.phase==='running'?`Аппарат работает сам · осталось ${minutes} мин. Можно уйти.`
+                : job.phase==='ready'?(job.at_station?'Партия готова.':'Партия готова. Вернитесь к аппарату за результатом.')
+                : job.remaining_seconds>0?`Работа идёт. Осталось ${minutes} мин игрового времени.`:'Время работы прошло. Можно завершить создание.';
+            body.append(el('h4',job.name),el('p',status));
             if(job.kind==='book'){
                 body.append(el('p','Чтение книги продолжается в КПК → Файлы.'));
                 return;
@@ -62,8 +77,8 @@ export async function showCrafting({characterId,lobbyId,onSaved,recipeId=''}){
                     const choice=select('Компонент при неудаче',job.escrow.map((e,index)=>[index,`${e.item.name} · зарезервировано ${e.amount}`]));body.append(choice);choices.push(choice);
                 }
             }
-            const finish=button(job.kind==='book'?'Завершить чтение':'Завершить · к100',()=>act('finish',{job_id:job.id,chosen_loss:choices.map(e=>Number(e.value))}));
-            finish.disabled=job.remaining_seconds>0;body.append(finish);
+            const finish=button(job.phase?'Забрать результат · к100':'Завершить · к100',()=>act('finish',{job_id:job.id,chosen_loss:choices.map(e=>Number(e.value))}));
+            finish.disabled=job.remaining_seconds>0||Boolean(job.phase&&!job.at_station);body.append(finish);
             if(job.salvage_roll?.awaiting_gm){
                 finish.disabled=true;
                 body.append(el('p',`Результат ${job.salvage_roll.total}: в книге эта строка не заполнена. Предмет сохранён, нужен выбор ГМа.`));
@@ -144,6 +159,7 @@ export async function showCrafting({characterId,lobbyId,onSaved,recipeId=''}){
                 const quoteGeneration=++generation;preview.replaceChildren(el('p','Считаем компоненты…'));
                 try{
                     const ammoPayload=ammo?{ammo_template_id:Number(ammo.value),ammo_variant:ammoVariant.value}:{};
+                    if(stationId)ammoPayload.station_id=stationId;
                     if(grenadeChoices.length)ammoPayload.grenade_paths=grenadeChoices.map(choice=>grenades[Number(choice.value)]?.path||[]);
                     const response=await Server.craft(characterId,{operation:'quote',recipe_id:recipe.id,tool_option:Number(tool.value),approval_id:approval?.id,...ammoPayload});
                     if(quoteGeneration!==generation||!modal.isConnected)return;
@@ -162,7 +178,7 @@ export async function showCrafting({characterId,lobbyId,onSaved,recipeId=''}){
                             `${option.name} ${option.available ?? 0}/${option.required ?? option.quantity}`).join(' или ')));
                     }
                     for(const missing of plan.other_missing || plan.missing)preview.append(el('p',missing,'error-message'));
-                    const start=button('Начать создание',()=>act('start',{recipe_id:recipe.id,tool_option:Number(tool.value),approval_id:approval?.id,...ammoPayload}));
+                    const start=button(plan.preparation_seconds?'Начать подготовку':'Начать создание',()=>act('start',{recipe_id:recipe.id,tool_option:Number(tool.value),approval_id:approval?.id,...ammoPayload}));
                     start.disabled=plan.missing.length>0;preview.append(start);
                 }catch(error){if(quoteGeneration===generation)preview.replaceChildren(el('p',error.message));}
             };
@@ -325,9 +341,15 @@ export async function showCrafting({characterId,lobbyId,onSaved,recipeId=''}){
             body.append(row);
         }
     };
-    socketUpdateHandler=event=>{
-        if(Number(event?.character_id)===Number(characterId)&&!busy&&modal.isConnected)void refresh();
+    const refreshIfIdle=()=>{if(!modal.isConnected){close();return;}if(!busy)void refresh().catch(()=>{});};
+    handlers.character_data_updated=event=>{if(Number(event?.character_id)===Number(characterId))refreshIfIdle();};
+    handlers.lobby_time_updated=()=>{if(snapshot?.state.current?.phase)refreshIfIdle();};
+    handlers.character_moved=event=>{
+        if(Number(event?.character_id)===Number(characterId)&&snapshot?.state.current?.phase)refreshIfIdle();
     };
-    socket?.on?.('character_data_updated',socketUpdateHandler);
+    handlers.location_object_updated=event=>{
+        if(stationId===event?.object?.id)refreshIfIdle();
+    };
+    for(const [name,handler] of Object.entries(handlers))socket?.on?.(name,handler);
     try{await refresh();}catch(error){body.replaceChildren(el('p',error.message));}
 }

@@ -11173,13 +11173,14 @@ function showObjectContextMenu(clientX, clientY, object) {
                     beginStationPlacement({characterId,revision:character.data._revision,object});
                 }catch(error){showNotification(error.message,'system');}
             }});
-            if(!['recipe-m34','recipe-m41'].includes(object.properties.portable_station))actions.push({label:'Инструменты станка',action:async()=>{
+            if(!object.properties.standard_distillery&&!['recipe-m34','recipe-m41'].includes(object.properties.portable_station))actions.push({label:'Инструменты станка',action:async()=>{
                 const {showStationTools}=await import('./stationTools.js');
                 await showStationTools({lobbyId:window.currentLobbyId,locationId:currentLocationId,characterId,object,onObject:updateLocationObject});
             }});
             actions.push({label:object.properties.aeration_unit?'Очистка воды':'Создание предметов',action:async()=>{
                 const {showCrafting}=await import('./crafting.js');await showCrafting({characterId,lobbyId:window.currentLobbyId,
-                    recipeId:object.properties.aeration_unit?'recipe-aa12':''});
+                    recipeId:object.properties.aeration_unit?'recipe-aa12':'',
+                    stationId:object.properties.portable_station==='recipe-m40'?object.id:undefined});
             }});
         }
     }

@@ -52,7 +52,11 @@ def append_work(data,operation_id,action,result):
     label={'start':'Создание предмета','salvage':'Разбор предмета','modify':'Установка модификации','read_book':'Чтение книги','request_tool':'Заявка на инструмент',
         'approve_tool':'Решение по инструменту','unlock_slot':'Открытие слота'}.get(action,(existing or {}).get('label','Работа'))
     text=result.get('name') or result.get('recipe_name') or ''
-    if action in {'start','modify','read_book','salvage'}:text+=f" · {max(0,result['ready_at']-result['started_at'])/60:g} мин"
+    if action in {'start','modify','read_book','salvage'}:
+        if result.get('preparation_remaining'):
+            text+=f" · подготовка {result['preparation_remaining']/60:g} мин, работа аппарата {result['processing_seconds']/60:g} мин"
+        else:
+            text+=f" · {max(0,result['ready_at']-result['started_at'])/60:g} мин"
     elif action in {'finish','cancel'}:
         text+=' · '+('отменено' if result.get('cancelled') else 'готово' if result.get('success') else 'неудача')
         if result.get('roll') is not None:

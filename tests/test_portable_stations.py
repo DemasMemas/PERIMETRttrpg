@@ -78,6 +78,17 @@ def test_place_replay_and_move_by_another_adjacent_character_preserve_instance(s
     assert obj.properties['rotation']==1.2
 
 
+def test_place_legacy_distillery_keeps_its_instance(station_game):
+    pair=station_game;character=pair['actor_character']
+    data=deepcopy(character.data)
+    data['inventory']['pockets']=[{'id':'old-distillery','name':'Самогонный Аппарат','category':'tool','quantity':1}]
+    character.data=data;db.session.commit()
+    _,obj=place(pair)
+    assert obj.properties['standard_distillery'] is True
+    assert obj.properties['station_item']['id']=='old-distillery'
+    assert character.data['inventory']['pockets']==[]
+
+
 @pytest.mark.parametrize('changes',[{'x':10},{'x':4,'y':4},{'rotation':'0'},{'floor_level':1}])
 def test_invalid_placement_keeps_item_and_creates_no_object(station_game,changes):
     pair=station_game;before=deepcopy(pair['actor_character'].data)

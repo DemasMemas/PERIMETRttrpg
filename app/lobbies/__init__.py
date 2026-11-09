@@ -547,8 +547,9 @@ def _advance_world_time(lobby, minutes):
         flag_modified(character, 'data')
         updated_characters.append(character)
     from app.services.crafting import complete_lobby_books
+    from app.services.distillery import advance_lobby as advance_distilleries
     return list({character.id:character for character in
-        [*portable_updated,*updated_characters,*complete_lobby_books(lobby)]}.values())
+        [*portable_updated,*updated_characters,*complete_lobby_books(lobby),*advance_distilleries(lobby,minutes*60)]}.values())
 
 
 def _world_group_submitted_for_current_turn(group, lobby):
@@ -1332,12 +1333,14 @@ def update_lobby_time(lobby_id, lobby):
             updated_characters.append(character)
     from app.services.crafting import complete_lobby_books
     updated_characters.extend(complete_lobby_books(lobby))
+    from app.services.distillery import advance_lobby as advance_distilleries
+    updated_characters.extend(advance_distilleries(lobby,elapsed_seconds))
     db.session.commit()
     payload = {'game_day': game_day, 'game_time_minutes': game_time_minutes}
     from app.services.weather_rules import emit as emit_weather
     emit_weather(lobby)
     socketio.emit('lobby_time_updated', payload, room=f"lobby_{lobby_id}")
-    for character in updated_characters:
+    for character in {item.id:item for item in updated_characters}.values():
         emit_character_update(
             {
                 'character_id': character.id,
@@ -1581,6 +1584,8 @@ def start_lobby_rest(lobby_id, lobby):
 
     from app.services.crafting import complete_lobby_books
     book_updated=complete_lobby_books(lobby)
+    from app.services.distillery import advance_lobby as advance_distilleries
+    distillery_updated=advance_distilleries(lobby,elapsed_seconds,resting_ids=selected_ids)
     db.session.commit()
     time_payload = {
         'game_day': lobby.game_day,
@@ -1589,7 +1594,7 @@ def start_lobby_rest(lobby_id, lobby):
     socketio.emit('lobby_time_updated', time_payload, room=f"lobby_{lobby_id}")
     from app.services.weather_rules import emit as emit_weather
     emit_weather(lobby)
-    for character in {item.id:item for item in [*characters,*portable_updated,*book_updated]}.values():
+    for character in {item.id:item for item in [*characters,*portable_updated,*book_updated,*distillery_updated]}.values():
         emit_character_update(
             {
                 'character_id': character.id,
