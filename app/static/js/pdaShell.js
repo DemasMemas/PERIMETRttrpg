@@ -527,7 +527,10 @@ export function openPdaShell({ item, findItem, getData, operate, canEdit, charac
                 const name = document.createElement('strong');
                 name.textContent = mod.name;
                 const effect = document.createElement('span');
-                effect.textContent = mod.description || 'Описание не указано';
+                const revisedDescription = ['pda-b21', 'pda-b22'].includes(mod.ruleId)
+                    ? filesSnapshot?.catalog?.modifications?.find(rule => rule.id === mod.ruleId)?.description
+                    : null;
+                effect.textContent = revisedDescription || mod.description || 'Описание не указано';
                 entry.append(name, effect);
                 content.append(entry);
             }

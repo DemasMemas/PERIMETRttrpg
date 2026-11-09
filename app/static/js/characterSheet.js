@@ -4811,7 +4811,7 @@ async function renderEquipmentTab(data, { focusWeaponIndex = null } = {}) {
                             <strong>${escapeHtml(eq.detector?.name || 'Не надет')}</strong>
                         </div>
                         <div class="field-group field-number">
-                            <label>Бонус</label>
+                            <label>Базовый бонус</label>
                             <input type="number" class="number-input form-control" name="equipment.detector.bonus" value="${eq.detector?.bonus || 0}">
                         </div>
                     </div>
@@ -6052,20 +6052,20 @@ window.drawWeaponFromEquipment = async function(weaponIndex,hand) {
         if(currentCharacterId!==characterId||medicalOperationInProgress)return;
         if(sheetSaveBlocked)throw new Error('Переоткройте лист перед доставанием оружия');
         medicalOperationInProgress=locked=true;medicalRemoteUpdate=null;
-        const combatState=window.locationCombatState,actor=combatState?.current_character;
-        if(combatState?.status!=='active'){
+        const combat = await Server.getEquipmentCombat(characterId);
+        if (!combat) {
             const result=await Server.changeWeaponGrip(characterId,{draw:true,weapon_index:weaponIndex,
                 hands:hand==='both'?2:hand?1:currentCharacterData.health?.combatMeta?.weaponGripHands===1?1:2,
                 ...(hand?{hand:hand==='both'?'right':hand}:{}),character_revision:currentCharacterData._revision});
             currentCharacterData=result.data;showNotification('Оружие взято в руки','success');return;
         }
-        if(actor?.character_id!==characterId)throw new Error('Достать оружие можно только в свой ход');
-        const result = await Server.performLocationCombatAction(window.currentLobbyId, window.currentLocationId, {
-            location_character_id: actor.location_character_id,
+        if (!combat.is_current_turn) throw new Error('Достать оружие можно только в свой ход');
+        const result = await Server.performLocationCombatAction(combat.lobby_id, combat.location_id, {
+            location_character_id: combat.location_character_id,
             action_key: 'draw_weapon',
             weapon_index: weaponIndex,
             ...(hand?{attribute_choice:hand==='both'?'both_hands':hand+'_hand'}:{}),
-            pending_action_id: `draw-weapon-${actor.location_character_id}-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+            pending_action_id: `draw-weapon-${combat.location_character_id}-${Date.now()}-${Math.random().toString(36).slice(2)}`,
         });
         if (result?.pending_action) {
             showNotification('Доставание оружия начато. Оно окажется в руках после полной оплаты ОД.', 'system');
@@ -8373,30 +8373,29 @@ async function refreshCharacterAfterEquipmentAction(data = null) {
 }
 
 async function runEquipmentAction(operation, slot, itemPath = null) {
-    const combatState = window.locationCombatState;
+    const characterId = currentCharacterId;
+    if (autoSaveTimer) await forceSyncCharacter();
+    await Server.waitForCharacterSave(characterId);
+    if (characterId !== currentCharacterId) return;
+    if (sheetSaveBlocked) throw new Error('Переоткройте лист перед сменой экипировки');
+    const combat = await Server.getEquipmentCombat(characterId);
+    if (characterId !== currentCharacterId) return;
     let result;
-    if (combatState?.status === 'active') {
-        const actor = combatState.current_character;
-        if (!actor || Number(actor.character_id) !== Number(currentCharacterId)) {
+    if (combat) {
+        if (!combat.is_current_turn) {
             throw new Error('Сейчас не ход этого персонажа');
         }
-        const item = itemPath ? getItemByPath(itemPath) : null;
-        const access = item
-            ? await calculateInventoryAccess(item, itemPath)
-            : { retrievalActionPoints: 0 };
-        const pendingActionId = `equipment-${actor.location_character_id}-${Date.now()}`;
         const payload = {
-            location_character_id: actor.location_character_id,
+            location_character_id: combat.location_character_id,
             action_key: 'change_equipment',
             equipment_operation: operation,
             equipment_slot: slot,
             item_path: itemPath,
-            inventory_retrieval_action_points: access.retrievalActionPoints,
-            pending_action_id: pendingActionId,
+            pending_action_id: `equipment-${combat.location_character_id}-${Date.now()}-${Math.random().toString(36).slice(2)}`,
         };
         result = await Server.performLocationCombatAction(
-            window.currentLobbyId,
-            window.currentLocationId,
+            combat.lobby_id,
+            combat.location_id,
             payload,
         );
         if (result?.pending_action) {
@@ -8405,14 +8404,14 @@ async function runEquipmentAction(operation, slot, itemPath = null) {
             showNotification('Смена экипировки начата и продолжится в следующем ходу', 'system');
             return result;
         }
-        await refreshCharacterAfterEquipmentAction();
+        if (characterId === currentCharacterId) await refreshCharacterAfterEquipmentAction();
     } else {
-        result = await Server.changeCharacterEquipment(currentCharacterId, {
+        result = await Server.changeCharacterEquipment(characterId, {
             operation,
             slot,
             item_path: itemPath,
         });
-        await refreshCharacterAfterEquipmentAction(result.data);
+        if (characterId === currentCharacterId) await refreshCharacterAfterEquipmentAction(result.data);
     }
     const details = result?.equipment_change || {};
     const duration = Number(details.duration_minutes || 0);
@@ -8427,7 +8426,11 @@ async function runEquipmentAction(operation, slot, itemPath = null) {
 }
 
 async function runEquipmentModuleAction(operation, targetPath, slotType, itemPath = null) {
-    await Server.waitForCharacterSave(currentCharacterId);
+    const characterId = currentCharacterId;
+    if (autoSaveTimer) await forceSyncCharacter();
+    await Server.waitForCharacterSave(characterId);
+    if (characterId !== currentCharacterId) return;
+    if (sheetSaveBlocked) throw new Error('Переоткройте лист перед сменой модуля');
     const target = getItemByPath(targetPath);
     const source = itemPath ? getItemByPath(itemPath) : null;
     const identity = item => item ? Object.fromEntries(
@@ -8436,16 +8439,16 @@ async function runEquipmentModuleAction(operation, targetPath, slotType, itemPat
             .map(key => [key, item[key]])
     ) : null;
     const selection = { target: identity(target), source: identity(source) };
-    const combatState = window.locationCombatState;
+    const combat = await Server.getEquipmentCombat(characterId);
+    if (characterId !== currentCharacterId) return;
     let result;
-    if (combatState?.status === 'active') {
-        const actor = combatState.current_character;
-        if (!actor || Number(actor.character_id) !== Number(currentCharacterId)) {
+    if (combat) {
+        if (!combat.is_current_turn) {
             throw new Error('Сейчас не ход этого персонажа');
         }
-        const pendingActionId = `equipment-module-${actor.location_character_id}-${Date.now()}`;
+        const pendingActionId = `equipment-module-${combat.location_character_id}-${Date.now()}`;
         const payload = {
-            location_character_id: actor.location_character_id,
+            location_character_id: combat.location_character_id,
             action_key: 'change_equipment_module',
             module_operation: operation,
             module_slot_type: slotType,
@@ -8455,8 +8458,8 @@ async function runEquipmentModuleAction(operation, targetPath, slotType, itemPat
             pending_action_id: pendingActionId,
         };
         result = await Server.performLocationCombatAction(
-            window.currentLobbyId,
-            window.currentLocationId,
+            combat.lobby_id,
+            combat.location_id,
             payload,
         );
         if (result?.pending_action) {
@@ -8465,9 +8468,9 @@ async function runEquipmentModuleAction(operation, targetPath, slotType, itemPat
             showNotification('Установка фильтра начата и продолжится в следующем ходу', 'system');
             return result;
         }
-        await refreshCharacterAfterEquipmentAction();
+        if (characterId === currentCharacterId) await refreshCharacterAfterEquipmentAction();
     } else {
-        result = await Server.changeCharacterEquipmentModule(currentCharacterId, {
+        result = await Server.changeCharacterEquipmentModule(characterId, {
             operation,
             slot_type: slotType,
             target_path: targetPath,
@@ -8475,7 +8478,7 @@ async function runEquipmentModuleAction(operation, targetPath, slotType, itemPat
             item_path: itemPath,
             character_revision: currentCharacterData._revision,
         });
-        await refreshCharacterAfterEquipmentAction(result.data);
+        if (characterId === currentCharacterId) await refreshCharacterAfterEquipmentAction(result.data);
     }
     showNotification(operation === 'install' ? 'Фильтр установлен' : 'Фильтр снят', 'success');
     return result;
@@ -9076,7 +9079,10 @@ window.equipDetectorFromInventory = async function(itemPath) {
         showNotification('Этот предмет нельзя надеть как детектор');
         return;
     }
-    if (item.subcategory !== 'anomaly_detector' && item.attributes?.type !== 'anomaly') {
+    const type = item.attributes?.type;
+    const detectsAnomalies = type === 'anomaly' || ['Аномалии', 'anomaly_detector'].includes(item.subcategory)
+        || (item.category === 'detector' && item.attributes?.avoidance_chance !== undefined);
+    if (!detectsAnomalies || ['artifact', 'radio'].includes(type)) {
         showNotification('Можно надеть только детектор аномалий');
         return;
     }

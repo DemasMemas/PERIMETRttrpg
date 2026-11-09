@@ -4,6 +4,29 @@ from app.extensions import db
 from app.models.templates import ItemTemplate
 from app.services.combat import CombatService
 from app.services.exceptions import ValidationError
+from test_grenade_rules import grenade_game
+
+
+def test_sheet_equipment_context_identifies_the_characters_actual_combat(client,grenade_game,auth_headers):
+    pair = grenade_game
+    actor = pair['actor_location']
+    endpoint = f'/lobbies/characters/{actor.character_id}/equipment-action'
+    headers = auth_headers(pair['actor_user'])
+    response = client.get(endpoint, headers=headers)
+    assert response.json['combat'] == {
+        'lobby_id': pair['lobby'].id, 'location_id': actor.location_id,
+        'location_character_id': actor.id, 'is_current_turn': True,
+    }
+    assert client.get(endpoint, headers=auth_headers(pair['target_user'])).status_code == 403
+    from app.models import LocationCombatState
+    state = LocationCombatState.query.filter_by(location_id=actor.location_id).one()
+    state.current_location_character_id = pair['target_location'].id
+    db.session.commit()
+    assert not client.get(endpoint, headers=headers).json['combat']['is_current_turn']
+    assert client.post(endpoint, headers=headers, json={'operation':'unequip','slot':'gasMask'}).status_code == 409
+    state.status = 'finished'
+    db.session.commit()
+    assert client.get(endpoint, headers=headers).json == {'combat': None}
 
 
 def test_fragment_glasses_are_incompatible_in_both_equipment_orders(app):

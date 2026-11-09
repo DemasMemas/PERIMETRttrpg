@@ -225,9 +225,13 @@ def parse_creation_catalog(workbook_path):
             'name': text(row.get('B')), 'description': text(row.get('C'))}
            for index, row in enumerate(pda_rows, 1) if text(row.get('A')) in {'Низкая', 'Средняя', 'Высокая', 'Очень высокая'}
            and row.get('B') and row.get('__row__', index) < 28]
+    pda_overrides = {
+        'pda-b21': ('Очень высокая', 'Подменяет имя отправителя в эфире, в том числе именем другого аккаунта.'),
+        'pda-b22': ('Высокая', 'При наличии образцов голоса позволяет имитировать речь человека. Применяется в сцене с ГМом.'),
+    }
     for rule in pda:
-        if rule['id'] in {'pda-b21','pda-b22'}:
-            rule['difficulty_group']='Очень высокая' if rule['id']=='pda-b21' else 'Высокая'
+        if rule['id'] in pda_overrides:
+            rule['difficulty_group'], rule['description'] = pda_overrides[rule['id']]
     flame_recipes=[]
     for kind,weapon,tank,capacity,row in [('jet','Струйный огнемёт','Бак для струйного огнемета',8,37),('reactive','Реактивный огнемёт','Баллон для реактивного огнемета',16,46)]:
         flame_recipes.append(recipe(f'flame-{row}',weapon,'Металлические детали (15), Резина (6), Клей, Зажигалка, Датчик' if kind=='jet' else 'Металлические детали (25), Резина (10), Клей, Зажигалка, Датчик',65 if kind=='jet' else 70,'Станок Оружейника','1 час','engineering','Огнемёты'))

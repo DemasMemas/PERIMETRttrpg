@@ -27,7 +27,7 @@ from app.services.custom_consumable_profile import validate_custom_consumable
 from app.services.exceptions import ConflictError, PermissionDenied, ValidationError, NotFoundError
 from app.services.character_events import emit_character_update, publish_character_save
 from app.services.combat import CombatService
-from app.services.world_travel_events import roll_travel_event, travel_scenario
+from app.services.world_travel_events import anomaly_check_details, roll_travel_event, travel_scenario
 from app.services.character_interaction import CharacterInteractionService
 from app.services.health import apply_health_maximums, heal_character_fully, health_zones_to_location
 from app.services.location_lighting import normalize_location_lighting
@@ -1128,7 +1128,7 @@ def move_world_group(lobby_id, group_id, lobby, participant):
             event = WorldTravelEvent(
                 lobby_id=lobby_id,
                 group_id=group.id,
-                description=(f'{outcome.name}: {outcome.prompt}' +
+                description=(f'{outcome.name}: {outcome.prompt}' + anomaly_check_details(outcome_key, group_characters) +
                     (f" {weather_label}: {weather_change['before']:.1f} → {weather_change['after']:.1f}." if weather_change else '')),
                 from_tile_x=from_x,
                 from_tile_y=from_y,
@@ -1850,7 +1850,7 @@ def update_character(character_id):
     return jsonify({'message': 'Character updated', 'data': result.character.data_snapshot()}), 200
 
 
-@lobbies_bp.route('/characters/<int:character_id>/equipment-action', methods=['POST'])
+@lobbies_bp.route('/characters/<int:character_id>/equipment-action', methods=['GET', 'POST'])
 @jwt_required()
 def change_character_equipment_outside_combat(character_id):
     user_id = int(get_jwt_identity())
@@ -1859,17 +1859,30 @@ def change_character_equipment_outside_combat(character_id):
         return jsonify({'error': 'Character not found'}), 404
     if not _character_edit_allowed(character, user_id):
         return jsonify({'error': 'You do not control this character'}), 403
-    active_location_character = (
-        LocationCharacter.query
+    active_combat = (
+        db.session.query(LocationCharacter, LocationCombatState)
         .join(LocationCombatState, LocationCombatState.location_id == LocationCharacter.location_id)
         .filter(
             LocationCharacter.character_id == character_id,
             LocationCombatState.status == 'active',
         )
-        .first()
+        .limit(2)
+        .all()
     )
-    if active_location_character:
-        return jsonify({'error': 'Use the combat equipment action during combat'}), 409
+    if len(active_combat) > 1:
+        return jsonify({'error': 'Персонаж участвует в нескольких боях. Сначала завершите лишний бой.'}), 409
+    if request.method == 'GET':
+        if not active_combat:
+            return jsonify({'combat': None}), 200
+        placed, state = active_combat[0]
+        return jsonify({'combat': {
+            'lobby_id': character.lobby_id,
+            'location_id': placed.location_id,
+            'location_character_id': placed.id,
+            'is_current_turn': state.current_location_character_id == placed.id,
+        }}), 200
+    if active_combat:
+        return jsonify({'error': 'Бой начался. Повторите действие с экипировкой.'}), 409
 
     payload = request.get_json(silent=True) or {}
     character_data = deepcopy(character.data or {})

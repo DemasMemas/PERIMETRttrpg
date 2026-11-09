@@ -1908,6 +1908,30 @@ def test_random_world_event_blocks_travel_until_gm_resolves_it(
     ).one().message == "Event party: Test world encounter: GM prompt"
 
 
+def test_world_travel_anomaly_uses_synchronized_detector_bonus(client,create_user,auth_headers,monkeypatch):
+    from app.services.equipment_modifications import make_record
+    from app.services.world_travel_events import OUTCOMES
+
+    gm = create_user('synchronized-detector-gm')
+    lobby = create_lobby(client, gm, auth_headers)
+    headers = auth_headers(gm)
+    api = f"/lobbies/{lobby['id']}/world-groups"
+    character = db.session.get(LobbyCharacter, create_character(client,lobby,gm,auth_headers)['id'])
+    character.data = {**character.data, 'equipment': {
+        'armor': {'modifications':[make_record('armor-a43')]},
+        'detector': {'category':'detector','subcategory':'Аномалии','bonus':2,'attributes':{'avoidance_chance':25}},
+    }}
+    db.session.commit()
+    group = client.post(api, headers=headers, json={'name':'Группа','tile_x':5,'tile_y':5}).json
+    assert client.patch(f"{api}/{group['id']}/members",headers=headers,json={'character_ids':[character.id]}).status_code==200
+    anomaly = next(outcome for outcome in OUTCOMES if outcome.key == 'anomaly')
+    monkeypatch.setattr('app.lobbies.roll_travel_event',lambda _scenario:anomaly)
+    moved = client.post(f"{api}/{group['id']}/move",headers=headers,json={'tile_x':6,'tile_y':5})
+    assert moved.status_code==200,moved.json
+    event = client.get(api, headers=headers).json['pending_events'][0]
+    assert f'{character.name} · СЛ 15 − бонус Внимательности.' in event['description']
+
+
 def test_world_travel_scenario_uses_only_explicit_active_bases(
     client, create_user, auth_headers
 ):

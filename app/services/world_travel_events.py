@@ -105,6 +105,22 @@ def outcome_probabilities(scenario):
     return result
 
 
+def anomaly_check_details(outcome_key, characters):
+    if outcome_key not in {'anomaly', 'trap_anomaly', 'teleport_anomaly'}:
+        return ''
+    from app.services.electronics import anomaly_detector_bonus
+    from app.services.portable_lights import walk
+
+    details = []
+    for character in characters:
+        data = character.data or {}
+        best = max((bonus for _, item in walk(data, True)
+                    if (bonus := anomaly_detector_bonus(data, item)) is not None), default=0)
+        if best:
+            details.append(f'{character.name} · СЛ {20 - best:g} − бонус Внимательности.')
+    return (' ' + ' '.join(details)) if details else ''
+
+
 def roll_travel_event(scenario, rng=None):
     rng = rng or random
     chance, categories = SCENARIOS[scenario]

@@ -85,6 +85,34 @@ def controller_templates():
             ('Таймер','timer','recipe-f12','Запуск взрывчатки или переключение устройства по времени. Максимальная отсрочка — 24 часа.')]]
 
 
+def is_anomaly_detector(item):
+    attrs = item.get('attributes') or {}
+    if attrs.get('type') in {'artifact', 'radio'}:
+        return False
+    return attrs.get('type') == 'anomaly' or item.get('subcategory') in {'Аномалии', 'anomaly_detector'} or (
+        item.get('category') == 'detector' and 'avoidance_chance' in attrs
+    )
+
+
+def anomaly_detector_bonus(data, item, *, jammed_by=None):
+    from app.services.artifact_effects import device_block_reason
+    from app.services.equipment_modifications import rule
+    from app.services.combat import CombatService
+
+    attrs = item.get('attributes') or {}
+    equipment = data.get('equipment') or {}
+    if not is_anomaly_detector(item) or item.get('protectionDisabled'):
+        return None
+    if not attrs.get('isActive', equipment.get('detector') is item):
+        return None
+    if device_block_reason(data, item, jammed_by=jammed_by):
+        return None
+    armor = equipment.get('armor') or {}
+    synchronization = 0 if armor.get('protectionDisabled') else rule(armor, 'anomaly_detector_bonus')
+    base = CombatService._coerce_float(item.get('bonus', attrs.get('bonus')), 0)
+    return base + synchronization
+
+
 def switchable(item):
     from app.services.portable_lights import definition
     return ((definition(item) in {'pda','dosimeter','hand','improved','head','module'})

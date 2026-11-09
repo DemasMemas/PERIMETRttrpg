@@ -466,11 +466,27 @@ module.exports=async({page,request,token,lobby,base,connect,debugPort,safeSessio
     const respirator=maskCatalog.global.find(template=>template.name==='Противогаз Респиратор');
     assert.ok(balaclava&&respirator);
     const visualItem=template=>({id:'visual-'+template.id,templateId:template.id,name:template.name,
-        category:template.category,attributes:template.attributes,quantity:1,installedModules:[]});
+        category:template.category,attributes:template.attributes,weight:template.weight,quantity:1,installedModules:[]});
+    const firearms=await request(api+'/templates?category=weapon',null,token,'GET');
+    const shotgun=firearms.global.find(template=>template.subcategory==='Дробовики');
+    assert.ok(shotgun,'Дробовик из каталога');
     const outfit=await request(api+'/characters',{name:'Проверка рисунка экипировки',data:{
-        equipment:{helmet:visualItem(balaclava),gasMask:visualItem(respirator)},
+        equipment:{gasMask:visualItem(respirator)},
+        inventory:{pockets:[visualItem(balaclava)],backpack:[]},
+        weapons:[{...visualItem(shotgun),model:shotgun.name}],
     }},token);
-    await page.evaluate(`window.openCharacterSheet(${outfit.id},'equipment').then(()=>true)`);
+    const outfitPlaced=await request(loc+'/spawn_character',{character_id:outfit.id,tile_x:45,tile_y:48},token);
+    const outfitActor=outfitPlaced.location_character_id;
+    await request(loc+'/combat/start',{location_character_ids:[outfitActor],initiator_location_character_id:outfitActor,
+        initiator_first:true},token);
+    const outfitCombat=()=>request(loc+'/combat',null,token,'GET');
+    let combat=await outfitCombat();
+    await request(loc+'/combat/adjust',{location_character_id:outfitActor,
+        action_points:20-combat.current_character.action_points_current},token);
+    await page.evaluate(`window.openCharacterSheet(${outfit.id},'inventory').then(()=>true)`);
+    await page.until(`document.querySelector('#pockets-container [data-widget-key="equip"]')`,'Балаклава в кармане');
+    await page.evaluate(`window.locationCombatState=null;
+        document.querySelector('#pockets-container [data-widget-key="equip"]').click();true`);
     await page.until(`(()=>{const figure=document.querySelector('.loadout-figure[data-helmet="balaclava"][data-mask-kind="respirator"]');
         if(!figure)return false;
         const fabric=figure.querySelector('.loadout-art-helmet-balaclava'),mask=figure.querySelector('.loadout-art-respirator');
@@ -483,8 +499,25 @@ module.exports=async({page,request,token,lobby,base,connect,debugPort,safeSessio
         return {x,y,width,height,scale:1};})()`);
     fs.writeFileSync(path.join(safeSession.artifacts,'balaclava-and-respirator.png'),
         Buffer.from((await page.call('Page.captureScreenshot',{format:'png',clip:respiratorClip})).data,'base64'));
+    const bothEquipped=await read(outfit.id);
+    assert.equal(bothEquipped.data.equipment.helmet.id,visualItem(balaclava).id);
+    assert.equal(bothEquipped.data.equipment.gasMask.id,visualItem(respirator).id);
+    assert.ok((await outfitCombat()).current_character.action_points_current<20);
+    await page.evaluate(`window.locationCombatState=null;
+        document.querySelector('[data-equipment-group="gasMask"] button[onclick="unequipGasMask()"]').click();true`);
+    await page.until(`document.querySelector('.loadout-figure[data-helmet="balaclava"][data-mask="false"]')`,
+        'Респиратор снят, балаклава осталась');
+    const respiratorOff=await read(outfit.id);
+    assert.equal(respiratorOff.data.equipment.gasMask?.id,undefined);
+    assert.equal(respiratorOff.data.inventory.backpack.filter(item=>item.id===visualItem(respirator).id).length,1);
+    await page.evaluate(`window.locationCombatState=null;window.drawWeaponFromEquipment(0,'both').then(()=>true)`);
+    combat=await outfitCombat();
+    assert.equal(combat.current_character.drawn_weapon_index,0);
+    assert.equal(combat.current_character.weapon_grip_hands,2);
+    await request(loc+'/combat/end',{},token);
     await page.evaluate('window.closeCharacterSheet();true');
-    console.log(JSON.stringify({bareHelmetWithGasMaskUi:true,compatibleAfterReload:true}));
+    console.log(JSON.stringify({bareHelmetWithGasMaskUi:true,compatibleAfterReload:true,
+        balaclavaEquippedAndRespiratorRemovedInCombatWithoutCachedState:true,shotgunDrawnWithBothHands:true}));
     const mediumTemplate=armorCatalog.global.find(template=>template.attributes?.modification_category==='Средняя');
     assert.ok(mediumTemplate,'Средняя броня присутствует в каталоге');
     const branchOwner=await read(a.id);

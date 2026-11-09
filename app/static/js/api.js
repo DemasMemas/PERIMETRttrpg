@@ -633,6 +633,10 @@ export const Server = {
         return apiFetch(`/lobbies/${lobbyId}/locations/${locationId}`, { method: 'DELETE' });
     },
 
+    async getEquipmentCombat(characterId) {
+        return (await apiFetch(`/lobbies/characters/${characterId}/equipment-action`)).combat;
+    },
+
     async changeCharacterEquipment(characterId, payload) {
         return apiFetch(`/lobbies/characters/${characterId}/equipment-action`, {
             method: 'POST',

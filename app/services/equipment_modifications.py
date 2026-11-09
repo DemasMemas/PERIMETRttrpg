@@ -46,7 +46,8 @@ SPECIAL_ARMOR={
  'd13':({'container_slots':1},{}),'d22':({'container_slots':1},{}),
  'a13':({}, {'ergonomics_tiers':1}),'a30':({'pocket_cells':10},{}),
  'a33':({}, {'radiation_with_mask':10}),'a35':({}, {'throwing_bonus':4}),
- 'a41':({'physical':5},{'full_limb_armor':True}),'g6':({}, {'ear_protection':15}),
+ 'a41':({'physical':5},{'full_limb_armor':True}),'a43':({}, {'anomaly_detector_bonus':3}),
+ 'g6':({}, {'ear_protection':15}),
  'g11':({'charisma_penalty':'=0'},{}),'g12':({'accuracy_penalty':'=0'},{}),
  'g13':({'radiation':10},{'filter_wear_reduction':.5}),
  'g14':({'accuracy_penalty':1},{'flash_reduction':.5}),
@@ -267,7 +268,7 @@ def make_record(rule_id,*,gunsmith=False,installer_id=None):
                 'ear_protection','filter_wear_reduction','flash_reduction','aimed_head_difficulty','concussion_reduction','belt_weight_reduction',
                 'explosion_wear_reduction','anomaly_wear_reduction','supported_accuracy','anomaly_escape_reduction',
                 'stealth_hiding_bonus','large_weapon_ergonomics','worn_burst_accuracy_reduction','snatch_difficulty_bonus',
-                'medical_pouch_capacity_multiplier','liquid_crystal_layer','bleeding_per_effect_reduction'):
+                'medical_pouch_capacity_multiplier','liquid_crystal_layer','bleeding_per_effect_reduction','anomaly_detector_bonus'):
         if key in flags:flags[key]*=factor
     if flags.get('pistol_burst'):flags['pistol_burst_factor']=factor
     return {'ruleId':rule_id,'name':rule.get('name') or rule['description'],'description':rule['description'],

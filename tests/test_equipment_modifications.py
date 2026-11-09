@@ -182,7 +182,8 @@ def test_shattered_mount_preserves_and_switches_off_devices_without_free_reactiv
 
 
 @pytest.mark.parametrize('rule_id,family,previous',[('armor-d11','Аномальная',['armor-d9','armor-d10']),
-    ('armor-d31','Экзоскелет',[]),('armor-d14','Аномальная',[]),('armor-a15','Лёгкая',[]),('armor-a31','Средняя',[])])
+    ('armor-d31','Экзоскелет',[]),('armor-d14','Аномальная',[]),('armor-a15','Лёгкая',[]),('armor-a31','Средняя',[]),
+    ('armor-a43','Тяжелая',[])])
 def test_existing_sealing_and_reanimation_effects_are_installable_at_specialist(workshop,rule_id,family,previous):
     from app.services.professional_modification import quote,perform
     from app.services.equipment_care import consume_reanimation
@@ -215,6 +216,15 @@ def test_existing_sealing_and_reanimation_effects_are_installable_at_specialist(
     elif rule_id in {'armor-a15','armor-a31'}:
         from app.services.auto_injector import available
         assert available(armor)
+    elif rule_id=='armor-a43':
+        from app.services.electronics import anomaly_detector_bonus
+        detector={'category':'detector','subcategory':'Аномалии','attributes':{'isActive':True,'avoidance_chance':25},'bonus':2}
+        assert anomaly_detector_bonus(owner.data,detector)==5
+        detector['attributes']['isActive']=False
+        assert anomaly_detector_bonus(owner.data,detector) is None
+        detector['attributes']['isActive']=True
+        armor['protectionDisabled']=True
+        assert anomaly_detector_bonus(owner.data,detector)==2
     else:
         from app.services.electronics import electric_protection
         assert electric_protection(owner.data,{'name':'КПК'})

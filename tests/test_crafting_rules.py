@@ -62,6 +62,8 @@ def test_identity_spoofing_and_narrative_voice_have_confirmed_complexity():
     identity=rule_by_id('pda-b21');voice=rule_by_id('pda-b22')
     assert identity['difficulty_group']=='Очень высокая' and GROUPS[identity['difficulty_group']][0]==90
     assert voice['difficulty_group']=='Высокая' and GROUPS[voice['difficulty_group']][0]==70
+    assert 'Применяется в сцене с ГМом' in voice['description']
+    assert 'имя отправителя' in identity['description']
 
 
 def test_catalog_contains_all_variants_and_preserves_recipe_choices():
