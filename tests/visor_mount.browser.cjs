@@ -90,6 +90,12 @@ module.exports=async({page,request,token,lobby,offered,loc,safeSession})=>{
         await page.until("(()=>{const root=document.getElementById('sheet-tab-equipment').getBoundingClientRect();const slots=[...document.querySelectorAll('.equipment-loadout .loadout-slot')];const devices=[...document.querySelectorAll('.portable-light-row')].filter(row=>row.getClientRects().length);return slots.length===18&&devices.length===2&&[...slots,...devices].every(item=>{const b=item.getBoundingClientRect();return b.width>0&&b.y>=root.y&&b.bottom<=Math.min(innerHeight,root.bottom)+1&&b.right<=root.right+1})})()",'Все слоты и два прибора видимы '+width+'×'+height);
         await selectHelmet();
         await page.until("(()=>{const root=document.getElementById('sheet-tab-equipment').getBoundingClientRect();const controls=[...document.querySelectorAll('[data-equipment-panel=helmet] input,[data-equipment-panel=helmet] select,[data-equipment-panel=helmet] button')].filter(e=>e.getClientRects().length);return controls.length>0&&controls.every(e=>{const r=e.getBoundingClientRect();return r.y>=root.y&&r.bottom<=Math.min(innerHeight,root.bottom)+1&&r.right<=root.right+1})})()",'Шлем целиком без прокрутки '+width+'×'+height);
+        await page.until(`(()=>{const slots=document.querySelector('[data-widget-slots="equipment.helmet"]');
+            const pin=slots?.querySelector(':scope > .sheet-pin');
+            const remove=slots?.firstElementChild.querySelector('button[onclick*="uninstallModuleFromSlot"]');
+            return pin?.getClientRects().length&&remove?.getClientRects().length
+                &&remove.getBoundingClientRect().right<=pin.getBoundingClientRect().left})()`,
+        'Закрепление виджета не перекрывает снятие забрала '+width+'×'+height);
         if(width===1280)fs.writeFileSync(path.join(safeSession.artifacts,'visor-stop-layer-1280x720.png'),Buffer.from((await page.call('Page.captureScreenshot',{format:'png'})).data,'base64'));
     }
     console.log('Стоп-слой: слот куплен у механика, g21 установлен, настоящее попадание в лицо поглощено, разрушение пришло в лист по сети, вложенные приборы сохранены.');

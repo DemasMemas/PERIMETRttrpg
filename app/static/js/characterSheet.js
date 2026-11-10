@@ -1464,13 +1464,7 @@ function getEffectiveTorsoProtection() {
     const vest = eq.vest;
     if (!vest || !vest.pouches) return null;
 
-    const allTemplates = allTemplatesCache || [];
-    const platePouches = vest.pouches.filter(pouch => {
-        if (!pouch.type) return false;
-        const template = allTemplates.find(t => t.id === pouch.type);
-        const hasSlot = template?.attributes?.slots?.some(s => s.type === 'armor_plate');
-        return hasSlot;
-    });
+    const platePouches = vest.pouches.filter(pouch => getItemSlots(pouch).some(slot => slot?.type === 'armor_plate'));
 
     if (platePouches.length === 0) return null;
 
@@ -1479,9 +1473,10 @@ function getEffectiveTorsoProtection() {
 
     const getPlateProtection = (pouch) => {
         if (!pouch) return null;
-        const installedPlate = (pouch.installedModules || []).find(m => m.slotType === 'armor_plate');
+        const installedPlate = (pouch.installedModules || []).find(module => module?.slotType === 'armor_plate'
+            && module.category === 'armor_plate');
         if (!installedPlate) return null;
-        return getPlateEffectiveProtection(installedPlate);
+        return vest.protectionDisabled ? 0 : getPlateEffectiveProtection(installedPlate);
     };
 
     const front = getPlateProtection(frontPouch);
@@ -1491,8 +1486,11 @@ function getEffectiveTorsoProtection() {
 }
 
 function getPlateEffectiveProtection(plate) {
-    if (!plate || plate.durability <= 0) return 0;
-    let protection = plate.attributes?.protection?.physical || 0;
+    if (!(Number(plate?.durability) > 0)) return 0;
+    const raw = plate.protection && typeof plate.protection === 'object'
+        ? plate.protection.physical : plate.attributes?.protection?.physical;
+    const value = typeof raw === 'number' ? raw : Number(String(raw ?? '').match(/-?\d+(?:[.,]\d+)?/)?.[0].replace(',', '.')) || 0;
+    let protection = Math.max(0, Math.min(100, Math.abs(value) <= 1 ? value * 100 : value));
     const stage = plate.stage || 1;
     if (stage >= 3) protection = Math.floor(protection * 0.9);
     if (stage >= 4) protection = Math.floor(protection * 0.9); // от текущего значения

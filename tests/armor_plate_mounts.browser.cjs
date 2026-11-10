@@ -42,7 +42,28 @@ module.exports = async ({page, request, token, lobby, offered, loc, safeSession}
     assert.equal(saved.data.inventory.pockets.length,0);
     await page.evaluate('window.closeCharacterSheet();true');
     await openInventory();
-    await page.until("(()=>{const summary=document.querySelector('[data-vest-protection]');return summary?.getClientRects().length&&/перед 15%.*спина 40%/s.test(summary.textContent)})()",'Лист показывает обе установленные плиты');
+    const expectProtection = (front,back) => page.until(`(()=>{const summary=document.querySelector('[data-vest-protection]');
+        return summary?.getClientRects().length&&summary.textContent.includes('перед ${front}%, спина ${back}%')})()`,
+    `Защита плит в листе ${front}% / ${back}%`);
+    await expectProtection(15,40);
+    const updateVest = async (edit) => {
+        await page.evaluate('window.closeCharacterSheet();true');
+        const {data} = await read();
+        edit(data.equipment.vest);
+        await request('/lobbies/characters/'+owner.id,{data},token,'PUT');
+        await openInventory();
+    };
+    await updateVest(worn => {
+        delete worn.pouches[0].type;
+        const plate = worn.pouches[1].installedModules[0];
+        plate.protection = {physical:55};
+        plate.stage = 4;
+    });
+    await expectProtection(15,44);
+    await updateVest(worn => { worn.protectionDisabled = true; });
+    await expectProtection(0,0);
+    const disabled = (await read()).data.equipment.vest;
+    assert.deepEqual(disabled.pouches.map(entry=>entry.installedModules[0].id),['plate-front','plate-back']);
     await page.evaluate('window.closeCharacterSheet();true');
-    console.log(JSON.stringify({armorPlateMounts:true,front:15,back:40,physicalInstancesSaved:true}));
+    console.log(JSON.stringify({armorPlateMounts:true,front:15,back:40,damaged:44,disabled:0,physicalInstancesSaved:true}));
 };

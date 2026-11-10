@@ -350,6 +350,7 @@ body.character-sheet-open #location-canvas > :not(canvas) {
 .sheet-pin[aria-pressed="true"] { background: var(--panel-header-bg); }
 .sheet-pinnable-block { position: relative; }
 .sheet-pinnable-block > :is(summary,h4,h5,.zone-label,label):first-child { padding-right: 22px; }
+.item-slots-container.sheet-pinnable-block > div:first-child { padding-inline-end: 24px; }
 .sheet-pinnable-block:is(h4,h5) { padding-right: 24px; }
 .sheet-inline-pin-anchor { display: flex; align-items: center; justify-content: flex-start !important; gap: 6px; }
 .sheet-inline-pin-anchor.block-header > h5 { margin-right: auto !important; }
