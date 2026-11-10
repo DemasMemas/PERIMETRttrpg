@@ -77,6 +77,44 @@ module.exports = async ({page, request, token, api, loc}) => {
     await checkOutput('Отмычка', 2);
     await closeCrafting();
 
+    const fuelName = 'Топливо(1 Литр)';
+    for (const useFuel of [false,true]) {
+        const liquid = useFuel
+            ? item('Канистра(Пустая)(Объем 15 литров)(45 использований воды)', 'molotov-canister', {
+                fuelUsed: true, contents: [item(fuelName, 'molotov-fuel')],
+            })
+            : item('Спирт', 'molotov-spirit', {uses: 10,maxUses: 10});
+        await replacePockets([liquid,
+            item('Стеклянная бутылка (Объем 1 литр) (3 использования воды)', 'molotov-bottle'),
+            item('Тканные материалы', 'molotov-cloth')]);
+        await openSheetCrafting();
+        await selectRecipe('recipe-v11');
+        const quoteLine = useFuel ? 'Топливо 1/0.5' : 'Спирт 10/3';
+        await page.until(`[...document.querySelectorAll('#crafting-modal .crafting-recipe-detail p')].some(p=>
+            p.textContent.includes(${JSON.stringify(quoteLine)}))`, 'Котировка учитывает остаток выбранной жидкости');
+        await click('Начать создание');
+        await waitState("data.crafting?.current?.recipe_id==='recipe-v11'", 'Материалы коктейля зарезервированы');
+        const {data} = await read();
+        const job = data.crafting.current;
+        assert.equal(job.station_usage ?? null,null);
+        assert.equal(data.inventory.pockets.length,1);
+        assert.equal(useFuel ? data.inventory.pockets[0].contents[0].quantity : data.inventory.pockets[0].uses,
+            useFuel ? 0.5 : 7);
+        const reserved = name => job.escrow.some(entry=>entry.item.templateId===template(name).id&&entry.amount===1);
+        assert.ok(reserved('Стеклянная бутылка (Объем 1 литр) (3 использования воды)'));
+        assert.ok(reserved('Тканные материалы'));
+        await finish(30);
+        await checkOutput('Коктейль Молотова', 1);
+        const done = (await read()).data;
+        const receipt = done.crafting.receipts.at(-1);
+        const repeat = await request(url+'/crafting',{operation:'finish',job_id:job.id,
+            operation_id:receipt.id,character_revision:data._revision},token);
+        assert.equal(repeat.result.replayed,true);
+        await checkOutput('Коктейль Молотова', 1);
+        await closeCrafting();
+    }
+    console.log('Коктейль Молотова: через спирт и через 0,5 л топлива из канистры, без станка, 30 минут, один результат и защита от повторной выдачи.');
+
     for (const water of ['Дождевая вода', 'Болотная вода']) {
         await replacePockets([item(water, 'recipe-water', {uses: 2}),
             item('Хлорные таблетки (10 штук)', 'recipe-chlorine')]);
