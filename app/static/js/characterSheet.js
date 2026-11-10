@@ -17938,31 +17938,15 @@ function universalUninstallModule(targetItem, targetPath, slotType) {
     targetItem.installedModules.splice(index, 1);
     if (slotType === 'exoskeleton_battery') targetItem.powered = false;
 
-    let restoredItem;
-    const templateId = moduleItem.templateId;
-    if (templateId) {
-        const allTemplates = allTemplatesCache || [];
-        const template = allTemplates.find(t => t.id === templateId);
-        if (template) {
-            restoredItem = createItemFromTemplate(template);
-            restoredItem.durability = moduleItem.durability;
-            restoredItem.maxDurability = moduleItem.maxDurability;
-            restoredItem.installedModules = moduleItem.installedModules ? [...moduleItem.installedModules] : [];
-            restoredItem.modifications = moduleItem.modifications ? [...moduleItem.modifications] : [];
-            if (moduleItem.attributes) restoredItem.attributes = { ...moduleItem.attributes };
-        } else {
-            restoredItem = { ...moduleItem };
-        }
-    } else {
-        restoredItem = { ...moduleItem };
-    }
+    // Шаблон заполняет недостающие поля старых модулей; состояние экземпляра сохраняется.
+    const template = moduleItem.templateId && allTemplatesCache?.find(t => t.id === moduleItem.templateId);
+    const restoredItem = { ...(template ? createItemFromTemplate(template) : {}), ...moduleItem, sourcePath: null };
 
     // Всегда кладём в рюкзак
     if (!currentCharacterData.inventory) currentCharacterData.inventory = {};
     if (!currentCharacterData.inventory.backpack) currentCharacterData.inventory.backpack = [];
     currentCharacterData.inventory.backpack.push(restoredItem);
 
-    restoredItem.sourcePath = null;
     return restoredItem;
 }
 

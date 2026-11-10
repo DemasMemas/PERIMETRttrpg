@@ -6,7 +6,9 @@ module.exports=async({page,request,token,lobby,base,safeSession})=>{
     const api=`/lobbies/${lobby.id}`,{fixture}=loadFixture();
     const location=await request(api+'/locations',{...fixture,objects:undefined,world_tile_x:7,world_tile_z:8},token),loc=api+'/locations/'+location.id;
     await request(loc+'/objects/batch',{objects:fixture.objects},token);
-    const actor=await request(api+'/characters',{name:'Каталог без дублей',data:{inventory:{pockets:[{
+    const oldGloves={id:'preserved-sports-gloves',templateId:9506,name:'Спортивные',category:'gloves',
+        quantity:1,weight:0.1,volume:1,attributes:{}};
+    const actor=await request(api+'/characters',{name:'Каталог без дублей',data:{inventory:{pockets:[oldGloves,{
         id:'preserved-legacy-grenade',templateId:156,name:'РГД-5',category:'grenade',quantity:1,weight:.3,volume:1,attributes:{}}],backpack:[]}}},token);
     await request(loc+'/spawn_character',{character_id:actor.id,tile_x:41,tile_y:48},token);
     const href=base+api+'/page?location='+location.id,epoch=await page.evaluate('performance.timeOrigin');
@@ -39,10 +41,13 @@ module.exports=async({page,request,token,lobby,base,safeSession})=>{
     await page.until(`(async()=>{const result=await(await import('/static/js/api.js')).Server.getCharacter(${actor.id});return result.data.inventory.pockets.some(item=>item.templateId===${grenades.find(t=>t.name==='Граната РГД-5').id})})()`,'Каноническая граната добавлена и сохранена');
     const fresh=await request('/lobbies/characters/'+actor.id,null,token,'GET'),items=fresh.data.inventory.pockets;
     assert.ok(items.some(item=>item.id==='preserved-legacy-grenade'&&item.templateId===156&&item.name==='РГД-5'&&item.quantity===1),'Старая сохранённая граната не потеряна и не переписана');
+    assert.deepEqual(items.find(item=>item.id===oldGloves.id),actor.data.inventory.pockets.find(item=>item.id===oldGloves.id),
+        'Новая выдача не меняет сохранённые спортивные перчатки');
     assert.ok(items.some(item=>item.templateId===grenades.find(t=>t.name==='Граната РГД-5').id&&item.quantity===1),'Новая выдача использует канонический шаблон');
     console.log('Каталог: старые и новые гранаты/подсумки/перчатки/детекторы/контейнеры вместе в тестовой БД; в интерфейсе один вариант, новая выдача каноническая, старый предмет сохранён. Окно 1920×1080 и 1366×768.');
     await page.evaluate("document.querySelector('#inventory-template-picker-modal .close').click();true");
     await require('./desktop_layout.browser.cjs')({page,request,token,actor,lobby,offered,safeSession});
     await require('./desktop_forms.browser.cjs')({page,request,token,actor,lobby,safeSession});
+    await require('./helmet_nvg_mount.browser.cjs')({page,request,token,lobby,offered,loc,locationId:location.id});
     await require('./visor_mount.browser.cjs')({page,request,token,lobby,offered,loc,safeSession});
 };

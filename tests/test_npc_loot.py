@@ -69,6 +69,15 @@ def test_retired_sport_gloves_are_not_offered_or_generated(client,prepared,auth_
         headers=auth_headers(prepared['actor_user']))
     assert response.status_code==200,response.json
     assert [entry['name'] for entry in response.json['global']]==['Рабочие']
+    merchant_url=f"/lobbies/{prepared['lobby'].id}/characters/{prepared['target_character'].id}/merchant"
+    settings={'character_revision':prepared['target_character'].revision,'enabled':True,
+              'prices':{str(sport.id):{'buy':100,'sell':200}}}
+    rejected=client.patch(merchant_url,headers=auth_headers(prepared['actor_user']),json=settings)
+    assert rejected.status_code==400,rejected.json
+    assert 'выведен из каталога' in rejected.json['error']['message']
+    settings['prices']={str(working.id):{'buy':100,'sell':200}}
+    accepted=client.patch(merchant_url,headers=auth_headers(prepared['actor_user']),json=settings)
+    assert accepted.status_code==200,accepted.json
 
 
 def test_retired_short_barrel_stays_in_saved_catalog_but_is_not_issued(client,prepared,auth_headers):
