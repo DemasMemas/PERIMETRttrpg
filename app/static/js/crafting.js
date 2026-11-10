@@ -1,6 +1,6 @@
 import {Server} from './api.js';
 import {showNotification} from './utils.js';
-import {fillModificationOptions} from './modificationOptions.js';
+import {modificationTitle,renderModificationMap} from './modificationOptions.js';
 
 const el=(tag,text,css)=>{const e=document.createElement(tag);if(text!=null)e.textContent=text;if(css)e.className=css;return e;};
 const button=(text,action)=>{const b=el('button',text,'btn btn-secondary');b.type='button';b.onclick=action;return b;};
@@ -18,7 +18,7 @@ const recipeLabel=recipe=>{
         :recipe.output_count>1?recipe.output_name:recipe.name;
 };
 
-export async function showCrafting({characterId,lobbyId,onSaved,recipeId='',stationId}){
+export async function showCrafting({characterId,lobbyId,onSaved,recipeId='',stationId,modificationTarget}){
     document.getElementById('crafting-modal')?.closeCrafting?.();
     const modal=el('div',null,'modal');modal.id='crafting-modal';modal.style.display='flex';
     const panel=el('div',null,'modal-content');panel.style.cssText='max-width:900px;max-height:90vh;overflow:hidden;display:flex;flex-direction:column';
@@ -35,13 +35,16 @@ export async function showCrafting({characterId,lobbyId,onSaved,recipeId='',stat
     const onKey=event=>{if(event.key==='Escape')close();};document.addEventListener('keydown',onKey);
     header.append(button('×',close));panel.append(header);
     const body=el('div',null,'crafting-body');panel.append(body);
-    let snapshot,busy=false,selectedRecipe=recipeId,searchValue='',generation=0,snapshotGeneration=0,activeTab='creation',selectedGroup='Все';
-    const modSelection={};
+    let snapshot,busy=false,selectedRecipe=recipeId,searchValue='',generation=0,snapshotGeneration=0;
+    let activeTab=modificationTarget?'modifications':'creation',selectedGroup='Все';
+    const targetKey=entry=>String(entry.item.id || JSON.stringify(entry.path));
+    const modSelection={target:modificationTarget && String(modificationTarget.id || JSON.stringify(modificationTarget.path))};
     const act=async(operation,payload={},targetId=characterId,revision=snapshot.revision)=>{
         if(busy)return;busy=true;
         body.querySelectorAll('button,select,input').forEach(e=>{e.disabled=true;});
         try{
             const response=await Server.craft(targetId,{operation,operation_id:crypto.randomUUID(),character_revision:revision,...payload});
+            if(operation==='modify')activeTab='creation';
             if(targetId===characterId)await onSaved?.(response.data);
             await refresh();return response;
         }catch(error){showNotification(error.message,'system');await refresh();}
@@ -53,9 +56,18 @@ export async function showCrafting({characterId,lobbyId,onSaved,recipeId='',stat
         if(requested!==snapshotGeneration||!modal.isConnected)return;
         snapshot=fresh;
         body.replaceChildren();
-        body.append(button('Обновить',refresh));
-        if(snapshot.is_gm)body.append(button('Подтверждения условий сцены',showRequests));
+        const toolbar=el('div',null,'crafting-toolbar');
+        toolbar.append(button('Обновить',refresh));
+        if(snapshot.is_gm)toolbar.append(button('Подтверждения условий сцены',showRequests));
         const job=snapshot.state.current;
+        panel.classList.toggle('crafting-workshop',activeTab==='modifications');
+        if(job&&activeTab==='modifications'){
+            toolbar.append(button('К текущей работе',()=>{activeTab='creation';void refresh();}));
+            body.append(toolbar);
+            renderModifications(body,true);
+            return;
+        }
+        body.append(toolbar);
         if(job){
             const minutes=Math.ceil(job.remaining_seconds/60);
             const status=job.phase==='preparing'
@@ -100,6 +112,7 @@ export async function showCrafting({characterId,lobbyId,onSaved,recipeId='',stat
             panes[key].dataset.craftingPane=key;body.append(panes[key]);
         }
         const activateTab=()=>{
+            panel.classList.toggle('crafting-workshop',activeTab==='modifications');
             for(const [key,pane] of Object.entries(panes)){pane.hidden=key!==activeTab;const tab=tabs.querySelector(`[data-crafting-tab="${key}"]`);tab.setAttribute('aria-selected',String(key===activeTab));tab.classList.toggle('is-active',key===activeTab);}
         };
         activateTab();
@@ -270,26 +283,39 @@ export async function showCrafting({characterId,lobbyId,onSaved,recipeId='',stat
             }catch(error){showNotification(error.message,'system');}
         }));
     };
-    const renderModifications=container=>{
-        const section=el('details');section.open=true;section.append(el('summary','Модификации снаряжения'));container.append(section);
-        const root=el('div');section.append(root);
-        const targets=select('Предмет для модификации',snapshot.targets.map((entry,i)=>[i,`${entry.item.name||entry.item.model} · ${entry.slots.used}/${entry.slots.available} слотов`]));
-        if(modSelection.target!=null&&snapshot.targets[modSelection.target])targets.value=modSelection.target;
-        root.append(el('label','Предмет для модификации'),targets);const form=el('div');root.append(form);let quoteVersion=0;
+    const renderModifications=(container,readOnly=false)=>{
+        if(!snapshot.targets.length){container.append(el('p','Нет снаряжения для модификации.'));return;}
+        const targets=select('Предмет для модификации',snapshot.targets.map(entry=>[targetKey(entry),entry.item.name||entry.item.model]));
+        if(modSelection.target!=null){
+            if(!snapshot.targets.some(entry=>targetKey(entry)===modSelection.target)){
+                const missing=el('option','Для выбранного предмета нет схемы');missing.value='';missing.disabled=true;targets.prepend(missing);
+                modSelection.target='';
+            }
+            targets.value=modSelection.target;
+        }
+        const label=el('label','Предмет для модификации','modification-target-label');label.append(targets);container.append(label);
+        const form=el('div',null,'modification-workspace');container.append(form);let quoteVersion=0;
         const redraw=()=>{
-            modSelection.target=Number(targets.value);const target=snapshot.targets[modSelection.target];form.replaceChildren();
+            modSelection.target=targets.value;
+            const target=snapshot.targets.find(entry=>targetKey(entry)===targets.value);
+            form.replaceChildren();
+            if(!target)return;
             const choices=snapshot.catalog.modifications.filter(r=>r.family===target.slots.family);
-            const rules=select('Модификация',[]);fillModificationOptions(rules,choices);
-            if(choices.some(r=>r.id===modSelection.rule))rules.value=modSelection.rule;
-            const ruleInfo=el('div',null,'crafting-modification-info');
-            form.append(el('label','Улучшение'),rules,ruleInfo,el('p',`Занято слотов: ${target.slots.used}. Доступно: ${target.slots.available} из ${target.slots.maximum}.`));
-            const tools=[...snapshot.inventory,...(snapshot.stations||[]).map(station=>({item:{name:station.name},stationId:station.id}))];
-            const tool=select('Инструменты для модификации',tools.map((entry,i)=>[i,entry.stationId?`${entry.item.name} · рядом · 1 заряд за работу`:`${entry.item.name} · ${entry.uses} зарядов`]));
+            const map=el('div',null,'modification-map'),sidebar=el('aside',null,'modification-inspector');
+            const ruleInfo=el('div',null,'modification-inspector-info'),fields=el('div',null,'modification-inspector-fields');
+            form.append(map,sidebar);sidebar.append(ruleInfo,fields);
+            const toolName=choices[0]?.kind==='weapon'?/оружейник/i:/бронник/i;
+            const tools=[...snapshot.inventory,...(snapshot.stations||[]).map(station=>({item:{name:station.name},stationId:station.id}))]
+                .filter(entry=>toolName.test(entry.item.name||''));
+            const tool=select('Инструменты для модификации',tools.length
+                ? tools.map((entry,i)=>[i,entry.stationId?`${entry.item.name} · рядом · 1 заряд за работу`:`${entry.item.name} · ${entry.uses} зарядов`])
+                : [['','Нет подходящих инструментов']]);
             if(tools[modSelection.tool])tool.value=modSelection.tool;
-            form.append(el('label','Набор инструментов или станок'),tool);
+            const toolLabel=el('label','Набор инструментов или станок');toolLabel.append(tool);fields.append(toolLabel);
             const double=el('input');double.type='checkbox';double.checked=!!modSelection.double;
-            const doubleLabel=el('label','20 зарядов вместо 10: СЛ −25 ');doubleLabel.prepend(double);form.append(doubleLabel);
-            const replacement=select('Заменяемая модификация',[]);form.append(replacement);
+            const doubleLabel=el('label','20 зарядов вместо 10 · СЛ −25','modification-checkbox');doubleLabel.prepend(double);fields.append(doubleLabel);
+            const replacement=select('Заменяемая модификация',[]);
+            const replacementLabel=el('label','Замена');replacementLabel.append(replacement);fields.append(replacementLabel);
             const materialSection=el('details');materialSection.append(el('summary','Дополнительные материалы · −1 СЛ за 150 ₽'));
             const materialInputs=[];
             for(const entry of snapshot.inventory.filter(e=>e.item.category==='crafting_material')){
@@ -297,36 +323,58 @@ export async function showCrafting({characterId,lobbyId,onSaved,recipeId='',stat
                 input.type='number';input.min=0;input.max=entry.uses;input.step=1;input.value=0;
                 input.setAttribute('aria-label','Потратить: '+entry.item.name);label.append(input);materialSection.append(label);materialInputs.push({entry,input});
             }
-            form.append(materialSection);
-            const preview=el('div');form.append(preview);
+            fields.append(materialSection);
+            const preview=el('div',null,'modification-preview');preview.setAttribute('role','status');sidebar.append(preview);
+            let rule;
             const update=async()=>{
-                const version=++quoteVersion;modSelection.rule=rules.value;modSelection.tool=Number(tool.value);modSelection.double=double.checked;
+                const version=++quoteVersion;modSelection.tool=Number(tool.value);modSelection.double=double.checked;
                 const selectedTool=tools[Number(tool.value)];
                 double.disabled=Boolean(selectedTool?.stationId);
                 if(double.disabled)double.checked=false;
-                const rule=choices.find(r=>r.id===rules.value);if(!rule)return;
-                ruleInfo.replaceChildren(el('strong',rule.branch||rule.family||'Оружие'),el('span',`Уровень ${rule.level||1}`),el('p',rule.name||rule.description));
+                preview.replaceChildren();
+                if(!rule||fields.hidden)return;
                 materialSection.hidden=rule.kind==='weapon';
-                const selectedReplacement=replacement.value;
-                replacement.replaceChildren();const none=el('option','Новая модификация');none.value='';replacement.append(none);
-                for(const record of target.item.modifications||[])if(record.ruleId&&record.level===(rule.level||1)){const option=el('option','Заменить: '+record.name);option.value=record.ruleId;replacement.append(option);}
-                if([...replacement.options].some(o=>o.value===selectedReplacement))replacement.value=selectedReplacement;
-                preview.replaceChildren(el('p',rule.description));
-                if(!rule.automatic_installation){preview.append(el('p','Автоматическая установка этого улучшения пока недоступна.'));return;}
+                preview.append(el('p','Рассчитываем установку…'));
                 const payload={rule_id:rule.id,target_path:target.path,tool_path:selectedTool?.path,station_id:selectedTool?.stationId,
                     double_charges:double.checked,replace_rule_id:replacement.value||null,
                     material_contributions:rule.kind==='weapon'?[]:materialInputs.filter(r=>Number(r.input.value)>0).map(r=>({path:r.entry.path,quantity:Number(r.input.value)}))};
                 try{
                     const response=await Server.craft(characterId,{operation:'quote_modification',...payload});
-                    if(version!==quoteVersion||!modal.isConnected)return;
+                    if(version!==quoteVersion||!preview.isConnected)return;
                     const plan=response.result;
+                    preview.replaceChildren();
                     if(plan.station_name)preview.append(el('p',`${plan.station_name} · риск порчи результата ${plan.spoil_chance}%`));
                     if(plan.material_value)preview.append(el('p',`Материалы на ${plan.material_value} ₽ будут потрачены при начале установки.`));
                     preview.append(el('p',`Итоговая СЛ ${plan.difficulty} · ${plan.tool_uses===1?'1 заряд':`${plan.tool_uses} зарядов`} · ${plan.duration_seconds/60} мин`),el('p',`Установка у специалиста: ${plan.professional_price} ₽`),
                         button('Установить самостоятельно',()=>act('modify',payload)));
-                }catch(error){if(version===quoteVersion)preview.append(el('p',error.message));}
+                }catch(error){if(version===quoteVersion)preview.replaceChildren(el('p',error.message));}
             };
-            rules.onchange=update;tool.onchange=update;double.onchange=update;replacement.onchange=update;void update();
+            const unavailableReason=rule=>rule.scientist_only?'Только у учёного'
+                :!rule.automatic_installation?'Установка недоступна':'';
+            const selectRule=selected=>{
+                rule=selected;modSelection.rule=rule?.id;
+                const installed=(target.item.modifications||[]).filter(record=>record.ruleId);
+                const owned=installed.find(record=>record.ruleId===rule?.id);
+                const unavailable=rule&&unavailableReason(rule);
+                fields.hidden=!rule||Boolean(owned)||readOnly||Boolean(unavailable);
+                ruleInfo.replaceChildren();
+                if(rule){
+                    const title=modificationTitle(rule),description=owned?.description||rule.description;
+                    ruleInfo.append(el('small',`${rule.branch||rule.family} · Уровень ${rule.level||1}`),el('h4',title));
+                    if(description&&description!==title)ruleInfo.append(el('p',description));
+                    if(owned)ruleInfo.append(el('p',owned.gunsmith?'Установлено · Оружейник ×1,5':'Установлено'));
+                    else if(readOnly)ruleInfo.append(el('p','Завершите текущую работу, чтобы начать установку.'));
+                    else if(unavailable)ruleInfo.append(el('p',unavailable));
+                }
+                const candidates=installed.filter(record=>record.level===(rule?.level||1));
+                const none=el('option','Без замены');none.value='';replacement.replaceChildren(none);
+                for(const record of candidates){const option=el('option',record.name||record.ruleId);option.value=record.ruleId;replacement.append(option);}
+                replacementLabel.hidden=!candidates.length;
+                if(rule?.kind==='weapon'&&candidates.length)replacement.value=candidates[0].ruleId;
+                void update();
+            };
+            selectRule(renderModificationMap(map,{target,rules:choices,selectedId:modSelection.rule,onSelect:selectRule,unavailableReason}));
+            tool.onchange=update;double.onchange=update;replacement.onchange=update;
             for(const row of materialInputs)row.input.onchange=update;
         };
         targets.onchange=redraw;redraw();

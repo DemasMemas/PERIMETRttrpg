@@ -258,9 +258,10 @@ module.exports=async({page,request,token,lobby,base,connect,debugPort,safeSessio
     await page.until(`document.querySelector('.modification-item-card .modification-slots span')`,'Экран установки показывает предмет и слоты');
     assert.match(await page.evaluate(`document.querySelector('.modification-item-card').textContent`),/Пистолет/);
     assert.ok(await page.evaluate(`document.querySelectorAll('.modification-slots span').length>0`));
-    await page.evaluate(`(()=>{const select=document.querySelector('.modification-rule');
-        if(![...select.options].some(option=>option.value==='weapon-c23'))throw Error('Модификация пистолета недоступна');
-        select.value='weapon-c23';select.dispatchEvent(new Event('change'));return true})()`);
+    await page.evaluate(`document.querySelector('[data-modification-id="weapon-c23"]').click();true`);
+    assert.deepEqual(await page.evaluate(`[...document.querySelectorAll('.modification-track .modification-level')]
+        .map(level=>level.querySelectorAll('.modification-node').length)`),[2,2,2]);
+    await page.until("!document.querySelector('.notification')",'Уведомления закрылись перед снимком');
     const modificationShot=await page.call('Page.captureScreenshot',{format:'png'});
     fs.writeFileSync(path.join(safeSession.artifacts,'modification-desktop.png'),Buffer.from(modificationShot.data,'base64'));
     await page.call('Emulation.setDeviceMetricsOverride',{width:480,height:900,deviceScaleFactor:1,mobile:false});
@@ -276,11 +277,12 @@ module.exports=async({page,request,token,lobby,base,connect,debugPort,safeSessio
     await page.until(`document.querySelector('.modification-service').parentElement.style.display==='none'`,'Установка у НПС оплачена');
     const afterModification=await read(a.id);
     assert.equal(afterModification.data.inventory.money,24000);
-    assert.ok(afterModification.data.weapons[0].modifications.some(value=>value.ruleId));
+    assert.ok(afterModification.data.weapons[0].modifications.some(value=>value.ruleId==='weapon-c23'));
     console.log(JSON.stringify({professional_modification_ui:true,slots_visible:true,server_quote:true,money_spent:true,weapon_modified:true}));
     await page.evaluate(`import('/static/js/locationScene.js').then(m=>m.showCharacterTradeMenu(${actorId},${a.id},${b.id})).then(()=>true)`);
     await page.evaluate(`document.querySelector('.trade-modification').click();true`);
     await page.until(`document.querySelector('.modification-unlock')`,'Открытие слота доступно у механика');
+    assert.ok(await page.evaluate(`document.querySelector('[data-modification-id=weapon-c23][data-modification-state=installed]')`));
     assert.equal(await page.evaluate(`document.querySelector('.modification-unlock').disabled`),false);
     await page.evaluate(`window.confirm=()=>true;document.querySelector('.modification-unlock').click();true`);
     await page.until(`document.querySelector('.modification-service').parentElement.style.display==='none'||document.querySelector('.modification-error').textContent`,'Механик обработал открытие слота');
@@ -557,15 +559,15 @@ module.exports=async({page,request,token,lobby,base,connect,debugPort,safeSessio
             const option=[...items.options].find(row=>row.textContent.includes(${JSON.stringify(name)}));
             if(!option)throw Error('Броня отсутствует в списке мастера');
             items.value=option.value;items.dispatchEvent(new Event('change'));
-            return [...document.querySelectorAll('.modification-rule optgroup')].map(group=>group.label)})()`);
+            return [...document.querySelectorAll('.modification-service [data-modification-branch]')].map(group=>group.dataset.modificationBranch)})()`);
         assert.deepEqual(actual,expected);
     }
     const thirdLevel = 'armor-a24';
     const missingBranchLevels = 'Модификации ветки устанавливаются последовательно';
-    assert.equal(await page.evaluate(`(()=>{const option=document.querySelector('.modification-rule option[value=${thirdLevel}]');
-        return option?.textContent==='Ур. 3 · Укрепление каркаса'&&option.parentElement.label==='Физический'})()`),true);
-    await page.evaluate(`(()=>{const rules=document.querySelector('.modification-rule');rules.value='${thirdLevel}';
-        rules.dispatchEvent(new Event('change'));document.querySelector('.modification-check').click();return true})()`);
+    const thirdCard=`[data-modification-branch="Физический"] [data-modification-id="${thirdLevel}"][data-modification-level="3"]`;
+    assert.equal(await page.evaluate(`(()=>{const card=document.querySelector(${JSON.stringify(thirdCard)});
+        return card?.querySelector('strong').textContent==='Укрепление каркаса'&&card.dataset.modificationState==='locked'})()`),true);
+    await page.evaluate(`document.querySelector(${JSON.stringify(thirdCard)}).click();document.querySelector('.modification-check').click();true`);
     await page.until(`document.querySelector('.modification-error')?.textContent.includes(${JSON.stringify(missingBranchLevels)})
         && document.querySelector('.modification-confirm')?.disabled`,'У механика видна причина недоступности третьего уровня');
     await page.evaluate(`document.querySelector('.modification-close').click();true`);
@@ -601,17 +603,27 @@ module.exports=async({page,request,token,lobby,base,connect,debugPort,safeSessio
             const option=[...items.options].find(row=>row.textContent.includes(${JSON.stringify(name)}));
             if(!option)throw Error('Броня отсутствует в самостоятельной установке');
             items.value=option.value;items.dispatchEvent(new Event('change'));
-            return [...document.querySelectorAll('#crafting-modal select[aria-label="Модификация"] optgroup')]
-                .map(group=>group.label)})()`);
+            return [...document.querySelectorAll('#crafting-modal [data-modification-branch]')]
+                .map(group=>group.dataset.modificationBranch)})()`);
         assert.deepEqual(actual,expected);
     }
-    assert.equal(await page.evaluate(`(()=>{const option=document.querySelector('#crafting-modal select[aria-label="Модификация"] option[value=${thirdLevel}]');
-        return option?.textContent==='Ур. 3 · Укрепление каркаса'&&option.parentElement.label==='Физический'})()`),true);
-    await page.evaluate(`(()=>{const rules=document.querySelector('#crafting-modal select[aria-label="Модификация"]');
-        rules.value='${thirdLevel}';rules.dispatchEvent(new Event('change'));return true})()`);
+    await page.evaluate(`document.querySelector(${JSON.stringify(thirdCard)}).click();true`);
     await page.until(`document.querySelector('[data-crafting-pane=modifications]')?.textContent.includes(${JSON.stringify(missingBranchLevels)})
         && ![...document.querySelectorAll('[data-crafting-pane=modifications] button')].some(button=>button.textContent==='Установить самостоятельно')`,
     'Причина отказа видна при самостоятельной установке');
+    assert.ok(await page.evaluate(`!Array.from(document.querySelectorAll('[aria-label="Инструменты для модификации"] option'))
+        .some(option=>option.textContent.includes('Вода'))`));
+    await page.until("!document.querySelector('.notification')",'Снимок схемы без уведомлений');
+    for(const [width,height] of [[1920,1080],[1366,768],[1280,720]]){
+        await page.call('Emulation.setDeviceMetricsOverride',{width,height,deviceScaleFactor:1,mobile:false});
+        assert.ok(await page.evaluate(`(()=>{const panel=document.querySelector('#crafting-modal .modal-content'),
+            body=panel.querySelector('.crafting-body'),box=panel.getBoundingClientRect(),inspector=panel.querySelector('.modification-inspector').getBoundingClientRect();
+            return box.left>=0&&box.right<=innerWidth&&box.bottom<=innerHeight&&body.scrollWidth<=body.clientWidth+2
+                &&inspector.right<=box.right&&document.querySelectorAll('.modification-node').length===15})()`),`Схема на ${width}×${height}`);
+        fs.writeFileSync(path.join(safeSession.artifacts,`modification-armor-${width}.png`),
+            Buffer.from((await page.call('Page.captureScreenshot',{format:'png'})).data,'base64'));
+    }
+    await page.call('Emulation.clearDeviceMetricsOverride');
     await page.evaluate(`document.querySelector('[data-crafting-tab=creation]').click();
         const recipes=document.querySelector('#crafting-modal select[aria-label=Рецепт]');
         recipes.value='recipe-v26';recipes.dispatchEvent(new Event('change'));true`);
@@ -636,8 +648,38 @@ module.exports=async({page,request,token,lobby,base,connect,debugPort,safeSessio
         assert.deepEqual(actual,{title:label,variants:[variant]});
     }
     await page.evaluate(`document.querySelector('#crafting-modal .block-header button').click();true`);
+    const beltTemplate=(await request(api+'/templates?category=belt',null,token,'GET')).global[0];
+    const equippedItem=(template,id)=>({id,templateId:template.id,name:template.name,category:template.category,
+        subcategory:template.subcategory,attributes:template.attributes,quantity:1,weight:template.weight,volume:template.volume});
+    const inspection=await request(api+'/characters',{name:'Проверка схем модификаций',data:{
+        equipment:{armor:equippedItem(armorTemplate,'inspect-armor'),helmet:equippedItem(helmetTemplate,'inspect-helmet'),
+            gasMask:equippedItem(maskTemplate,'inspect-mask'),belt:equippedItem(beltTemplate,'inspect-belt')},
+        weapons:[{...(await read(a.id)).data.weapons[0],id:'inspect-weapon'}],
+    }},token);
+    await page.evaluate(`window.openCharacterSheet(${inspection.id},'equipment').then(()=>true)`);
+    for(const [slot,target,id,count] of [['armor','equipment.armor','inspect-armor',9],['helmet','equipment.helmet','inspect-helmet',6],
+        ['gasMask','equipment.gasMask','inspect-mask',4],['belt','equipment.belt','inspect-belt',18],['weapon-0','weapons.0','inspect-weapon',6]]){
+        const loadout=slot==='belt'?'.loadout-slot[data-equipment-open="inventory"][aria-label^="Пояс"]'
+            :`.loadout-slot[data-equipment-open="${slot}"]`;
+        const control=`[data-modification-target="${target}"]`;
+        await page.until(`document.querySelector(${JSON.stringify(loadout)})`,'Слот предмета доступен '+slot);
+        await page.evaluate(`document.querySelector(${JSON.stringify(loadout)}).click();true`);
+        await page.until(`document.querySelector(${JSON.stringify(control)})`,'Ссылка на схему предмета');
+        if(slot==='weapon-0')await page.evaluate(`document.querySelector(${JSON.stringify(control)}).closest('details').open=true;true`);
+        await page.until(`document.querySelector(${JSON.stringify(control)}).getClientRects().length`,'Ссылка на схему видна');
+        await page.evaluate(`document.querySelector(${JSON.stringify(control)}).click();true`);
+        await page.until(`document.querySelector('#crafting-modal select[aria-label="Предмет для модификации"]')?.value===${JSON.stringify(id)}
+            &&document.querySelectorAll('#crafting-modal .modification-node').length===${count}
+            &&!document.querySelector('[data-crafting-pane=modifications]').hidden`,'Открыта схема конкретного экземпляра '+slot);
+        if(slot==='belt'){
+            const shot=await page.call('Page.captureScreenshot',{format:'png'});
+            fs.writeFileSync(path.join(safeSession.artifacts,'modification-belt.png'),Buffer.from(shot.data,'base64'));
+        }
+        await page.evaluate("document.getElementById('crafting-modal').closeCrafting();true");
+    }
+    await page.evaluate('window.closeCharacterSheet();true');
     console.log(JSON.stringify({armorBranchesGrouped:true,families:['Лёгкая','Средняя'],
-        selfCrafting:true,professionalInstallation:true,unavailableLevelReason:true}));
+        selfCrafting:true,professionalInstallation:true,unavailableLevelReason:true,contextualTargets:5}));
     await page.evaluate(`(async()=>{const generator=await import('/static/js/npcGenerator.js');
         await generator.openNpcCreation(${lobby.id});return true})()`);
     await page.until(`document.querySelector('.npc-generator-name')?.value.includes(' ')

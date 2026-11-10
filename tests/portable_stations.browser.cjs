@@ -58,7 +58,7 @@ module.exports=async({page,request,token,lobby,base,safeSession})=>{
     await page.evaluate(`(async()=>{document.getElementById('station-tools-modal')?.remove();const {showCrafting}=await import('/static/js/crafting.js');await showCrafting({characterId:${character.id},lobbyId:${lobby.id}});})()`);
     await page.evaluate("document.querySelector('[data-crafting-tab=modifications]').click();true");
     await page.until("[...document.querySelectorAll('select[aria-label=\"Инструменты для модификации\"] option')].some(o=>o.textContent.includes('Кустарный станок оружейника'))",'Размещённый станок доступен для модификаций');
-    await page.evaluate("(()=>{const t=document.querySelector('select[aria-label=\"Инструменты для модификации\"]');t.value=[...t.options].find(o=>o.textContent.includes('Кустарный станок оружейника')).value;t.dispatchEvent(new Event('change'));const r=document.querySelector('select[aria-label=Модификация]');r.value='weapon-c23';r.dispatchEvent(new Event('change'));})()");
+    await page.evaluate("(()=>{const t=document.querySelector('select[aria-label=\"Инструменты для модификации\"]');t.value=[...t.options].find(o=>o.textContent.includes('Кустарный станок оружейника')).value;t.dispatchEvent(new Event('change'));document.querySelector('[data-modification-id=weapon-c23]').click();})()");
     await page.until("document.getElementById('crafting-modal')?.innerText.includes('1 заряд · 15 мин')",'Получена действующая оценка установки со станком');
     console.log('Станок: размещение мышью, синхронизация, заправка и выбор для модификаций проверены в Припяти.');
 };

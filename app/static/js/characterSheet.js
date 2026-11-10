@@ -4491,6 +4491,8 @@ async function renderEquipmentTab(data, { focusWeaponIndex = null } = {}) {
     const equippedHelmetTemplate = helmetTemplates.find(
         template => template.id == helmet.templateId
     );
+    const softHeadwear = helmet.attributes?.soft_headwear ?? equippedHelmetTemplate?.attributes?.soft_headwear;
+    const canModifyHelmet = !softHeadwear || helmet.name?.toLowerCase() === 'ушанка';
     if (helmet.templateId && helmet.movementPenalty === undefined) {
         helmet.movementPenalty = Number(
             equippedHelmetTemplate?.attributes?.movement_penalty
@@ -4613,8 +4615,8 @@ async function renderEquipmentTab(data, { focusWeaponIndex = null } = {}) {
                     ${renderSlotsUniversal(helmet, ['equipment', 'helmet'])}
                 </div>
             ` : ''}
-            ${helmet.modifications?.length ? `<div class="modifications-block">
-                <h5>Модификации шлема</h5>
+            ${helmet.templateId || helmet.name || helmet.model ? `<div class="modifications-block">
+                ${canModifyHelmet ? modificationMapButton(['equipment',helmet.integratedWithArmor?'armor':'helmet']) : ''}
                 <div id="helmet-modifications-container">${renderHelmetModifications(helmet.modifications, groupedHelmetMods)}</div>
             </div>` : ''}
         </div>
@@ -4655,9 +4657,7 @@ async function renderEquipmentTab(data, { focusWeaponIndex = null } = {}) {
                 </div>
             ` : ''}
             <div class="modifications-block">
-                <div style="display:flex; align-items:center;">
-                    <h5 style="margin:0;">Модификации противогаза</h5>
-                </div>
+                ${gasMask.templateId || gasMask.name || gasMask.model ? modificationMapButton(['equipment','gasMask']) : ''}
                 <div id="gasMask-modifications-container">${renderGasMaskModifications(gasMask.modifications, groupedGasMaskMods)}</div>
             </div>
         </div>
@@ -4780,9 +4780,7 @@ async function renderEquipmentTab(data, { focusWeaponIndex = null } = {}) {
                 </div>
                 ` : ''}
             <div class="modifications-block">
-                <div style="display:flex; align-items:center;">
-                    <h5 style="margin:0;">Модификации брони</h5>
-                </div>
+                ${armor.templateId || armor.name || armor.model ? modificationMapButton(['equipment','armor']) : ''}
                 <div id="armor-modifications-container">${renderArmorModifications(armor.modifications, groupedArmorMods)}</div>
             </div>
         </div>
@@ -4946,16 +4944,25 @@ async function renderEquipmentTab(data, { focusWeaponIndex = null } = {}) {
     }
 }
 
-window.openCharacterCrafting=async function(){
+async function openCharacterWorkshop(modificationTarget){
     if(!currentCharacterCanEdit||medicalOperationInProgress)return;
     const characterId=currentCharacterId,lobbyId=currentLobbyId;
     try{
         await forceSyncCharacter();await Server.waitForCharacterSave(characterId);
         if(currentCharacterId!==characterId)return;
         const {showCrafting}=await import('./crafting.js');
-        await showCrafting({characterId,lobbyId,onSaved:data=>queueRemoteSheetData(data,characterId)});
+        await showCrafting({characterId,lobbyId,modificationTarget,onSaved:data=>queueRemoteSheetData(data,characterId)});
     }catch(error){showNotification(error.message,'system');}
-};
+}
+
+window.openCharacterCrafting=()=>openCharacterWorkshop();
+window.openItemModificationMap=path=>openCharacterWorkshop({path,id:getItemByPath(path)?.id});
+
+function modificationMapButton(path) {
+    if(!currentCharacterCanEdit)return '';
+    return `<button type="button" class="btn btn-sm btn-secondary" data-modification-target="${path.join('.')}"
+        onclick="openItemModificationMap(${escapeHtml(JSON.stringify(path))})">Ветки модификаций</button>`;
+}
 
 function equipmentModule(item, slotType) {
     const modules = Array.isArray(item?.installedModules) ? item.installedModules : [];
@@ -6900,9 +6907,7 @@ async function renderWeapons(weapons, weaponTemplates, moduleTemplates, weaponMo
                     ${slotsHtml}
                     ${!isMelee ? `
                     <div style="margin-top:10px;">
-                        <div style="display: flex; align-items: center;">
-                            <label style="margin: 0;">Модификации</label>
-                        </div>
+                        ${weapon.naturalWeapon?'':modificationMapButton(['weapons',index])}
                         <div id="modifications-${index}">${modificationsHtml}</div>
                     </div>
                     ` : ''}
@@ -14585,7 +14590,8 @@ async function renderInventoryTab(data) {
         <div class="equipment-group" data-widget-block="belt" style="margin-top: 20px;">
             <div class="equipment-header" style="display: flex; align-items: center; justify-content: space-between;">
                 <h4>Пояс ${renderCreatedByPlayerBadge(eq.belt)}</h4>
-                <button type="button" class="btn btn-sm btn-danger" onclick="unequipBelt()">Снять</button>
+                <div>${modificationMapButton(['equipment','belt'])}
+                    <button type="button" class="btn btn-sm btn-danger" onclick="unequipBelt()">Снять</button></div>
             </div>
             <div style="margin-bottom: 10px;">
                 <label>Предмет на поясе</label>
@@ -14646,9 +14652,6 @@ async function renderInventoryTab(data) {
                         ${renderArtifactSpecial(item)}
                     </div>`:'').join('')}
             </div>`:''}
-            <div style="display: flex; align-items: center; margin-top: 15px;">
-                <h5 style="margin: 0;">Модификации пояса</h5>
-            </div>
             <div id="belt-modifications-container">
                 ${renderBeltModifications(eq.belt?.modifications || [], modificationTemplates.filter(t => t.attributes?.type === 'belt'))}
             </div>

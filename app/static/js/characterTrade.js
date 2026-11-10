@@ -1,4 +1,4 @@
-import {fillModificationOptions} from './modificationOptions.js';
+import {modificationTitle,renderModificationMap} from './modificationOptions.js';
 
 const escape = value => String(value ?? '').replace(/[&<>"']/g, char => ({
     '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
@@ -262,38 +262,60 @@ export function renderProfessionalRepairEditor(modal,{entries,balance,onQuote,on
     else {itemSelect.innerHTML='<option>Нет подходящих предметов</option>';modal.querySelector('.repair-check').disabled=true;}
 }
 
-export function renderProfessionalModificationEditor(modal,{targets,rules,balance,onQuote,onSubmit,onUnlockQuote,onUnlockSubmit,onClose}) {
+export function renderProfessionalModificationEditor(modal,{targets,rules,canInstall=()=>true,balance,onQuote,onSubmit,onUnlockQuote,onUnlockSubmit,onClose}) {
     const options=(targets||[]).filter(entry=>entry?.item && entry?.slots?.family);
     modal.innerHTML=`<div class="modal-content character-trade modification-service">
         <div class="character-trade-heading"><div><h3>Установка модификации</h3><small>Услуга специалиста · сразу после оплаты</small></div>
             <button type="button" class="btn btn-secondary modification-close" aria-label="Закрыть">×</button></div>
-        <div class="modification-service-grid">
-            <section class="modification-service-panel"><label>Ваш предмет<select class="form-control modification-item">${options.map((entry,index)=>
+        <div class="modification-service-body">
+            <label class="modification-target-label">Ваш предмет<select class="form-control modification-item">${options.map((entry,index)=>
                 `<option value="${index}">${escape(entry.item.name||entry.item.model||'Предмет')}</option>`).join('')}</select></label>
+            <div class="modification-workspace">
+            <div class="modification-map"></div>
+            <aside class="modification-inspector">
                 <div class="modification-item-card"></div>
-                ${onUnlockQuote?'<button type="button" class="btn btn-secondary modification-unlock">Открыть слот у механика · 2500 ₽</button>':''}</section>
-            <section class="modification-service-panel"><label>Улучшение<select class="form-control modification-rule"></select></label>
-                <div class="modification-rule-details"></div>
-                <label>Заменить установленное улучшение<select class="form-control modification-replace"></select></label>
-                <div class="modification-service-price"><small>На руках: ${rubles(balance)}</small><strong class="modification-price-value">Выберите улучшение</strong></div></section>
-        </div><div class="trade-error modification-error" role="status"></div>
-        <div class="form-actions"><button type="button" class="btn btn-secondary modification-check">Рассчитать стоимость</button>
-            <button type="button" class="btn btn-primary modification-confirm" disabled>Оплатить и установить</button></div></div>`;
-    const itemSelect=modal.querySelector('.modification-item'),ruleSelect=modal.querySelector('.modification-rule');
+                ${onUnlockQuote?'<button type="button" class="btn btn-secondary modification-unlock">Открыть слот у механика · 2500 ₽</button>':''}
+                <div class="modification-inspector-info modification-rule-details"></div>
+                <label>Замена<select class="form-control modification-replace"></select></label>
+                <div class="modification-service-price"><small>На руках · ${rubles(balance)}</small><strong class="modification-price-value">Выберите улучшение</strong></div>
+                <div class="trade-error modification-error" role="status"></div>
+                <div class="form-actions"><button type="button" class="btn btn-secondary modification-check">Рассчитать стоимость</button>
+                    <button type="button" class="btn btn-primary modification-confirm" disabled>Оплатить и установить</button></div>
+            </aside></div></div></div>`;
+    const itemSelect=modal.querySelector('.modification-item'),map=modal.querySelector('.modification-map');
     const replaceSelect=modal.querySelector('.modification-replace'),card=modal.querySelector('.modification-item-card');
     const details=modal.querySelector('.modification-rule-details'),price=modal.querySelector('.modification-price-value');
     const error=modal.querySelector('.modification-error'),confirm=modal.querySelector('.modification-confirm');
     const unlock=modal.querySelector('.modification-unlock');
-    let quoted=null,operationId=null,busy=false;
-    const reset=()=>{quoted=null;operationId=null;confirm.disabled=true;price.textContent='Выберите улучшение';error.textContent='';};
+    const check=modal.querySelector('.modification-check');
+    let quoted=null,operationId=null,busy=false,selected,quoteVersion=0;
+    const reset=()=>{
+        quoteVersion++;quoted=null;operationId=null;confirm.disabled=true;
+        price.textContent=selected?'Стоимость по запросу':'Выберите улучшение';error.textContent='';
+    };
     const current=()=>options[Number(itemSelect.value)];
-    const rule=()=>((rules||[]).find(entry=>entry.id===ruleSelect.value));
-    const renderRule=()=>{
-        reset();const selected=rule(),entry=current();
-        details.textContent=selected ? `${selected.description||selected.name}${selected.kind==='pda'?' · '+selected.difficulty_group:' · Уровень '+selected.level}` : '';
-        const installed=(entry?.item?.modifications||[]).filter(value=>value?.ruleId&&value.level===selected?.level);
+    const unavailableReason=rule=>rule.kind!=='pda'&&!rule.automatic_installation?'Установка недоступна'
+        :!canInstall(rule)?(rule.scientist_only?'Только у учёного':'Специалист не устанавливает'):'';
+    const renderRule=rule=>{
+        selected=rule;reset();
+        const records=(current()?.item?.modifications||[]).filter(value=>value?.ruleId);
+        const owned=records.find(record=>record.ruleId===selected?.id);
+        details.replaceChildren();
+        if(selected){
+            const title=modificationTitle(selected),description=owned?.description||selected.description;
+            const caption=document.createElement('small'),heading=document.createElement('h4');
+            caption.textContent=selected.kind==='pda'?selected.difficulty_group:`${selected.branch||selected.family} · Уровень ${selected.level}`;
+            heading.textContent=title;details.append(caption,heading);
+            if(description&&description!==title){const text=document.createElement('p');text.textContent=description;details.append(text);}
+            if(owned)price.textContent=owned.gunsmith?'Установлено · Оружейник ×1,5':'Установлено';
+            else if(unavailableReason(selected))price.textContent=unavailableReason(selected);
+        }
+        const installed=records.filter(value=>value.level===selected?.level);
         replaceSelect.innerHTML='<option value="">Без замены</option>'+installed.map(value=>
             `<option value="${escape(value.ruleId)}">${escape(value.name||value.ruleId)}</option>`).join('');
+        replaceSelect.parentElement.hidden=!installed.length||Boolean(owned)||selected?.kind==='pda';
+        if(selected?.kind==='weapon'&&installed.length)replaceSelect.value=installed[0].ruleId;
+        check.disabled=!selected||Boolean(owned)||Boolean(unavailableReason(selected));
     };
     const renderItem=()=>{
         reset();const entry=current();if(!entry)return;
@@ -310,15 +332,10 @@ export function renderProfessionalModificationEditor(modal,{targets,rules,balanc
                 `<span class="${index<installed.length?'filled':index>=slots.available?'locked':''}" title="${index<installed.length?'Занят':index>=slots.available?'Закрыт':'Свободен'}"></span>`).join('')}</div>
             <small>${installed.length} занято · ${Math.max(0,slots.available-installed.length)} свободно · ${slots.maximum-slots.available} закрыто</small>
             <div class="modification-installed">${installed.length?installed.map(value=>`<span>${escape(value.name||value.ruleId)}</span>`).join(''):'Пока нет улучшений'}</div>`;
-        const available=(rules||[]).filter(value=>pda?value.kind==='pda'&&!installed.some(mod=>mod.ruleId===value.id)
-            :value.automatic_installation && value.family===slots.family);
-        fillModificationOptions(ruleSelect,available);
-        if(!available.length)ruleSelect.innerHTML='<option value="">Нет доступных улучшений</option>';
-        modal.querySelector('.modification-check').disabled=!available.length;
-        replaceSelect.parentElement.hidden=pda;
-        renderRule();
+        const available=(rules||[]).filter(value=>pda?value.kind==='pda':value.family===slots.family);
+        renderRule(renderModificationMap(map,{target:entry,rules:available,onSelect:renderRule,unavailableReason}));
     };
-    itemSelect.onchange=renderItem;ruleSelect.onchange=renderRule;replaceSelect.onchange=reset;
+    itemSelect.onchange=renderItem;replaceSelect.onchange=reset;
     modal.querySelector('.modification-close').onclick=()=>{if(!busy)onClose();};
     if(unlock)unlock.onclick=async()=>{
         const entry=current();if(busy||!entry)return;
@@ -326,29 +343,37 @@ export function renderProfessionalModificationEditor(modal,{targets,rules,balanc
         try{
             const plan=await onUnlockQuote(entry);
             if(plan.price>balance)throw Error('Не хватает денег на открытие слота');
-            if(window.confirm(`Открыть слот на «${entry.item.name||entry.item.model}» у механика за ${rubles(plan.price)}?`)){
+            if(current()===entry&&window.confirm(`Открыть слот на «${entry.item.name||entry.item.model}» у механика за ${rubles(plan.price)}?`)){
                 await onUnlockSubmit(entry,crypto.randomUUID());
             }
         }catch(reason){error.textContent=reason.message||'Не удалось открыть слот';}
         finally{busy=false;unlock.disabled=current()?.slots.available>=current()?.slots.maximum;}
     };
-    modal.querySelector('.modification-check').onclick=async()=>{
-        const entry=current(),selected=rule();if(!entry||!selected)return;
+    check.onclick=async()=>{
+        const entry=current(),rule=selected,replace=replaceSelect.value||null;
+        if(busy||!entry||!rule)return;
+        const version=++quoteVersion;
         busy=true;error.textContent='';confirm.disabled=true;
+        price.textContent='Рассчитываем установку…';
         try{
-            const result=await onQuote(entry,selected,replaceSelect.value||null);
-            quoted={entry,selected,replace:replaceSelect.value||null,result};operationId=crypto.randomUUID();
+            const result=await onQuote(entry,rule,replace);
+            if(version!==quoteVersion)return;
+            quoted={entry,selected:rule,replace,result};operationId=crypto.randomUUID();
             price.textContent=`К оплате ${rubles(result.price)}`;
             confirm.disabled=result.price>balance;
             if(result.price>balance)error.textContent='Не хватает денег на установку.';
-        }catch(reason){quoted=null;error.textContent=reason.message||'Не удалось рассчитать установку';}
+        }catch(reason){
+            if(version!==quoteVersion)return;
+            quoted=null;price.textContent='Установка недоступна';error.textContent=reason.message||'Не удалось рассчитать установку';
+        }
         finally{busy=false;}
     };
     confirm.onclick=async()=>{
         if(busy||!quoted)return;
         busy=true;confirm.disabled=true;error.textContent='';
+        const version=quoteVersion;
         try{await onSubmit(quoted.entry,quoted.selected,quoted.replace,operationId);}
-        catch(reason){error.textContent=reason.message||'Не удалось установить улучшение';confirm.disabled=false;}
+        catch(reason){if(version===quoteVersion){error.textContent=reason.message||'Не удалось установить улучшение';confirm.disabled=false;}}
         finally{busy=false;}
     };
     if(options.length)renderItem();

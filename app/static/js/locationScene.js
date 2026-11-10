@@ -10064,8 +10064,9 @@ export async function showCharacterTradeMenu(actorLocationCharacterId, actorChar
         onModification:npc && (targetData.merchant?.repair_enabled || targetData.merchant?.modification_enabled || targetData.merchant?.scientist_enabled) ? async () => {
             try {
                 const snapshot=await Server.getCrafting(actorCharacterId);
-                const rules=(snapshot.catalog?.modifications||[]).filter(rule=>rule.scientist_only
-                    ? targetData.merchant?.scientist_enabled : targetData.merchant?.modification_enabled);
+                const rules=snapshot.catalog?.modifications||[];
+                const canInstall=rule=>rule.scientist_only
+                    ? targetData.merchant?.scientist_enabled : targetData.merchant?.modification_enabled;
                 const request=(entry,rule,replace,extra={})=>Server.professionalModification(window.currentLobbyId,getCurrentLocationId(),{
                     actor_location_character_id:actorLocationCharacterId,specialist_character_id:targetCharacterId,
                     target_path:entry.path,item_id:entry.item.id,rule_id:rule.id,
@@ -10078,7 +10079,7 @@ export async function showCharacterTradeMenu(actorLocationCharacterId, actorChar
                 });
                 renderProfessionalModificationEditor(modal,{
                     targets:[...snapshot.targets,...snapshot.inventory.filter(entry=>entry.item?.name?.trim().toLowerCase()==='кпк')
-                        .map(entry=>({...entry,slots:{family:'КПК'}}))],rules,
+                        .map(entry=>({...entry,slots:{family:'КПК'}}))],rules,canInstall,
                     balance:Number(actorCharacter?.data?.inventory?.money||0),
                     onUnlockQuote:targetData.merchant?.repair_enabled?entry=>unlockRequest(entry):null,
                     onUnlockSubmit:targetData.merchant?.repair_enabled?async(entry,operationId)=>{
