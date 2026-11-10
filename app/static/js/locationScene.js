@@ -17761,9 +17761,20 @@ export function applyLocationTilesUpdate(locationId, updates) {
     let waterTopologyChanged = false;
     let waterShoreChanged = false;
     let lightChanged = false;
+    let movementSurfaceChanged = false;
     const changed = [];
     for (const upd of updates) {
         let tile = currentLocationData.tiles_data[upd.z][upd.x];
+        if (upd.state && tile.difficult_surface !== upd.state.difficult_surface) {
+            const {difficult_surface: previous, ...before} = tile;
+            const {difficult_surface: next, ...after} = upd.state;
+            if (equal(before, after)) {
+                if (typeof next === 'boolean') tile.difficult_surface = next;
+                else delete tile.difficult_surface;
+                movementSurfaceChanged = true;
+                continue;
+            }
+        }
         const previousObjects = tile.objects;
         const previousTerrain = tile.terrain;
         if(upd.water_profile!==undefined)tile.water_profile=normalizeWaterProfile(upd.water_profile);
@@ -17787,6 +17798,8 @@ export function applyLocationTilesUpdate(locationId, updates) {
         else if (Number.isFinite(upd.water_level_offset)) tile.water_level_offset=upd.water_level_offset;
         if (upd.objects !== undefined && (objectsChanged || !previousObjects)) tile.objects = upd.objects;
         if (upd.radiation !== undefined) tile.radiation = upd.radiation;
+        if (typeof upd.difficult_surface === 'boolean') tile.difficult_surface = upd.difficult_surface;
+        else if (upd.difficult_surface === null) delete tile.difficult_surface;
         if (upd.state) {
             tile = currentLocationData.tiles_data[upd.z][upd.x] = copy(upd.state);
             if (!objectsChanged && Object.hasOwn(tile, 'objects') && previousObjects) tile.objects = previousObjects;
@@ -17804,7 +17817,10 @@ export function applyLocationTilesUpdate(locationId, updates) {
         if (objectsChanged) rebuildTileObjects(upd.x, upd.z);
         changed.push({ x: upd.x, z: upd.z });
     }
-    if (!changed.length) return;
+    if (!changed.length) {
+        if (movementSurfaceChanged) invalidateMovementMapCache();
+        return;
+    }
     for(const {x,z} of changed)locationWaterProfiles?.updateRegion(x,z);
     const foundationChanged = refreshTerrainFoundation();
     const tilesNeedSmooth = updateTileCubes(changed);
@@ -17908,6 +17924,19 @@ export function applyLocationBrush(centerX, centerZ, updates, radius) {
                 if (tiles[z]?.[x]) targets.set(`${x},${z}`, { x, z });
             }
         }
+    }
+    if (Object.hasOwn(updates, 'difficult_surface')) {
+        if (objectEdit?.phase !== 'stroke' || locationViewLevel !== 0) return;
+        const difficult = updates.difficult_surface;
+        for (const {x,z} of targets.values()) {
+            const tile = tiles[z][x];
+            if (tile.difficult_surface === difficult) continue;
+            touchStrokeCell(x,z);
+            if (typeof difficult === 'boolean') tile.difficult_surface = difficult;
+            else delete tile.difficult_surface;
+        }
+        invalidateMovementMapCache();
+        return;
     }
     for (const { x, z } of targets.values()) {
             if (x < 0 || x >= currentLocationData.grid_width || z < 0 || z >= currentLocationData.grid_height) continue;
@@ -18716,6 +18745,10 @@ function getEditBrushUpdates() {
     const tool = window.locationEditorTool;
     if (eraserMode || tool === 'erase') return { objects: [] };
     if (tool === 'radiation') return { radiation: brushRadiation };
+    if (tool === 'surface') {
+        const mode = document.getElementById('loc-surface-cost')?.value;
+        return {difficult_surface: mode === 'auto' ? undefined : mode === 'difficult'};
+    }
     if (tool === 'decor') return { addObject: true };
     if (tool === 'terrain') return { terrain: currentBrushTerrain,
         ...(currentBrushTerrain === 'grass' ? { grass_subtype: currentBrushGrassSubtype } : {}),
@@ -18809,6 +18842,8 @@ export function setupLocationEditing() {
                 <b>(${x}, ${z})</b><br>
                 Ландшафт: ${tile.terrain}<br>
                 Высота: ${tile.height}<br>
+                ${window.locationEditorTool==='surface'&&locationViewLevel===0
+                    ? `Проходимость: ${tile.difficult_surface===true?'×2 вручную':tile.difficult_surface===false?'×1 вручную':'автоматически'}<br>` : ''}
                 ${radiationTooltipLine(tile.radiation)}
             `;
             locInfo.style.display = 'block';

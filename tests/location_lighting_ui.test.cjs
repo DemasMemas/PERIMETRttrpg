@@ -248,7 +248,7 @@ test('location tools keep light, asset library and selection inspector in separa
     const scene = fs.readFileSync(path.join(__dirname, '../app/static/js/locationScene.js'), 'utf8');
     const toolbar = main.match(/toolbar\.innerHTML = `([\s\S]*?)`;/)?.[1] || '';
     assert.deepEqual([...toolbar.matchAll(/data-location-tool="([^"]+)"/g)].map(match => match[1]),
-        ['select', 'terrain', 'height', 'radiation', 'erase', 'assets', 'building', 'light']);
+        ['select', 'terrain', 'surface', 'height', 'radiation', 'erase', 'assets', 'building', 'light']);
     assert.doesNotMatch(toolbar, /data-location-action="resize"/);
     assert.match(main, /assetSection\.hidden = !\['assets','building'\]\.includes\(tool\)/);
     assert.match(main, /environmentSection\.hidden = tool !== 'light'/);

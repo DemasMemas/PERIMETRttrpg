@@ -2816,6 +2816,7 @@ def update_location(lobby_id, location_id, lobby):
                     'height': tile.get('height'),
                     'water_level_offset': tile.get('water_level_offset'),
                     'water_profile': tile.get('water_profile', 'auto'),
+                    'difficult_surface': tile.get('difficult_surface'),
                     'objects': tile.get('objects', [])
                 })
         socketio.emit('location_tiles_updated', {

@@ -11393,7 +11393,7 @@ class CombatService:
             return {}
         vegetation = {f'nature_{species}_{state}' for species in ('bush', 'tall_grass')
                       for state in ('green', 'dry', 'dead')}
-        costs, all_objects = {}, list(objects)
+        costs, overrides, all_objects = {}, {}, list(objects)
         for y, row in enumerate(getattr(location, 'tiles_data', None) or []):
             if not isinstance(row, list):
                 continue
@@ -11402,6 +11402,8 @@ class CombatService:
                     continue
                 if tile.get('terrain') in {'snow', 'sand', 'swamp', 'ice'}:
                     costs[x, y, 0] = 2
+                if type(tile.get('difficult_surface')) is bool:
+                    overrides[x, y, 0] = tile['difficult_surface']
                 all_objects.extend({**o, 'tile_x': x, 'tile_y': y}
                                    for o in tile.get('objects') or [] if isinstance(o, dict))
         entries = [(o, o.get('type') if isinstance(o, dict) else o.type,
@@ -11416,6 +11418,11 @@ class CombatService:
             if kind == 'bush' or properties.get('visual_asset') in vegetation:
                 for x, y in CombatService._object_footprint_tiles(obj):
                     costs[x, y, level_of(obj)] = 2
+        for tile, difficult in overrides.items():
+            if difficult:
+                costs[tile] = 2
+            else:
+                costs.pop(tile, None)
         return costs
 
     @staticmethod

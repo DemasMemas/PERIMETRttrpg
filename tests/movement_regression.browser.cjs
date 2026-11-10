@@ -31,9 +31,9 @@ function expectedSurfaceRouteCost(start,end,fixture){
         const t=(ordered[index]+ordered[index+1])/2;
         const x=Math.floor(start.x+dx*t+.5),y=Math.floor(start.y+dy*t+.5);
         const tile=fixture.tiles_data?.[y]?.[x]||{};
-        const difficult=['snow','sand','swamp','ice'].includes(tile.terrain)
+        const difficult=tile.difficult_surface??(['snow','sand','swamp','ice'].includes(tile.terrain)
             ||(fixture.objects||[]).some(object=>object.tile_x===x&&object.tile_y===y
-                &&/^nature_(bush|tall_grass)_(green|dry|dead)$/.test(object.properties?.visual_asset||''));
+                &&/^nature_(bush|tall_grass)_(green|dry|dead)$/.test(object.properties?.visual_asset||'')));
         cost+=length*(ordered[index+1]-ordered[index])*(difficult?2:1);
     }
     return Math.round(cost*1e9)/1e9;
@@ -159,12 +159,12 @@ module.exports=async({page,request,token,base,connect,debugPort,safeSession,fixt
             assert.equal(after.movement_mode_this_turn,before.movement_mode_this_turn);assert.equal(after.movement_distance_this_turn,before.movement_distance_this_turn);
             return conversion.after;
         };
-        const pointAt=async(x,y,height)=>{
-            await peer.call('Page.bringToFront');
+        const pointAt=async(x,y,height,client=peer)=>{
+            await client.call('Page.bringToFront');
             // CDP передаёт указатель целыми пикселями. В общем плане полпикселя
             // попадало в соседнюю десятую метра; приближаем обычную камеру.
-            await peer.evaluate(`(()=>{const delta=new T.Vector3(${x+.5}-locationControls.target.x,${height}-locationControls.target.y,${y+.5}-locationControls.target.z);locationControls.object.position.add(delta);locationControls.target.add(delta);locationControls.object.zoom=4;locationControls.object.updateProjectionMatrix();locationControls.update();locationControls.object.updateMatrixWorld(true)})()`);
-            return peer.evaluate(`(()=>{const p=new T.Vector3(${x+.5},${height},${y+.5}).project(locationControls.object),r=document.querySelector('#location-canvas canvas').getBoundingClientRect();return{x:r.left+(p.x+1)*r.width/2,y:r.top+(1-p.y)*r.height/2}})()`);
+            await client.evaluate(`(()=>{const delta=new T.Vector3(${x+.5}-locationControls.target.x,${height}-locationControls.target.y,${y+.5}-locationControls.target.z);locationControls.object.position.add(delta);locationControls.target.add(delta);locationControls.object.zoom=4;locationControls.object.updateProjectionMatrix();locationControls.update();locationControls.object.updateMatrixWorld(true)})()`);
+            return client.evaluate(`(()=>{const p=new T.Vector3(${x+.5},${height},${y+.5}).project(locationControls.object),r=document.querySelector('#location-canvas canvas').getBoundingClientRect();return{x:r.left+(p.x+1)*r.width/2,y:r.top+(1-p.y)*r.height/2}})()`);
         };
         let expectedPosition={x:41,y:48};
         const armPreview=async(mode,x,y)=>{
@@ -195,6 +195,46 @@ module.exports=async({page,request,token,base,connect,debugPort,safeSession,fixt
             return{point,state,route,price};
         };
         await ensureMovementBudget('initial-turn');
+        if(process.env.VTT_SAFE_SCENARIO==='surface'){
+            const tile=fixture.tiles_data[48][42];
+            const before=(await preview(42,48)).route;
+            assert.equal(before.cost,1.5,'Полметра обычной земли и полметра снега');
+            await peer.evaluate("window.surfaceUpdates=[];socket.on('location_editor_objects_changed', event=>surfaceUpdates.push(...(event.cells||[])));true");
+            const waitSurface=async(value,count)=>{
+                await peer.until(`surfaceUpdates.filter(cell=>cell.x===42&&cell.z===48&&cell.state.difficult_surface===${String(value)}).length===${count}`,
+                    'Переопределение наземного участка дошло до игрока');
+                const saved=await request(url,null,token,'GET');
+                assert.equal(saved.tiles_data[48][42].terrain,'snow');
+                assert.equal(saved.tiles_data[48][42].difficult_surface,value);
+                if(value===undefined)delete tile.difficult_surface;else tile.difficult_surface=value;
+            };
+            const paint=async(mode)=>{
+                await page.evaluate(`(async()=>{document.querySelector('[data-location-tool=surface]').click();
+                    const input=document.getElementById('loc-surface-cost');input.value=${JSON.stringify(mode)};
+                    input.dispatchEvent(new Event('change'));(await import('/static/js/ui_interactions.js')).collapseMapToolsPanel();return true})()`);
+                const point=await pointAt(42,48,before.surfaces.at(-1).height,page);
+                await page.call('Input.dispatchMouseEvent',{type:'mouseMoved',...point,buttons:0});
+                await page.until('L.getHoveredTileCoords()?.x===42&&L.getHoveredTileCoords()?.z===48','Кисть над снежной клеткой');
+                for(const type of ['mousePressed','mouseReleased'])await page.call('Input.dispatchMouseEvent',{type,...point,
+                    button:'left',buttons:type==='mousePressed'?1:0,clickCount:1});
+            };
+            await paint('normal');
+            await waitSurface(false,1);
+            await page.evaluate('L.setLocationEditMode(false);true');
+            const ordinary=await armPreview('walk',42,48);
+            assert.equal(ordinary.route.cost,1);
+            await page.evaluate("L.setLocationEditMode(true);document.querySelector('[data-location-undo]').click();true");
+            await waitSurface(undefined,1);
+            assert.equal((await preview(42,48)).route.cost,1.5);
+            await page.evaluate("document.querySelector('[data-location-redo]').click();true");
+            await waitSurface(false,2);
+            await paint('auto');
+            await waitSurface(undefined,2);
+            assert.equal((await preview(42,48)).route.cost,1.5);
+            await page.evaluate("window.selectLocationEditorTool('select');L.setLocationEditMode(false);true");
+            result.phases.push({stage:'surface-override',before:before.cost,ordinary:ordinary.route.cost,
+                automatic:(await preview(42,48)).route.cost,undoRedo:true,network:true});save();
+        }
         const beforeSelection=await server();
         await armPreview('walk',42,48);await armPreview('run',42,48);
         const unchanged=await server();

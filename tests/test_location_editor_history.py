@@ -57,6 +57,29 @@ def test_decor_conflict_does_not_commit_any_other_changes(editor):
     assert client.get(url, headers=headers).get_json()['tiles_data'][1][1]['objects'] == []
 
 
+def test_surface_override_round_trips_without_repainting_and_rejects_non_boolean(editor):
+    client, headers, url, _ = editor
+    initial = client.get(url, headers=headers).get_json()['tiles_data'][1][1]
+    route = url + '/object-edits'
+    for setting in (True, False):
+        edited = {**initial, 'difficult_surface': setting}
+        response = client.post(route, headers=headers, json={'cells': [
+            {'x': 1, 'z': 1, 'before': initial, 'after': edited},
+        ]})
+        assert response.status_code == 200, response.get_json()
+        assert response.get_json()['cells'][0]['state'] == edited
+        assert client.get(url, headers=headers).get_json()['tiles_data'][1][1] == edited
+        undo = client.post(route, headers=headers, json={'cells': [
+            {'x': 1, 'z': 1, 'before': edited, 'after': initial},
+        ]})
+        assert undo.status_code == 200
+    rejected = client.post(route, headers=headers, json={'cells': [
+        {'x': 1, 'z': 1, 'before': initial, 'after': {**initial, 'difficult_surface': 'false'}},
+    ]})
+    assert rejected.status_code == 400
+    assert client.get(url, headers=headers).get_json()['tiles_data'][1][1] == initial
+
+
 def test_lamp_history_keeps_other_settings_and_detects_foreign_lamp(editor):
     client, headers, url, _ = editor
     initial = client.get(url, headers=headers).get_json()['lighting']

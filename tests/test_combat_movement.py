@@ -1778,6 +1778,23 @@ def test_flight_keeps_existing_difficult_surface_immunity():
     assert CombatService._movement_surface_costs(location, ignores_terrain=True) == {}
 
 
+def test_gm_surface_override_applies_after_natural_layers_and_respects_flight():
+    location = SimpleNamespace(tiles_data=[[
+        {'terrain': 'snow', 'difficult_surface': False},
+        {'terrain': 'grass', 'difficult_surface': True},
+        {'terrain': 'grass', 'difficult_surface': 1},
+    ]])
+    objects = [
+        {'type': 'bush', 'tile_x': 0, 'tile_y': 0, 'properties': {'level': 0}},
+        {'type': 'bush', 'tile_x': 0, 'tile_y': 0, 'properties': {'level': 1}},
+        {'type': 'floor', 'tile_x': 1, 'tile_y': 0, 'properties': {'level': 0}},
+    ]
+    assert CombatService._movement_surface_costs(location, objects) == {(1, 0, 0): 2, (0, 0, 1): 2}
+    assert CombatService._movement_surface_costs(location, objects, ignores_terrain=True) == {}
+    del location.tiles_data[0][0]['difficult_surface']
+    assert CombatService._movement_surface_costs(location, objects)[(0, 0, 0)] == 2
+
+
 @pytest.mark.parametrize(('strength', 'modifier', 'distance'), [(6, -2, 1.6), (10, 0, 2), (18, 4, 2.8)])
 @pytest.mark.parametrize('mode', ['walk', 'run', 'sprint'])
 def test_jump_preview_uses_canonical_modifier_and_running_rules(strength, modifier, distance, mode):

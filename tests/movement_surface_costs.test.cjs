@@ -19,6 +19,17 @@ test('Шесть существующих vegetation ID стоят два, по�
   assert.equal(costs.has('0:0:0'),false);assert.equal(costs.get('0:0:1'),2);
  }
 });
+test('Ручная проходимость переопределяет покрытие и кусты только на нулевом этаже',async()=>{
+ const {buildMovementSurfaceCosts}=await modulePromise;
+ const location={tiles_data:[[{terrain:'snow',difficult_surface:false},{terrain:'grass',difficult_surface:true}]],objects:[
+  {type:'bush',tile_x:0,tile_y:0,properties:{level:0}},
+  {type:'bush',tile_x:0,tile_y:0,properties:{level:1}},
+  {type:'floor',tile_x:1,tile_y:0,properties:{level:0}}]};
+ const costs=buildMovementSurfaceCosts(location,footprint,level);
+ assert.deepEqual([...costs.entries()].sort(),[['0:0:1',2],['1:0:0',2]]);
+ delete location.tiles_data[0][0].difficult_surface;
+ assert.equal(buildMovementSurfaceCosts(location,footprint,level).get('0:0:0'),2);
+});
 test('Клиентский A* выбирает доступный путь по цене, а не кратчайший через песок',async()=>{
  const {buildMovementSurfaceCosts}=await modulePromise;
  const tiles=Array.from({length:3},()=>Array.from({length:3},()=>({terrain:'grass'})));tiles[1][1].terrain='sand';

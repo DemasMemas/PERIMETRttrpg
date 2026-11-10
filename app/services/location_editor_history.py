@@ -125,6 +125,7 @@ def apply_object_edit(location_id, lobby_id, data):
         if (not isinstance(after, dict) or not isinstance(after.get('terrain'), str)
                 or type(after.get('height')) not in (int, float)
                 or ('objects' in after and not isinstance(after['objects'], list))
+                or ('difficult_surface' in after and type(after['difficult_surface']) is not bool)
                 or ('radiation' in after and (type(after['radiation']) not in (int, float) or not 0 <= after['radiation'] <= 10))):
             raise ValidationError('Invalid terrain snapshot')
         next_tiles[z][x] = deepcopy(after)

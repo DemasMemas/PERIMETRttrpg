@@ -1,14 +1,15 @@
 // Существующие terrain/visual_asset; внешний вид воды не задаёт её глубину.
 export function buildMovementSurfaceCosts(location, footprint, levelOf) {
-    const costs = new Map(), objects = [...(location?.objects || [])];
+    const costs = new Map(), overrides = new Map(), objects = [...(location?.objects || [])];
     const vegetation = new Set(['bush', 'tall_grass'].flatMap(species =>
         ['green', 'dry', 'dead'].map(state => 'nature_' + species + '_' + state)));
     const key = (x, y, level) => x + ':' + y + ':' + level;
     (location?.tiles_data || []).forEach((row, y) => {
         if (!Array.isArray(row)) return;
         row.forEach((tile, x) => {
-        if (['snow', 'sand', 'swamp', 'ice'].includes(tile?.terrain)) costs.set(key(x, y, 0), 2);
-        for (const object of tile?.objects || []) objects.push({ ...object, tile_x: x, tile_y: y });
+            if (['snow', 'sand', 'swamp', 'ice'].includes(tile?.terrain)) costs.set(key(x, y, 0), 2);
+            if (typeof tile?.difficult_surface === 'boolean') overrides.set(key(x, y, 0), tile.difficult_surface);
+            for (const object of tile?.objects || []) objects.push({ ...object, tile_x: x, tile_y: y });
         });
     });
     // Пол над грунтом использует свою поверхность, а не снег под ним.
@@ -18,6 +19,10 @@ export function buildMovementSurfaceCosts(location, footprint, levelOf) {
     for (const object of objects) {
         if (object.type !== 'bush' && !vegetation.has(object.properties?.visual_asset)) continue;
         for (const {x, y} of footprint(object)) costs.set(key(x, y, levelOf(object)), 2);
+    }
+    for (const [tile, difficult] of overrides) {
+        if (difficult) costs.set(tile, 2);
+        else costs.delete(tile);
     }
     return costs;
 }

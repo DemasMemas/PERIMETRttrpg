@@ -572,6 +572,7 @@ window.enterLocation = async function(locationId, { scoutView = null } = {}) {
                     select: createToolSection('Выбор', []),
                     brush: createToolSection('Кисть', ['loc-edit-radius']),
                     terrain: createToolSection('Ландшафт', ['loc-edit-terrain', 'loc-grass-subtype']),
+                    surface: createToolSection('Проходимость', []),
                     height: createToolSection('Высота', ['loc-edit-height']),
                     radiation: createToolSection('Радиация', ['loc-edit-radiation']),
                 };
@@ -634,6 +635,7 @@ window.enterLocation = async function(locationId, { scoutView = null } = {}) {
                 toolbar.innerHTML = `
                     <button type="button" data-location-tool="select">Выбор</button>
                     <button type="button" data-location-tool="terrain">Ландшафт</button>
+                    <button type="button" data-location-tool="surface">Проходимость</button>
                     <button type="button" data-location-tool="height">Высота</button>
                     <button type="button" data-location-tool="radiation">Радиация</button>
                     <button type="button" data-location-tool="erase">Ластик</button>
@@ -651,10 +653,17 @@ window.enterLocation = async function(locationId, { scoutView = null } = {}) {
                 const toolSettings = document.createElement('div');
                 toolSettings.className = 'location-tool-settings';
                 hint.after(toolSettings);
-                for (const section of [sections.brush, sections.terrain, sections.height, sections.radiation]) {
+                for (const section of [sections.brush, sections.terrain, sections.surface, sections.height, sections.radiation]) {
                     section.setAttribute('aria-label', section.querySelector('strong').textContent);
                     toolSettings.appendChild(section);
                 }
+                sections.surface.insertAdjacentHTML('beforeend', `<label>Цена прохода
+                    <select id="loc-surface-cost" class="form-control" data-canvas-editor-control>
+                        <option value="difficult">Сложная · ×2</option>
+                        <option value="normal">Обычная · ×1</option>
+                        <option value="auto">Определять автоматически</option>
+                    </select></label>`);
+                document.getElementById('loc-surface-cost').onchange = event => event.target.blur();
                 sections.select.classList.add('location-selection-section');
                 for (const id of ['loc-edit-radius', 'loc-edit-height', 'loc-edit-radiation']) {
                     const row = document.getElementById(id).parentElement;
@@ -724,7 +733,7 @@ window.enterLocation = async function(locationId, { scoutView = null } = {}) {
                 let environmentSection = null;
                 const selectLocationTool = tool => {
                     window.cancelCommonMapTool?.();
-                    if (!['select', 'terrain', 'height', 'radiation', 'erase', 'assets', 'building', 'light'].includes(tool)) return;
+                    if (!['select', 'terrain', 'surface', 'height', 'radiation', 'erase', 'assets', 'building', 'light'].includes(tool)) return;
                     cancelLocationPaste();
                     cancelLocationAssetResize(false);
                     const previousTool = window.locationEditorTool;
@@ -742,9 +751,9 @@ window.enterLocation = async function(locationId, { scoutView = null } = {}) {
                     });
                     Object.entries(sections).forEach(([name, section]) => {
                         section.hidden = name !== tool
-                            && !(name === 'brush' && ['terrain', 'height', 'radiation', 'erase'].includes(tool));
+                            && !(name === 'brush' && ['terrain', 'surface', 'height', 'radiation', 'erase'].includes(tool));
                     });
-                    toolSettings.hidden = !['terrain', 'height', 'radiation', 'erase'].includes(tool);
+                    toolSettings.hidden = !['terrain', 'surface', 'height', 'radiation', 'erase'].includes(tool);
                     waterSettings.hidden = document.getElementById('loc-edit-terrain')?.value !== 'water';
                     eraseSettings.hidden = tool !== 'erase';
                     if (assetSection) {
@@ -766,6 +775,7 @@ window.enterLocation = async function(locationId, { scoutView = null } = {}) {
                         assets: 'Выберите ассет в библиотеке, наведите на карту и кликните для размещения. ПКМ отменяет выбор ассета.',
                         building: 'Выберите строительный элемент или нарисуйте контур здания. Здесь же доступны этажи, планировка, мебель и аномалии.',
                         terrain: 'Кликните по клетке или проведите кистью, чтобы сменить покрытие.',
+                        surface: 'Проведите кистью по наземному уровню, чтобы задать цену прохода. Покрытие останется прежним.',
                         height: 'Кликните по клетке или проведите кистью, чтобы изменить высоту.',
                         radiation: 'Кликните по клетке или проведите кистью, чтобы задать радиацию.',
                         light: 'Настройте освещение или закрасьте клетки без дневного света.',
