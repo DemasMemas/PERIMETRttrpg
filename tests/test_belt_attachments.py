@@ -23,13 +23,114 @@ def setup_tools(pair, *, quantity=1, name='Ножницы'):
     return item
 
 
-def change(client,pair,auth_headers,operation='mount',*,source=None,revision=None,user=None):
+def change(client,pair,auth_headers,operation='mount',*,source=None,revision=None,user=None,kind='tool'):
     character=pair['actor_character'];data=character.data
     path=['inventory','pockets',0] if operation=='mount' else ['equipment','belt','installedModules',0]
     item=data['inventory']['pockets'][0] if operation=='mount' else data['equipment']['belt']['installedModules'][0]
     return client.post(f'/lobbies/characters/{character.id}/belt-attachment',headers=auth_headers(user or pair['actor_user']),json={
-        'operation':operation,'belt_id':'belt-test','character_revision':character.revision if revision is None else revision,
+        'operation':operation,'kind':kind,'belt_id':'belt-test','character_revision':character.revision if revision is None else revision,
         'source':source or {'path':path,'snapshot':deepcopy(item)}})
+
+
+def test_radio_mount_keeps_one_physical_radio_and_rejects_other_items(client,pair,auth_headers):
+    from app.services.equipment_modifications import definition, supported
+
+    assert supported(definition('armor-g69'))
+    setup_tools(pair)
+    character = pair['actor_character']
+    template = ItemTemplate(name='Рация', category='misc', weight=1, volume=2)
+    db.session.add(template)
+    db.session.flush()
+    radio = {'id':'radio-1','templateId':template.id,'name':template.name,'category':template.category,
+             'weight':1,'volume':2,'quantity':1}
+    data = deepcopy(character.data)
+    data['equipment']['belt']['modifications'] = [make_record('armor-g69')]
+    character.data = data
+    db.session.commit()
+    assert change(client,pair,auth_headers,kind='radio').status_code == 400
+    data = deepcopy(character.data)
+    data['inventory']['pockets'] = [radio,{**radio,'id':'radio-2'}]
+    character.data = data
+    db.session.commit()
+    assert change(client,pair,auth_headers,kind='radio').status_code == 200
+    equipped = character.data['equipment']['belt']
+    assert loaded(equipped,'radio')[0][1]['id'] == 'radio-1'
+    assert change(client,pair,auth_headers,kind='radio').status_code == 400
+    with pytest.raises(ValidationError,match='Сначала снимите рацию'):
+        install(equipped,make_record('armor-g62'),replacing='armor-g69')
+    assert change(client,pair,auth_headers,'unmount',kind='radio').status_code == 200
+    assert [entry['id'] for entry in character.data['inventory']['pockets']] == ['radio-2','radio-1']
+    assert character.data['inventory']['pockets'][-1] == radio
+
+
+def test_mounted_detector_and_regular_slot_use_the_higher_active_bonus(client,pair,auth_headers):
+    from app.services.equipment_modifications import definition, supported
+    from app.services.world_travel_events import anomaly_check_details
+
+    assert supported(definition('armor-g68'))
+    setup_tools(pair)
+    character = pair['actor_character']
+    template = ItemTemplate(name='Детектор для крепления', category='detector', subcategory='Аномалии',
+                            attributes={'type':'anomaly','bonus':7})
+    db.session.add(template)
+    db.session.flush()
+    detector = {'id':'detector-belt','templateId':template.id,'name':template.name,'category':'detector',
+                'subcategory':'Аномалии','attributes':template.attributes,'quantity':1}
+    data = deepcopy(character.data)
+    data['equipment']['belt']['modifications'] = [make_record('armor-g68')]
+    data['equipment']['detector'] = {'id':'detector-normal','category':'detector','subcategory':'Аномалии','bonus':3}
+    data['inventory']['pockets'] = [detector]
+    character.data = data
+    db.session.commit()
+    difficulty = lambda: anomaly_check_details('anomaly',[character])
+    assert 'СЛ 17 ' in difficulty()
+    assert change(client,pair,auth_headers,kind='detector').status_code == 200
+    assert 'СЛ 13 ' in difficulty()
+    data = deepcopy(character.data)
+    data['equipment']['detector']['bonus'] = 9
+    character.data = data
+    assert 'СЛ 11 ' in difficulty()
+    data['equipment']['detector']['bonus'] = 3
+    data['equipment']['belt']['protectionDisabled'] = True
+    assert 'СЛ 17 ' in difficulty()
+    data['equipment']['belt'].pop('protectionDisabled')
+    data['inventory']['backpack'].append(data['equipment'].pop('belt'))
+    assert 'СЛ 17 ' in difficulty()
+
+
+@pytest.mark.parametrize('kind,rule_id,name,category,attributes',[
+    ('grenade','armor-g60','РГД-5','grenade',{}),
+    ('dressing','armor-g64','Бинт','consumable',{}),
+    ('syringe','armor-g65','Миколий','consumable',{'consumable':{'direct':{'application_form':'injectable'}}}),
+])
+def test_quick_belt_retrieval_uses_free_action_then_one_ap(client,pair,auth_headers,kind,rule_id,name,category,attributes):
+    setup_tools(pair)
+    character, actor = pair['actor_character'], pair['actor_location']
+    template = ItemTemplate(name=name,category=category,attributes=attributes)
+    db.session.add(template)
+    db.session.flush()
+    data = deepcopy(character.data)
+    data['equipment']['belt']['modifications'] = [make_record(rule_id)]
+    data['inventory']['pockets'] = [{'id':'quick-belt-item','name':name,'category':category,'templateId':template.id,
+                                    'quantity':1,'attributes':attributes}]
+    character.data = data
+    actor.free_actions_current = 1
+    db.session.commit()
+    assert change(client,pair,auth_headers,kind=kind).status_code == 200
+    before = actor.action_points_current
+    result = change(client,pair,auth_headers,'retrieve',kind=kind)
+    assert result.status_code == 200, result.json
+    assert actor.action_points_current == before and actor.free_actions_current == 0
+    retrieved = character.data['inventory']['held'][0]
+    assert retrieved['id'] == 'quick-belt-item' and 'slotType' not in retrieved
+    data = deepcopy(character.data)
+    data['inventory']['pockets'] = [data['inventory']['held'].pop()]
+    character.data = data
+    db.session.commit()
+    assert change(client,pair,auth_headers,kind=kind).status_code == 200
+    before = actor.action_points_current
+    assert change(client,pair,auth_headers,'retrieve',kind=kind).status_code == 200
+    assert actor.action_points_current == before-1 and actor.free_actions_current == 0
 
 
 @pytest.mark.parametrize('quantity',[1,2])

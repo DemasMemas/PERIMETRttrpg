@@ -59,9 +59,12 @@ SPECIAL_ARMOR={
  'g57':({}, {'extra_belt_pouches':2}),
  'g56':({}, {'free_pouch_mounts':1}),'g76':({}, {'magazine_pouch_mounts':2}),
  'g61':({}, {'belt_tool_mounts':4}),
+ 'g60':({}, {'belt_grenade_mount':True}),
+ 'g64':({}, {'belt_dressing_mount':True}),'g65':({}, {'belt_syringe_mount':True}),
  'g70':({}, {'belt_artifact_mount':True}),
  'g62':({}, {'belt_light_mount':True}),
  'g66':({}, {'medical_pouch_capacity_multiplier':2}),
+ 'g68':({}, {'belt_detector_mount':True}),'g69':({}, {'belt_radio_mount':True}),
  'g77':({}, {'belt_reload_ap_reduction':1}),'g78':({}, {'large_weapon_ergonomics':10}),
  'd27':({}, {'unpowered_weight_penalty_suppression':True}),
  'd28':({'movement_penalty':'=3'},{}),
@@ -77,7 +80,7 @@ SPECIAL_ARMOR={
 
 def supported(rule):
     if rule['kind']=='weapon':return True
-    if rule['kind']=='belt':return rule['id'] in {'armor-g56','armor-g57','armor-g58','armor-g61','armor-g62','armor-g66','armor-g70','armor-g76','armor-g77','armor-g78'}
+    if rule['kind']=='belt':return rule['id'] in {'armor-g56','armor-g57','armor-g58','armor-g60','armor-g61','armor-g62','armor-g64','armor-g65','armor-g66','armor-g68','armor-g69','armor-g70','armor-g76','armor-g77','armor-g78'}
     return rule['id'] in DIRECT_ARMOR or rule['id'].removeprefix('armor-') in SPECIAL_ARMOR
 
 
@@ -92,6 +95,14 @@ def install(item,record,replacing=None):
             mod.get('ruleId')=='armor-g61' for mod in proposed if isinstance(mod,dict)):
         from app.services.belt_attachments import loaded
         if loaded(item):raise ValidationError('Сначала снимите инструменты с креплений пояса')
+    attachment_replacements = {'armor-g60': ('grenade', 'гранату'), 'armor-g64': ('dressing', 'перевязку'),
+        'armor-g65': ('syringe', 'шприц'), 'armor-g68': ('detector', 'детектор'), 'armor-g69': ('radio', 'рацию')}
+    if previous and previous['ruleId'] in attachment_replacements and not any(
+            mod.get('ruleId') == previous['ruleId'] for mod in proposed if isinstance(mod, dict)):
+        from app.services.belt_attachments import loaded
+        kind, label = attachment_replacements[previous['ruleId']]
+        if loaded(item, kind):
+            raise ValidationError(f'Сначала снимите {label} с крепления пояса')
     if previous and previous.get('ruleId') in {'armor-a15','armor-a31'} and not any(
             mod.get('ruleId') in {'armor-a15','armor-a31'} for mod in proposed if isinstance(mod,dict)):
         from app.services.auto_injector import loaded

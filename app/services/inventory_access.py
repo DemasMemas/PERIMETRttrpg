@@ -126,7 +126,10 @@ def calculate_inventory_access(character_data, item_path, item=None):
     base_action_points = 0
     quick_access_discount = 0
     source = "unknown"
-    from app.services.belt_attachments import accessible
+    from app.services.belt_attachments import accessible, QUICK_SLOTS
+
+    if path[:3] == ['equipment', 'belt', 'installedModules'] and item.get('slotType') in QUICK_SLOTS:
+        raise ValidationError('Сначала достаньте предмет с крепления пояса')
 
     if path[:2] == ["inventory", "pockets"]:
         base_action_points = 1

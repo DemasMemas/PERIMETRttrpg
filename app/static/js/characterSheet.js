@@ -2127,7 +2127,8 @@ function calculateCarriedWeight(data) {
     const inv = data?.inventory || {};
     const eq = data?.equipment || {};
     const items = [];
-    const beltItems=(eq.belt?.installedModules||[]).filter(item=>item?.slotType==='belt_artifact'
+    const beltItems=(eq.belt?.installedModules||[]).filter(item=>
+        ['belt_artifact','belt_detector','belt_radio','belt_grenade','belt_dressing','belt_syringe'].includes(item?.slotType)
         ||item?.slotType==='belt_tool'&&(eq.belt?.protectionDisabled||!modificationRule(eq.belt,'belt_tool_mounts')));
     items.push(...beltItems);
     items.push(...(eq.armor?.installedModules||[]).filter(item=>item?.slotType==='auto_injector'));
@@ -4806,6 +4807,7 @@ async function renderEquipmentTab(data, { focusWeaponIndex = null } = {}) {
                 </div>
             </div>
             ${eq.detector ? renderSlotsUniversal(eq.detector, ['equipment', 'detector']) : ''}
+            ${renderBeltDevices(eq.belt, armor)}
         </div>
 
         <!-- Косметическая экипировка -->
@@ -5936,6 +5938,89 @@ window.activateArtifactSpecial = async function(itemId,power,singleForecast=fals
     }catch(error){showNotification(error.message||'Не удалось применить артефакт','system');}
     finally{if(locked){medicalOperationInProgress=false;medicalRemoteUpdate=null;await refreshSavedSheet(characterId);}}
 };
+const beltDeviceMounts = {
+    detector: {label: 'Детектор на поясе', rule: 'belt_detector_mount', accepts: item =>
+        getInventoryItemCategory(item) === 'detector' || isBeltDosimeter(item)},
+    radio: {label: 'Рация на поясе', rule: 'belt_radio_mount', accepts: item =>
+        getInventoryItemCategory(item) === 'misc' && item.name === 'Рация'},
+};
+const beltQuickMounts = {
+    grenade: {label:'Крепление для гранаты', rule:'belt_grenade_mount', capacity:1,
+        accepts: item=>getInventoryItemCategory(item)==='grenade'},
+    dressing: {label:'Кармашек для перевязки', rule:'belt_dressing_mount', capacity:2,
+        accepts: item=>getInventoryItemCategory(item)==='consumable' && /(?:^|[^а-яё])(?:бинт|жгут|турникет)(?=$|[^а-яё])/i.test(item.name)},
+    syringe: {label:'Кармашек для шприцов', rule:'belt_syringe_mount', capacity:2,
+        accepts: item=>getInventoryItemCategory(item)==='consumable' &&
+            (getInventoryItemTemplate(item)?.attributes ?? item.attributes)?.consumable?.direct?.application_form==='injectable'},
+};
+
+function renderBeltQuickMounts(belt) {
+    const combat = window.locationCombatState?.status === 'active';
+    return Object.entries(beltQuickMounts).map(([kind, mount]) => {
+        const items = (belt?.installedModules || []).map((item,index)=>({item,index}))
+            .filter(({item})=>item?.slotType===`belt_${kind}`);
+        const enabled = modificationRule(belt,mount.rule) && !belt?.protectionDisabled;
+        if (!enabled && !items.length) return '';
+        return `<div class="loadout-group" data-belt-quick="${kind}">
+            <h5>${mount.label} · ${items.length}/${mount.capacity}</h5>
+            <button type="button" class="btn btn-sm btn-secondary" data-sheet-control
+                onclick="window.changeBeltDevice('${kind}')" ${!currentCharacterCanEdit || !enabled || items.length>=mount.capacity ? 'disabled' : ''}>
+                Закрепить${combat?' · 3 ОД':''}</button>
+            ${items.map(({item,index})=>`<div class="equipment-care-status">
+                <strong>${escapeHtml(item.name)}</strong>
+                <button type="button" class="btn btn-sm btn-secondary" data-sheet-control
+                    onclick="window.retrieveBeltItem('${kind}',${index})" ${!currentCharacterCanEdit || !enabled ? 'disabled' : ''}>
+                    Достать${combat?' · 1 СД или 1 ОД':''}</button>
+                <button type="button" class="btn btn-sm btn-secondary" data-sheet-control
+                    onclick="window.changeBeltDevice('${kind}',${index})" ${!currentCharacterCanEdit ? 'disabled' : ''}>
+                    Снять в карманы${combat?' · 3 ОД':''}</button>
+            </div>`).join('')}
+        </div>`;
+    }).join('');
+}
+
+function isBeltDosimeter(item) {
+    return getInventoryItemCategory(item) === 'device' && item?.attributes?.device_kind === 'dosimeter';
+}
+
+function renderBeltDevices(belt, armor) {
+    const cost = window.locationCombatState?.status === 'active' ? ' · 3 ОД' : '';
+    return Object.entries(beltDeviceMounts).map(([kind, mount]) => {
+        const index = (belt?.installedModules || []).findIndex(item => item?.slotType === `belt_${kind}`);
+        const item = belt?.installedModules?.[index];
+        const available = modificationRule(belt, mount.rule) && !belt?.protectionDisabled;
+        if (!available && !item) return '';
+        const dosimeter = isBeltDosimeter(item);
+        let status = item ? ` · ${escapeHtml(item.name)}` : ' · пусто';
+        if (item && (!available || item.protectionDisabled)) status += ' · крепление отключено';
+        else if (item?.electronicsState?.burned) status += ' · прибор сгорел';
+        else if (kind === 'detector' && item && !dosimeter && item.attributes?.type !== 'artifact') {
+            const blocked = currentCharacterData?._artifact_profile?.blocked_devices;
+            const bonus = (Number(item.bonus ?? item.attributes?.bonus) || 0)
+                + (armor.protectionDisabled ? 0 : modificationRule(armor, 'anomaly_detector_bonus'));
+            status += item.attributes?.isActive === false || blocked?.detector?.length || blocked?.electronics?.length
+                ? ' · показания недоступны' : ` · бонус ${bonus}`;
+        }
+        return `<div class="equipment-care-status" data-belt-device="${kind}">
+            <strong>${mount.label}</strong>${status}
+            ${dosimeter && available ? `<button type="button" class="btn btn-sm btn-secondary" data-sheet-control
+                onclick="window.openBeltDosimeter(${index})">Показания</button>` : ''}
+            ${item ? `<button type="button" class="btn btn-sm btn-secondary" data-sheet-control
+                onclick="window.changeBeltDevice('${kind}', ${index})" ${!currentCharacterCanEdit ? 'disabled' : ''}>Снять${cost}</button>`
+                : `<button type="button" class="btn btn-sm btn-secondary" data-sheet-control
+                onclick="window.changeBeltDevice('${kind}')" ${!currentCharacterCanEdit ? 'disabled' : ''}>Закрепить${cost}</button>`}
+        </div>`;
+    }).join('');
+}
+
+window.changeBeltDevice = (kind,index) => changeBeltTool(index == null ? 'mount' : 'unmount',index,kind);
+window.retrieveBeltItem = (kind,index) => changeBeltTool('retrieve',index,kind);
+window.openBeltDosimeter = index => {
+    const path = ['equipment','belt','installedModules',index];
+    const item = getItemByPath(path);
+    if (item?.slotType === 'belt_detector' && isBeltDosimeter(item)) return useItem(item,path);
+};
+
 async function changeBeltTool(operation,index,kind='tool') {
     if(medicalOperationInProgress||!currentCharacterCanEdit)return;
     const characterId=currentCharacterId;let locked=false;
@@ -5945,15 +6030,16 @@ async function changeBeltTool(operation,index,kind='tool') {
         medicalOperationInProgress=locked=true;medicalRemoteUpdate=null;
         let source;
         if(operation==='mount'){
-            const choices=collectInventoryEntries(currentCharacterData,item=>getInventoryItemCategory(item)===(kind==='artifact'?'artifact':'tool'))
-                .filter(entry=>!entry.path.includes('installedModules'))
+            const device = beltDeviceMounts[kind] || beltQuickMounts[kind];
+            const choices=collectInventoryEntries(currentCharacterData,device?.accepts || (item=>getInventoryItemCategory(item)===kind))
+                .filter(entry=>!entry.path.includes('installedModules') && (!device || entry.path[1] !== 'held'))
                 .map(entry=>({label:entry.item.name,source:{path:entry.path,snapshot:structuredClone(entry.item)}}));
-            if(!choices.length){showNotification(kind==='artifact'?'В инвентаре нет артефактов':'В инвентаре нет инструментов','system');return;}
-            const choice=await chooseConsumableApplication(kind==='artifact'?'Артефакт для крепления на поясе':'Инструмент для крепления на поясе',choices,{alwaysShow:true});
+            if(!choices.length){showNotification(device?'В инвентаре нет подходящих приборов':kind==='artifact'?'В инвентаре нет артефактов':'В инвентаре нет инструментов','system');return;}
+            const choice=await chooseConsumableApplication(device?.label || (kind==='artifact'?'Артефакт для крепления на поясе':'Инструмент для крепления на поясе'),choices,{alwaysShow:true});
             if(!choice||currentCharacterId!==characterId)return;source=choice.source;
         }else{
             const item=currentCharacterData.equipment?.belt?.installedModules?.[index];
-            if(item?.slotType!==(kind==='artifact'?'belt_artifact':'belt_tool'))return;
+            if(item?.slotType!==`belt_${kind}`)return;
             source={path:['equipment','belt','installedModules',index],snapshot:structuredClone(item)};
         }
         const response=await Server.operateBeltAttachment(characterId,{operation,source,kind,
@@ -5961,7 +6047,7 @@ async function changeBeltTool(operation,index,kind='tool') {
         if(currentCharacterId!==characterId)return;
         currentCharacterData=response.data;
         await renderEquipmentTab(currentCharacterData);renderInventoryTab(currentCharacterData);
-        showNotification(operation==='mount'?'Предмет закреплён':'Предмет снят в карманы','success');
+        showNotification(operation==='mount'?'Предмет закреплён':operation==='retrieve'?'Предмет в руке':'Предмет снят в карманы','success');
     }catch(error){showNotification(error.message||'Не удалось изменить крепление пояса','system');}
     finally{if(locked){
         if(currentCharacterId===characterId&&medicalRemoteUpdate?.character_id===Number(characterId)
@@ -10679,6 +10765,8 @@ async function calculateInventoryAccess(item, itemPath) {
     } else if (path[0] === 'inventory' && path[1] === 'backpack') {
         baseActionPoints = 2;
         source = 'backpack';
+    } else if (path[0] === 'inventory' && path[1] === 'held') {
+        source = 'held';
     } else if (path[0] === 'equipment' && ['belt', 'vest'].includes(path[1]) && path[2] === 'pouches') {
         const pouch = getInventoryValueByPath(currentCharacterData, path.slice(0, 4));
         if (isItemCompatibleWithPouch(item, pouch)) {
@@ -10704,7 +10792,7 @@ async function calculateInventoryAccess(item, itemPath) {
         baseActionPoints += accessCost;
     });
 
-    const limbPenalty = getDisabledArmRetrievalPenalty();
+    const limbPenalty = source === 'held' ? 0 : getDisabledArmRetrievalPenalty();
     const retrievalActionPoints = Math.max(
         0,
         baseActionPoints - quickAccessDiscount + limbPenalty
@@ -14474,6 +14562,7 @@ async function renderInventoryTab(data) {
             <div id="belt-modifications-container">
                 ${renderBeltModifications(eq.belt?.modifications || [], modificationTemplates.filter(t => t.attributes?.type === 'belt'))}
             </div>
+            ${renderBeltQuickMounts(eq.belt)}
         </div>
         ` : ''}
 
@@ -14547,6 +14636,14 @@ async function renderInventoryTab(data) {
             event.dataTransfer.setData('application/x-inventory-path', JSON.stringify(path));
             event.dataTransfer.effectAllowed = 'move';
         });
+        if (currentCharacterCanEdit && ['consumable','grenade'].includes(item.category)) {
+            const use = document.createElement('button');
+            use.type = 'button';
+            use.className = 'btn btn-sm btn-secondary';
+            use.textContent = item.category === 'grenade' ? 'Метнуть' : 'Использовать';
+            use.onclick = () => useItem(item,path).catch(error=>showNotification(error.message,'system'));
+            row.append(' ',use);
+        }
         if (currentCharacterCanEdit && window.isLocationActive) {
             const drop = document.createElement('button');
             drop.type = 'button';

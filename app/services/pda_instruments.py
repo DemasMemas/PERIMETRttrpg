@@ -5,13 +5,13 @@ from app.services.portable_lights import walk
 def readings(source):
     if 'pda-b6' not in source['mods']:return None
     from app.services.artifact_effects import device_block_reason
-    from app.services.electronics import anomaly_detector_bonus,is_dosimeter,state
+    from app.services.electronics import anomaly_detector_bonus,detector_mount_usable,is_dosimeter,state
     from app.services.combat import CombatService as C
     data=getattr(source.get('character'),'data',None) or {}
     if device_block_reason(data,source['item'],jammed_by=source.get('jammed_by')):return []
     result=[];radiation=None
     for _,item in walk(data,True):
-        if device_block_reason(data,item,jammed_by=source.get('jammed_by')):continue
+        if not detector_mount_usable(data,item) or device_block_reason(data,item,jammed_by=source.get('jammed_by')):continue
         attrs=item.get('attributes') or {}
         if is_dosimeter(item):
             power=state(item)

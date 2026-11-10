@@ -1,5 +1,7 @@
 """Физические предметы на отдельных креплениях пояса."""
 from copy import deepcopy
+import re
+from types import SimpleNamespace
 from uuid import uuid4
 
 from sqlalchemy.orm.attributes import flag_modified
@@ -14,7 +16,14 @@ CAPACITY = 4
 MOUNTS = {
     'tool': {'slot': SLOT, 'rule': 'belt_tool_mounts', 'capacity': CAPACITY, 'category': 'tool', 'label': 'Инструмент'},
     'artifact': {'slot': 'belt_artifact', 'rule': 'belt_artifact_mount', 'capacity': 1, 'category': 'artifact', 'label': 'Артефакт'},
+    'detector': {'slot': 'belt_detector', 'rule': 'belt_detector_mount', 'capacity': 1, 'label': 'Детектор'},
+    'radio': {'slot': 'belt_radio', 'rule': 'belt_radio_mount', 'capacity': 1, 'category': 'misc', 'label': 'Рация'},
+    'grenade': {'slot': 'belt_grenade', 'rule': 'belt_grenade_mount', 'capacity': 1, 'category': 'grenade', 'label': 'Граната'},
+    'dressing': {'slot': 'belt_dressing', 'rule': 'belt_dressing_mount', 'capacity': 2, 'label': 'Бинт или жгут'},
+    'syringe': {'slot': 'belt_syringe', 'rule': 'belt_syringe_mount', 'capacity': 2, 'label': 'Препарат в шприце'},
 }
+QUICK_MOUNTS = {'grenade', 'dressing', 'syringe'}
+QUICK_SLOTS = {MOUNTS[kind]['slot'] for kind in QUICK_MOUNTS}
 
 
 def available(belt,kind='tool'):
@@ -45,6 +54,20 @@ def tool_path(path):
 def accessible(data, path, item):
     belt = (data.get('equipment') or {}).get('belt') or {}
     return bool(tool_path(path) and any(index == path[3] and entry == item for index, entry in loaded(belt)))
+
+
+def accepts(kind, template):
+    if kind == 'detector':
+        return template.category == 'detector' or (
+            template.category == 'device' and (template.attributes or {}).get('device_kind') == 'dosimeter')
+    if kind == 'radio':
+        return template.category == 'misc' and template.name == 'Рация'
+    if kind == 'dressing':
+        return template.category == 'consumable' and bool(re.search(r'\b(?:бинт|жгут|турникет)\b', template.name, re.I))
+    if kind == 'syringe':
+        direct = ((template.attributes or {}).get('consumable') or {}).get('direct') or {}
+        return template.category == 'consumable' and direct.get('application_form') == 'injectable'
+    return template.category == MOUNTS[kind]['category']
 
 
 def preserve(current, incoming):
@@ -121,7 +144,7 @@ def operate(character_id, user_id, payload):
         if 'installedModules' in path:
             raise ValidationError('Этот предмет уже закреплён')
         template = resolve_item_template(item, character.lobby_id)
-        if not template or template.category != mount['category'] or item.get('category') != mount['category'] or item.get('name') != template.name:
+        if not template or not accepts(kind, template) or item.get('category') != template.category or item.get('name') != template.name:
             raise ValidationError('На это крепление нужен предмет: '+mount['label'])
         if type(item.get('quantity', 1)) is not int or item.get('quantity', 1) < 1:
             raise ValidationError('Некорректная стопка предметов')
@@ -136,22 +159,32 @@ def operate(character_id, user_id, payload):
             parent.pop(index)
             if not candidate.get('id'):candidate['id'] = str(uuid4())
         belt.setdefault('installedModules', []).append(candidate)
-    elif operation == 'unmount':
+    elif operation in ('unmount', 'retrieve'):
         if not tool_path(path) or not any(i==index and entry==item for i,entry in loaded(belt,kind)):
             raise ValidationError('Выберите предмет на соответствующем креплении надетого пояса')
+        if operation == 'retrieve':
+            if kind not in QUICK_MOUNTS or not available(belt,kind):
+                raise ValidationError('На поясе нет действующего крепления быстрого доступа')
+            holder = actor or SimpleNamespace(character=character, drawn_weapon_index=data.get('activeWeaponIndex'))
+            if not CombatService._has_usable_free_hand(holder):
+                raise ValidationError('Чтобы достать предмет, нужна свободная действующая рука')
         parent.pop(index)
         item.pop('slotType', None)
-        data.setdefault('inventory', {}).setdefault('pockets', []).append(item)
+        destination = 'held' if operation == 'retrieve' else 'pockets'
+        data.setdefault('inventory', {}).setdefault(destination, []).append(item)
     else:
-        raise ValidationError('Выберите установку или снятие предмета')
-    cost = 3 if actor else 0
+        raise ValidationError('Выберите действие с креплением')
+    free = int(bool(actor and operation == 'retrieve' and actor.free_actions_current > 0))
+    cost = (1-free if operation == 'retrieve' else 3) if actor else 0
     if actor:
         if actor.action_points_current < cost:
-            raise ValidationError('Для этого действия нужно 3 ОД')
+            raise ValidationError('Чтобы достать предмет, нужен 1 ОД или 1 СД' if operation == 'retrieve'
+                                  else 'Для этого действия нужно 3 ОД')
         actor.action_points_current -= cost
+        actor.free_actions_current -= free
         CombatService._clear_aim(actor)
     character.data = data
     from app.services.artifact_effects import needs_clocks,sync_clocks
     if needs_clocks(data):data.setdefault('health',{})['effects']=sync_clocks(data)
     flag_modified(character, 'data')
-    return character, actor, {'operation': operation, 'kind':kind, 'action_points': cost}
+    return character, actor, {'operation': operation, 'kind':kind, 'action_points': cost, 'free_actions': free}

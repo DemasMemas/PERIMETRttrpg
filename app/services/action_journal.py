@@ -124,8 +124,10 @@ def record(actor, values, before, result=None, error=None):
     if key=='portable_light':
         label={'pda_profile':'Переключение профиля КПК','pda_wipe':'Очистка КПК'}.get(payload.get('operation'),label)
     if key=='belt_attachment':
-        subject='артефакта' if payload.get('kind')=='artifact' else 'инструмента'
-        label=f'Снятие {subject} с пояса' if payload.get('operation')=='unmount' else f'Крепление {subject} на поясе'
+        subject={'artifact':'артефакта','detector':'детектора','radio':'рации','grenade':'гранаты',
+                 'dressing':'перевязки','syringe':'шприца'}.get(payload.get('kind'),'инструмента')
+        if payload.get('operation')=='retrieve':label=f'Доставание {subject} с пояса'
+        else:label=f'Снятие {subject} с пояса' if payload.get('operation')=='unmount' else f'Крепление {subject} на поясе'
     row = db.session.get(DeferredCombatAction, str(action_id)) if action_id else None
     paid = max(0, before[0] - (actor.action_points_current or 0)) if key not in {'end_turn','end_combat'} else 0
     previous_total=existing.get('total_action_points') if existing and existing.get('status')!='rejected' else None

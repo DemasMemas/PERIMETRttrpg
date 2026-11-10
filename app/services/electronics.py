@@ -38,7 +38,8 @@ def state(item):
 def active(data, *, jammed_by=None):
     from app.services.portable_lights import walk
     from app.services.artifact_effects import device_block_reason
-    return any(is_dosimeter(item) and state(item)['on'] and state(item)['remaining_seconds']>0
+    return any(is_dosimeter(item) and detector_mount_usable(data, item)
+        and state(item)['on'] and state(item)['remaining_seconds']>0
         and not device_block_reason(data,item,jammed_by=jammed_by) for _,item in walk(data,True))
 
 
@@ -94,6 +95,15 @@ def is_anomaly_detector(item):
     )
 
 
+def detector_mount_usable(data, item):
+    from app.services.belt_attachments import available, loaded
+
+    if item.get('slotType') != 'belt_detector':
+        return True
+    belt = (data.get('equipment') or {}).get('belt')
+    return available(belt, 'detector') and any(detector is item for _, detector in loaded(belt, 'detector'))
+
+
 def anomaly_detector_bonus(data, item, *, jammed_by=None):
     from app.services.artifact_effects import device_block_reason
     from app.services.equipment_modifications import rule
@@ -101,9 +111,9 @@ def anomaly_detector_bonus(data, item, *, jammed_by=None):
 
     attrs = item.get('attributes') or {}
     equipment = data.get('equipment') or {}
-    if not is_anomaly_detector(item) or item.get('protectionDisabled'):
+    if not is_anomaly_detector(item) or item.get('protectionDisabled') or not detector_mount_usable(data, item):
         return None
-    if not attrs.get('isActive', equipment.get('detector') is item):
+    if not attrs.get('isActive', equipment.get('detector') is item or item.get('slotType') == 'belt_detector'):
         return None
     if device_block_reason(data, item, jammed_by=jammed_by):
         return None
