@@ -5644,6 +5644,13 @@ function getManualCycleType(weapon, template = null) {
     return null;
 }
 
+function getManualCycleCost(weapon, template, cycleType) {
+    const specialization = weaponSpecializationKey(template);
+    const level = currentCharacterData?.skills?.specialized?.[specialization]?.level;
+    const base = cycleType === 'pump' && level === 'professional' ? 0 : 1;
+    return Math.min(base, modificationRule(weapon, 'cycle_ap', 1));
+}
+
 function getCombatWeaponErgonomics(weaponIndex) {
     const current = window.locationCombatState?.current_character;
     if (!current || current.character_id !== currentCharacterId) return null;
@@ -6335,9 +6342,7 @@ window.cycleWeaponFromEquipment = async function(weaponIndex) {
     }
     const template = (allTemplatesCache || []).find(entry => entry.id == weapon.templateId);
     const cycleType = getManualCycleType(weapon, template);
-    const specialization = weaponSpecializationKey(template);
-    const level = currentCharacterData?.skills?.specialized?.[specialization]?.level || 'unfamiliar';
-    const actionPoints = Math.min(cycleType === 'pump' && level === 'professional' ? 0 : 1,modificationRule(weapon,'cycle_ap',1));
+    const actionPoints = getManualCycleCost(weapon, template, cycleType);
     try {
         const paid = await chooseAndSpendCombatPayment(
             cycleType === 'pump' ? 'Дослать патрон' : 'Передёрнуть затвор',
@@ -6501,9 +6506,7 @@ function renderRangedAttackButtons(weapon, template, index, disabled) {
     }
     if (weapon.requiresManualCycle) {
         const cycleType = getManualCycleType(weapon, template);
-        const specialization = weaponSpecializationKey(template);
-        const level = currentCharacterData?.skills?.specialized?.[specialization]?.level || 'unfamiliar';
-        const cycleCost = cycleType === 'pump' && level === 'professional' ? 0 : 1;
+        const cycleCost = getManualCycleCost(weapon, template, cycleType);
         return `${buttButton}<button type="button" class="btn btn-sm btn-warning" ${disabledAttr} onclick="cycleWeaponFromEquipment(${index})">${cycleType === 'pump' ? 'Дослать патрон' : 'Передёрнуть затвор'} · ${cycleCost} ОД</button>`;
     }
     if (isCombatActive &&

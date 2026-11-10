@@ -8,7 +8,7 @@ module.exports=async({page,request,token,lobby,base,safeSession})=>{
     await request(loc+'/objects/batch',{objects:fixture.objects},token);
     const npc=await request(api+'/characters',{name:'Мастер снаряжения',data:{is_npc:true,inventory:{money:0}}},token);
     await request(api+'/characters/'+npc.id+'/merchant',{character_revision:npc.data._revision,enabled:false,
-        repair_enabled:true,modification_enabled:true,workbenches:['Станок Бронника'],prices:{}},token,'PATCH');
+        repair_enabled:true,modification_enabled:true,workbenches:['Станок Бронника','Станок Оружейника'],prices:{}},token,'PATCH');
     await request(loc+'/spawn_character',{character_id:npc.id,tile_x:46,tile_y:49},token);
     const href=base+api+'/page?location='+location.id,epoch=await page.evaluate('performance.timeOrigin');
     await page.call('Page.navigate',{url:href});await waitForDocument(page,{href,afterEpoch:epoch,label:'Снаряжение на копии Припяти'});
@@ -22,6 +22,7 @@ module.exports=async({page,request,token,lobby,base,safeSession})=>{
         await require('./pepper_playtest.browser.cjs')({page,request,token,lobby,loc,safeSession});
         return;
     }
+    await require('./bolt_modification.browser.cjs')({page,request,token,lobby,offered,loc,npc});
     await require('./spare_plates.browser.cjs')({page,request,token,lobby,offered,loc,npc,safeSession});
     await require('./medical_pouches.browser.cjs')({page,request,token,lobby,offered,loc,npc,safeSession});
     await require('./armor_plate_mounts.browser.cjs')({page,request,token,lobby,offered,loc,safeSession});
