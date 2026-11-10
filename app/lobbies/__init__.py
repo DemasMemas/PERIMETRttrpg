@@ -5351,6 +5351,22 @@ def activate_spare_plates(character_id):
     return jsonify({'operation':result,'data':character.data_snapshot()}),200
 
 
+@lobbies_bp.route('/characters/<int:character_id>/exoskeleton-recharge', methods=['POST'])
+@jwt_required()
+def recharge_exoskeleton(character_id):
+    from app.services.equipment_care import recharge_exoskeleton as operate
+
+    user_id = int(get_jwt_identity())
+    character, actor, result = operate(character_id, user_id, request.get_json(silent=True) or {})
+    if not result['duplicate']:
+        emit_character_update({'character_id': character.id, 'updates': {'data': character.data_snapshot()},
+                               'source': 'equipment_care'})
+        if actor:
+            socketio.emit('combat_state_updated', CombatService.get_state(actor.location_id, user_id),
+                          room=f'location_{actor.location_id}')
+    return jsonify({'operation': result, 'data': character.data_snapshot()}), 200
+
+
 def _equipment_care_response(character,user_id,result):
     # Помощь соседу не открывает инженеру его закрытый лист.
     try:

@@ -10,6 +10,56 @@ from app.services.combat import CombatService
 from test_quick_skill_checks import checks
 
 
+@pytest.mark.parametrize('mode', ['combat', 'outside', 'no_battery', 'trash', 'full', 'low_ap', 'other_turn'])
+def test_artifact_power_station_recharges_the_installed_battery_once(client, checks, auth_headers, mode):
+    from app.models import LocationCombatState
+    from app.models.templates import ItemTemplate
+
+    assert supported(definition('armor-d29'))
+    character, actor = checks['actor_character'], checks['actor_location']
+    grade = 'trash' if mode == 'trash' else '1'
+    template = ItemTemplate(name='Артефакт для электростанции', category='artifact', item_class=grade)
+    db.session.add(template)
+    db.session.flush()
+    battery = {'id': 'battery', 'slotType': 'exoskeleton_battery',
+               'attributes': {'charge_days': 3, 'remaining_days': 3 if mode == 'full' else 0}}
+    armor = {'id': 'exoskeleton', 'name': 'Экзоскелет', 'category': 'armor', 'powered': False,
+             'modifications': [make_record('armor-d29')], 'installedModules': [] if mode == 'no_battery' else [battery]}
+    data = deepcopy(character.data)
+    data['equipment']['armor'] = armor
+    data['inventory']['pockets'] = [{'id': 'station-fuel', 'name': template.name, 'category': 'artifact',
+        'templateId': template.id, 'quantity': 2, 'attributes': {'artifact_class': '1'}}]
+    character.data = data
+    actor.action_points_current = 4 if mode == 'low_ap' else 8
+    state = LocationCombatState.query.filter_by(location_id=actor.location_id).one()
+    if mode == 'outside':
+        state.status = 'ended'
+    if mode == 'other_turn':
+        state.current_location_character_id = checks['target_location'].id
+    db.session.commit()
+    revision = character.revision
+    payload = {'character_revision': revision, 'armor_id': armor['id'], 'operation_id': 'station-charge',
+               'source': {'id': 'station-fuel', 'path': ['inventory', 'pockets', 0]}}
+    url = f'/lobbies/characters/{character.id}/exoskeleton-recharge'
+    headers = auth_headers(checks['actor_user'])
+    response = client.post(url, headers=headers, json=payload)
+    if mode in {'combat', 'outside'}:
+        assert response.status_code == 200, response.json
+        assert response.json['operation']['action_points'] == (5 if mode == 'combat' else 0)
+        assert character.data['equipment']['armor']['installedModules'][0]['id'] == 'battery'
+        assert character.data['equipment']['armor']['installedModules'][0]['attributes']['remaining_days'] == 3
+        assert CombatService._exoskeleton_power_profile(character.data)['powered']
+        repeat = client.post(url, headers=headers, json=payload)
+        assert repeat.status_code == 200 and repeat.json['operation']['duplicate']
+        assert character.data['inventory']['pockets'][0]['quantity'] == 1
+        assert actor.action_points_current == (3 if mode == 'combat' else 8)
+    else:
+        assert response.status_code == (403 if mode == 'other_turn' else 400), response.json
+        assert character.revision == revision
+        assert character.data['inventory']['pockets'][0]['quantity'] == 2
+        assert actor.action_points_current == (4 if mode == 'low_ap' else 8)
+
+
 def test_polymer_regenerator_restores_current_stage_over_game_time():
     assert supported(definition('armor-d26'))
     armor={'name':'Экзоскелет','category':'armor','stage':2,'stageDurability':1000,

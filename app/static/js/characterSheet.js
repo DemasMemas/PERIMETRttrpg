@@ -4458,6 +4458,10 @@ async function renderEquipmentTab(data, { focusWeaponIndex = null } = {}) {
     const gasMask = eq.gasMask || {};
     const armor = eq.armor || {};
     const weapons = data.weapons || [];
+    const stationBattery = equipmentModule(armor, 'exoskeleton_battery');
+    const stationCharge = Math.max(0, Number(stationBattery?.attributes?.remaining_days) || 0);
+    const stationCapacity = Number(stationBattery?.attributes?.charge_days ?? 1);
+    const validStationCapacity = Number.isFinite(stationCapacity) && stationCapacity > 0;
 
     if (!helmet.modifications) helmet.modifications = [];
     if (!gasMask.modifications) gasMask.modifications = [];
@@ -4658,6 +4662,15 @@ async function renderEquipmentTab(data, { focusWeaponIndex = null } = {}) {
 
         <!-- Броня -->
         <div class="equipment-group" data-equipment-group="armor">
+            ${armor.modifications?.some(mod => mod?.ruleId === 'armor-d29') ? `
+                <div class="equipment-care-status">
+                    Артефактная электростанция · ${stationBattery ? validStationCapacity
+                        ? `заряд ${Math.round(100 * Math.min(1, stationCharge / stationCapacity))}%` : 'ёмкость неизвестна' : 'нет аккумулятора'}
+                    <button type="button" class="btn btn-sm btn-secondary" data-sheet-control onclick="window.rechargeExoskeleton()"
+                        ${!currentCharacterCanEdit || armor.protectionDisabled || !stationBattery || !validStationCapacity || stationCharge >= stationCapacity ? 'disabled' : ''}>
+                        Зарядить артефактом · 5 ОД в бою
+                    </button>
+                </div>` : ''}
             ${armor.modifications?.some(mod=>['armor-a15','armor-a31'].includes(mod?.ruleId))?`
                 <div class="auto-injector-controls" data-auto-injector>
                     <strong>Автоинъектор:</strong>
@@ -5782,6 +5795,51 @@ window.useSparePlates = async function() {
         if(medicalRemoteUpdate?.character_id===Number(characterId)&&Number(medicalRemoteUpdate.data?._revision)>Number(currentCharacterData?._revision))currentCharacterData=medicalRemoteUpdate.data;
         medicalRemoteUpdate=null;medicalOperationInProgress=false;await refreshSavedSheet(characterId);
     }}
+};
+
+window.rechargeExoskeleton = async function() {
+    if (medicalOperationInProgress || !currentCharacterCanEdit) return;
+    const characterId = currentCharacterId;
+    let locked = false;
+    try {
+        if (autoSaveTimer) await forceSyncCharacter();
+        await Server.waitForCharacterSave(characterId);
+        if (currentCharacterId !== characterId || medicalOperationInProgress || sheetSaveBlocked) return;
+        const armorId = currentCharacterData.equipment?.armor?.id;
+        if (!armorId) throw new Error('Снимите и наденьте экзоскелет заново');
+        medicalOperationInProgress = locked = true;
+        medicalRemoteUpdate = null;
+        await getAllItemTemplates();
+        if (currentCharacterId !== characterId) return;
+        const choices = collectInventoryEntries(currentCharacterData, item => {
+            if (item?.category !== 'artifact' || !item.id) return false;
+            const template = getInventoryItemTemplate(item);
+            const grade = template?.attributes?.artifact_class ?? template?.item_class
+                ?? item.attributes?.artifact_class ?? item.itemClass;
+            return ['1', '2', '3', 'x', 'х'].includes(String(grade).toLowerCase());
+        }).map(({item, path}) => ({label: `${item.name}${item.quantity > 1 ? ` · в стопке ${item.quantity}` : ''}`,
+            path, id: item.id}));
+        if (!choices.length) throw new Error('В инвентаре нет артефакта класса выше Мусорного');
+        const revision = currentCharacterData._revision;
+        const source = await chooseConsumableApplication('Расщепить один артефакт для зарядки', choices, {alwaysShow: true});
+        if (!source || currentCharacterId !== characterId) return;
+        const response = await Server.rechargeExoskeleton(characterId, {character_revision: revision,
+            armor_id: armorId, source: {path: source.path, id: source.id}, operation_id: crypto.randomUUID()});
+        if (currentCharacterId === characterId) currentCharacterData = response.data;
+        showNotification(`Аккумулятор заряжен до 100%. Расщеплён артефакт «${response.operation.artifact}».`, 'success');
+    } catch (error) {
+        showNotification(error.message || 'Не удалось зарядить экзоскелет', 'system');
+    } finally {
+        if (locked) {
+            if (currentCharacterId === characterId && medicalRemoteUpdate?.character_id === Number(characterId)
+                && Number(medicalRemoteUpdate.data?._revision) > Number(currentCharacterData?._revision)) {
+                currentCharacterData = medicalRemoteUpdate.data;
+            }
+            medicalRemoteUpdate = null;
+            medicalOperationInProgress = false;
+            if (currentCharacterId === characterId) await refreshSavedSheet(characterId);
+        }
+    }
 };
 
 window.useAutoInjector = async function(payment) {

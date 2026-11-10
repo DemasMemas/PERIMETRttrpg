@@ -34,6 +34,11 @@ def install(app,db,check_database,run_id,*,controlled_pepper=False,belt_artifact
         legacy.append(ItemTemplate(id=9600,name='Контрольный артефакт крепления',category='artifact',weight=2,volume=2,
             attributes={'positive_effect':'Защита от физического урона +15%',
                         'negative_effect':'Штраф перемещения +2 3 Радиации за перемещение'}))
+        from app.services.world_rules import world_rules
+        for template_id, grade in [(9601, '1'), (9602, 'trash')]:
+            artifact = next(row for row in world_rules()['artifacts'] if row['artifact_class'] == grade)
+            legacy.append(ItemTemplate(id=template_id, name=artifact['name'], category='artifact', item_class=grade,
+                weight=artifact['weight'], volume=1, attributes={'artifact_class': grade}))
     db.session.add_all(legacy);db.session.commit()
     # Для завершающего попадания в забрало: успешный к20 и известная лицевая зона.
     from types import SimpleNamespace

@@ -89,6 +89,8 @@ export const Server = {
         method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}),
     useSparePlates: (characterId,payload) => apiFetch(`/lobbies/characters/${characterId}/spare-plates`,{
         method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}),
+    rechargeExoskeleton: (characterId,payload) => apiFetch(`/lobbies/characters/${characterId}/exoskeleton-recharge`,{
+        method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}),
     rechargeLiquidCrystal: (characterId,payload) => apiFetch(`/lobbies/characters/${characterId}/liquid-crystal-recharge`,{
         method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}),
     rechargeNeckBrace: (characterId,payload) => apiFetch(`/lobbies/characters/${characterId}/neck-brace-recharge`,{

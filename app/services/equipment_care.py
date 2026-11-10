@@ -152,6 +152,96 @@ def infection_multiplier(data):
 
 
 @atomic_operation
+def recharge_exoskeleton(character_id, user_id, payload):
+    from datetime import datetime, timezone
+    from math import isfinite
+    from app.services.auto_injector import combat_actor
+    from app.services.character import CharacterService
+    from app.services.combat import CombatService
+    from app.services.equipment_modifications import rule
+    from app.services.equipment_module import _validate_source_path
+    from app.services.item_template_lookup import resolve_item_template
+    from app.services.magazine import inventory_slot
+
+    if not isinstance(payload, dict) or set(payload) != {'character_revision', 'armor_id', 'source', 'operation_id'}:
+        raise ValidationError('Некорректная команда электростанции')
+    operation_id, source = payload['operation_id'], payload['source']
+    if not isinstance(operation_id, str) or not 1 <= len(operation_id) <= 100 or not isinstance(source, dict):
+        raise ValidationError('Укажите артефакт и идентификатор действия')
+    path, artifact_id = source.get('path'), source.get('id')
+    if not isinstance(artifact_id, str) or not artifact_id:
+        raise ValidationError('Выберите экземпляр артефакта')
+    character = db.session.get(LobbyCharacter, character_id)
+    if not character:
+        raise NotFoundError('Персонаж не найден')
+    CharacterService.check_access(character, user_id, edit=True)
+    data = deepcopy(character.data or {})
+    journal_id = 'exoskeleton-recharge:' + operation_id
+    history = (((data.get('health') or {}).get('combatMeta') or {}).get('actionJournal') or [])
+    previous = next((entry for entry in history if entry.get('id') == journal_id), None)
+    if previous:
+        if (previous.get('item_id'), previous.get('artifact_id')) != (payload['armor_id'], artifact_id):
+            raise ConflictError('Идентификатор зарядки уже использован с другим снаряжением')
+        return character, None, {'duplicate': True, 'artifact': previous['artifact'], 'action_points': previous['action_points']}
+    if type(payload['character_revision']) is not int or payload['character_revision'] != character.revision:
+        raise ConflictError('Лист изменился. Выберите артефакт заново')
+    armor = (data.get('equipment') or {}).get('armor')
+    if (not isinstance(armor, dict) or not armor.get('id') or armor['id'] != payload['armor_id']
+            or armor.get('protectionDisabled') or not rule(armor, 'artifact_power_station')
+            or not CombatService._exoskeleton_power_profile(data)['is_exoskeleton']):
+        raise ValidationError('Наденьте экзоскелет с артефактной электростанцией')
+    battery = next((module for module in armor.get('installedModules') or [] if isinstance(module, dict)
+        and (module.get('slotType') == 'exoskeleton_battery'
+             or (module.get('attributes') or {}).get('slot_type') == 'exoskeleton_battery')), None)
+    if battery is None:
+        raise ValidationError('Сначала установите аккумулятор экзоскелета')
+    attributes = battery.setdefault('attributes', {})
+    capacity = CombatService._coerce_float(attributes.get('charge_days'), 1)
+    if not isfinite(capacity) or capacity <= 0:
+        raise ValidationError('У аккумулятора не задана ёмкость')
+    if CombatService._coerce_float(attributes.get('remaining_days'), 0) >= capacity:
+        raise ValidationError('Аккумулятор уже полностью заряжен')
+    if not (isinstance(path, list) and len(path) == 3 and path[:2] == ['inventory', 'held']):
+        _validate_source_path(path)
+    if 'installedModules' in path:
+        raise ValidationError('Сначала снимите артефакт с крепления')
+    parent, index = inventory_slot(data, path)
+    artifact = parent[index]
+    if artifact.get('id') != artifact_id:
+        raise ConflictError('Артефакт перемещён. Выберите его заново')
+    template = resolve_item_template(artifact, character.lobby_id)
+    artifact_class = ((template.attributes or {}).get('artifact_class') or template.item_class) if template else None
+    if (not template or template.category != 'artifact' or artifact.get('category') != 'artifact'
+            or str(artifact_class).casefold() not in {'1', '2', '3', 'x', 'х'}):
+        raise ValidationError('Нужен артефакт класса выше Мусорного')
+    quantity = artifact.get('quantity', 1)
+    if type(quantity) is not int or quantity < 1 or any(artifact.get(key) for key in ('contents', 'installedModules')):
+        raise ValidationError('Выберите отдельный артефакт без вложенных предметов')
+    actor = combat_actor(character, user_id, action_name='Артефактная электростанция')
+    cost = 5 if actor else 0
+    if actor:
+        if actor.action_points_current < cost:
+            raise ValidationError('Для зарядки аккумулятора нужно 5 ОД')
+        actor.action_points_current -= cost
+        CombatService._clear_aim(actor)
+    if quantity > 1:
+        artifact['quantity'] -= 1
+    else:
+        parent.pop(index)
+    attributes['remaining_days'] = capacity
+    armor['powered'] = True
+    history.append({'id': journal_id, 'timestamp': datetime.now(timezone.utc).isoformat(),
+        'action': 'exoskeleton_recharge', 'kind': 'equipment_care', 'label': 'Артефактная электростанция',
+        'status': 'completed', 'location_id': actor.location_id if actor else None, 'item_id': armor['id'],
+        'action_points': cost, 'movement_points': 0, 'free_actions': 0, 'artifact_id': artifact_id,
+        'artifact': artifact['name'], 'outcome': f"Аккумулятор заряжен до 100%. Расщеплён артефакт «{artifact['name']}»."})
+    data.setdefault('health', {}).setdefault('combatMeta', {})['actionJournal'] = history[-100:]
+    character.data = data
+    flag_modified(character, 'data')
+    return character, actor, {'duplicate': False, 'artifact': artifact['name'], 'action_points': cost}
+
+
+@atomic_operation
 def use_spare_plates(character_id,user_id,payload):
     """Одноразово восстановить две стадии надетой тяжёлой брони."""
     from datetime import datetime,timezone
