@@ -560,6 +560,14 @@ module.exports=async({page,request,token,lobby,base,connect,debugPort,safeSessio
             return [...document.querySelectorAll('.modification-rule optgroup')].map(group=>group.label)})()`);
         assert.deepEqual(actual,expected);
     }
+    const thirdLevel = 'armor-a24';
+    const missingBranchLevels = 'Модификации ветки устанавливаются последовательно';
+    assert.equal(await page.evaluate(`(()=>{const option=document.querySelector('.modification-rule option[value=${thirdLevel}]');
+        return option?.textContent==='Ур. 3 · Укрепление каркаса'&&option.parentElement.label==='Физический'})()`),true);
+    await page.evaluate(`(()=>{const rules=document.querySelector('.modification-rule');rules.value='${thirdLevel}';
+        rules.dispatchEvent(new Event('change'));document.querySelector('.modification-check').click();return true})()`);
+    await page.until(`document.querySelector('.modification-error')?.textContent.includes(${JSON.stringify(missingBranchLevels)})
+        && document.querySelector('.modification-confirm')?.disabled`,'У механика видна причина недоступности третьего уровня');
     await page.evaluate(`document.querySelector('.modification-close').click();true`);
     await page.evaluate(`document.querySelectorAll('.character-trade').forEach(editor=>editor.closest('.modal')?.remove());true`);
     await page.evaluate(`import('/static/js/crafting.js')
@@ -597,6 +605,13 @@ module.exports=async({page,request,token,lobby,base,connect,debugPort,safeSessio
                 .map(group=>group.label)})()`);
         assert.deepEqual(actual,expected);
     }
+    assert.equal(await page.evaluate(`(()=>{const option=document.querySelector('#crafting-modal select[aria-label="Модификация"] option[value=${thirdLevel}]');
+        return option?.textContent==='Ур. 3 · Укрепление каркаса'&&option.parentElement.label==='Физический'})()`),true);
+    await page.evaluate(`(()=>{const rules=document.querySelector('#crafting-modal select[aria-label="Модификация"]');
+        rules.value='${thirdLevel}';rules.dispatchEvent(new Event('change'));return true})()`);
+    await page.until(`document.querySelector('[data-crafting-pane=modifications]')?.textContent.includes(${JSON.stringify(missingBranchLevels)})
+        && ![...document.querySelectorAll('[data-crafting-pane=modifications] button')].some(button=>button.textContent==='Установить самостоятельно')`,
+    'Причина отказа видна при самостоятельной установке');
     await page.evaluate(`document.querySelector('[data-crafting-tab=creation]').click();
         const recipes=document.querySelector('#crafting-modal select[aria-label=Рецепт]');
         recipes.value='recipe-v26';recipes.dispatchEvent(new Event('change'));true`);
@@ -622,7 +637,7 @@ module.exports=async({page,request,token,lobby,base,connect,debugPort,safeSessio
     }
     await page.evaluate(`document.querySelector('#crafting-modal .block-header button').click();true`);
     console.log(JSON.stringify({armorBranchesGrouped:true,families:['Лёгкая','Средняя'],
-        selfCrafting:true,professionalInstallation:true}));
+        selfCrafting:true,professionalInstallation:true,unavailableLevelReason:true}));
     await page.evaluate(`(async()=>{const generator=await import('/static/js/npcGenerator.js');
         await generator.openNpcCreation(${lobby.id});return true})()`);
     await page.until(`document.querySelector('.npc-generator-name')?.value.includes(' ')

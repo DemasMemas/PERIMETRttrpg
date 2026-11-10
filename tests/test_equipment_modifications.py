@@ -5,7 +5,7 @@ from app.extensions import db
 from app.models.templates import ItemTemplate
 from app.services.combat import CombatService
 from app.services.crafting_rules import catalog
-from app.services.equipment_modifications import make_record,stat,rule,fire_profile
+from app.services.equipment_modifications import make_record,stat,rule,fire_profile,supported
 from test_crafting import workshop,call
 from test_quick_skill_checks import checks
 from test_grenade_rules import grenade_game
@@ -1052,3 +1052,11 @@ def test_anomaly_exit_upgrade_changes_real_check_difficulty(app,monkeypatch,guns
     result=CombatService.perform_action(location.id,user.id,placed.id,'escape_anomaly',target_x=1,target_y=2)
     assert result['anomaly']['check']['difficulty']==max(1,anomaly_profile('otboynik')['dc']-reduction)
     assert (placed.pos_x,placed.pos_y)==(1,2) and placed.action_points_current==2
+def test_catalog_modifications_for_weapons_armor_and_belts_have_installable_records():
+    rules = [rule for rule in catalog()['modifications'] if rule['kind'] in {'weapon','armor','belt'}]
+    assert rules
+    for rule in rules:
+        assert supported(rule), rule['id']
+        record = make_record(rule['id'])
+        assert record['ruleId'] == rule['id']
+        assert record['modifiers'] or record['rules'], rule['id']
