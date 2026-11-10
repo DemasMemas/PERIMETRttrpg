@@ -126,12 +126,15 @@ def calculate_inventory_access(character_data, item_path, item=None):
     base_action_points = 0
     quick_access_discount = 0
     source = "unknown"
-    from app.services.belt_attachments import accessible, QUICK_SLOTS
+    from app.services.belt_attachments import accessible, fixed_access, QUICK_SLOTS
 
     if path[:3] == ['equipment', 'belt', 'installedModules'] and item.get('slotType') in QUICK_SLOTS:
         raise ValidationError('Сначала достаньте предмет с крепления пояса')
 
-    if path[:2] == ["inventory", "pockets"]:
+    if fixed_access(character_data, path, item):
+        base_action_points = 1
+        source = 'belt_fixed_access'
+    elif path[:2] == ["inventory", "pockets"]:
         base_action_points = 1
         source = "pockets"
         from app.services.character_traits import passive_profile
@@ -172,7 +175,8 @@ def calculate_inventory_access(character_data, item_path, item=None):
         isinstance(zones.get(area), dict) and _non_negative_number(zones[area].get("current")) == 0
         for area in ("leftArm", "rightArm") if not limb(character_data,area)
     ))
-    retrieval = max(0, base_action_points - quick_access_discount + (0 if len(path) == 3 and source == 'held' else limb_penalty))
+    retrieval = max(0, base_action_points - quick_access_discount + (0 if source == 'belt_fixed_access'
+        or len(path) == 3 and source == 'held' else limb_penalty))
     return {
         "source": source,
         "base_action_points": base_action_points,

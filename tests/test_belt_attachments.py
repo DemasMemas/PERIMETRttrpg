@@ -23,13 +23,14 @@ def setup_tools(pair, *, quantity=1, name='Ножницы'):
     return item
 
 
-def change(client,pair,auth_headers,operation='mount',*,source=None,revision=None,user=None,kind='tool'):
+def change(client,pair,auth_headers,operation='mount',*,source=None,revision=None,user=None,kind='tool',quantity=None):
     character=pair['actor_character'];data=character.data
     path=['inventory','pockets',0] if operation=='mount' else ['equipment','belt','installedModules',0]
     item=data['inventory']['pockets'][0] if operation=='mount' else data['equipment']['belt']['installedModules'][0]
     return client.post(f'/lobbies/characters/{character.id}/belt-attachment',headers=auth_headers(user or pair['actor_user']),json={
         'operation':operation,'kind':kind,'belt_id':'belt-test','character_revision':character.revision if revision is None else revision,
-        'source':source or {'path':path,'snapshot':deepcopy(item)}})
+        'source':source or {'path':path,'snapshot':deepcopy(item)},
+        **({'quantity':quantity} if quantity is not None else {})})
 
 
 def test_radio_mount_keeps_one_physical_radio_and_rejects_other_items(client,pair,auth_headers):
@@ -131,6 +132,105 @@ def test_quick_belt_retrieval_uses_free_action_then_one_ap(client,pair,auth_head
     before = actor.action_points_current
     assert change(client,pair,auth_headers,'retrieve',kind=kind).status_code == 200
     assert actor.action_points_current == before-1 and actor.free_actions_current == 0
+
+
+def test_restraint_mount_counts_units_and_retrieves_for_one_ap(client,pair,auth_headers):
+    setup_tools(pair)
+    character, actor = pair['actor_character'], pair['actor_location']
+    ties = ItemTemplate(name='Хомут пластиковый',category='misc')
+    rope = ItemTemplate(name='Веревка 10м',category='misc')
+    db.session.add_all([ties,rope])
+    db.session.flush()
+    data = deepcopy(character.data)
+    data['equipment']['belt']['modifications'] = [make_record('armor-g72')]
+    data['inventory']['pockets'] = [{'id':ident,'name':template.name,'category':'misc','templateId':template.id,'quantity':amount}
+        for ident,template,amount in [('ties',ties,16),('rope',rope,1)]]
+    character.data = data
+    actor.free_actions_current = 2
+    db.session.commit()
+    assert change(client,pair,auth_headers,kind='restraint',quantity=16).status_code == 400
+    assert change(client,pair,auth_headers,kind='restraint',quantity=14).status_code == 200
+    pockets = character.data['inventory']['pockets']
+    source = {'path':['inventory','pockets',1],'snapshot':deepcopy(pockets[1])}
+    assert change(client,pair,auth_headers,kind='restraint',source=source).status_code == 400
+    assert change(client,pair,auth_headers,kind='restraint',quantity=2).status_code == 400
+    assert change(client,pair,auth_headers,kind='restraint',quantity=1).status_code == 200
+    before = actor.action_points_current
+    assert change(client,pair,auth_headers,'retrieve',kind='restraint').status_code == 200
+    assert actor.action_points_current == before-1 and actor.free_actions_current == 2
+    assert character.data['inventory']['held'][0]['quantity'] == 14
+    assert loaded(character.data['equipment']['belt'],'restraint')[0][1]['quantity'] == 1
+
+
+def test_cartridge_mount_caps_total_and_charges_one_ap_when_loading(client,pair,auth_headers):
+    from app.services.ammo_loading import load_ammunition
+
+    setup_tools(pair)
+    character = pair['actor_character']
+    rounds = ItemTemplate(name='9x19',category='ammo',attributes={'caliber':'9x19'})
+    other = ItemTemplate(name='9x18',category='ammo',attributes={'caliber':'9x18'})
+    db.session.add_all([rounds,other])
+    db.session.flush()
+    data = deepcopy(character.data)
+    data['equipment']['belt']['modifications'] = [make_record('armor-g74')]
+    data.setdefault('skills',{}).setdefault('other',{})['tactics'] = {'base':15}
+    data['inventory']['pockets'] = [{'id':ident,'name':template.name,'category':'ammo','templateId':template.id,
+        'quantity':quantity,'attributes':template.attributes,'ammo_variant':'bp'}
+        for ident,template,quantity in [('first',rounds,45),('second',other,10)]]
+    data['inventory']['pockets'].append({'id':'mag','name':'Магазин','category':'magazine','attributes':{'caliber':'9x19','capacity':5}})
+    character.data = data
+    db.session.commit()
+    assert change(client,pair,auth_headers,kind='cartridge',quantity=45).status_code == 200
+    assert change(client,pair,auth_headers,kind='cartridge',quantity=6).status_code == 400
+    assert change(client,pair,auth_headers,kind='cartridge',quantity=5).status_code == 200
+    data = deepcopy(character.data)
+    assert [item['quantity'] for _,item in loaded(data['equipment']['belt'],'cartridge')] == [45,5]
+    request = {'source_path':['equipment','belt','installedModules',0],'target_path':['inventory','pockets',1],
+               'quantity':1,'action_points':0,'free_actions':3}
+    with pytest.raises(ValidationError,match='Не оплачены'):
+        load_ammunition(deepcopy(data),request,combat=True)
+    disabled = deepcopy(data)
+    disabled['equipment']['belt']['protectionDisabled'] = True
+    with pytest.raises(ValidationError,match='пояс'):
+        load_ammunition(disabled,request)
+    result = load_ammunition(data,{**request,'action_points':1,'free_actions':2},combat=True)
+    assert result['quantity'] == 1
+    assert loaded(data['equipment']['belt'],'cartridge')[0][1]['quantity'] == 44
+    loaded_round = data['inventory']['pockets'][1]['ammo'][0]
+    assert loaded_round['ammo_variant'] == 'bp' and 'slotType' not in loaded_round
+
+
+def test_holster_binds_one_weapon_and_reduces_the_actual_draw_cost(client,pair,auth_headers):
+    setup_tools(pair)
+    character, actor = pair['actor_character'], pair['actor_location']
+    data = deepcopy(character.data)
+    data['equipment']['belt']['modifications'] = [make_record('armor-g73')]
+    data['weapons'] = [{'id':'short','name':'Пистолет','category':'weapon','size':2,'ergonomics':20},
+                       {'id':'large','name':'Винтовка','category':'weapon','size':4,'ergonomics':20}]
+    data.pop('activeWeaponIndex',None)
+    character.data = data
+    actor.drawn_weapon_index = None
+    db.session.commit()
+    headers = auth_headers(pair['actor_user'])
+    endpoint = f'/lobbies/characters/{character.id}/belt-attachment'
+    def mount(weapon_id):
+        return client.post(endpoint,headers=headers,json={'operation':'mount','kind':'holster','weapon_id':weapon_id,
+            'character_revision':character.revision,'belt_id':'belt-test'})
+    ordinary = CombatService._weapon_ergonomics_profile(actor,data['weapons'][0],0)['draw_action_points']
+    assert ordinary > 0
+    assert mount('large').status_code == 400
+    assert mount('short').status_code == 200
+    assert character.data['equipment']['belt']['holsterWeaponId'] == 'short'
+    forged = deepcopy(character.data)
+    forged['equipment']['belt']['holsterWeaponId'] = 'large'
+    preserve(character.data,forged)
+    assert forged['equipment']['belt']['holsterWeaponId'] == 'short'
+    before = actor.action_points_current
+    draw = client.post(f'/lobbies/{character.lobby_id}/locations/{actor.location_id}/combat/action',headers=headers,
+        json={'location_character_id':actor.id,'action_key':'draw_weapon','weapon_index':0,'attribute_choice':'right_hand'})
+    assert draw.status_code == 200, draw.json
+    assert actor.action_points_current == before-ordinary+1 and actor.drawn_weapon_index == 0
+    assert [item['id'] for item in character.data['weapons']] == ['short','large']
 
 
 @pytest.mark.parametrize('quantity',[1,2])

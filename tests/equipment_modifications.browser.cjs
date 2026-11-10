@@ -28,6 +28,7 @@ module.exports=async({page,request,token,lobby,base,safeSession})=>{
     await require('./exoskeleton_power_station.browser.cjs')({page,request,token,lobby,offered,loc,npc,safeSession});
     await require('./belt_devices.browser.cjs')({page,request,token,lobby,offered,loc,npc,safeSession});
     await require('./belt_quick_mounts.browser.cjs')({page,request,token,lobby,offered,loc,npc,safeSession});
+    await require('./belt_sheriff.browser.cjs')({page,request,token,lobby,offered,loc,npc,safeSession});
     await require('./belt_light.browser.cjs')({page,request,token,lobby,offered,loc,npc,safeSession});
     await require('./belt_attachments.browser.cjs')({page,request,token,lobby,offered,loc,npc,safeSession});
     await require('./belt_artifact.browser.cjs')({page,request,token,lobby,offered,loc,npc,safeSession});

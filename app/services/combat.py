@@ -1060,6 +1060,9 @@ class CombatService:
         band=max(i for i,minimum in enumerate(thresholds) if effective_value>=minimum)
         if tiers:effective_value=max(effective_value,thresholds[min(9,band+tiers)])
         effects = CombatService._ergonomics_effects(effective_value)
+        from app.services.belt_attachments import holstered
+        if 0 < CombatService._coerce_float(weapon_size, 0) < 4 and holstered(data, weapon):
+            effects['draw_action_points'] = max(0, effects['draw_action_points'] - 1)
         effects['aimed_shot_action_points']=trait_action_cost(data,'attack',effects['aimed_shot_action_points'],
             weapon_type=CombatService._weapon_class(weapon),aimed=True)
         return {

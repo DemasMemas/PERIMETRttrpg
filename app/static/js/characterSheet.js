@@ -2128,7 +2128,8 @@ function calculateCarriedWeight(data) {
     const eq = data?.equipment || {};
     const items = [];
     const beltItems=(eq.belt?.installedModules||[]).filter(item=>
-        ['belt_artifact','belt_detector','belt_radio','belt_grenade','belt_dressing','belt_syringe'].includes(item?.slotType)
+        ['belt_artifact','belt_detector','belt_radio','belt_grenade','belt_dressing','belt_syringe',
+            'belt_restraint','belt_cartridge'].includes(item?.slotType)
         ||item?.slotType==='belt_tool'&&(eq.belt?.protectionDisabled||!modificationRule(eq.belt,'belt_tool_mounts')));
     items.push(...beltItems);
     items.push(...(eq.armor?.installedModules||[]).filter(item=>item?.slotType==='auto_injector'));
@@ -5952,25 +5953,55 @@ const beltQuickMounts = {
     syringe: {label:'Кармашек для шприцов', rule:'belt_syringe_mount', capacity:2,
         accepts: item=>getInventoryItemCategory(item)==='consumable' &&
             (getInventoryItemTemplate(item)?.attributes ?? item.attributes)?.consumable?.direct?.application_form==='injectable'},
+    restraint: {label:'Законный ремень', rule:'belt_restraint_mount', capacity:15, counted:true,
+        accepts: item=>getInventoryItemCategory(item)==='misc' && (item.name==='Хомут пластиковый' || isBeltRope(item))},
+    cartridge: {label:'Патронташ', rule:'belt_cartridge_mount', capacity:50, counted:true,
+        accepts: item=>getInventoryItemCategory(item)==='ammo'},
 };
+
+function isBeltRope(item) {
+    return /^вер[её]вка/i.test(item?.name || '');
+}
+
+function beltCartridges(caliber) {
+    const belt = currentCharacterData?.equipment?.belt;
+    if (belt?.protectionDisabled || !modificationRule(belt,'belt_cartridge_mount')) return [];
+    return (belt.installedModules || []).flatMap((item,index)=>item?.slotType==='belt_cartridge'
+        && item.quantity>0 && (!caliber || getItemCaliber(item)===caliber)
+        ? [{item,path:['equipment','belt','installedModules',index]}] : []);
+}
+
+function renderBeltHolster(belt, weapons) {
+    const weapon = weapons.find(item=>item?.id && item.id===belt?.holsterWeaponId);
+    const enabled = modificationRule(belt,'belt_holster') && !belt?.protectionDisabled;
+    if (!enabled && !weapon) return '';
+    const cost = window.locationCombatState?.status==='active' ? ' · 3 ОД' : '';
+    return `<div class="loadout-group" data-belt-holster>
+        <h5>Кобура · ${weapon ? escapeHtml(weapon.name) : 'пусто'}</h5>
+        <button type="button" class="btn btn-sm btn-secondary" data-sheet-control onclick="window.changeBeltHolster('${weapon?'unmount':'mount'}')"
+            ${!currentCharacterCanEdit || !weapon && !enabled ? 'disabled' : ''}>${weapon?'Освободить':'Выбрать оружие'}${cost}</button>
+    </div>`;
+}
 
 function renderBeltQuickMounts(belt) {
     const combat = window.locationCombatState?.status === 'active';
     return Object.entries(beltQuickMounts).map(([kind, mount]) => {
         const items = (belt?.installedModules || []).map((item,index)=>({item,index}))
             .filter(({item})=>item?.slotType===`belt_${kind}`);
+        const count = mount.counted ? items.reduce((sum,{item})=>sum+Number(item.quantity||1),0) : items.length;
+        const capacity = kind==='restraint' && items.some(({item})=>isBeltRope(item)) ? 1 : mount.capacity;
         const enabled = modificationRule(belt,mount.rule) && !belt?.protectionDisabled;
         if (!enabled && !items.length) return '';
         return `<div class="loadout-group" data-belt-quick="${kind}">
-            <h5>${mount.label} · ${items.length}/${mount.capacity}</h5>
+            <h5>${mount.label} · ${count}/${capacity}</h5>
             <button type="button" class="btn btn-sm btn-secondary" data-sheet-control
-                onclick="window.changeBeltDevice('${kind}')" ${!currentCharacterCanEdit || !enabled || items.length>=mount.capacity ? 'disabled' : ''}>
+                onclick="window.changeBeltDevice('${kind}')" ${!currentCharacterCanEdit || !enabled || count>=capacity ? 'disabled' : ''}>
                 Закрепить${combat?' · 3 ОД':''}</button>
             ${items.map(({item,index})=>`<div class="equipment-care-status">
-                <strong>${escapeHtml(item.name)}</strong>
+                <strong>${escapeHtml(item.name)}${mount.counted ? ` × ${Number(item.quantity)||1}` : ''}</strong>
                 <button type="button" class="btn btn-sm btn-secondary" data-sheet-control
                     onclick="window.retrieveBeltItem('${kind}',${index})" ${!currentCharacterCanEdit || !enabled ? 'disabled' : ''}>
-                    Достать${combat?' · 1 СД или 1 ОД':''}</button>
+                    Достать${combat ? mount.counted ? ' · 1 ОД' : ' · 1 СД или 1 ОД' : ''}</button>
                 <button type="button" class="btn btn-sm btn-secondary" data-sheet-control
                     onclick="window.changeBeltDevice('${kind}',${index})" ${!currentCharacterCanEdit ? 'disabled' : ''}>
                     Снять в карманы${combat?' · 3 ОД':''}</button>
@@ -6015,6 +6046,7 @@ function renderBeltDevices(belt, armor) {
 
 window.changeBeltDevice = (kind,index) => changeBeltTool(index == null ? 'mount' : 'unmount',index,kind);
 window.retrieveBeltItem = (kind,index) => changeBeltTool('retrieve',index,kind);
+window.changeBeltHolster = operation => changeBeltTool(operation,null,'holster');
 window.openBeltDosimeter = index => {
     const path = ['equipment','belt','installedModules',index];
     const item = getItemByPath(path);
@@ -6028,26 +6060,52 @@ async function changeBeltTool(operation,index,kind='tool') {
         await forceSyncCharacter();await Server.waitForCharacterSave(characterId);
         if(currentCharacterId!==characterId||sheetSaveBlocked||medicalOperationInProgress)return;
         medicalOperationInProgress=locked=true;medicalRemoteUpdate=null;
-        let source;
-        if(operation==='mount'){
+        const belt = currentCharacterData.equipment?.belt;
+        const revision = currentCharacterData._revision;
+        let details;
+        if (kind==='holster') {
+            let weaponId = belt?.holsterWeaponId;
+            if (operation==='mount') {
+                await getAllItemTemplates();
+                if (currentCharacterId!==characterId) return;
+                const choices = (currentCharacterData.weapons || []).flatMap((item,index)=>{
+                    const size = Number(item.size ?? item.attributes?.size ?? getInventoryItemTemplate(item)?.attributes?.size);
+                    return item.id && !item.naturalWeapon && !item.attributes?.natural_weapon && size>0 && size<4
+                        && !isHeldWeaponIndex(currentCharacterData.activeWeaponIndex,index) ? [{label:item.name, id:item.id}] : [];
+                });
+                if (!choices.length) throw new Error('Нет экипированного оружия размером меньше 4, убранного из рук');
+                const choice = await chooseConsumableApplication('Оружие для кобуры',choices,{alwaysShow:true});
+                if (!choice || currentCharacterId!==characterId) return;
+                weaponId = choice.id;
+            }
+            details = {weapon_id:weaponId};
+        } else if(operation==='mount'){
             const device = beltDeviceMounts[kind] || beltQuickMounts[kind];
+            const mounted = device?.counted ? (belt?.installedModules || []).filter(item=>item?.slotType===`belt_${kind}`) : [];
+            const space = (device?.capacity || 1) - mounted.reduce((sum,item)=>sum+Number(item.quantity||1),0);
             const choices=collectInventoryEntries(currentCharacterData,device?.accepts || (item=>getInventoryItemCategory(item)===kind))
                 .filter(entry=>!entry.path.includes('installedModules') && (!device || entry.path[1] !== 'held'))
-                .map(entry=>({label:entry.item.name,source:{path:entry.path,snapshot:structuredClone(entry.item)}}));
-            if(!choices.length){showNotification(device?'В инвентаре нет подходящих приборов':kind==='artifact'?'В инвентаре нет артефактов':'В инвентаре нет инструментов','system');return;}
+                .flatMap(({item,path})=>{
+                    if (kind==='restraint' && (mounted.some(isBeltRope) || isBeltRope(item) && mounted.length)) return [];
+                    const maxQuantity = device?.counted && !isBeltRope(item) ? Math.min(space,Number(item.quantity)||1) : 1;
+                    return maxQuantity>0 ? [{label:item.name,maxQuantity,source:{path,snapshot:structuredClone(item)}}] : [];
+                });
+            if(!choices.length){showNotification(device?'В инвентаре нет подходящих предметов':kind==='artifact'?'В инвентаре нет артефактов':'В инвентаре нет инструментов','system');return;}
             const choice=await chooseConsumableApplication(device?.label || (kind==='artifact'?'Артефакт для крепления на поясе':'Инструмент для крепления на поясе'),choices,{alwaysShow:true});
-            if(!choice||currentCharacterId!==characterId)return;source=choice.source;
+            if(!choice||currentCharacterId!==characterId)return;
+            details={source:choice.source,...(device?.counted ? {quantity:choice.quantity || 1} : {})};
         }else{
             const item=currentCharacterData.equipment?.belt?.installedModules?.[index];
             if(item?.slotType!==`belt_${kind}`)return;
-            source={path:['equipment','belt','installedModules',index],snapshot:structuredClone(item)};
+            details={source:{path:['equipment','belt','installedModules',index],snapshot:structuredClone(item)}};
         }
-        const response=await Server.operateBeltAttachment(characterId,{operation,source,kind,
-            character_revision:currentCharacterData._revision,belt_id:currentCharacterData.equipment.belt.id});
+        const response=await Server.operateBeltAttachment(characterId,{operation,...details,kind,
+            character_revision:revision,belt_id:belt.id});
         if(currentCharacterId!==characterId)return;
         currentCharacterData=response.data;
         await renderEquipmentTab(currentCharacterData);renderInventoryTab(currentCharacterData);
-        showNotification(operation==='mount'?'Предмет закреплён':operation==='retrieve'?'Предмет в руке':'Предмет снят в карманы','success');
+        showNotification(kind==='holster' ? operation==='mount'?'Оружие в кобуре':'Кобура освобождена'
+            : operation==='mount'?'Предмет закреплён':operation==='retrieve'?'Предмет в руке':'Предмет снят в карманы','success');
     }catch(error){showNotification(error.message||'Не удалось изменить крепление пояса','system');}
     finally{if(locked){
         if(currentCharacterId===characterId&&medicalRemoteUpdate?.character_id===Number(characterId)
@@ -6169,9 +6227,12 @@ function renderWeaponGripControl(weapon, index) {
     if (secondary===index) return `<span>В ${side==='left'?'правой':'левой'} руке</span><button type="button" class="btn btn-sm btn-secondary" ${disabled?'disabled':''} onclick="changeWeaponPair('stow',${index})">Убрать второе оружие</button>`;
     if (!isSelectedWeaponIndex(selected, index)) {
         const cost=active?` · ${getCombatWeaponErgonomics(index)?.draw_action_points??4} ОД`:'';
+        const belt = currentCharacterData?.equipment?.belt;
+        const holster = weapon.id && belt?.holsterWeaponId===weapon.id && !belt.protectionDisabled && modificationRule(belt,'belt_holster')
+            ? '<span class="badge">В кобуре</span>' : '';
         const choices=[['right','Взять в правую руку'],['left','Взять в левую руку'],['both','Взять двумя руками']].map(([hand,label])=>
             `<button type="button" data-weapon-draw-hand="${hand}" data-weapon-draw-index="${index}" class="btn btn-sm btn-secondary" ${disabled?'disabled':''} onclick="drawWeaponFromEquipment(${index},'${hand}')">${label}${cost}</button>`).join('');
-        return (selected!=null && hands===1 && secondary==null
+        return holster+(selected!=null && hands===1 && secondary==null
             ? `<button type="button" data-weapon-pair-take="${index}" class="btn btn-sm btn-secondary" ${disabled?'disabled':''} onclick="changeWeaponPair('take',${index})">Взять во вторую руку</button>` : '')+choices;
     }
     if (secondary!=null) return '<span>По оружию в каждой руке</span>';
@@ -7414,6 +7475,8 @@ window.reloadFixedMagazine = async function(weaponIndex) {
     };
     collectAmmo(currentCharacterData.inventory?.backpack, ['inventory', 'backpack']);
     collectAmmo(currentCharacterData.inventory?.pockets, ['inventory', 'pockets']);
+    collectAmmo(currentCharacterData.inventory?.held, ['inventory', 'held']);
+    ammoItems.push(...beltCartridges(caliber));
     beltPouches.forEach((pouch, i) => collectAmmo(pouch.contents, ['equipment', 'belt', 'pouches', i, 'contents']));
     vestPouches.forEach((pouch, i) => collectAmmo(pouch.contents, ['equipment', 'vest', 'pouches', i, 'contents']));
 
@@ -7864,6 +7927,8 @@ window.reloadMagazineFromInventory = async function(pathStr) {
     };
     collectAmmo(currentCharacterData.inventory?.backpack, ['inventory', 'backpack']);
     collectAmmo(currentCharacterData.inventory?.pockets, ['inventory', 'pockets']);
+    collectAmmo(currentCharacterData.inventory?.held, ['inventory', 'held']);
+    ammoItems.push(...beltCartridges(caliber));
     const beltPouches = currentCharacterData.equipment?.belt?.pouches || [];
     beltPouches.forEach((pouch, i) => collectAmmo(pouch.contents, ['equipment', 'belt', 'pouches', i, 'contents']));
     const vestPouches = currentCharacterData.equipment?.vest?.pouches || [];
@@ -10767,6 +10832,10 @@ async function calculateInventoryAccess(item, itemPath) {
         source = 'backpack';
     } else if (path[0] === 'inventory' && path[1] === 'held') {
         source = 'held';
+    } else if (path[0]==='equipment' && path[1]==='belt' && path[2]==='installedModules'
+        && ['belt_restraint','belt_cartridge'].includes(item?.slotType)) {
+        baseActionPoints = 1;
+        source = 'belt_fixed_access';
     } else if (path[0] === 'equipment' && ['belt', 'vest'].includes(path[1]) && path[2] === 'pouches') {
         const pouch = getInventoryValueByPath(currentCharacterData, path.slice(0, 4));
         if (isItemCompatibleWithPouch(item, pouch)) {
@@ -10792,7 +10861,7 @@ async function calculateInventoryAccess(item, itemPath) {
         baseActionPoints += accessCost;
     });
 
-    const limbPenalty = source === 'held' ? 0 : getDisabledArmRetrievalPenalty();
+    const limbPenalty = ['held','belt_fixed_access'].includes(source) ? 0 : getDisabledArmRetrievalPenalty();
     const retrievalActionPoints = Math.max(
         0,
         baseActionPoints - quickAccessDiscount + limbPenalty
@@ -10967,6 +11036,8 @@ async function submitAmmunitionLoading(request, paymentGroups = []) {
 
 async function inventoryItemPreparationPayments(item, itemPath, role) {
     const access = await calculateInventoryAccess(item, itemPath);
+    if (access.source==='belt_fixed_access') return [{actionPoints:1,freeActions:0}];
+    if (access.source==='held') return [{actionPoints:0,freeActions:0}];
     const quick = access.source === 'pockets' || access.source === 'compatible_pouch';
     if (role === 'magazine') {
         return quick
@@ -11333,8 +11404,24 @@ function chooseConsumableApplication(title, choices, { alwaysShow = false } = {}
             button.style.textAlign = 'left';
             button.textContent = choice.label;
             button.disabled = choice.disabled === true;
-            button.onclick = () => finish(choice);
-            modal.querySelector('.consumable-application-list').appendChild(button);
+            const list = modal.querySelector('.consumable-application-list');
+            if (choice.maxQuantity > 1) {
+                const quantity = document.createElement('input');
+                quantity.type='number';quantity.min='1';quantity.max=String(choice.maxQuantity);
+                quantity.step='1';quantity.required=true;quantity.value=quantity.max;
+                quantity.className='form-control number-input';
+                quantity.setAttribute('aria-label',`Количество ${choice.label}`);
+                const row = document.createElement('div');
+                row.className='form-actions';
+                row.append(quantity,button);
+                list.append(row);
+                button.onclick=()=>{
+                    if (quantity.reportValidity()) finish({...choice,quantity:quantity.valueAsNumber});
+                };
+            } else {
+                button.onclick=()=>finish(choice);
+                list.append(button);
+            }
         });
         document.body.appendChild(modal);
         document.addEventListener('keydown', onKeyDown);
@@ -14563,6 +14650,7 @@ async function renderInventoryTab(data) {
                 ${renderBeltModifications(eq.belt?.modifications || [], modificationTemplates.filter(t => t.attributes?.type === 'belt'))}
             </div>
             ${renderBeltQuickMounts(eq.belt)}
+            ${renderBeltHolster(eq.belt, data.weapons || [])}
         </div>
         ` : ''}
 

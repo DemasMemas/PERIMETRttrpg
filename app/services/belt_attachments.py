@@ -21,9 +21,17 @@ MOUNTS = {
     'grenade': {'slot': 'belt_grenade', 'rule': 'belt_grenade_mount', 'capacity': 1, 'category': 'grenade', 'label': 'Граната'},
     'dressing': {'slot': 'belt_dressing', 'rule': 'belt_dressing_mount', 'capacity': 2, 'label': 'Бинт или жгут'},
     'syringe': {'slot': 'belt_syringe', 'rule': 'belt_syringe_mount', 'capacity': 2, 'label': 'Препарат в шприце'},
+    'restraint': {'slot': 'belt_restraint', 'rule': 'belt_restraint_mount', 'capacity': 15, 'category': 'misc', 'label': 'Хомут или верёвка'},
+    'cartridge': {'slot': 'belt_cartridge', 'rule': 'belt_cartridge_mount', 'capacity': 50, 'category': 'ammo', 'label': 'Патроны'},
 }
 QUICK_MOUNTS = {'grenade', 'dressing', 'syringe'}
 QUICK_SLOTS = {MOUNTS[kind]['slot'] for kind in QUICK_MOUNTS}
+COUNTED_MOUNTS = {'restraint', 'cartridge'}
+COUNTED_SLOTS = {MOUNTS[kind]['slot']: kind for kind in COUNTED_MOUNTS}
+
+
+def rope(item):
+    return str(item.get('name') or '').casefold().replace('ё', 'е').startswith('веревка')
 
 
 def available(belt,kind='tool'):
@@ -67,15 +75,45 @@ def accepts(kind, template):
     if kind == 'syringe':
         direct = ((template.attributes or {}).get('consumable') or {}).get('direct') or {}
         return template.category == 'consumable' and direct.get('application_form') == 'injectable'
+    if kind == 'restraint':
+        return template.category == 'misc' and (template.name == 'Хомут пластиковый' or rope({'name': template.name}))
     return template.category == MOUNTS[kind]['category']
+
+
+def fixed_access(data, path, item):
+    kind = COUNTED_SLOTS.get(item.get('slotType'))
+    if kind is None:
+        return False
+    belt = (data.get('equipment') or {}).get('belt')
+    if not tool_path(path) or not available(belt, kind) or not any(
+            index == path[3] and entry is item for index, entry in loaded(belt, kind)):
+        raise ValidationError('Наденьте и включите пояс с этим креплением')
+    return True
+
+
+def holstered(data, weapon):
+    from app.services.equipment_modifications import rule
+
+    belt = (data.get('equipment') or {}).get('belt') or {}
+    return bool(weapon.get('id') and belt.get('holsterWeaponId') == weapon['id']
+                and not belt.get('protectionDisabled') and rule(belt, 'belt_holster'))
 
 
 def preserve(current, incoming):
     """Сохранение листа не снимает, не копирует и не перезаправляет вложения."""
     from app.services.portable_lights import walk
     old_belts = {item['id']: item for _, item in walk(current or {}, True)
-                 if item.get('id') and attached(item)}
+                 if item.get('id') and (attached(item) or item.get('holsterWeaponId'))}
     incoming_items = list(walk(incoming, True))
+    old_holsters = {item['id']: item['holsterWeaponId'] for _, item in walk(current or {}, True)
+                    if item.get('id') and item.get('holsterWeaponId')}
+    weapon_ids = {weapon.get('id') for weapon in incoming.get('weapons') or [] if isinstance(weapon, dict)}
+    for _, item in incoming_items:
+        bound = old_holsters.get(item.get('id'))
+        if bound and bound in weapon_ids:
+            item['holsterWeaponId'] = bound
+        else:
+            item.pop('holsterWeaponId', None)
     for belt_id, old in old_belts.items():
         matches = [item for _, item in incoming_items if item.get('id') == belt_id]
         if len(matches) > 1:
@@ -113,11 +151,10 @@ def operate(character_id, user_id, payload):
     from app.services.equipment_module import _validate_source_path
     from app.services.magazine import inventory_slot
     from app.services.item_template_lookup import resolve_item_template
-    if not isinstance(payload, dict) or set(payload) - {'operation', 'kind', 'character_revision', 'belt_id', 'source'}:
+    if not isinstance(payload, dict) or set(payload) - {'operation', 'kind', 'character_revision', 'belt_id', 'source', 'quantity', 'weapon_id'}:
         raise ValidationError('Некорректное действие с креплением пояса')
     kind=payload.get('kind','tool')
-    if not isinstance(kind,str) or kind not in MOUNTS:raise ValidationError('Неизвестное крепление пояса')
-    mount=MOUNTS[kind]
+    if not isinstance(kind,str) or kind not in {*MOUNTS, 'holster'}:raise ValidationError('Неизвестное крепление пояса')
     character = db.session.get(LobbyCharacter, character_id)
     if not character:
         raise NotFoundError('Персонаж не найден')
@@ -130,6 +167,9 @@ def operate(character_id, user_id, payload):
         raise ConflictError('Пояс перемещён. Откройте лист заново')
     actor = combat_actor(character, user_id, action_name='Крепление пояса')
     operation = payload.get('operation')
+    if kind == 'holster':
+        return change_holster(character, data, belt, actor, operation, payload.get('weapon_id'))
+    mount = MOUNTS[kind]
     source = payload.get('source') or {}
     if not isinstance(source,dict):raise ValidationError('Выберите предмет для крепления')
     path = source.get('path')
@@ -150,10 +190,23 @@ def operate(character_id, user_id, payload):
             raise ValidationError('Некорректная стопка предметов')
         if item.get('quantity', 1) > 1 and any(item.get(key) for key in ('contents', 'installedModules', 'pouches')):
             raise ValidationError('Сначала разделите заполненные предметы на отдельные экземпляры')
+        quantity = payload.get('quantity', 1)
+        if kind in COUNTED_MOUNTS:
+            existing = [entry for _, entry in loaded(belt, kind)]
+            capacity = mount['capacity'] - sum(entry.get('quantity', 1) for entry in existing)
+            if kind == 'restraint':
+                if any(rope(entry) for entry in existing) or rope(item) and existing:
+                    raise ValidationError('На законном ремне помещаются либо хомуты, либо одна верёвка')
+                if rope(item):
+                    capacity = 1
+            if type(quantity) is not int or not 1 <= quantity <= min(capacity, item.get('quantity', 1)):
+                raise ValidationError('Количество превышает свободное место или остаток в стопке')
+        elif type(quantity) is not int or quantity != 1:
+            raise ValidationError('Закреплять можно по одному предмету')
         candidate = deepcopy(item)
-        candidate.update(quantity=1, slotType=mount['slot'])
-        if item.get('quantity', 1) > 1:
-            item['quantity'] -= 1
+        candidate.update(quantity=quantity, slotType=mount['slot'])
+        if item.get('quantity', 1) > quantity:
+            item['quantity'] -= quantity
             candidate['id'] = str(uuid4())
         else:
             parent.pop(index)
@@ -163,7 +216,7 @@ def operate(character_id, user_id, payload):
         if not tool_path(path) or not any(i==index and entry==item for i,entry in loaded(belt,kind)):
             raise ValidationError('Выберите предмет на соответствующем креплении надетого пояса')
         if operation == 'retrieve':
-            if kind not in QUICK_MOUNTS or not available(belt,kind):
+            if kind not in QUICK_MOUNTS | COUNTED_MOUNTS or not available(belt,kind):
                 raise ValidationError('На поясе нет действующего крепления быстрого доступа')
             holder = actor or SimpleNamespace(character=character, drawn_weapon_index=data.get('activeWeaponIndex'))
             if not CombatService._has_usable_free_hand(holder):
@@ -174,11 +227,12 @@ def operate(character_id, user_id, payload):
         data.setdefault('inventory', {}).setdefault(destination, []).append(item)
     else:
         raise ValidationError('Выберите действие с креплением')
-    free = int(bool(actor and operation == 'retrieve' and actor.free_actions_current > 0))
+    free = int(bool(actor and operation == 'retrieve' and kind in QUICK_MOUNTS and actor.free_actions_current > 0))
     cost = (1-free if operation == 'retrieve' else 3) if actor else 0
     if actor:
         if actor.action_points_current < cost:
-            raise ValidationError('Чтобы достать предмет, нужен 1 ОД или 1 СД' if operation == 'retrieve'
+            raise ValidationError('Чтобы достать предмет, нужен 1 ОД' if operation == 'retrieve' and kind in COUNTED_MOUNTS
+                                  else 'Чтобы достать предмет, нужен 1 ОД или 1 СД' if operation == 'retrieve'
                                   else 'Для этого действия нужно 3 ОД')
         actor.action_points_current -= cost
         actor.free_actions_current -= free
@@ -188,3 +242,42 @@ def operate(character_id, user_id, payload):
     if needs_clocks(data):data.setdefault('health',{})['effects']=sync_clocks(data)
     flag_modified(character, 'data')
     return character, actor, {'operation': operation, 'kind':kind, 'action_points': cost, 'free_actions': free}
+
+
+def change_holster(character, data, belt, actor, operation, weapon_id):
+    from app.services.combat import CombatService
+    from app.services.equipment_modifications import rule
+    from app.services.item_template_lookup import resolve_item_template
+    from app.services.weapon_grip import held
+
+    if operation == 'mount':
+        if not isinstance(weapon_id, str) or not weapon_id or belt.get('protectionDisabled') or not rule(belt, 'belt_holster'):
+            raise ValidationError('Выберите оружие для действующей кобуры')
+        bound = belt.get('holsterWeaponId')
+        if bound and any(item.get('id') == bound for item in data.get('weapons') or [] if isinstance(item, dict)):
+            raise ValidationError('Сначала освободите кобуру')
+        weapon = next((item for item in data.get('weapons') or [] if isinstance(item, dict) and item.get('id') == weapon_id), None)
+        if not weapon:
+            raise ConflictError('Оружие перемещено. Выберите его заново')
+        template = resolve_item_template(weapon, character.lobby_id)
+        attributes = (template.attributes or {}) if template else {}
+        size = CombatService._coerce_float(weapon.get('size', (weapon.get('attributes') or {}).get('size', attributes.get('size'))), 0)
+        if weapon.get('naturalWeapon') or attributes.get('natural_weapon') or not 0 < size < 4:
+            raise ValidationError('В кобуру помещается оружие размером меньше 4')
+        index = data['weapons'].index(weapon)
+        if (actor and held(actor, index)) or (not actor and data.get('activeWeaponIndex') == index):
+            raise ValidationError('Сначала уберите оружие из рук')
+        belt['holsterWeaponId'] = weapon_id
+    elif operation == 'unmount' and belt.get('holsterWeaponId') == weapon_id and weapon_id:
+        belt.pop('holsterWeaponId')
+    else:
+        raise ValidationError('Оружие в кобуре изменилось')
+    cost = 3 if actor else 0
+    if actor:
+        if actor.action_points_current < cost:
+            raise ValidationError('Для этого действия нужно 3 ОД')
+        actor.action_points_current -= cost
+        CombatService._clear_aim(actor)
+    character.data = data
+    flag_modified(character, 'data')
+    return character, actor, {'operation': operation, 'kind': 'holster', 'action_points': cost, 'free_actions': 0}

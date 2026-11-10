@@ -125,7 +125,8 @@ def record(actor, values, before, result=None, error=None):
         label={'pda_profile':'Переключение профиля КПК','pda_wipe':'Очистка КПК'}.get(payload.get('operation'),label)
     if key=='belt_attachment':
         subject={'artifact':'артефакта','detector':'детектора','radio':'рации','grenade':'гранаты',
-                 'dressing':'перевязки','syringe':'шприца'}.get(payload.get('kind'),'инструмента')
+                 'dressing':'перевязки','syringe':'шприца','restraint':'хомутов или верёвки',
+                 'cartridge':'патронов','holster':'оружия в кобуре'}.get(str(payload.get('kind')),'инструмента')
         if payload.get('operation')=='retrieve':label=f'Доставание {subject} с пояса'
         else:label=f'Снятие {subject} с пояса' if payload.get('operation')=='unmount' else f'Крепление {subject} на поясе'
     row = db.session.get(DeferredCombatAction, str(action_id)) if action_id else None

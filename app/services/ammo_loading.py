@@ -56,6 +56,10 @@ def _preparation_payments(data, path, item, role):
     from app.services.inventory_access import calculate_inventory_access
 
     access = calculate_inventory_access(data, path, item)
+    if access['source'] == 'belt_fixed_access':
+        return [(1, 0)]
+    if access['source'] == 'held':
+        return [(0, 0)]
     quick = access['source'] in {'pockets', 'compatible_pouch'}
     if quick:
         return [(0, 1), (1, 0)]
@@ -173,6 +177,9 @@ def validate_loading(data, request, *, combat=False):
     if request.get('selection') is not None and request['selection'] != bindings:
         raise ConflictError('Магазин или патроны изменились. Выберите их заново.')
     source = _item(data, request.get('source_path'))
+    if source.get('slotType') == 'belt_cartridge':
+        from app.services.belt_attachments import fixed_access
+        fixed_access(data, request['source_path'], source)
     fixed = request.get('weapon_index') is not None
     if fixed:
         if request.get('target_path') is not None:
@@ -287,6 +294,8 @@ def load_ammunition(data, request, *, combat=False):
             loaded = deepcopy(stack)
             for key in (('ammo',) if stack.get('controllerState') else ('id', 'weight', 'volume', 'ammo')):
                 loaded.pop(key, None)
+            if loaded.get('slotType') == 'belt_cartridge':
+                loaded.pop('slotType')
             loaded['quantity'] = moved
             last = ammo[-1] if ammo else None
             if last and {k: v for k, v in last.items() if k != 'quantity'} == {k: v for k, v in loaded.items() if k != 'quantity'}:
