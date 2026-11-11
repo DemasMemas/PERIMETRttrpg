@@ -13147,13 +13147,13 @@
       "price": 5000,
       "weight": 2.5,
       "volume": 1,
-      "description": "Радиация артефакта до 0. Положить артефакт: 4 ОД; вынуть: 8 ОД.",
+      "description": "Допускаются артефакты с любой радиоактивностью. Положить артефакт: 4 ОД; вынуть: 8 ОД.",
       "attributes": {
         "import_source": "equipment_workbook",
-        "radiation_limit": 0,
+        "radiation_limit": null,
         "artifact_container_kind": "storage",
         "source_order": 398,
-        "source_description": "Радиация артефакта до 0. Положить артефакт: 4 ОД; вынуть: 8 ОД."
+        "source_description": "Допускаются артефакты с любой радиоактивностью. Положить артефакт: 4 ОД; вынуть: 8 ОД."
       },
       "compatible_ids": []
     },

@@ -147,7 +147,8 @@ def canonical_catalog_templates(templates):
             if category == 'gloves' and _normalize_equipment_name((name or '').removeprefix('Перчатки ').removesuffix(' перчатки')) in {
                     canonical_name for canonical_category, canonical_name in by_key if canonical_category == 'gloves'}:
                 continue
-        if key[1] in known_names and key not in by_key:
+        world_artifact = category == 'artifact' and attrs.get('import_source') == 'world_rules'
+        if key[1] in known_names and key not in by_key and not world_artifact:
             continue
         source = by_key.get(key)
         expected = (source or {}).get('attributes') or {}

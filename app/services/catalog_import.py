@@ -203,14 +203,17 @@ def devices_templates(rows):
             result.append(template(name, 'detector', row['M'], 1, 0,
                 'Шанс избежать аномалии: %s.' % attrs['avoidance_chance'], 'Аномалии', attrs))
         if container_kind and name and re.fullmatch(r'\d+', text(row.get('M'))):
-            if not text(row.get('N')):
+            radiation = text(row.get('N'))
+            if not radiation:
                 continue
-            attrs = {'radiation_limit': _as_int(row.get('N')), 'artifact_container_kind': container_kind,
+            limit = None if radiation.casefold() == 'любые' else _as_int(radiation)
+            attrs = {'radiation_limit': limit, 'artifact_container_kind': container_kind,
                      'unspecified_fields': ['volume']}
             equipped_names = {'1 ур': 'Блок-А', '2 ур': 'Барьер', '3 ур': 'Щит', '4 ур': 'Стена'}
             container_name = equipped_names.get(name.strip(), name) if container_kind == 'equipped' else name
+            allowed = 'Допускаются артефакты с любой радиоактивностью.' if limit is None else f'Радиация артефакта до {limit}.'
             result.append(template(container_name, 'container', row['M'], 2.5, 0,
-                'Радиация артефакта до %s. Положить артефакт: 4 ОД; вынуть: 8 ОД.' % attrs['radiation_limit'],
+                f'{allowed} Положить артефакт: 4 ОД; вынуть: 8 ОД.',
                 'Использование' if container_kind == 'equipped' else 'Хранение', attrs))
         if left in {'Силок', 'Рыбак'} and text(row.get('I')):
             attrs = {'artifact_count': _as_int(row.get('L')), 'field_rank_offset': -1 if left == 'Силок' else 0}
