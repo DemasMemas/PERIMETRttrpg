@@ -743,6 +743,35 @@ module.exports=async({page,request,token,lobby,loc,locationId,rules,safeSession}
     assert.equal(forecastAfter.data._artifact_specials[0].remaining_uses,2);
     assert.equal((await liveState()).current_character.action_points_current,forecastBefore-2);
     await request(loc+'/combat/end',{},token);
+
+    await equipSpecial('Кристалл статики','native-static-crystal');
+    const crystalOrigin=await request(loc+'/spawn_character',{character_id:spongeBearer.id,tile_x:45,tile_y:62,force_relocate:true},token);
+    const crystalTarget=async(name,y,direction)=>{
+        const target=await request('/lobbies/'+lobby.id+'/characters',{name,data:{health:{current:700,max:700,effects:[]}}},token);
+        await request(loc+'/spawn_character',{character_id:target.id,tile_x:45,tile_y:y},token);
+        await request(loc+'/characters/'+target.id+'/facing',{facing_x:0,facing_y:direction},token,'PATCH');
+        return target.id;
+    };
+    const crystalFacing=await crystalTarget('Смотрит на вспышку',63,-1);
+    const crystalTurned=await crystalTarget('Отвернулся от вспышки',61,-1);
+    const blindness=async id=>(await request('/lobbies/characters/'+id,null,token,'GET')).data.health.effects
+        .filter(effect=>effect.source==='artifact_static_crystal').reduce((total,effect)=>total+effect.value,0);
+    await clickSpecial('native-static-crystal');
+    assert.equal(await blindness(crystalFacing),80);
+    assert.equal(await blindness(crystalTurned),0);
+    assert.equal(await blindness(spongeBearer.id),0);
+
+    await equipSpecial('Искровая жилка','native-spark-vein');
+    await request(loc+'/combat/start',{location_character_ids:[crystalOrigin.location_character_id],
+        initiator_location_character_id:crystalOrigin.location_character_id,initiator_first:true},token);
+    const movementBefore=(await getSponge()).data._artifact_profile.movement_penalty;
+    const sparkAp=(await liveState()).current_character.action_points_current;
+    await clickSpecial('native-spark-vein');
+    assert.equal((await liveState()).current_character.action_points_current,sparkAp-1);
+    assert.equal((await getSponge()).data._artifact_profile.movement_penalty,movementBefore-3);
+    await request(loc+'/combat/end_turn',{location_character_id:crystalOrigin.location_character_id},token);
+    assert.equal((await getSponge()).data._artifact_profile.movement_penalty,movementBefore);
+    await request(loc+'/combat/end',{},token);
     fs.writeFileSync(path.join(safeSession.artifacts,'artifact-special.json'),JSON.stringify({scene:'Припять',artifact:rule.name,
         preparedWornSeconds:86394,realRoundSeconds:6,readyAfterRealRound:true,realButtonActivations:2,apPerUse:1,
         first:{radiation:0,hp:200,cooldown:86400},second:{radiation:0,hp:300,cooldown:86394},reopened:true,
@@ -770,7 +799,9 @@ module.exports=async({page,request,token,lobby,loc,locationId,rules,safeSession}
         gravityCore:{realButton:true,baseDamage:strike.base_damage,zone:strike.zone,destination:[thrownTarget.x,thrownTarget.y],totalActionPoints:3},
         ignitionAura:{radius:5,night:true,movedWithBearer:true,removedWithArtifact:true},
         stormConductorSharedSight:{realButton:true,distance:28,damage:350},
-        singleForecast:{realButton:true,actionPoints:2,psiPrice,dailyChargesSpent:0,gmNotice:true}},null,2));
+        singleForecast:{realButton:true,actionPoints:2,psiPrice,dailyChargesSpent:0,gmNotice:true},
+        staticCrystal:{facing:80,turnedAway:0,owner:0},
+        sparkVein:{actionPoints:1,movementReduction:3,rounds:1}},null,2));
     console.log('Особые свойства: подготовленное ношение+реальный раунд, две кнопки Ядра твари по1ОД без рук, радиация→ОЗ; общий срок после первого, переоткрытие.');
     console.log('Генератор: кнопка без радиации, фактический штраф перемещения−1→−3,600→594секунд за раунд; истечение по игровому времени возвращает−1.');
     console.log('Сердце жара: настоящая кнопка и настоящее горение; первый раунд0урона, после истечения50.');
@@ -789,4 +820,5 @@ module.exports=async({page,request,token,lobby,loc,locationId,rules,safeSession}
     console.log('Философский лист: настоящая кнопка, прыжок во Вспышку, завершение хода и 400→600 общих ОЗ.');
     console.log('Громоотвод: выбор видимой цели в интерфейсе и 200 электрического урона.');
     console.log('Ферромагнит: выбор металла без стекла, одна единица отображается в руках и перетаскивается в карман.');
+    console.log('Кристалл статики: на расстоянии 1 м 80 ослепления у смотрящего, 0 у отвернувшегося и владельца. Искровая жилка: −3 к штрафу движения на один раунд за 1 ОД.');
 };
