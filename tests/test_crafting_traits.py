@@ -6,7 +6,7 @@ from app.services.crafting import quote
 from app.services.crafting_rules import catalog
 from app.extensions import db
 from app.models import LocationObject
-from test_crafting import workshop, call, catalog_template, ammo_workshop
+from test_crafting import workshop, call, catalog_template, ammo_workshop, place_distillery
 from test_quick_skill_checks import checks
 
 
@@ -130,3 +130,99 @@ def test_precise_eye_increases_ammo_and_medicine_by_twenty_percent_rounding_down
         count = base['recipe']['output_count']
         assert result['recipe']['output_count'] == (count * 6 // 5 if payload['recipe_id'] != 'recipe-aa15' else count)
         assert result['allocations'] == base['allocations']
+
+
+def test_constructor_reserves_twice_until_a_successful_ammo_variant(client, workshop, auth_headers, monkeypatch):
+    template = ammo_workshop(workshop)
+    other_template = catalog_template('7.62x39')
+    character = workshop['actor_character']
+    data = deepcopy(character.data)
+    data.setdefault('basic', {})['background'] = {'ruleId': 'background-e'}
+    for item in data['inventory']['pockets']:
+        if item['category'] == 'crafting_material':
+            item['quantity'] = 20
+    character.data = data
+    db.session.commit()
+    recipe = {'recipe_id': 'recipe-v26', 'ammo_template_id': template.id}
+
+    for attempt, outcome in [('cancel', None), ('failure', False), ('success', True)]:
+        planned = call(client, workshop, auth_headers, 'quote', **recipe).json['result']
+        assert planned['constructor_materials']
+        assert all(notice['alternatives'][0]['available'] >= notice['alternatives'][0]['required']
+                   for notice in planned['extra_component_status'])
+        started = call(client, workshop, auth_headers, 'start', operation_id=f'start-{attempt}', **recipe)
+        assert started.status_code == 200, started.json
+        job = started.json['result']
+        assert job['output_key'] == 'ammo:base'
+        assert sum(entry['amount'] for entry in job['escrow'] if entry['item']['name'] == 'Порох') == 2
+        if outcome is None:
+            result = call(client, workshop, auth_headers, 'cancel', job_id=job['id'])
+        else:
+            workshop['lobby'].game_time_minutes += 60
+            db.session.commit()
+            monkeypatch.setattr('app.services.crafting.resolve_creation',
+                                lambda quote: {'success': outcome, 'roll': 100 if outcome else 1})
+            result = call(client, workshop, auth_headers, 'finish', operation_id=f'finish-{attempt}', job_id=job['id'])
+            assert result.json['result']['success'] is outcome
+        assert result.status_code == 200, result.json
+        assert ('ammo:base' in result.json['data']['crafting'].get('successful_outputs', {})) is (outcome is True)
+
+    replay = call(client, workshop, auth_headers, 'finish', operation_id='finish-success', job_id=job['id'])
+    assert replay.json['result']['replayed'] and replay.json['data'] == result.json['data']
+    after_history_rotates = deepcopy(character.data)
+    after_history_rotates['crafting']['history'] = []
+    other = quote(character, after_history_rotates, {**recipe, 'ammo_template_id': other_template.id})
+    assert not other['constructor_materials']
+    assert quote(character, character.data, {**recipe, 'ammo_variant': 'bp'})['constructor_materials']
+
+
+def test_constructor_recognizes_a_legacy_success_from_another_caliber(workshop):
+    template = ammo_workshop(workshop)
+    character = workshop['actor_character']
+    data = deepcopy(character.data)
+    data.setdefault('basic', {})['background'] = {'name': 'Конструктор'}
+    data['crafting'] = {'history': [
+        {'kind': 'recipe', 'success': True, 'name': '7.62x39 · Обычные'},
+        {'kind': 'recipe', 'success': False, 'name': '7.62x39 · БП'},
+    ]}
+    payload = {'recipe_id': 'recipe-v26', 'ammo_template_id': template.id}
+    assert not quote(character, data, payload)['constructor_materials']
+    assert quote(character, data, {**payload, 'ammo_variant': 'bp'})['constructor_materials']
+
+
+@pytest.mark.parametrize('roll,remaining', [(50, 3), (51, 2)])
+def test_constructor_can_save_a_station_tool_charge_at_job_start(client, workshop, auth_headers, monkeypatch, roll, remaining):
+    from types import SimpleNamespace
+    from app.services.character_starting_purchase import item_from_template
+
+    catalog_template('Спирт')
+    beer = catalog_template('Банка пива')
+    character = workshop['actor_character']
+    data = deepcopy(character.data)
+    data.setdefault('basic', {})['background'] = {'ruleId': 'background-e'}
+    data['skills']['other']['survival'] = {'base': 20}
+    data['inventory']['pockets'] = [
+        {'name': 'Вода', 'category': 'consumable', 'quantity': 10},
+        item_from_template(beer, 2),
+        {'name': 'Хлеб', 'category': 'food', 'quantity': 4},
+    ]
+    character.data = data
+    station = place_distillery(workshop, portable=True)
+    rolls = []
+    def draw(lower, upper):
+        rolls.append((lower, upper))
+        return roll
+    monkeypatch.setattr('app.services.portable_stations.random', SimpleNamespace(randint=draw))
+    planned = call(client, workshop, auth_headers, 'quote', recipe_id='recipe-aa7')
+    assert planned.status_code == 200 and not planned.json['result']['missing']
+    assert not rolls
+    started = call(client, workshop, auth_headers, 'start', recipe_id='recipe-aa7')
+    assert started.status_code == 200, started.json
+    assert started.json['result']['station_usage'].get('tool_use_saved', False) == (roll == 50)
+    db.session.refresh(station)
+    assert station.properties['station_tools'][0]['uses'] == remaining
+    replay = call(client, workshop, auth_headers, 'start', recipe_id='recipe-aa7')
+    assert replay.json['result']['replayed']
+    assert rolls == [(1, 100)]
+    db.session.refresh(station)
+    assert station.properties['station_tools'][0]['uses'] == remaining

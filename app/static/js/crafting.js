@@ -76,6 +76,7 @@ export async function showCrafting({characterId,lobbyId,onSaved,recipeId='',stat
                 : job.phase==='ready'?(job.at_station?'Партия готова.':'Партия готова. Вернитесь к аппарату за результатом.')
                 : job.remaining_seconds>0?`Работа идёт. Осталось ${minutes} мин игрового времени.`:'Время работы прошло. Можно завершить создание.';
             body.append(el('h4',job.name),el('p',status));
+            if(job.station_usage?.tool_use_saved)body.append(el('p','«Конструктор» сохранил заряд инструмента станка.'));
             if(job.kind==='book'){
                 body.append(el('p','Чтение книги продолжается в КПК → Файлы.'));
                 return;
@@ -180,6 +181,7 @@ export async function showCrafting({characterId,lobbyId,onSaved,recipeId='',stat
                         el('p',`Итоговая СЛ ${plan.difficulty}${plan.automatic_success?' · автоуспех':''}`));
                     if(plan.station_name)preview.append(el('p',`Устройство: ${plan.station_name}${plan.spoil_chance?` · риск порчи результата ${plan.spoil_chance}%`:''}`));
                     if(approval)preview.append(el('p','ГМ подтвердил условие сцены. СЛ не меняется.'));
+                    if(plan.constructor_materials)preview.append(el('p','«Конструктору» нужны два комплекта материалов до первого успеха.'));
                     let statusIndex=0;
                     for(const component of plan.recipe.components){
                         if(/^доступ к |^в округе должна быть мебель из дерева или готовые доски$|^трава$/i.test(component.name)){
@@ -189,6 +191,13 @@ export async function showCrafting({characterId,lobbyId,onSaved,recipeId='',stat
                         const options=status?.alternatives || component.alternatives || [component];
                         preview.append(el('p',options.map(option=>
                             `${option.name} ${option.available ?? 0}/${option.required ?? option.quantity}`).join(' или ')));
+                    }
+                    if(plan.extra_component_status?.length){
+                        preview.append(el('h4','Дополнительный комплект'));
+                        for(const status of plan.extra_component_status){
+                            preview.append(el('p',status.alternatives.map(option=>
+                                `${option.name} ${option.available}/${option.required}`).join(' или ')));
+                        }
                     }
                     for(const missing of plan.other_missing || plan.missing)preview.append(el('p',missing,'error-message'));
                     const start=button(plan.preparation_seconds?'Начать подготовку':'Начать создание',()=>act('start',{recipe_id:recipe.id,tool_option:Number(tool.value),approval_id:approval?.id,...ammoPayload}));

@@ -3,6 +3,7 @@ from copy import deepcopy
 import hashlib
 import json
 import math
+import random
 from uuid import uuid4
 
 from sqlalchemy.orm.attributes import flag_modified
@@ -80,7 +81,7 @@ def selected(character,recipe,option=0,*,preferred_id=None):
     return min(candidates,key=lambda obj:(bool((obj.properties or {}).get('portable_station')),obj.id),default=None)
 
 
-def consume_for_job(obj):
+def consume_for_job(obj, *, can_save_tool_charge=False):
     from app.services.general_consumable import _available_uses
     from app.services.distillery import is_distillery,occupied
     key=(obj.properties or {}).get('portable_station')
@@ -94,14 +95,17 @@ def consume_for_job(obj):
         if key not in PROFILES or (obj.properties or {}).get('standard_distillery') is True:
             return {'object_id':obj.id,'name':obj.name,'spoil_chance':0}
     if key not in PROFILES:return None
+    usage = {'object_id': obj.id, 'name': obj.name, 'spoil_chance': 0 if key == 'recipe-m34' else 15}
     props=deepcopy(obj.properties or {})
     if key not in {'recipe-m34','recipe-m41'}:
         tool=next((item for item in props.get('station_tools') or [] if _available_uses(item)>0),None)
         if not tool:raise ConflictError('В станке закончились заряды инструмента')
+        if can_save_tool_charge and random.randint(1, 100) <= 50:
+            return {**usage, 'tool_use_saved': True}
         tool['uses']=_available_uses(tool)-1
         tool.setdefault('attributes',{})['uses_remaining']=tool['uses']
         obj.properties=props
-    return {'object_id':obj.id,'name':obj.name,'spoil_chance':0 if key=='recipe-m34' else 15}
+    return usage
 
 
 def templates():

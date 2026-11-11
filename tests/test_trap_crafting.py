@@ -90,7 +90,8 @@ def test_all_trap_recipe_outputs_resolve_without_confusing_artifact_snare(worksh
 
 
 @pytest.mark.parametrize('key,names',[('recipe-m8',['РГД-5']),('recipe-m9',['РГД-5','Черемуха'])])
-def test_tripwire_output_preserves_each_selected_grenade(workshop,client,auth_headers,monkeypatch,key,names):
+@pytest.mark.parametrize('constructor', [False, True])
+def test_tripwire_output_preserves_each_selected_grenade(workshop,client,auth_headers,monkeypatch,key,names,constructor):
     from app.services.equipment_catalog import load_catalog
     from app.services.trap_catalog import preserve
     rows={row['name']:row for row in load_catalog() if row['category']=='grenade'}
@@ -101,10 +102,16 @@ def test_tripwire_output_preserves_each_selected_grenade(workshop,client,auth_he
         template=ItemTemplate(**row);db.session.add(template);db.session.flush()
         item=item_from_template(template);item['customLabel']='Сохранить '+name;selected.append(item)
     data=deepcopy(workshop['actor_character'].data);data['skills']['other'].update(engineering={'base':20},survival={'base':20})
-    data['inventory']['pockets']=[{'name':'Граната Ф-1','category':'grenade','quantity':1},*selected,{'name':'Электронные материалы','category':'crafting_material','quantity':2}]
+    data['inventory']['pockets']=[
+        {'name':'Граната Ф-1','category':'grenade','quantity':len(names) if constructor else 1},
+        *selected, {'name':'Электронные материалы','category':'crafting_material','quantity':4 if constructor else 2},
+    ]
+    if constructor:
+        data.setdefault('basic', {})['background'] = {'name': 'Конструктор'}
     workshop['actor_character'].data=data;db.session.commit()
     started=call(client,workshop,auth_headers,'start',recipe_id=key,
         grenade_paths=[['inventory','pockets',i+1] for i in range(len(names))]);assert started.status_code==200,started.json
+    assert sum(entry['amount'] for entry in started.json['result']['escrow'] if entry['component']==0) == len(names)*(2 if constructor else 1)
     workshop['lobby'].game_time_minutes+=60;db.session.commit()
     monkeypatch.setattr('app.services.crafting.resolve_creation',lambda quote:{'success':True,'roll':100})
     finished=call(client,workshop,auth_headers,'finish',job_id=started.json['result']['id'],chosen_loss=[])

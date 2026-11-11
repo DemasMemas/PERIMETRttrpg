@@ -191,9 +191,13 @@ def _craft_filter_charges(item):
     return int(filter_charges(item))*quantity
 
 
-def _allocate(data,recipe,*,with_status=False,grenade_paths=None,lobby_id=None,mutant_corpse=False):
+def _allocate(data,recipe,*,with_status=False,grenade_paths=None,lobby_id=None,mutant_corpse=False,
+              reserved_allocations=()):
     from app.services.trade import _contains_individual_items
     candidates=entries(data);spent={};allocations=[];missing=[];statuses=[]
+    for allocation in reserved_allocations:
+        key=tuple(allocation['path'])
+        spent[key]=spent.get(key,0)+allocation['amount']
     grenade_counts=None
     if grenade_paths is not None:
         if recipe['id'] not in {'recipe-m8','recipe-m9'} or not isinstance(grenade_paths,list) or len(grenade_paths)!=(2 if recipe['id']=='recipe-m9' else 1):
@@ -330,6 +334,34 @@ def _tools(character,data,recipe,option):
     return missing
 
 
+def _output_key(output_id, ammo_variant):
+    return f'ammo:{ammo_variant}' if ammo_variant else f'item:{output_id}'
+
+
+def _has_successful_output(state, output_key, recipe_name, ammo_variant):
+    if output_key in (state.get('successful_outputs') or {}):
+        return True
+    # Старые сохранения содержат только название результата в недавней истории.
+    from app.services.crafting_ammo import VARIANTS
+    suffix = f' · {VARIANTS[ammo_variant][0]}' if ammo_variant else None
+    return any(entry.get('kind') == 'recipe' and entry.get('success') is True
+               and (str(entry.get('name', '')).endswith(suffix) if suffix else entry.get('name') == recipe_name)
+               for entry in state.get('history', []))
+
+
+def _merge_material_allocations(primary, extra):
+    merged = {}
+    for allocation in (*primary, *extra):
+        key = allocation['component'], tuple(allocation['path'])
+        if key in merged:
+            entry = merged[key]
+            amount = entry['amount'] + allocation['amount']
+            entry['amount'] = round(amount, 1) if entry['liquid_liters'] else amount
+        else:
+            merged[key] = {**allocation}
+    return list(merged.values())
+
+
 def quote(character,data,payload):
     from app.services.combat import CombatService
     from app.services.distillery import PREPARATION_RECIPES,RECIPES,is_distillery,occupied
@@ -338,6 +370,12 @@ def quote(character,data,payload):
     from app.services.character_traits import background_is, ammo_crafting_modifier, trait_count
     recipe=recipe_by_id(payload.get('recipe_id'));option=payload.get('tool_option',0)
     recipe,ammo_template,ammo_variant=chosen_ammo(recipe,payload)
+    tool_output=CRAFTED_TOOLS.get(recipe['id'])
+    output=ammo_template or _template(tool_output[0] if tool_output else recipe['output_name'])
+    state=data.get('crafting') or {}
+    output_key = _output_key(output.id, ammo_variant) if output and not recipe.get('maintenance') else None
+    constructor_materials = bool(output_key and background_is(data, 'Конструктор')
+        and not _has_successful_output(state, output_key, recipe['name'], ammo_variant))
     if recipe.get('requires_tool_crafting'):
         if not trait_count(data,'Мастер на все руки') and not background_is(data,'Полевой ученый'):raise ValidationError('Изготовление инструментов требует «Мастера на все руки» или предыстории «Полевой учёный»')
     missing_tools=_tools(character,data,recipe,option)
@@ -351,15 +389,24 @@ def quote(character,data,payload):
                 for model in LocationCharacter.query.filter_by(location_id=placement.location_id))
     allocations,missing,component_status=_allocate(data,recipe,with_status=True,
         grenade_paths=payload.get('grenade_paths'),lobby_id=character.lobby_id,mutant_corpse=mutant_corpse)
+    extra_component_status = []
+    primary_inputs = None
+    if constructor_materials and not missing:
+        extra, extra_missing, extra_component_status = _allocate(
+            data, recipe, with_status=True, lobby_id=character.lobby_id,
+            mutant_corpse=mutant_corpse, reserved_allocations=allocations,
+        )
+        missing.extend(f'Дополнительный комплект: {message}' for message in extra_missing)
+        if recipe['id'] in {'recipe-m8', 'recipe-m9', 'recipe-aa15', 'recipe-aa16'}:
+            primary_inputs = [entry for entry in allocations if entry['component'] == 0]
+        allocations = _merge_material_allocations(allocations, extra)
     component_missing_count=len(missing)
-    state=data.get('crafting') or {};approval=next((r for r in state.get('tool_requests',[]) if r['id']==payload.get('approval_id')
+    approval=next((r for r in state.get('tool_requests',[]) if r['id']==payload.get('approval_id')
         and r['recipe_id']==recipe['id'] and r['status']=='approved' and r.get('environment') and not r.get('used')),None)
     environment=[c['name'] for c in recipe['components'] if _environment(c) and normalized(c['name'])!='трава']
     if environment and not (approval and approval.get('environment')):missing.append('Нужно подтверждение условий ГМом: '+', '.join(environment))
     if any(normalized(c['name'])=='трава' for c in recipe['components']) and not _grass_at_location(character):
         missing.append('На подлокации нужна хотя бы одна клетка с травой')
-    tool_output=CRAFTED_TOOLS.get(recipe['id'])
-    output=ammo_template or _template(tool_output[0] if tool_output else recipe['output_name'])
     level=CombatService._skill_value(data,'skills.'+recipe['skill'])
     difficulty=recipe['difficulty_options'][option] if recipe['difficulty_options'] else 0
     if background_is(data, 'Прогульщик'):
@@ -394,6 +441,8 @@ def quote(character,data,payload):
     use_station=bool(station and (station_key or is_distillery(station)))
     return {**result,'recipe':recipe,'allocations':allocations,'missing':missing,
         'component_status':component_status,'other_missing':missing[component_missing_count:],
+        'constructor_materials':constructor_materials,'extra_component_status':extra_component_status,
+        'primary_inputs':primary_inputs,'output_key':output_key,
         'output_id':output.id if output else None,'output_variant':ammo_variant,
         'ammo_template_id':ammo_template.id if ammo_template else None,
         'output_uses':tool_output[1] if tool_output else None,
@@ -776,7 +825,7 @@ def operate(character_id,user_id,payload):
             result['remote_source']={key:payload['remote_source'].get(key) for key in ('session_id','source_id')}
         state['current']=result
     elif action=='start':
-        from app.services.character_traits import trait_count
+        from app.services.character_traits import background_is, trait_count
         from app.services.distillery import RECIPES,placement_at
         if state.get('current'):raise ConflictError('Сначала завершите или отмените текущую работу')
         for _,item in entries(data):item.setdefault('id',str(uuid4()))
@@ -787,7 +836,7 @@ def operate(character_id,user_id,payload):
             from app.services.portable_stations import consume_for_job
             station=LocationObject.query.filter_by(id=plan['station_id']).with_for_update().first()
             if not station:raise ConflictError('Станок недоступен')
-            station_usage=consume_for_job(station)
+            station_usage = consume_for_job(station, can_save_tool_charge=background_is(data, 'Конструктор'))
         if plan['recipe']['id'] in RECIPES and (not station_usage or not placement_at(character,plan['station_id'])):
             raise ValidationError('Подойдите к самогонному аппарату')
         reserve=_escrow(data,plan['allocations'])
@@ -800,6 +849,12 @@ def operate(character_id,user_id,payload):
             'started_at':now(character),'ready_at':now(character)+plan['duration_seconds']}
         if result['recipe_id'] in {'recipe-aa15', 'recipe-aa16'}:
             result['cook_bonus'] = trait_count(data, 'Первоклассный повар')
+        result['output_key'] = plan['output_key']
+        if plan['primary_inputs'] is not None:
+            result['primary_inputs'] = [
+                {key: entry[key] for key in ('component', 'amount', 'item')}
+                for entry in plan['primary_inputs']
+            ]
         if result['recipe_id']=='recipe-aa12':
             result['collection_station_id']=plan.get('station_id')
         if plan['preparation_seconds']:
@@ -913,7 +968,8 @@ def operate(character_id,user_id,payload):
                 produced['attributes']['uses_remaining']=produced['uses']
             else:produced=item_from_template(output,job['output_count'])
             from app.services.trap_catalog import bind_crafted_output
-            bind_crafted_output(produced,job['recipe_id'],job['escrow'],character.lobby_id)
+            recipe_inputs = job.get('primary_inputs', job['escrow'])
+            bind_crafted_output(produced,job['recipe_id'],recipe_inputs,character.lobby_id)
             if job.get('ammo_template_id'):
                 variant=job.get('output_variant')
                 produced['ammo_variant']=variant if variant!='base' else None
@@ -924,7 +980,7 @@ def operate(character_id,user_id,payload):
                     produced['price']=floor((output.price or 0)*(.25 if variant=='handmade' else 1.5))
             if job['recipe_id'] in {'recipe-aa15', 'recipe-aa16'}:
                 from app.services.cooked_meat import cooked_output
-                source=next(entry['item'] for entry in job['escrow'] if entry['component']==0)
+                source=next(entry['item'] for entry in recipe_inputs if entry['component']==0)
                 cooked_output(source, job['recipe_id'], produced, cook_bonus=job.get('cook_bonus', 0))
             if job.get('output_uses') is not None:
                 if type(produced.get('maxUses')) is not int or not 0<job['output_uses']<produced['maxUses']:
@@ -932,6 +988,9 @@ def operate(character_id,user_id,payload):
                 produced['uses']=job['output_uses']
                 produced['attributes']['uses_remaining']=job['output_uses']
             data.setdefault('inventory',{}).setdefault('pockets',[]).append(produced)
+            output_key = job.get('output_key', _output_key(output.id, job.get('output_variant')))
+            if output_key:
+                state.setdefault('successful_outputs', {})[output_key] = True
         result={'job_id':job['id'],'kind':job['kind'],'name':job['name'],'cancelled':action=='cancel','success':success,'roll':roll,
             'difficulty':job['quote']['difficulty'],'lost':lost,
             'lost_items':[{'name':entry['item']['name'],'amount':lost.get(index,0)} for index,entry in enumerate(job['escrow']) if lost.get(index,0) and not success],
