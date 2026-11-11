@@ -57,6 +57,7 @@ const pendingManualFieldPaths = new Set();
 const AUTO_SAVE_DELAY = 500;
 const pendingWeaponJamActions = new Map();
 let equipmentRenderVersion = 0;
+let equipmentDevicesVersion = 0;
 let equipmentOpenPanels = new Set();
 let equipmentActivePanel = 'weapons';
 let sheetSocketHandler = null;
@@ -4931,8 +4932,7 @@ async function renderEquipmentTab(data, { focusWeaponIndex = null } = {}) {
         { focusWeaponIndex, restoreWeaponPanels });
     const loadout = container.querySelector('.equipment-loadout') || container;
     const devices = container.querySelector('[data-equipment-group="detector"]');
-    if (devices) await renderPortableLights(devices,currentCharacterId,data,window.operatePortableLight,
-        ()=>renderVersion===equipmentRenderVersion,currentCharacterCanEdit&&!medicalOperationInProgress).catch(error=>console.warn('Не удалось загрузить фонари:',error));
+    await refreshEquipmentDevices(devices);
     if(renderVersion===equipmentRenderVersion)renderProstheses(loadout,data,window.operateProsthesis,currentCharacterCanEdit&&!medicalOperationInProgress,currentCharacterId);
     if(renderVersion===equipmentRenderVersion){
         const craftingButton=document.createElement('button');craftingButton.type='button';craftingButton.className='btn btn-secondary';
@@ -5183,6 +5183,31 @@ function equipmentHandsContents(data) {
         : '<span>Руки свободны</span>';
 }
 
+async function refreshEquipmentDevices(devices, { opening = false } = {}) {
+    if (!devices) return;
+    const characterId = currentCharacterId;
+    const renderVersion = equipmentRenderVersion;
+    const devicesVersion = ++equipmentDevicesVersion;
+    const isCurrent = () => characterId === currentCharacterId
+        && renderVersion === equipmentRenderVersion && devicesVersion === equipmentDevicesVersion
+        && devices.isConnected;
+    // После перемещения предмета список должен получить его новый адрес в инвентаре.
+    if (opening) devices.querySelector(':scope > .portable-lights')?.remove();
+    try {
+        if (opening && autoSaveTimer) await forceSyncCharacter();
+        await Server.waitForCharacterSave(characterId);
+        if (!isCurrent()) return;
+        const lights = document.createElement('div');
+        await renderPortableLights(lights, characterId, currentCharacterData, window.operatePortableLight,
+            isCurrent, currentCharacterCanEdit && !medicalOperationInProgress);
+        if (!isCurrent()) return;
+        devices.querySelector(':scope > .portable-lights')?.remove();
+        if (lights.firstElementChild) devices.append(lights.firstElementChild);
+    } catch (error) {
+        console.warn('Не удалось загрузить приборы:', error);
+    }
+}
+
 function renderEquipmentLoadout(container, data, weaponTemplates, helmetTemplates, gasMaskTemplates, armorTemplates,
     { focusWeaponIndex, restoreWeaponPanels }) {
     const panelLabels = {
@@ -5303,7 +5328,7 @@ function renderEquipmentLoadout(container, data, weaponTemplates, helmetTemplate
         button.textContent = label;
         navigation.append(button);
     });
-    const selectPanel = key => {
+    const selectPanel = (key, opening = true) => {
         equipmentActivePanel = key;
         panels.querySelectorAll(':scope > .equipment-detail').forEach(panel => {
             const selected = panel.dataset.equipmentPanel === key;
@@ -5313,11 +5338,14 @@ function renderEquipmentLoadout(container, data, weaponTemplates, helmetTemplate
         navigation.querySelectorAll('.equipment-panel-tab').forEach(button => {
             button.setAttribute('aria-selected', String(button.dataset.panel === key));
         });
+        if (opening && key === 'detector') {
+            refreshEquipmentDevices(panels.querySelector('[data-equipment-group="detector"]'), { opening: true });
+        }
     };
     navigation.querySelectorAll('.equipment-panel-tab').forEach(button => {
         button.addEventListener('click', () => selectPanel(button.dataset.panel));
     });
-    selectPanel(navigation.querySelector(`[data-panel="${equipmentActivePanel}"]`) ? equipmentActivePanel : 'weapons');
+    selectPanel(navigation.querySelector(`[data-panel="${equipmentActivePanel}"]`) ? equipmentActivePanel : 'weapons', false);
     const selectedWeaponIndex = Number.isInteger(Number(data.activeWeaponIndex))
         && (Number(data.activeWeaponIndex) === -1 || weapons[Number(data.activeWeaponIndex)])
         ? Number(data.activeWeaponIndex) : weapons.length ? 0 : -1;

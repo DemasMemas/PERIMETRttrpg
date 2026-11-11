@@ -227,7 +227,24 @@ module.exports = async ({ page, request, token, lobby, login, profile, base, con
     await page.evaluate("document.querySelector('.equipment-panel-tab[data-panel=detector]').click()");
     const lightRow=`[data-equipment-panel="detector"] [data-light-id="${lampId}"]`;
     await page.until(`document.querySelector('${lightRow} [data-light-operation=prepare]:not(:disabled)')`,'Фонарём можно управлять из Приборов');
-    await page.evaluate(`document.querySelector('${lightRow} [data-light-operation=prepare]').click()`);
+    await page.evaluate(`(()=>{
+        const fetch=window.fetch;
+        window.__widgetLightResponse=null;
+        window.fetch=async(...args)=>{
+            const response=await fetch(...args);
+            if(String(args[0]).endsWith('/portable-lights')&&args[1]?.method==='POST'){
+                window.fetch=fetch;
+                window.__widgetLightResponse={status:response.status,request:JSON.parse(args[1].body),body:await response.clone().json()};
+            }
+            return response;
+        };
+        document.querySelector('${lightRow} [data-light-operation=prepare]').click();
+        return true;
+    })()`);
+    await page.until('window.__widgetLightResponse','Ответ сервера при взятии фонаря');
+    const lightResponse=await page.evaluate('window.__widgetLightResponse');
+    assert.equal(lightResponse.status,200,JSON.stringify({request:lightResponse.request,error:lightResponse.body.error}));
+    assert.deepEqual(lightResponse.request.path,['inventory','backpack',0]);
     await page.until("document.querySelector('#equipment-hands-items')?.textContent.includes('Фонарик')",'Фонарь показан в руках');
     await page.until(`document.querySelector('${lightRow} [data-light-operation=stow]:not(:disabled)')`,'Фонарь можно убрать');
     await page.evaluate(`document.querySelector('${lightRow} [data-light-operation=stow]').click()`);
