@@ -33,6 +33,14 @@ def background_is(data,name):
     return aliases.get(_name(bg.get('name')),_name(bg.get('name')))==aliases.get(_name(name),_name(name)) or bool(known and bg.get('ruleId')==known)
 
 
+def personal_tool_bonus(data, bonus):
+    """Предыстория усиливает положительный бонус инструмента, но не штраф и не автоуспех."""
+    from math import ceil
+    if type(bonus) in {int, float} and bonus > 0 and background_is(data, 'Полевой инженер'):
+        return ceil(bonus * 1.5)
+    return bonus
+
+
 def skill_learning_multiplier(data,path):
     amount=sum(1 for t in _traits(data)
                if isinstance(t,dict) and t.get('active',True) and (_name(t.get('name'))==_name('Заинтересованный') or t.get('ruleId')==_known_id('traits','Заинтересованный'))

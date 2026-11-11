@@ -11,6 +11,7 @@ from app.models import LocationTrap,LocationCharacter,LocationCombatState,LobbyP
 from app.services.trap_catalog import PROFILES
 from app.services.exceptions import ValidationError,ConflictError,NotFoundError
 from app.services.transaction import atomic_operation
+from app.services.character_traits import background_is, trait_count, personal_tool_bonus
 
 
 def enabled():
@@ -127,6 +128,8 @@ def prepare(actor,data,payload,user_id):
             if not any(any(word in attack for word in ('реж','руб','cut','slash')) for attack in allowed):raise ValidationError('Это оружие не режет и не рубит')
         return {'operation':operation,'trap':trap,'profile':PROFILES[trap.recipe_id],'victim':victim,'action_points':2 if operation=='escape_net' else 3,'key':trap.recipe_id,'item':None,'tool':None}
     if operation=='place':
+        if background_is(data, 'Полевой инженер'):
+            raise ValidationError('Полевой инженер не может устанавливать ловушки')
         item=_item(data,payload.get('item_path'))
         template=resolve_item_template(item,actor.character.lobby_id) if item else None
         key=(template.attributes or {}).get('trap_recipe') if template else None
@@ -214,15 +217,16 @@ def execute(actor,data,payload,user_id,state=None):
     elif operation=='recover':
         data.setdefault('inventory',{}).setdefault('backpack',[]).append(deepcopy(trap.data['item']));trap.status='recovered'
     elif operation=='mask':
-        check=CombatService._narrative_skill_check(data,'skills.other.stealth')
-        bonus=_tool_bonus(plan['tool'],p,True);trap.detection_dc=check['total']+bonus
+        masking_bonus=4*trait_count(data,'Мастер маскировки')
+        check=CombatService._narrative_skill_check(data,'skills.other.stealth',roll_bonus=masking_bonus)
+        bonus=personal_tool_bonus(data,_tool_bonus(plan['tool'],p,True));trap.detection_dc=check['total']+bonus
         trap.known_users=list(set([*(trap.known_users or []),user_id]))
-        result.update(check={**check,'total':check['total']+bonus,'tool_bonus':bonus},roll_required=True)
+        result.update(check={**check,'total':check['total']+bonus,'tool_bonus':bonus,'masking_bonus':masking_bonus},roll_required=True)
     elif operation=='defuse':
-        bonus=_tool_bonus(plan['tool'],p)
+        bonus=personal_tool_bonus(data,_tool_bonus(plan['tool'],p))
         difficulty=p['difficulty']-CombatService._base_skill_modifier(data,'skills.other.engineering')-CombatService._base_skill_modifier(data,'skills.physical.awareness')-(bonus if isinstance(bonus,int) else 0)
         roll=random.randint(1,20);success=bonus=='automatic' or roll==20 or roll!=1 and roll>=difficulty
-        result.update(check={'roll':roll,'total':roll,'success':success},difficulty=difficulty,roll_required=True)
+        result.update(check={'roll':roll,'total':roll,'success':success,'tool_bonus':bonus},difficulty=difficulty,roll_required=True)
         if success:trap.status='disarmed'
         else:
             result['trigger']=trigger(trap,actor,state)

@@ -8,10 +8,12 @@ from app.services.crafting_rules import catalog
 TOOLS={'нож':5,'напильник':5,'ножницы':10,'плоскогубцы':10,'молоток':10,'отвертка':15,'мультитул':25}
 
 
-def tool_bonus(item):
+def tool_bonus(item, data=None):
     from app.services.crafting import normalized
+    from app.services.character_traits import personal_tool_bonus
     name=normalized(item.get('name'))
-    return 5 if 'нож' in name.split() or name.startswith('штык нож') else TOOLS.get(name,0)
+    bonus=5 if 'нож' in name.split() or name.startswith('штык нож') else TOOLS.get(name,0)
+    return personal_tool_bonus(data,bonus)
 
 
 def kind_of(item):
@@ -58,7 +60,7 @@ def plan(data,payload):
     book_subject=family(item) or {'ammo':'Боеприпасы','grenade':'Гранаты','electronics':'Электроника'}.get(kind)
     library=(data.get('crafting') or {}).get('library',[])
     book=25 if any(b.get('book_kind')=='equipment' and normalized(b.get('book_subject')).replace(' броня','')==normalized(book_subject) for b in library) else 0
-    bonus=CombatService._base_skill_modifier(data,'skills.other.engineering')*10+(tool_bonus(tool) if tool else 0)+book
+    bonus=CombatService._base_skill_modifier(data,'skills.other.engineering')*10+(tool_bonus(tool,data) if tool else 0)+book
     bonus+=amount_bonus if kind=='ammo' else factor+condition if kind in {'weapon','armor'} else factor if kind=='grenade' else 0
     missing=[m['name'] for band in catalog()['salvage'][kind] for m in band['materials'] if not _template(m['name'])]
     if missing:raise ValidationError('В каталоге нет компонентов результата: '+', '.join(sorted(set(missing))))

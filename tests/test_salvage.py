@@ -62,6 +62,27 @@ def test_salvage_without_tool_is_available_with_lower_bonus(client,salvage_works
     assert started.json['result']['kind']=='salvage'
 
 
+def test_field_engineer_salvage_uses_personal_tool_bonus_in_quote_and_job(client, salvage_workshop, auth_headers):
+    case = salvage_workshop
+    data = deepcopy(case['actor_character'].data)
+    data.setdefault('basic', {})['background'] = {'ruleId': 'background-z'}
+    data['inventory']['pockets'][3]['name'] = 'Нож'
+    case['actor_character'].data = data
+    db.session.commit()
+    selected = {'path': ['inventory', 'pockets', 4], 'tool_path': ['inventory', 'pockets', 3]}
+    without = call(client, case, auth_headers, 'quote_salvage', path=selected['path'])
+    quote = call(client, case, auth_headers, 'quote_salvage', **selected)
+    assert quote.status_code == 200, quote.json
+    assert quote.json['result']['bonus'] - without.json['result']['bonus'] == 8
+    snapshot = client.get(f"/lobbies/characters/{case['actor_character'].id}/crafting", headers=auth_headers(case['actor_user']))
+    assert snapshot.status_code == 200, snapshot.json
+    knife = next(entry for entry in snapshot.json['inventory'] if entry['path'] == selected['tool_path'])
+    assert knife['salvage_tool_bonus'] == 8
+    started = call(client, case, auth_headers, 'salvage', **selected)
+    assert started.status_code == 200, started.json
+    assert started.json['result']['bonus'] == quote.json['result']['bonus']
+
+
 def test_contents_and_tool_self_scrapping_are_rejected(salvage_workshop):
     data=deepcopy(salvage_workshop['actor_character'].data)
     data['inventory']['pockets'][4]['installedModules']=[{'name':'Прицел'}]

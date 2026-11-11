@@ -556,6 +556,7 @@ def _return_materials(data,escrow,lost):
 
 def snapshot(character,user_id):
     from app.services.character_creation import _catalog
+    from app.services.character_traits import background_is, trait_count
     from app.services.crafting_ammo import available_ammo
     from app.services.equipment_modifications import supported
     from app.services.flamethrower import resources
@@ -576,8 +577,11 @@ def snapshot(character,user_id):
     rules=catalog()
     placement=LocationCharacter.query.filter_by(character_id=character.id).order_by(LocationCharacter.last_action.desc().nullslast(),LocationCharacter.id.desc()).first()
     for entry in rules['modifications']:entry['automatic_installation']=supported(entry)
-    return {'catalog':rules,'ammo_options':available_ammo(),'state':state,'inventory':[{'path':path,'item':item,'uses':_available_uses(item),'salvage_kind':kind_of(item),'salvage_tool_bonus':tool_bonus(item),'tripwire_compatible':tripwire_grenade_allowed(item,character.lobby_id)} for path,item in entries(data)],
+    return {'catalog':rules,'ammo_options':available_ammo(),'state':state,'inventory':[{'path':path,'item':item,'uses':_available_uses(item),'salvage_kind':kind_of(item),'salvage_tool_bonus':tool_bonus(item,data),'tripwire_compatible':tripwire_grenade_allowed(item,character.lobby_id)} for path,item in entries(data)],
         'targets':modification_targets(data),'is_gm':character.lobby.gm_id==user_id,'revision':character.revision,
+        'trap_rules':{'placement_allowed':not background_is(data,'Полевой инженер'),
+            'tool_multiplier':1.5 if background_is(data,'Полевой инженер') else 1,
+            'masking_bonus':4*trait_count(data,'Мастер маскировки')},
         'stations':[{'id':obj.id,'name':obj.name,'kind':obj.properties['portable_station']} for obj in nearby(character)
             if (obj.properties or {}).get('portable_station') in {'recipe-m42','recipe-m43'} and ready(obj)],
         'placement':{'lobby_id':character.lobby_id,'location_id':placement.location_id,'actor_id':placement.id} if placement else None,

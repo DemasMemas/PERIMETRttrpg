@@ -55,6 +55,24 @@ def test_tools_use_exact_stats_and_ap_once(client,locked,auth_headers,monkeypatc
     assert len(entries)==1 and entries[0]['action_points']==3
 
 
+@pytest.mark.parametrize('name,strength,expected', [('Отмычка', 10, 3), ('Монтировка', 14, 8), (None, 10, -10)])
+def test_field_engineer_scales_tool_bonus_but_not_no_tool_penalty(client, locked, auth_headers, monkeypatch, name, strength, expected):
+    tool = add_tool(locked, name) if name else None
+    data = deepcopy(locked['actor_character'].data)
+    data.setdefault('basic', {})['background'] = {'ruleId': 'background-z'}
+    data['skills']['physical']['strength']['base'] = strength
+    locked['actor_character'].data = data
+    db.session.commit()
+    monkeypatch.setattr('app.services.object_locks.random.randint', lambda *_: 20)
+    body = command(locked, tool=tool)
+    response = attempt(client, locked, auth_headers, body)
+    assert response.status_code == 200, response.json
+    assert response.json['operation']['tool_bonus'] == expected
+    assert response.json['operation']['difficulty'] == max(1, 8 - expected)
+    assert attempt(client, locked, auth_headers, body).json['operation']['duplicate']
+    assert locked['actor_location'].action_points_current == 2
+
+
 def test_failed_pick_breaks_one_from_stack_without_opening(client,locked,auth_headers,monkeypatch):
     game=locked;tool=add_tool(game,quantity=2);rolls=iter([1,50]);monkeypatch.setattr('app.services.object_locks.random.randint',lambda *_:next(rolls))
     response=attempt(client,game,auth_headers,command(game,tool=tool));assert response.status_code==200,response.json

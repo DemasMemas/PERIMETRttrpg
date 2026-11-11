@@ -31,6 +31,120 @@ def request(pair,operation='place',**extra):
 def call(pair,payload):return operate(pair['lobby'].id,pair['location'].id,pair['actor_user']['id'],payload)
 
 
+@pytest.mark.parametrize('in_combat', [False, True])
+def test_field_engineer_cannot_place_trap_or_spend_item_and_ap(trap_game, client, auth_headers, in_combat):
+    from app.services.combat import CombatService
+    pair = trap_game
+    actor = pair['actor_location']
+    data = deepcopy(actor.character.data)
+    data.setdefault('basic', {})['background'] = {'ruleId': 'background-z'}
+    actor.character.data = data
+    if in_combat:
+        CombatService.start_combat(actor.location_id, pair['lobby'].gm_id, [actor.id], actor.id)
+    db.session.commit()
+    db.session.expire_all()
+    before, ap = deepcopy(actor.character.data), actor.action_points_current
+    loc = f"/lobbies/{pair['lobby'].id}/locations/{actor.location_id}"
+    payload = request(pair)
+    if in_combat:
+        response = client.post(loc + '/combat/action', headers=auth_headers(pair['actor_user']), json={
+            'location_character_id': actor.id, 'action_key': 'trap', 'attribute_choice': payload,
+            'pending_action_id': 'engineer-placement', 'item_path': payload['item_path'], 'item_id': payload['item_id'],
+        })
+    else:
+        response = client.post(loc + '/traps', headers=auth_headers(pair['actor_user']), json=payload)
+    assert response.status_code == 400, response.json
+    assert 'Полевой инженер' in str(response.json)
+    db.session.expire_all()
+    after = deepcopy(actor.character.data)
+    if in_combat:
+        # Отказ сохраняется в журнале; игровые ресурсы и содержимое остаются прежними.
+        history = after['health']['combatMeta'].pop('actionJournal')
+        previous = before['health']['combatMeta'].pop('actionJournal', [])
+        assert history[:-1] == previous
+        assert history[-1]['action_points'] == 0 and 'Полевой инженер' in history[-1]['reason']
+    assert after == before and actor.action_points_current == ap
+    assert LocationTrap.query.count() == 0
+
+
+@pytest.mark.parametrize('count,inactive,engineer,tool,expected', [
+    (0, False, False, None, 12), (1, False, False, None, 16),
+    (2, False, False, 'Нож', 21), (1, True, False, None, 12),
+    (1, False, True, 'Нож', 18), (2, False, True, 'Лопата', 25),
+])
+def test_masking_traits_and_tools_set_saved_detection_dc(trap_game, monkeypatch, count, inactive, engineer, tool, expected):
+    pair = trap_game
+    call(pair, request(pair))
+    trap = LocationTrap.query.one()
+    data = deepcopy(pair['actor_character'].data)
+    data['skills'] = {'other': {'stealth': {'base': 10}}}
+    data.setdefault('features', {})['specialTraits'] = [
+        {'ruleId': 'trait-f14', 'active': not inactive} for _ in range(count)
+    ]
+    if engineer:
+        data.setdefault('basic', {})['background'] = {'ruleId': 'background-z'}
+    data['inventory']['pockets'] = [{'name': tool, 'category': 'tool', 'quantity': 1}] if tool else []
+    pair['actor_character'].data = data
+    db.session.commit()
+    monkeypatch.setattr('app.services.combat.random.randint', lambda *_: 12)
+    payload = request(pair, 'mask', trap_id=trap.id, trap_revision=trap.revision,
+                      tool_path=['inventory', 'pockets', 0] if tool else None)
+    _, result = call(pair, payload)
+    assert result['check']['total'] == expected
+    assert trap.detection_dc == expected
+    call(pair, payload)
+    db.session.expire_all()
+    assert db.session.get(LocationTrap, trap.id).detection_dc == expected
+
+
+@pytest.mark.parametrize('engineer,roll,tool,expected_bonus,success', [
+    (False, 2, 'Нож', 5, False), (True, 2, 'Нож', 8, True),
+    (True, 1, 'Нож', 8, False), (True, 8, None, 0, True),
+])
+def test_engineer_defuse_tool_bonus_keeps_failure_and_optional_tool_rules(trap_game, monkeypatch, engineer, roll, tool, expected_bonus, success):
+    pair = trap_game
+    trap = LocationTrap(location_id=pair['location'].id, x=5, y=4, level=0,
+                        recipe_id='recipe-m5', status='armed', known_users=[], data={})
+    db.session.add(trap)
+    data = deepcopy(pair['actor_character'].data)
+    data['skills'] = {'physical': {'awareness': {'base': 10}}, 'other': {'engineering': {'base': 10}}}
+    if engineer:
+        data.setdefault('basic', {})['background'] = {'ruleId': 'background-z'}
+    data['inventory']['pockets'] = [{'name': tool, 'category': 'tool', 'quantity': 1}] if tool else []
+    pair['actor_character'].data = data
+    db.session.commit()
+    monkeypatch.setattr('app.services.traps.random.randint', lambda *_: roll)
+    payload = request(pair, 'defuse', trap_id=trap.id, trap_revision=trap.revision,
+                      tool_path=['inventory', 'pockets', 0] if tool else None)
+    _, result = call(pair, payload)
+    assert result['difficulty'] == 8 - expected_bonus
+    assert result['check']['success'] is success
+    assert trap.status == ('disarmed' if success else 'spent')
+    assert pair['actor_character'].data['inventory']['pockets'] == data['inventory']['pockets']
+    _, repeated = call(pair, payload)
+    assert repeated['check'] == result['check']
+
+
+def test_engineer_keeps_automatic_weight_tool_and_custom_trait_is_not_background(trap_game, monkeypatch):
+    pair = trap_game
+    data = deepcopy(pair['actor_character'].data)
+    data.setdefault('features', {})['specialTraits'] = [{'name': 'Полевой инженер'}]
+    pair['actor_character'].data = data
+    db.session.commit()
+    call(pair, request(pair))
+    trap = LocationTrap.query.one()
+    data = deepcopy(pair['actor_character'].data)
+    data.setdefault('basic', {})['background'] = {'ruleId': 'background-z'}
+    data['inventory']['pockets'] = [{'name': 'Грузик', 'category': 'tool', 'quantity': 1}]
+    pair['actor_character'].data = data
+    db.session.commit()
+    monkeypatch.setattr('app.services.traps.random.randint', lambda *_: 1)
+    _, result = call(pair, request(pair, 'defuse', trap_id=trap.id, trap_revision=trap.revision,
+                                  tool_path=['inventory', 'pockets', 0]))
+    assert result['check']['success'] and result['check']['tool_bonus'] == 'automatic'
+    assert trap.status == 'disarmed'
+
+
 def test_placement_is_replay_safe_and_masks_do_not_leak_in_location_api(trap_game,client,auth_headers,monkeypatch):
     pair=trap_game;payload=request(pair);call(pair,payload);call(pair,payload)
     trap=LocationTrap.query.one();assert pair['actor_character'].data['inventory']['pockets']==[]

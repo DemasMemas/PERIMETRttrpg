@@ -9,7 +9,7 @@ export async function showTrapAction({characterId,lobbyId,locationId,trap,operat
     const panel=document.createElement('div');panel.className='modal-content';panel.style.cssText='width:min(600px,90vw);max-height:80vh;overflow:auto;padding:20px';
     modal.append(panel);document.body.append(modal);
     const node=(tag,text)=>{const el=document.createElement(tag);el.textContent=text;return el;};
-    const close=node('button','Закрыть');close.type='button';close.onclick=()=>modal.remove();
+    const close=node('button','Закрыть');close.type='button';close.className='btn btn-secondary';close.onclick=()=>modal.remove();
     panel.append(node('h3',`${names[operation]}${trap?' · '+trap.name:''}`));
     try{
         const snapshot=await Server.getCrafting(characterId),character=await Server.getCharacter(characterId);
@@ -29,7 +29,10 @@ export async function showTrapAction({characterId,lobbyId,locationId,trap,operat
         const none=node('option',operation==='cut_net'?'Выберите острое оружие':'Без инструмента');none.value='';choice.append(none);
         for(const [index,entry]of tools.entries()){const option=node('option',entry.item.name);option.value=index;choice.append(option);}
         if(['mask','defuse','cut_net'].includes(operation))panel.append(node('label','Инструмент'),choice);
-        if(operation==='mask')panel.append(node('p','5 ОД. К20 + Скрытность + инструмент. Нож: +1; лопата или саперная лопатка: +3. Результат — СЛ обнаружения по Внимательности.'));
+        const toolMultiplier=snapshot.trap_rules?.tool_multiplier||1;
+        if(operation==='mask')panel.append(node('p',`5 ОД. К20 + Скрытность + инструмент. Нож: +${Math.ceil(toolMultiplier)}; лопата или саперная лопатка: +${Math.ceil(3*toolMultiplier)}. Результат — СЛ обнаружения по Внимательности.`));
+        if(operation==='mask'&&snapshot.trap_rules?.masking_bonus)panel.append(node('p',`Мастер маскировки: +${snapshot.trap_rules.masking_bonus} к броску.`));
+        if(['mask','defuse'].includes(operation)&&snapshot.trap_rules?.tool_multiplier>1)panel.append(node('p','Полевой инженер: бонус инструмента ×1,5 с округлением вверх.'));
         if(operation==='defuse')panel.append(node('p','2 ОД. При неудаче ловушка сработает. Инструмент не обязателен.'));
         if(operation==='escape_net')panel.append(node('p','2 ОД. Проверка Силы: СЛ 12.'));
         if(operation==='cut_net')panel.append(node('p','3 ОД. Нужна режущая или рубящая атака выбранного оружия.'));
@@ -54,6 +57,6 @@ export async function showTrapAction({characterId,lobbyId,locationId,trap,operat
                 submit.disabled=false;choice.disabled=false;
             }
         };
-        panel.append(submit,close);
+        const actions=node('div','');actions.style.cssText='display:flex;gap:8px;margin-top:12px';actions.append(submit,close);panel.append(actions);
     }catch(error){panel.append(node('p',error.message),close);}
 }

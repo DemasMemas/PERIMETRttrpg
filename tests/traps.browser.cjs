@@ -32,6 +32,8 @@ module.exports=async({page,request,token,lobby,base,safeSession})=>{
     let trap=await page.evaluate("__trapEvents.find(e=>e.object?.type==='placed_trap').object");
     assert.equal(trap.tile_x,42);assert.equal(trap.tile_y,48);
     await page.until(`L.sceneGraphicsForTest().roots.some(r=>r.userData.locationObjectId===${trap.id})`,'Ловушка появилась по сетевому событию');
+    await checkTrapTraits({page,request,token,api,loc,lobby,location,template,trap,safeSession});
+    trap=(await request(loc,null,token,'GET')).objects.find(o=>o.id===trap.id);
     await page.evaluate(`L.showObjectContextMenu(650,350,${JSON.stringify(trap)});true`);
     await page.until("[...document.querySelectorAll('button')].some(b=>b.textContent.includes('Замаскировать'))",'Действие маскировки');
     await page.evaluate("[...document.querySelectorAll('button')].find(b=>b.textContent.includes('Замаскировать')).click();true");
@@ -64,6 +66,34 @@ module.exports=async({page,request,token,lobby,base,safeSession})=>{
     await checkTripwireChoices({page,request,token,api,safeSession});
     console.log('Ловушки в Припяти: модели, установка мышью, сетевое появление, маскировка, reload, срабатывание и освобождение из сети проверены.');
 };
+
+async function checkTrapTraits({page,request,token,api,loc,lobby,location,template,trap,safeSession}){
+    const engineer=await request(api+'/characters',{name:'Инженер и маскировка',data:{
+        basic:{background:{ruleId:'background-z',name:'Полевой инженер'}},
+        features:{specialTraits:[{ruleId:'trait-f14',name:'Мастер маскировки'},{ruleId:'trait-f14',name:'Мастер маскировки'}]},
+        skills:{other:{stealth:{base:10}}},health:{current:700,max:700,effects:[]},
+        inventory:{pockets:[{id:'engineer-net',name:'Сеть',category:'misc',quantity:1,templateId:template.id+1000000,
+            attributes:template.attributes},{id:'engineer-shovel',name:'Лопата',category:'tool',quantity:1}],backpack:[]},
+    }},token);
+    await request(loc+'/spawn_character',{character_id:engineer.id,tile_x:41,tile_y:49},token);
+    await page.evaluate(`window.openCharacterSheet(${engineer.id},'inventory').then(()=>true)`);
+    await page.until("document.querySelector('[data-widget-key=place-station]')?.disabled",'Инженер видит недоступную установку ловушки');
+    assert.ok(await page.evaluate("document.querySelector('[data-widget-key=place-station]').title.includes('Полевой инженер')"));
+    await page.evaluate(`(async()=>{window.closeCharacterSheet();const {showTrapAction}=await import('/static/js/traps.js');await showTrapAction({characterId:${engineer.id},lobbyId:${lobby.id},locationId:${location.id},trap:${JSON.stringify(trap)},operation:'mask'});})()`);
+    await page.until("document.querySelector('#trap-action-modal')?.innerText.includes('Мастер маскировки: +8')",'Показан личный бонус маскировки');
+    assert.ok(await page.evaluate("document.querySelector('#trap-action-modal').innerText.includes('×1,5')"));
+    await page.evaluate("(()=>{const s=document.querySelector('#trap-action-modal select');s.value=[...s.options].find(o=>o.textContent==='Лопата').value;return true})()");
+    const screenshot=await page.call('Page.captureScreenshot',{format:'png'});
+    fs.writeFileSync(path.join(safeSession.artifacts,'trap-traits.png'),Buffer.from(screenshot.data,'base64'));
+    await page.evaluate("[...document.querySelectorAll('#trap-action-modal button')].find(b=>b.textContent==='Замаскировать').click();true");
+    await page.until("!document.getElementById('trap-action-modal')",'Бросок маскировки инженера сохранён');
+    const saved=await request('/lobbies/characters/'+engineer.id,null,token,'GET');
+    const result=saved.data.crafting.trap_receipts.at(-1).result;
+    assert.equal(result.check.tool_bonus,5);assert.equal(result.check.masking_bonus,8);
+    assert.equal(result.check.total,result.check.roll+13);
+    assert.equal(saved.data.inventory.pockets.length,2);
+    fs.writeFileSync(path.join(safeSession.artifacts,'trap-traits.json'),JSON.stringify(result,null,2));
+}
 
 async function checkTripwireChoices({page,request,token,api,safeSession}){
     const catalog=JSON.parse(fs.readFileSync(path.join(__dirname,'../app/data/equipment_catalog.json'),'utf8')).templates;

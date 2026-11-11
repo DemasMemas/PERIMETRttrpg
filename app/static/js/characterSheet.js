@@ -16801,6 +16801,9 @@ function renderBackpackItem(item, index, parentPath, parentContainer, allTemplat
         ||getInventoryItemCategory(item)==='tool'&&item.name?.trim().toLowerCase()==='самогонный аппарат') {
         const placeBtn=document.createElement('button');placeBtn.type='button';placeBtn.className='btn btn-sm btn-primary';
         placeBtn.textContent='Разместить';placeBtn.dataset.widgetKey='place-station';
+        if(item.attributes?.trap_recipe&&(backgroundIs(currentCharacterData,'Полевой инженер')||currentCharacterData.basic?.background?.ruleId==='background-z')){
+            placeBtn.disabled=true;placeBtn.title='Полевой инженер не может устанавливать ловушки';
+        }
         placeBtn.onclick=async e=>{
             e.stopPropagation();const characterId=currentCharacterId;
             if(!window.isLocationActive){showNotification('Откройте подлокацию с этим персонажем','system');return;}

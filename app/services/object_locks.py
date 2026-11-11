@@ -56,7 +56,8 @@ def _tool(data,source,lobby_id,strength):
             if definition and definition.name=='Баллон Горелки' and candidate.get('name')==definition.name and candidate.get('quantity',1)>0:
                 fuel=candidate_path;break
         if fuel is None:raise ValidationError('Для горелки нужен Баллон Горелки')
-    return item,bonuses[template.name],fuel
+    from app.services.character_traits import personal_tool_bonus
+    return item,personal_tool_bonus(data,bonuses[template.name]),fuel
 
 
 @journaled(kind='object_lock')
