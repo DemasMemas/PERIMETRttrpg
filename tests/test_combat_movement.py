@@ -1721,6 +1721,28 @@ def test_difficult_surface_route_cost_is_doubled(terrain, monkeypatch):
     assert CombatService._movement_route_cost(route, "walk")["movement_points"] == 3.5
     assert CombatService._movement_route_cost(route, "run")["movement_points"] == 1.75
 
+
+@pytest.mark.parametrize(('mode', 'points'), [
+    ('walk', 1.5), ('backward_sideways', 3), ('run', 0.75),
+    ('sprint', 0.5), ('correction', 0),
+])
+def test_overlapping_difficult_surfaces_preserve_base_movement_mode(mode, points):
+    from app.services.location_navigation import find_path
+
+    location = SimpleNamespace(grid_width=2, grid_height=1, tiles_data=[[
+        {'height': 1, 'terrain': 'grass'}, {'height': 1, 'terrain': 'snow'},
+    ]])
+    bushes = [{'type': 'bush', 'tile_x': 1, 'tile_y': 0, 'properties': {'level': 0}} for _ in range(2)]
+    costs = CombatService._movement_surface_costs(location, bushes)
+    assert costs[(1, 0, 0)] == 2
+    route = find_path(location, bushes, (0, 0, 0), (1, 0, 0), lambda level: (set(), {}),
+                      terrain_costs=costs, continuous=True)
+
+    assert route['distance'] == 1
+    assert route['cost'] == 1.5
+    assert CombatService._movement_route_cost(route, mode)['movement_points'] == points
+
+
 def test_mixed_surface_route_counts_destination_and_keeps_climb_separate(monkeypatch):
     location = SimpleNamespace(grid_width=4, grid_height=1, tiles_data=[
         [{"terrain": "snow"}, {"terrain": "concrete"}, {"terrain": "sand"}, {"terrain": "concrete"}]
