@@ -772,6 +772,37 @@ module.exports=async({page,request,token,lobby,loc,locationId,rules,safeSession}
     await request(loc+'/combat/end_turn',{location_character_id:crystalOrigin.location_character_id},token);
     assert.equal((await getSponge()).data._artifact_profile.movement_penalty,movementBefore);
     await request(loc+'/combat/end',{},token);
+
+    await equipSpecial('Нервный катализатор','native-nerve-catalyst');
+    await request(loc+'/combat/start',{location_character_ids:[crystalOrigin.location_character_id],
+        initiator_location_character_id:crystalOrigin.location_character_id,initiator_first:true},token);
+    const catalystBefore=(await getSponge()).data._artifact_profile;
+    const catalystAp=(await liveState()).current_character.action_points_current;
+    await clickSpecial('native-nerve-catalyst');
+    assert.equal((await liveState()).current_character.action_points_current,catalystAp-1);
+    const assertCatalyst=async (movementDelta,strengthDelta)=>{
+        const profile=(await getSponge()).data._artifact_profile;
+        assert.equal(profile.movement_penalty,catalystBefore.movement_penalty+movementDelta);
+        assert.equal(profile.skill_strength,catalystBefore.skill_strength+strengthDelta);
+    };
+    await assertCatalyst(-5,2);
+    await request(loc+'/combat/end_turn',{location_character_id:crystalOrigin.location_character_id},token);
+    await assertCatalyst(-5,2);
+    await request(loc+'/combat/end_turn',{location_character_id:crystalOrigin.location_character_id},token);
+    await assertCatalyst(0,0);
+    await request(loc+'/combat/end',{},token);
+
+    await equipSpecial('Звезда гнили','native-rot-star');
+    const rotStarBefore=await getSponge();
+    Object.assign(rotStarBefore.data.health,{current:300,max:700,radiation:40});
+    await request(spongeUrl,{data:rotStarBefore.data},token,'PUT');
+    const rotStarStart=(await getSponge()).data.health;
+    assert.equal(rotStarStart.radiation,40);
+    await clickSpecial('native-rot-star');
+    const rotStarAfter=(await getSponge()).data.health;
+    assert.equal(rotStarAfter.radiation,0);
+    assert.equal(rotStarAfter.current,rotStarStart.current+200);
+
     fs.writeFileSync(path.join(safeSession.artifacts,'artifact-special.json'),JSON.stringify({scene:'Припять',artifact:rule.name,
         preparedWornSeconds:86394,realRoundSeconds:6,readyAfterRealRound:true,realButtonActivations:2,apPerUse:1,
         first:{radiation:0,hp:200,cooldown:86400},second:{radiation:0,hp:300,cooldown:86394},reopened:true,
@@ -801,7 +832,9 @@ module.exports=async({page,request,token,lobby,loc,locationId,rules,safeSession}
         stormConductorSharedSight:{realButton:true,distance:28,damage:350},
         singleForecast:{realButton:true,actionPoints:2,psiPrice,dailyChargesSpent:0,gmNotice:true},
         staticCrystal:{facing:80,turnedAway:0,owner:0},
-        sparkVein:{actionPoints:1,movementReduction:3,rounds:1}},null,2));
+        sparkVein:{actionPoints:1,movementReduction:3,rounds:1},
+        nerveCatalyst:{actionPoints:1,movementReduction:5,strengthBonus:2,rounds:2},
+        rotStar:{radiationRemoved:40,hpRestored:200}},null,2));
     console.log('Особые свойства: подготовленное ношение+реальный раунд, две кнопки Ядра твари по1ОД без рук, радиация→ОЗ; общий срок после первого, переоткрытие.');
     console.log('Генератор: кнопка без радиации, фактический штраф перемещения−1→−3,600→594секунд за раунд; истечение по игровому времени возвращает−1.');
     console.log('Сердце жара: настоящая кнопка и настоящее горение; первый раунд0урона, после истечения50.');
