@@ -227,7 +227,11 @@ def execute(actor,data,payload,user_id,state=None):
         difficulty=p['difficulty']-CombatService._base_skill_modifier(data,'skills.other.engineering')-CombatService._base_skill_modifier(data,'skills.physical.awareness')-(bonus if isinstance(bonus,int) else 0)
         roll=random.randint(1,20);success=bonus=='automatic' or roll==20 or roll!=1 and roll>=difficulty
         result.update(check={'roll':roll,'total':roll,'success':success,'tool_bonus':bonus},difficulty=difficulty,roll_required=True)
-        if success:trap.status='disarmed'
+        if success:
+            trap.status='disarmed'
+            if not background_is(data, 'Полевой инженер'):
+                from app.services import noise
+                result['noise'] = noise.apply(actor.location, trap.x, trap.y, trap.level, 5)
         else:
             result['trigger']=trigger(trap,actor,state)
             actor._trap_end_turn=bool(result['trigger'].get('end_turn'))

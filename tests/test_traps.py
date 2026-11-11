@@ -100,9 +100,12 @@ def test_masking_traits_and_tools_set_saved_detection_dc(trap_game, monkeypatch,
 @pytest.mark.parametrize('engineer,roll,tool,expected_bonus,success', [
     (False, 2, 'Нож', 5, False), (True, 2, 'Нож', 8, True),
     (True, 1, 'Нож', 8, False), (True, 8, None, 0, True),
+    (False, 8, None, 0, True),
 ])
 def test_engineer_defuse_tool_bonus_keeps_failure_and_optional_tool_rules(trap_game, monkeypatch, engineer, roll, tool, expected_bonus, success):
     pair = trap_game
+    listener = pair['target_location']
+    listener.pos_x = 5
     trap = LocationTrap(location_id=pair['location'].id, x=5, y=4, level=0,
                         recipe_id='recipe-m5', status='armed', known_users=[], data={})
     db.session.add(trap)
@@ -121,8 +124,14 @@ def test_engineer_defuse_tool_bonus_keeps_failure_and_optional_tool_rules(trap_g
     assert result['check']['success'] is success
     assert trap.status == ('disarmed' if success else 'spent')
     assert pair['actor_character'].data['inventory']['pockets'] == data['inventory']['pockets']
+    expected_noise = 2.5 if success and not engineer else 0
+    assert sum(entry['noise_received'] for entry in result.get('noise', [])
+               if entry['character_id'] == listener.character_id) == expected_noise
+    from app.services.combat import CombatService
+    assert CombatService._deafness_level(listener.character.data) == expected_noise
     _, repeated = call(pair, payload)
     assert repeated['check'] == result['check']
+    assert CombatService._deafness_level(listener.character.data) == expected_noise
 
 
 def test_engineer_keeps_automatic_weight_tool_and_custom_trait_is_not_background(trap_game, monkeypatch):

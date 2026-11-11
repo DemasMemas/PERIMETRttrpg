@@ -423,11 +423,12 @@ def test_pacifist_failure_spends_ap_without_ammo_then_allows_retry(grenade_game,
     ({'ruleId': 'background-av'}, [], 'Маленький размер. Точность при стрельбе -2', 0),
     ({'name': 'Утиный стрелок'}, [], 'Маленький размер. Точность при стрельбе -2', 0),
     ({}, [{'name': 'Утиный стрелок'}], 'Маленький размер. Точность при стрельбе -2', -2),
-    ({'ruleId': 'background-av'}, [], 'Крошечный размер. Точность при стрельбе -5', -5),
+    ({}, [], 'Крошечный размер. Точность при стрельбе -5', -5),
+    ({'ruleId': 'background-av'}, [], 'Крошечный размер. Точность при стрельбе -5', -3),
     ({'ruleId': 'background-av'}, [], 'Большой размер. Точность при стрельбе +4', 4),
     ({'ruleId': 'background-av'}, [], 'Особая защита. Точность при стрельбе -3', -3),
 ])
-def test_duck_shooter_only_removes_small_target_penalty_in_paid_shot(grenade_game, monkeypatch, background, traits, target_trait, expected):
+def test_duck_shooter_adjusts_small_and_tiny_targets_in_paid_shot(grenade_game, monkeypatch, background, traits, target_trait, expected):
     case = grenade_game
     actor, target = case['actor_location'], case['target_location']
     target.pos_x, target.pos_y = actor.pos_x + 3, actor.pos_y

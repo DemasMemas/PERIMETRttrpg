@@ -3779,8 +3779,11 @@ class CombatService:
             match = re.search(r'Точность при стрельбе\s*([+-]\d+)', trait, re.IGNORECASE)
             if match:
                 modifier = int(match.group(1))
-                if modifier < 0 and re.search(r'\bМаленький размер\b', trait, re.IGNORECASE) and background_is(shooter_data, 'Утиный стрелок'):
-                    return 0
+                if modifier < 0 and background_is(shooter_data, 'Утиный стрелок'):
+                    if re.search(r'\bМаленький размер\b', trait, re.IGNORECASE):
+                        return 0
+                    if re.search(r'\bКрошечный размер\b', trait, re.IGNORECASE):
+                        return -3
                 return modifier
         return 0
 
