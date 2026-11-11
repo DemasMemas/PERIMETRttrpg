@@ -38,6 +38,8 @@ module.exports=async({page,request,token,lobby,base,connect,debugPort,safeSessio
  const allowed=await attack();result.clearAttempt={status:allowed.status,error:allowed.body.error,pending:allowed.body.pending_action};save();assert.equal(allowed.status,200,'после удаления холма штатное прицельное действие принято');
  result.checks.push({stage:'hill-removed',clientLos:clear,attackStatus:allowed.status,scope:'Принятие действия, не завершённый оплаченный выстрел'});
  await page.evaluate('exitLocation()');
+ await require('./terrain_los_pripyat.browser.cjs')({page,request,token,lobby,base,connect,debugPort,safeSession});
+ result.checks.push({stage:'pripyat-two-clients',liveTerrainUpdates:true,blockedShot:true,noApAmmoHpChange:true});save();
  const waterTiles=Array.from({length:8},()=>Array.from({length:8},()=>({terrain:'grass',height:1,objects:[]})));
  for(const [x,z,height] of [[2,2,1.4],[3,2,.8],[2,3,1.2],[6,6,2.4]])waterTiles[z][x]={terrain:'water',height,objects:[]};
  const waterLocation=await request(api+'/locations',{name:'№216 выравнивание водоёма',world_tile_x:11,world_tile_z:7,
