@@ -21,7 +21,7 @@ def _blind(data):
     )
 
 
-def select_electric_target(actor, data, target_id, radius):
+def select_electric_target(actor, data, target_id, radius, *, shared_sight=False):
     from app.services.combat import CombatService
     if not isinstance(actor, LocationCharacter) or type(target_id) is not int or target_id <= 0:
         raise ValidationError('Выберите видимую цель на подлокации')
@@ -54,7 +54,7 @@ def select_electric_target(actor, data, target_id, radius):
 
     if visible_from(actor, data):
         return target, round_number
-    if radius > SIGHT_RADIUS and actor.team_name:
+    if shared_sight and actor.team_name:
         team = CombatService._unique_location_characters(LocationCharacter.query.filter_by(
             location_id=actor.location_id, team_name=actor.team_name).all())
         for observer in team:

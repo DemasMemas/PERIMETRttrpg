@@ -1109,13 +1109,29 @@ def test_plasma_cord_teleports_to_visible_point_without_opportunity_attacks(gren
 
 
 def test_horizon_pull_moves_five_metres_towards_owner(grenade_game):
+    from app.models import LobbyCharacter, LocationCharacter
     actor, target = grenade_game['actor_location'], grenade_game['target_location']
     actor.character.data = ready(name='Глаз горизонта')
     target.pos_x, target.pos_y = actor.pos_x+8, actor.pos_y
     target.character.data = {'health':{'current':700,'max':700}}
+    actor.team_name = 'Разведка'
+    actor.facing_x, actor.facing_y = -1, 0
+    spotter = LobbyCharacter(lobby_id=actor.character.lobby_id, owner_id=actor.character.owner_id,
+                             name='Разведчик', data={'health': {'current':700,'max':700}})
+    db.session.add(spotter)
+    db.session.flush()
+    db.session.add(LocationCharacter(location_id=actor.location_id, character_id=spotter.id,
+        controlled_by=spotter.owner_id, pos_x=actor.pos_x+4, pos_y=actor.pos_y+1, floor_level=0,
+        facing_x=1, facing_y=0, team_name=actor.team_name))
     db.session.commit()
-    result = execute(actor, actor.character.data, {'item_id':'reactive-artifact','operation_id':'pull',
-                     'target_id':target.character_id}, grenade_game['lobby'].gm_id)
+    payload = {'item_id':'reactive-artifact','operation_id':'pull','target_id':target.character_id}
+    with pytest.raises(ValidationError, match='не видит цель'):
+        execute(actor, actor.character.data, payload, grenade_game['lobby'].gm_id)
+    assert target.pos_x == pytest.approx(actor.pos_x+8)
+    assert snapshot(actor.character.data)[0]['remaining_uses'] == 2
+
+    actor.facing_x = 1
+    result = execute(actor, actor.character.data, payload, grenade_game['lobby'].gm_id)
     assert target.pos_x == pytest.approx(actor.pos_x+3) and target.pos_y == actor.pos_y
     assert result['_moves'][0]['character_id'] == target.character_id
     assert target.character.data['health']['current'] == 700

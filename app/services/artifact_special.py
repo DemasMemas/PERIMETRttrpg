@@ -339,7 +339,10 @@ def prepare(actor, data, payload, user_id):
         raise ValidationError('Нет радиации для восстановления здоровья')
     plan = {'item': item, 'state': state, 'action_points': state['action_points']}
     if state['target_range'] and actor is not None:
-        plan['target'], plan['round_number'] = select_electric_target(actor, data, payload.get('target_id'), state['target_range'])
+        plan['target'], plan['round_number'] = select_electric_target(
+            actor, data, payload.get('target_id'), state['target_range'],
+            shared_sight=item['name'] == 'Проводник бури',
+        )
     if state['magnet_target'] and actor is not None:
         from app.services.artifact_magnet import select
         plan['magnet_source'] = select(actor, data, payload.get('magnet_target'))

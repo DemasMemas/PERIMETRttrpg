@@ -604,14 +604,21 @@ module.exports=async({page,request,token,lobby,loc,locationId,rules,safeSession}
         await request('/__testing/artifact-preparation/'+safeSession.runId,{character_id:spongeBearer.id},token);
         await changeMinutes(1);
     };
-    const clickSpecial=async(id)=>{
+    const clickSpecial=async(id,target)=>{
         await page.evaluate(`window.openCharacterSheet(${spongeBearer.id},'equipment').then(()=>true)`);
         await page.until("document.querySelector('.loadout-slot[data-equipment-open=armor]')",'Броня с проверяемым артефактом');
         await page.evaluate("document.querySelector('.loadout-slot[data-equipment-open=armor]').click();true");
         const button=`document.querySelector('[data-artifact-special="${id}"]:not(:disabled)')`;
         await page.until(button,'Артефакт готов');
+        const [combatResponses,sheetResponses]=await page.evaluate('[window.__artifactHttp.length,window.__artifactSheetHttp.length]');
         await page.evaluate(`${button}.click();true`);
+        if(target){
+            await page.until(target,'В выборе есть ожидаемая цель');
+            await page.evaluate(`${target}.click();true`);
+        }
         await page.evaluate('window.__artifactUsePromise.then(()=>true)');
+        const responses=await page.evaluate(`window.__artifactHttp.slice(${combatResponses}).concat(window.__artifactSheetHttp.slice(${sheetResponses}))`);
+        assert.deepEqual(responses.map(response=>response.status),[200],`${id}: ${JSON.stringify(responses)}`);
     };
     await equipSpecial('Полюс','native-pole');
     await request(loc+'/spawn_character',{character_id:spongeBearer.id,tile_x:45,tile_y:62,force_relocate:true},token);
@@ -803,6 +810,225 @@ module.exports=async({page,request,token,lobby,loc,locationId,rules,safeSession}
     assert.equal(rotStarAfter.radiation,0);
     assert.equal(rotStarAfter.current,rotStarStart.current+200);
 
+    const amplifierResults={};
+    for(const [name,id,other,physical,hpCost,movementCost] of [
+        ['Ядро мысли','native-thought-core',5,3,150,0],
+        ['Сердце Эха','native-echo-heart',8,4,0,3],
+    ]){
+        await equipSpecial(name,id);
+        const prepared=await getSponge();
+        prepared.data.health.current=700;
+        await request(spongeUrl,{data:prepared.data},token,'PUT');
+        const assertPhase=async (multiplier,health,movement)=>{
+            const data=(await getSponge()).data;
+            assert.equal(data.health.current,health,name);
+            assert.equal(data._artifact_profile.movement_penalty,movement,name);
+            assert.equal(data._artifact_profile.skill_other,other*multiplier,name);
+            assert.equal(data._artifact_profile.skill_physical,physical*multiplier,name);
+            for(const field of ['pain_per_movement','health_per_movement']){
+                assert.equal(data._artifact_profile[field],prepared.data._artifact_profile[field],name);
+            }
+        };
+        await assertPhase(1,700,0);
+        await clickSpecial(id);
+        await assertPhase(2,700,0);
+        await changeMinutes(1);
+        await assertPhase(1,700-hpCost,movementCost);
+        if(movementCost){
+            await changeMinutes(9);
+            // На десятой минуте ношения отдельно срабатывает пассивная потеря 50 ОЗ.
+            await assertPhase(1,650,movementCost);
+            await changeMinutes(1);
+            await assertPhase(1,650,0);
+        }else{
+            await changeMinutes(1);
+            await assertPhase(1,700-hpCost,0);
+        }
+        amplifierResults[id]={name,other:[other,other*2,other],physical:[physical,physical*2,physical],
+            boostSeconds:60,hpCost,movementCost,movementCostSeconds:movementCost?600:0};
+        console.log(`${name}: удвоение после нажатия, возврат через минуту, отложенная цена проверена.`);
+    }
+
+    for(const [name,id,threshold,protection,radiationCost,multiplier,radiationPerMovement] of [
+        ['Хозяин свечения','native-glow-master',30,10,20,2,5],
+        ['Реактор','native-reactor',40,20,50,3,8],
+    ]){
+        await equipSpecial(name,id);
+        const prepared=await getSponge();
+        prepared.data.health.radiation=threshold-1;
+        await request(spongeUrl,{data:prepared.data},token,'PUT');
+        const assertPhase=async (radiation,movement,defense)=>{
+            const data=(await getSponge()).data;
+            assert.equal(data.health.radiation,radiation,name);
+            assert.equal(data._artifact_profile.movement_penalty,movement,name);
+            assert.ok(Object.values(data._artifact_profile.protection).every(value=>value===defense),name);
+            assert.equal(data._artifact_profile.radiation_per_movement,radiationPerMovement,name);
+        };
+        await assertPhase(threshold-1,0,0);
+        await clickSpecial(id);
+        const radiation=threshold-1+radiationCost;
+        await assertPhase(radiation,-2*multiplier,protection*multiplier);
+        await changeMinutes(1);
+        await assertPhase(radiation,-2,protection);
+        amplifierResults[id]={name,multiplier,radiationCost,boostSeconds:60};
+    }
+
+    const startSolo=()=>request(loc+'/combat/start',{location_character_ids:[crystalOrigin.location_character_id],
+        initiator_location_character_id:crystalOrigin.location_character_id,initiator_first:true},token);
+    const endSoloTurn=()=>request(loc+'/combat/end_turn',{location_character_id:crystalOrigin.location_character_id},token);
+    const prepareHealth=async (getCharacter,sheetUrl,health)=>{
+        const sheet=await getCharacter();
+        sheet.data.health={max:700,current:700,effects:[],...health};
+        await request(sheetUrl,{data:sheet.data},token,'PUT');
+    };
+    await prepareHealth(getSponge,spongeUrl,{});
+    const timedResults={};
+    for(const {name,id,rounds,stats,movement=0,defense} of [
+        {name:'Пылающий осколок',id:'native-burning-shard',rounds:3,stats:['movement_penalty','physical_protection'],movement:-3,defense:['physical',10]},
+        {name:'Гнилая железа',id:'native-rotten-gland',rounds:10,stats:['chemical_protection'],defense:['chemical',20]},
+        {name:'Ядро пепелища',id:'native-ash-core',rounds:3,stats:['immune_thermal','movement_penalty'],movement:-4},
+        {name:'Печенка',id:'native-liver',rounds:1,stats:['immune_chemical']},
+        {name:'Сердце притяжения',id:'native-attraction-heart',rounds:1,stats:['immune_physical']},
+    ]){
+        await equipSpecial(name,id);
+        const baseline=(await getSponge()).data._artifact_profile;
+        await startSolo();
+        await clickSpecial(id);
+        const assertPhase=async remaining=>{
+            const data=(await getSponge()).data;
+            const effects=data.health.effects.filter(effect=>stats.includes(effect.artifact_stat));
+            assert.deepEqual(effects.map(effect=>effect.remaining_seconds),remaining?stats.map(()=>remaining):[],name);
+            assert.equal(data._artifact_profile.movement_penalty,baseline.movement_penalty+(remaining?movement:0),name);
+            if(defense){
+                const [kind,bonus]=defense;
+                assert.equal(data._artifact_profile.protection[kind],baseline.protection[kind]+(remaining?bonus:0),name);
+            }
+        };
+        await assertPhase(rounds*6);
+        for(let round=1;round<=rounds;round++){
+            await endSoloTurn();
+            await assertPhase((rounds-round)*6);
+        }
+        await request(loc+'/combat/end',{},token);
+        timedResults[id]={name,rounds,stats,movement,defense};
+    }
+
+    const remainingResults={};
+    const burningEffect={type:'burning',name:'Горение',remaining:6,tick:'round_end',source:'artifact-special-test-fire',damage_per_round:50};
+    for(const withDamage of [false,true]){
+        const id=`native-second-skin-${withDamage}`;
+        await equipSpecial('Вторая кожа',id);
+        await prepareHealth(getSponge,spongeUrl,{current:400,painLevel:6,effects:withDamage?[burningEffect]:[]});
+        await startSolo();
+        await clickSpecial(id);
+        const skinEffect=data=>data.health.effects.find(effect=>effect.artifact_stat==='second_skin');
+        assert.equal(skinEffect((await getSponge()).data).remaining_seconds,18);
+        await endSoloTurn();
+        const afterFirstRound=(await getSponge()).data;
+        assert.equal(Boolean(skinEffect(afterFirstRound).damage_taken),withDamage);
+        await endSoloTurn();
+        await endSoloTurn();
+        const expired=(await getSponge()).data;
+        assert.equal(skinEffect(expired),undefined);
+        assert.equal(expired.health.current,withDamage?250:550);
+        await request(loc+'/combat/end',{},token);
+    }
+    remainingResults.secondSkin={rounds:3,healingWithoutDamage:150,healingWithDamage:0};
+
+    const artifactPosition=async id=>(await request(loc+'/combat',null,token,'GET')).characters.find(row=>row.character_id===id);
+    const placeTestCharacter=(id,y)=>request(loc+'/spawn_character',{character_id:id,tile_x:45,tile_y:y,force_relocate:true},token);
+    for(const [id,x,y] of [[crystalFacing,30,67],[crystalTurned,30,65],[spotter.id,30,63]]){
+        await request(loc+'/spawn_character',{character_id:id,tile_x:x,tile_y:y,force_relocate:true},token);
+    }
+    await placeTestCharacter(spongeBearer.id,62);
+    await placeTestCharacter(exposed.id,64);
+    await prepareHealth(getSponge,spongeUrl,{});
+    await prepareHealth(getExposed,exposedUrl,{});
+    const placeDevice=async(getCharacter,sheetUrl,id)=>{
+        const sheet=await getCharacter();
+        sheet.data.inventory.pockets=[{id,name:'Фонарик',attributes:{portable_light:'hand'}}];
+        await request(sheetUrl,{data:sheet.data},token,'PUT');
+    };
+    await placeDevice(getSponge,spongeUrl,'storm-own-lamp');
+    await placeDevice(getExposed,exposedUrl,'storm-nearby-lamp');
+    await equipSpecial('Штормовой камень','native-storm-stone');
+    await clickSpecial('native-storm-stone');
+    assert.equal((await getExposed()).data.inventory.pockets[0].electronicsState.burned,true);
+    assert.ok(!(await getSponge()).data.inventory.pockets[0].electronicsState?.burned);
+    remainingResults.stormStone={nearbyDeviceBurned:true,ownerDeviceIntact:true};
+
+    for(const [name,id,damage] of [
+        ['Ядро возгорания','native-ignition-wave',0],
+        ['Железное сердце','native-iron-wave',75],
+        ['Свет горизонта','native-horizon-wave',50],
+    ]){
+        await equipSpecial(name,id);
+        await placeTestCharacter(exposed.id,64);
+        await prepareHealth(getSponge,spongeUrl,{effects:damage?[]:[burningEffect]});
+        await prepareHealth(getExposed,exposedUrl,{});
+        const before=(await artifactPosition(exposed.id)).y;
+        await clickSpecial(id);
+        const after=(await artifactPosition(exposed.id)).y;
+        assert.ok(after>before,name);
+        assert.equal((await getExposed()).data.health.current,700-damage,name);
+        assert.ok(!(await getSponge()).data.health.effects.some(effect=>effect.type==='burning'),name);
+        remainingResults[id]={name,damage,moved:after-before};
+    }
+
+    const beforeDaylight=await getSponge();
+    beforeDaylight.data.equipment.armor.containers=[];
+    await request(spongeUrl,{data:beforeDaylight.data},token,'PUT');
+    const daylight=await request('/lobbies/'+lobby.id,null,token,'GET');
+    await changeMinutes((720-daylight.game_time_minutes+1440)%1440);
+    await placeTestCharacter(exposed.id,67);
+    await request(loc+'/characters/'+spongeBearer.id+'/facing',{facing_x:0,facing_y:1},token,'PATCH');
+    await equipSpecial('Глаз горизонта','native-horizon-pull');
+    await clickSpecial('native-horizon-pull',targetChoice);
+    const pulled=(await artifactPosition(exposed.id)).y;
+    assert.ok(pulled<64&&pulled>62);
+    remainingResults.horizonPull={moved:67-pulled};
+
+    for(const [name,id,movement,accuracy] of [
+        ['Тень чужого','native-shadow-forecast',3,0],['Лик чужого','native-face-forecast',5,4],
+    ]){
+        await equipSpecial(name,id);
+        await prepareHealth(getSponge,spongeUrl,{});
+        await placeTestCharacter(exposed.id,66);
+        await page.evaluate("document.querySelectorAll('.notification').forEach(el=>el.remove());true");
+        await startSolo();
+        await clickSpecial(id);
+        await page.until(`Array.from(document.querySelectorAll('.notification')).some(el=>el.textContent.includes('Цель Пиявки')&&el.textContent.includes(${JSON.stringify(name)}))`,
+            `${name}: сообщение ГМу о намерениях противника`);
+        const getForecast=async()=>{
+            const data=(await getSponge()).data;
+            return {movement:data._artifact_profile.movement_penalty,
+                accuracy:data.health.effects.find(effect=>effect.artifact_stat==='forecast_accuracy')?.value||0};
+        };
+        assert.deepEqual(await getForecast(),{movement,accuracy});
+        for(let round=0;round<3;round++)await endSoloTurn();
+        assert.deepEqual(await getForecast(),{movement:0,accuracy});
+        for(let round=3;round<10;round++)await endSoloTurn();
+        assert.deepEqual(await getForecast(),{movement:0,accuracy:0});
+        await request(loc+'/combat/end',{},token);
+        remainingResults[id]={name,movement,accuracy,penaltyRounds:3};
+    }
+
+    await equipSpecial('Тяжесть','native-heavy-hit');
+    const heavyTarget=await placeTestCharacter(exposed.id,63);
+    await prepareHealth(getExposed,exposedUrl,{effects:[{type:'sleep',name:'Сон',source:'heavy-target-sleep',tick:'manual',active:true}]});
+    await request(loc+'/combat/start',{location_character_ids:[crystalOrigin.location_character_id,heavyTarget.location_character_id],
+        initiator_location_character_id:crystalOrigin.location_character_id,initiator_first:true},token);
+    const heavyAp=(await liveState()).current_character.action_points_current;
+    await clickSpecial('native-heavy-hit');
+    assert.equal((await liveState()).current_character.action_points_current,heavyAp-1);
+    assert.equal((await getSponge()).data._artifact_specials[0].remaining_uses,2);
+    const heavyStrike=await request(loc+'/combat/action',{location_character_id:crystalOrigin.location_character_id,
+        action_key:'attack',attack_type:'unarmed',weapon_index:-1,target_character_id:exposed.id},token);
+    assert.ok(heavyStrike.attack.results.some(hit=>hit.hit&&hit.ignores_armor&&hit.armor===0));
+    assert.equal((await getSponge()).data._artifact_specials[0].remaining_uses,1);
+    await request(loc+'/combat/end',{},token);
+    remainingResults.heavyHit={armedFor:1,spentOnHit:true,ignoresArmor:true};
+
     fs.writeFileSync(path.join(safeSession.artifacts,'artifact-special.json'),JSON.stringify({scene:'Припять',artifact:rule.name,
         preparedWornSeconds:86394,realRoundSeconds:6,readyAfterRealRound:true,realButtonActivations:2,apPerUse:1,
         first:{radiation:0,hp:200,cooldown:86400},second:{radiation:0,hp:300,cooldown:86394},reopened:true,
@@ -834,7 +1060,7 @@ module.exports=async({page,request,token,lobby,loc,locationId,rules,safeSession}
         staticCrystal:{facing:80,turnedAway:0,owner:0},
         sparkVein:{actionPoints:1,movementReduction:3,rounds:1},
         nerveCatalyst:{actionPoints:1,movementReduction:5,strengthBonus:2,rounds:2},
-        rotStar:{radiationRemoved:40,hpRestored:200}},null,2));
+        rotStar:{radiationRemoved:40,hpRestored:200},amplifiers:amplifierResults,timedEffects:timedResults,remaining:remainingResults},null,2));
     console.log('Особые свойства: подготовленное ношение+реальный раунд, две кнопки Ядра твари по1ОД без рук, радиация→ОЗ; общий срок после первого, переоткрытие.');
     console.log('Генератор: кнопка без радиации, фактический штраф перемещения−1→−3,600→594секунд за раунд; истечение по игровому времени возвращает−1.');
     console.log('Сердце жара: настоящая кнопка и настоящее горение; первый раунд0урона, после истечения50.');
