@@ -335,11 +335,10 @@ def quote(character,data,payload):
     from app.services.distillery import PREPARATION_RECIPES,RECIPES,is_distillery,occupied
     from app.services.equipment_passives import craft_difficulty_modifier
     from app.services.crafting_ammo import chosen_ammo
-    from app.services.character_traits import background_is, ammo_crafting_modifier
+    from app.services.character_traits import background_is, ammo_crafting_modifier, trait_count
     recipe=recipe_by_id(payload.get('recipe_id'));option=payload.get('tool_option',0)
     recipe,ammo_template,ammo_variant=chosen_ammo(recipe,payload)
     if recipe.get('requires_tool_crafting'):
-        from app.services.character_traits import trait_count
         if not trait_count(data,'Мастер на все руки') and not background_is(data,'Полевой ученый'):raise ValidationError('Изготовление инструментов требует «Мастера на все руки» или предыстории «Полевой учёный»')
     missing_tools=_tools(character,data,recipe,option)
     mutant_corpse=False
@@ -363,6 +362,11 @@ def quote(character,data,payload):
     output=ammo_template or _template(tool_output[0] if tool_output else recipe['output_name'])
     level=CombatService._skill_value(data,'skills.'+recipe['skill'])
     difficulty=recipe['difficulty_options'][option] if recipe['difficulty_options'] else 0
+    if background_is(data, 'Прогульщик'):
+        difficulty *= 2
+    precise_eye = trait_count(data, 'Точный глаз')
+    if precise_eye and (recipe['skill'] == 'other.medicine' or output and output.category == 'ammo'):
+        recipe = {**recipe, 'output_count': recipe['output_count'] * (5 + precise_eye) // 5}
     difficulty_modifier = craft_difficulty_modifier(data)
     if recipe['skill'] == 'other.medicine' and background_is(data, 'Фармацевт'):
         difficulty_modifier -= 40
@@ -772,6 +776,7 @@ def operate(character_id,user_id,payload):
             result['remote_source']={key:payload['remote_source'].get(key) for key in ('session_id','source_id')}
         state['current']=result
     elif action=='start':
+        from app.services.character_traits import trait_count
         from app.services.distillery import RECIPES,placement_at
         if state.get('current'):raise ConflictError('Сначала завершите или отмените текущую работу')
         for _,item in entries(data):item.setdefault('id',str(uuid4()))
@@ -793,6 +798,8 @@ def operate(character_id,user_id,payload):
             'ammo_template_id':plan['ammo_template_id'],
             'station_usage':station_usage,
             'started_at':now(character),'ready_at':now(character)+plan['duration_seconds']}
+        if result['recipe_id'] in {'recipe-aa15', 'recipe-aa16'}:
+            result['cook_bonus'] = trait_count(data, 'Первоклассный повар')
         if result['recipe_id']=='recipe-aa12':
             result['collection_station_id']=plan.get('station_id')
         if plan['preparation_seconds']:
@@ -918,7 +925,7 @@ def operate(character_id,user_id,payload):
             if job['recipe_id'] in {'recipe-aa15', 'recipe-aa16'}:
                 from app.services.cooked_meat import cooked_output
                 source=next(entry['item'] for entry in job['escrow'] if entry['component']==0)
-                cooked_output(source,job['recipe_id'],produced)
+                cooked_output(source, job['recipe_id'], produced, cook_bonus=job.get('cook_bonus', 0))
             if job.get('output_uses') is not None:
                 if type(produced.get('maxUses')) is not int or not 0<job['output_uses']<produced['maxUses']:
                     raise ConflictError('Каталожный максимум зарядов инструмента изменился')

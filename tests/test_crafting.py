@@ -1472,6 +1472,7 @@ def test_cooking_mutant_meat_keeps_source_radiation_and_reboils_without_duplicat
     db.session.add_all(ItemTemplate(**entry) for entry in meat_templates())
     data=deepcopy(workshop['actor_character'].data)
     data['skills']['other']['survival']={'base':20}
+    data['features']={'specialTraits':[{'ruleId':'trait-c14'},{'ruleId':'trait-c14'}]}
     data['inventory']['pockets'].extend([
         {'id':'raw-meat','name':'Мясо: Слепыш','category':'mutant_part','quantity':1,'price':25,
          'attributes':{'mutant_part':'meat','source_mutant':'Слепыш','radiation':25}},
@@ -1486,6 +1487,7 @@ def test_cooking_mutant_meat_keeps_source_radiation_and_reboils_without_duplicat
         started=call(client,workshop,auth_headers,'start',recipe_id='recipe-aa16',
                      operation_id=f'start-meat-{sequence}')
         assert started.status_code==200,started.json
+        assert started.json['result']['cook_bonus']==(2 if sequence==1 else 1)
         workshop['lobby'].game_time_minutes+=60
         db.session.commit()
         completed=call(client,workshop,auth_headers,'finish',job_id=started.json['result']['id'],
@@ -1495,7 +1497,12 @@ def test_cooking_mutant_meat_keeps_source_radiation_and_reboils_without_duplicat
                 if item.get('attributes',{}).get('cooked_meat')=='boiled']
         assert len(cooked)==1
         assert cooked[0]['attributes']['meat_remaining_radiation']==expected
+        assert cooked[0]['attributes']['cook_exhaustion_bonus']==2
         assert (cooked[0]['uses'],cooked[0]['price'],cooked[0]['weight'],cooked[0]['volume'])==(3,25,1,1)
+        updated=deepcopy(workshop['actor_character'].data)
+        updated['features']['specialTraits'].pop()
+        workshop['actor_character'].data=updated
+        db.session.commit()
     assert not any(item.get('id')=='raw-meat' for item in completed.json['data']['inventory']['pockets'])
 
 

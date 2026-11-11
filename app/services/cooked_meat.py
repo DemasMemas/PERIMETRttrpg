@@ -46,7 +46,7 @@ def _radiation(value):
     return float(value)
 
 
-def cooked_output(source, recipe_id, output):
+def cooked_output(source, recipe_id, output, *, cook_bonus=0):
     """Сохраняет исходный вид и снижает радиацию от исходного максимума."""
     if recipe_id not in RECIPES or not ingredient_matches(recipe_id, source):
         raise ValidationError('Для приготовления нужно мясо подходящего мутанта')
@@ -62,11 +62,19 @@ def cooked_output(source, recipe_id, output):
     new_attrs.update(cooked_meat=kind, source_mutant=attrs.get('source_mutant'),
         meat_original_radiation=original, meat_remaining_radiation=remaining,
         radiation=remaining, cooking_count=int(attrs.get('cooking_count') or 0) + 1)
+    bonus = max(cook_bonus, _cook_bonus(attrs))
+    if bonus:
+        new_attrs['cook_exhaustion_bonus'] = bonus
     output['price'] = source.get('price', 0)
     if attrs.get('cooked_meat') == 'boiled':
         output['uses'] = source.get('uses', 3)
         new_attrs['uses_remaining'] = output['uses']
     return output
+
+
+def _cook_bonus(attrs):
+    bonus = attrs.get('cook_exhaustion_bonus')
+    return bonus if type(bonus) is int and bonus > 0 else 0
 
 
 def portion_profile(template, item, profile, direct):
@@ -79,6 +87,6 @@ def portion_profile(template, item, profile, direct):
         raise ValidationError('У мяса нет подтверждённого профиля приготовления')
     profile, direct = deepcopy(profile), deepcopy(direct)
     direct.update(nutrition=1, radiation_delta=remaining / 3,
-                  exhaustion_delta=0.5 if remaining else -1)
+                  exhaustion_delta=(0.5 if remaining else -1) - _cook_bonus(attrs))
     profile['direct'] = direct
     return profile, direct

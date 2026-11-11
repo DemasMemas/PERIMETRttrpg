@@ -12180,6 +12180,10 @@ class CombatService:
                 'total': total,
                 'weapon_name': weapon['name'],
             }
+            if background_is(actor_data, 'Утилизатор'):
+                risk_roll = random.randint(1, 100)
+                pending['utilizer_risk_roll'] = risk_roll
+                pending['total'] = 0 if risk_roll <= 10 else math.floor(total * 1.5)
             target_meta['butcheringRoll'] = pending
             target.character.data = target_data
             flag_modified(target.character, 'data')

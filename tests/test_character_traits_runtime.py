@@ -479,6 +479,37 @@ def test_hunter_completed_butchering_removes_all_debt_not_other_stress(grenade_g
     assert not actor.character.data['health']['combatMeta'].get('hunterStressDebt')
 
 
+@pytest.mark.parametrize('risk,total', [(10, 0), (11, 22)])
+def test_utilizer_butchering_points_and_risk_are_saved_before_selection(grenade_game, monkeypatch, risk, total):
+    actor, target = grenade_game['actor_location'], grenade_game['target_location']
+    LocationCombatState.query.filter_by(location_id=actor.location_id).one().status = 'idle'
+    data = deepcopy(actor.character.data)
+    data['basic'] = {'background': {'ruleId': 'background-o'}}
+    data['skills']['other']['survival'] = {'base': 10, 'bonus': 0}
+    data['weapons'] = [{'id': 'knife', 'name': 'Охотничий нож', 'category': 'melee_weapon',
+                        'attributes': {'armor_piercing': 100, 'allowed_attacks': ['Колющий']}}]
+    actor.character.data = data
+    actor.drawn_weapon_index = 0
+    target.character.data = {**deepcopy(target.character.data), 'is_mutant': True, 'basic': {'mutant_type': 'Кабан'},
+                             'health': {'current': 0, 'max': 700, 'effects': [{'type': 'death'}]}}
+    target.pos_x, target.pos_y = actor.pos_x + 1, actor.pos_y
+    db.session.commit()
+    calls = []
+    def roll(lower, upper):
+        calls.append((lower, upper))
+        return risk if upper == 100 else 19
+    monkeypatch.setattr('app.services.combat.random.randint', roll)
+    args = actor.location_id, grenade_game['lobby'].gm_id, actor.id, target.character_id
+    first = CombatService.butcher_mutant(*args)['roll']
+    assert first['utilizer_risk_roll'] == risk
+    assert first['total'] == total
+    assert CombatService.butcher_mutant(*args)['roll'] == first
+    if risk == 10:
+        with pytest.raises(ValidationError, match='не хватает очков'):
+            CombatService.butcher_mutant(*args, allocation={'meat': 1})
+    assert calls == [(1, 20), (1, 100)]
+
+
 def test_helper_deferred_payment_clears_penalty_only_when_fully_paid(grenade_game):
     actor,target=grenade_game['actor_location'],grenade_game['target_location']
     data=deepcopy(actor.character.data);data['basic']={'background':{'name':'Помощник'}}

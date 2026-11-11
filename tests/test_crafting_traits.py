@@ -99,3 +99,34 @@ def test_ammo_trait_applies_only_to_chosen_caliber(workshop,recipe_id,variant):
     assert trained['recipe']['output_count']==base['recipe']['output_count']
     assert trained['allocations']==base['allocations']
     assert trained['missing']==base['missing']
+
+
+def test_truant_doubles_base_difficulty_before_skill_reduction(workshop):
+    ammo = ammo_workshop(workshop)
+    character = workshop['actor_character']
+    data = deepcopy(character.data)
+    recipe = next(entry for entry in catalog()['recipes'] if entry['id'] == 'recipe-v26')
+    group, skill = recipe['skill'].split('.')
+    data['skills'][group][skill] = {'base': 20, 'bonus': 0}
+    payload = {'recipe_id': recipe['id'], 'ammo_template_id': ammo.id}
+    assert quote(character, data, payload)['difficulty'] == 35
+    data.setdefault('basic', {})['background'] = {'ruleId': 'background-m'}
+    result = quote(character, data, payload)
+    assert result['original_difficulty'] == 130
+    assert result['difficulty'] == 100
+
+
+def test_precise_eye_increases_ammo_and_medicine_by_twenty_percent_rounding_down(workshop):
+    ammo = ammo_workshop(workshop)
+    character = workshop['actor_character']
+    data = deepcopy(character.data)
+    data['skills']['other'].update(medicine={'base': 10}, survival={'base': 10})
+    for payload in [{'recipe_id': 'recipe-v26', 'ammo_template_id': ammo.id},
+                    {'recipe_id': 'recipe-aa21'}, {'recipe_id': 'recipe-aa15'}]:
+        base = quote(character, data, payload)
+        trained = deepcopy(data)
+        trained['features'] = {'specialTraits': [{'ruleId': 'trait-d14'}, {'name': 'Точный глаз', 'active': False}]}
+        result = quote(character, trained, payload)
+        count = base['recipe']['output_count']
+        assert result['recipe']['output_count'] == (count * 6 // 5 if payload['recipe_id'] != 'recipe-aa15' else count)
+        assert result['allocations'] == base['allocations']
