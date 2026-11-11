@@ -110,9 +110,11 @@ module.exports=async({page,request,token,lobby,offered,loc,safeSession})=>{
     await shot('day-terrain-after-lights');
     const errors=await page.evaluate('FG.renderer.getContext().getError()');assert.equal(errors,0,'Ошибка графики после переключений');
     await page.evaluate(`window.openCharacterSheet(${owner.id},'equipment').then(()=>true)`);
-    await page.until("document.querySelectorAll('.portable-light-options').length===5",'Батарейки и крепление в нижних строках');
+    await page.evaluate("document.querySelector('.equipment-panel-tab[data-panel=detector]').click();true");
     for(const[width,height]of [[1920,1080],[1600,900],[1366,768],[1280,720]]){
         await page.call('Emulation.setDeviceMetricsOverride',{width,height,deviceScaleFactor:1,mobile:false});
+        await page.until("[...document.querySelectorAll('.portable-light-options')].filter(group=>group.offsetWidth>0).length===5",
+            'Батарейки и крепления видны после обновления вкладки «Приборы»');
         const groups=await page.evaluate(`(()=>{const box=e=>{const r=e.getBoundingClientRect();return{x:r.x,y:r.y,right:r.right,bottom:r.bottom}};
             return [...document.querySelectorAll('.portable-light-options')].map(group=>({
                 select:box(group.querySelector('select')),button:box(group.querySelector('button')),group:box(group),
