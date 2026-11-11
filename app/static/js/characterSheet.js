@@ -1451,6 +1451,9 @@ function getItemSlots(item) {
         }
     }
     slots = [...(slots || [])];
+    if (artifactContainerKind(item) && !slots.some(slot => slot?.type === 'artifact')) {
+        slots.push({type:'artifact', label:'Артефакт', maxItems:1});
+    }
     if (item.slotType === 'visor' || item.attributes?.slot_type === 'visor') {
         const visorSlots = slots.filter(slot => !['nvg', 'light'].includes(slot.type));
         const installed = item.installedModules || [];
@@ -4786,7 +4789,8 @@ async function renderEquipmentTab(data, { focusWeaponIndex = null } = {}) {
                                 `}
                             </div>
                             ${slot.item ? [slot.item,...(slot.item.installedModules||[])].map(renderArtifactSpecial).join('') : ''}
-                            ${slot.item && slot.item.category === 'container' && slot.item.installedModules?.length ? `
+                            ${artifactContainerKind(slot.item) ? renderSlotsUniversal(slot.item, ['equipment','armor','containers',idx,'item']) : ''}
+                            ${slot.item && !artifactContainerKind(slot.item) && slot.item.category === 'container' && slot.item.installedModules?.length ? `
                                 <div style="margin-top: 5px; font-size: 0.75rem; color: #aaa; word-break: break-all;">
                                     📦 ${slot.item.installedModules.map(m => m.name).join(', ')}
                                 </div>
@@ -5431,7 +5435,8 @@ function renderSlotsUniversal(item, itemPath, depth = 0) {
     let html = '';
 
     for (const slot of slots) {
-        const installed = (item.installedModules || []).find(m => m.slotType === slot.type);
+        const artifactSlot = slot.type === 'artifact' && artifactContainerKind(item);
+        const installed = artifactSlot ? artifactInContainer(item) : (item.installedModules || []).find(m => m.slotType === slot.type);
 
         if (installed) {
             let info = escapeHtml(installed.name);
@@ -5472,7 +5477,7 @@ function renderSlotsUniversal(item, itemPath, depth = 0) {
                 info = `${info} (Физ. защита ${formatProtectionPercent(prot)}. Стадия ${stageText}. Прочность стадии ${currentStageDur}/${maxStageDur})`;
             }
 
-            const uninstallBtn = `<button type="button" class="btn btn-sm btn-danger" onclick="window.uninstallModuleFromSlot('${JSON.stringify(itemPath).replace(/"/g, '&quot;')}', '${slot.type}')">Снять</button>`;
+            const uninstallBtn = `<button type="button" class="btn btn-sm btn-danger" onclick="window.uninstallModuleFromSlot('${JSON.stringify(itemPath).replace(/"/g, '&quot;')}', '${slot.type}')">${artifactSlot ? 'Извлечь · 8 ОД в бою' : 'Снять'}</button>`;
             const configBtn = (slot.type === 'visor') ? `<button type="button" class="btn btn-sm btn-secondary" onclick="openVisorModificationsModal('${JSON.stringify(itemPath).replace(/"/g, '&quot;')}', '${slot.type}')">⚙️</button>` : '';
 
             html += `
@@ -5484,11 +5489,14 @@ function renderSlotsUniversal(item, itemPath, depth = 0) {
                 </div>
             `;
 
-            const installedIndex = (item.installedModules || []).findIndex(m => m.slotType === slot.type);
-            const subPath = itemPath.concat(['installedModules', installedIndex]);
-            html += renderSlotsUniversal(installed, subPath, depth + 1);
+            if (!artifactSlot) {
+                const installedIndex = (item.installedModules || []).findIndex(m => m.slotType === slot.type);
+                const subPath = itemPath.concat(['installedModules', installedIndex]);
+                html += renderSlotsUniversal(installed, subPath, depth + 1);
+            }
         } else {
-            const installBtn = `<button type="button" class="btn btn-sm btn-primary" onclick="window.installModuleFromSlot('${JSON.stringify(itemPath).replace(/"/g, '&quot;')}', '${slot.type}')">Установить</button>`;
+            if (artifactSlot === 'storage' && itemPath[0] === 'equipment' && itemPath[1] === 'armor') continue;
+            const installBtn = `<button type="button" class="btn btn-sm btn-primary" onclick="window.installModuleFromSlot('${JSON.stringify(itemPath).replace(/"/g, '&quot;')}', '${slot.type}')">${artifactSlot ? 'Вложить · 4 ОД в бою' : 'Установить'}</button>`;
             html += `
                 <div style="margin-left:${indent}px; display:flex; align-items:center; gap:10px; margin-top:5px;">
                     <span style="width:100px;">${slot.label}:</span>
@@ -7759,10 +7767,10 @@ window.addItemToArmorContainer = async function(containerIndex) {
     const collect = (items, path) => {
         if (!Array.isArray(items)) return;
         items.forEach((it, idx) => {
-            if (it.category === 'container' || it.category === 'artifact') {
+            if ((it.category === 'container' && artifactContainerKind(it) !== 'storage') || it.category === 'artifact') {
                 candidates.push({ item: it, path: path.concat(idx) });
             }
-            if (it.contents) collect(it.contents, path.concat(idx, 'contents'));
+            if (it.contents && !artifactContainerKind(it)) collect(it.contents, path.concat(idx, 'contents'));
         });
     };
     collect(currentCharacterData.inventory?.backpack, ['inventory', 'backpack']);
@@ -7848,6 +7856,18 @@ function isArtifactContainer(item) {
     if (!template) return false;
     const slots = template.attributes?.slots || [];
     return slots.some(s => s.type === 'artifact');
+}
+
+function artifactContainerKind(item) {
+    if (item?.category !== 'container') return null;
+    const template = allTemplatesCache?.find(entry => Number(entry.id) === Number(item.templateId));
+    const kind = item.attributes?.artifact_container_kind ?? template?.attributes?.artifact_container_kind;
+    return ['storage', 'equipped'].includes(kind) ? kind : null;
+}
+
+function artifactInContainer(item) {
+    return item?.installedModules?.find(module => module?.category === 'artifact' || module?.slotType === 'artifact')
+        || item?.contents?.find(module => module?.category === 'artifact');
 }
 
 // Просмотр содержимого контейнера (если это контейнер)
@@ -8458,20 +8478,24 @@ async function runEquipmentAction(operation, slot, itemPath = null) {
     return result;
 }
 
-async function runEquipmentModuleAction(operation, targetPath, slotType, itemPath = null) {
+function equipmentModuleIdentity(item) {
+    return item ? Object.fromEntries(['id', 'templateId', 'name', 'category']
+        .filter(key => item[key] !== undefined).map(key => [key, item[key]])) : null;
+}
+
+async function runEquipmentModuleAction(operation, targetPath, slotType, itemPath = null, expected = null) {
     const characterId = currentCharacterId;
+    const artifact = slotType === 'artifact';
+    const initialTarget = getItemByPath(targetPath);
+    if (artifact && !expected) {
+        expected = {target:equipmentModuleIdentity(initialTarget), source:equipmentModuleIdentity(artifactInContainer(initialTarget))};
+    }
     if (autoSaveTimer) await forceSyncCharacter();
     await Server.waitForCharacterSave(characterId);
     if (characterId !== currentCharacterId) return;
     if (sheetSaveBlocked) throw new Error('Переоткройте лист перед сменой модуля');
     const target = getItemByPath(targetPath);
-    const source = itemPath ? getItemByPath(itemPath) : null;
-    const identity = item => item ? Object.fromEntries(
-        ['id', 'templateId', 'name', 'category']
-            .filter(key => item[key] !== undefined)
-            .map(key => [key, item[key]])
-    ) : null;
-    const selection = { target: identity(target), source: identity(source) };
+    const selection = expected || {target:equipmentModuleIdentity(target), source:equipmentModuleIdentity(itemPath ? getItemByPath(itemPath) : null)};
     const combat = await Server.getEquipmentCombat(characterId);
     if (characterId !== currentCharacterId) return;
     let result;
@@ -8498,7 +8522,7 @@ async function runEquipmentModuleAction(operation, targetPath, slotType, itemPat
         if (result?.pending_action) {
             const sceneModule = await import('./locationScene.js');
             sceneModule.registerDeferredCombatAction(result.pending_action_id, payload);
-            showNotification('Установка фильтра начата и продолжится в следующем ходу', 'system');
+            showNotification(artifact ? 'Действие с контейнером продолжится в следующем ходу' : 'Установка фильтра начата и продолжится в следующем ходу', 'system');
             return result;
         }
         if (characterId === currentCharacterId) await refreshCharacterAfterEquipmentAction();
@@ -8513,7 +8537,10 @@ async function runEquipmentModuleAction(operation, targetPath, slotType, itemPat
         });
         if (characterId === currentCharacterId) await refreshCharacterAfterEquipmentAction(result.data);
     }
-    showNotification(operation === 'install' ? 'Фильтр установлен' : 'Фильтр снят', 'success');
+    const message = artifact
+        ? (operation === 'install' ? 'Артефакт вложен' : 'Артефакт извлечён')
+        : (operation === 'install' ? 'Фильтр установлен' : 'Фильтр снят');
+    showNotification(message, 'success');
     return result;
 }
 
@@ -16639,7 +16666,9 @@ function renderBackpackItem(item, index, parentPath, parentContainer, allTemplat
     itemDiv.dataset.widgetIdentity = JSON.stringify(item.id != null ? { id: item.id } : { templateId: item.templateId, name: item.name, category: item.category });
 
     // Если предмет — контейнер, делаем его drop-целью (закрытый контейнер)
-    const isArtifactCont = isArtifactContainer(item);
+    const catalogArtifactContainer = artifactContainerKind(item);
+    const isArtifactCont = catalogArtifactContainer || isArtifactContainer(item);
+    const showContents = !isArtifactCont || Boolean(catalogArtifactContainer && item.contents?.some(entry => entry.category !== 'artifact'));
     if (item.isContainer && !isArtifactCont) {
         setupDropTarget(itemDiv, itemPath.concat('contents'), item);
     }
@@ -16666,7 +16695,7 @@ function renderBackpackItem(item, index, parentPath, parentContainer, allTemplat
     nameWrapper.style.display = 'flex';
     nameWrapper.style.alignItems = 'center';
 
-    if (item.isContainer && !isArtifactCont) {
+    if (item.isContainer && showContents) {
         const toggleIcon = document.createElement('span');
         toggleIcon.textContent = '▶';
         toggleIcon.style.cursor = 'pointer';
@@ -17074,7 +17103,7 @@ function renderBackpackItem(item, index, parentPath, parentContainer, allTemplat
     }
 
     // Содержимое контейнера
-    if (item.isContainer && !isArtifactCont) {
+    if (item.isContainer && showContents) {
         const template = allTemplates?.find(t => t.id === item.templateId);
         const hasArmorPlateSlot = template?.attributes?.slots?.some(s => s.type === 'armor_plate');
         if (!hasArmorPlateSlot) {
@@ -17089,11 +17118,12 @@ function renderBackpackItem(item, index, parentPath, parentContainer, allTemplat
 
             if (item.contents && item.contents.length > 0) {
                 item.contents.forEach((subItem, subIndex) => {
+                    if (catalogArtifactContainer && subItem.category === 'artifact') return;
                     renderBackpackItem(subItem, subIndex, itemPath.concat('contents'), contentsDiv, allTemplates);
                 });
             }
 
-            if (window.isGM) {
+            if (window.isGM && !catalogArtifactContainer) {
                 const addBtn = document.createElement('button');
                 addBtn.type = 'button';
                 addBtn.className = 'btn btn-sm btn-secondary';
@@ -17102,7 +17132,7 @@ function renderBackpackItem(item, index, parentPath, parentContainer, allTemplat
                 contentsDiv.appendChild(addBtn);
             }
 
-            setupDropTarget(contentsDiv, itemPath.concat('contents'), item);
+            if (!catalogArtifactContainer) setupDropTarget(contentsDiv, itemPath.concat('contents'), item);
             itemDiv.appendChild(contentsDiv);
             itemDiv._contentsDiv = contentsDiv;
 
@@ -17885,7 +17915,7 @@ window.universalInstallModulePrompt = async function(targetPath, slotType) {
                 matches = (it.slot_type === slotType) || (it.attributes?.slot_type === slotType);
             }
             if (matches) candidateModules.push({ item: it, path: path.concat(idx), type });
-            if (it.contents) collect(it.contents, path.concat(idx, 'contents'));
+            if (it.contents && (slotType !== 'artifact' || !artifactContainerKind(it))) collect(it.contents, path.concat(idx, 'contents'));
         });
     };
 
@@ -17946,11 +17976,13 @@ window.universalInstallModulePrompt = async function(targetPath, slotType) {
         const selected = candidateModules[idx];
         modal.remove();
 
-        if (slotType === 'filter') {
+        if (slotType === 'filter' || (slotType === 'artifact' && artifactContainerKind(targetItem))) {
             try {
-                await runEquipmentModuleAction('install', targetPath, slotType, selected.path);
+                const expected = slotType === 'artifact'
+                    ? {target:equipmentModuleIdentity(targetItem), source:equipmentModuleIdentity(selected.item)} : null;
+                await runEquipmentModuleAction('install', targetPath, slotType, selected.path, expected);
             } catch (error) {
-                showNotification(error.message || 'Не удалось установить фильтр');
+                showNotification(error.message || (slotType === 'artifact' ? 'Не удалось вложить артефакт' : 'Не удалось установить фильтр'));
             }
             return;
         }
@@ -18012,11 +18044,11 @@ function universalUninstallModule(targetItem, targetPath, slotType) {
 }
 
 window.universalUninstallModuleByPath = async function(targetPath, slotType) {
-    if (slotType === 'filter') {
+    if (slotType === 'filter' || (slotType === 'artifact' && artifactContainerKind(getItemByPath(targetPath)))) {
         try {
             await runEquipmentModuleAction('uninstall', targetPath, slotType);
         } catch (error) {
-            showNotification(error.message || 'Не удалось снять фильтр');
+            showNotification(error.message || (slotType === 'artifact' ? 'Не удалось извлечь артефакт' : 'Не удалось снять фильтр'));
         }
         return;
     }

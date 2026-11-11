@@ -2,6 +2,7 @@
 
 from copy import deepcopy
 import re
+from uuid import uuid4
 
 from sqlalchemy.orm.attributes import flag_modified
 
@@ -15,7 +16,7 @@ from app.services.magazine import inventory_slot
 from app.services.transaction import atomic_operation
 
 
-SUPPORTED_SLOTS = {"filter"}
+SUPPORTED_SLOTS = {"filter", "artifact"}
 IDENTITY_FIELDS = ("id", "templateId", "name", "category")
 
 
@@ -57,6 +58,12 @@ def _slots(item):
 def _validate_target(target, slot_type):
     if slot_type not in SUPPORTED_SLOTS:
         raise ValidationError("Этот тип модуля пока нельзя устанавливать сервером")
+    if slot_type == "artifact":
+        attrs = _container_attributes(target)
+        if (target.get("category") != "container" or target.get("quantity", 1) != 1
+                or attrs.get("artifact_container_kind") not in {"storage", "equipped"}):
+            raise ValidationError("Выберите отдельный контейнер для артефактов")
+        return
     installed = target.get("installedModules") or []
     has_installed_slot = any(
         isinstance(module, dict) and module.get("slotType") == slot_type
@@ -67,6 +74,63 @@ def _validate_target(target, slot_type):
     category = str(target.get("category") or (_template(target).category if _template(target) else "")).lower()
     if category not in {"gas_mask", "helmet"}:
         raise ValidationError("Фильтр можно установить только в противогаз или противогазо-шлем")
+
+
+def _container_attributes(target):
+    template = _template(target)
+    return {**((template.attributes or {}) if template else {}), **(target.get("attributes") or {})}
+
+
+def _artifact_slot(target):
+    for key in ("installedModules", "contents"):
+        for index, item in enumerate(target.get(key) or []):
+            if isinstance(item, dict) and (item.get("category") == "artifact" or item.get("slotType") == "artifact"):
+                return target[key], index
+    return None
+
+
+def _artifact_source(data, path):
+    _validate_source_path(path)
+    if "installedModules" in path or "containers" in path:
+        raise ValidationError("Сначала извлеките артефакт из контейнера или снимите его с крепления")
+    parent, index = inventory_slot(data, path)
+    source = parent[index]
+    quantity = source.get("quantity", 1)
+    if source.get("category") != "artifact" or type(quantity) is not int or quantity < 1:
+        raise ValidationError("Выберите артефакт в инвентаре")
+    if path[-2] == "contents":
+        container = _value_at_path(data, path[:-2], label="контейнер")
+        if _container_attributes(container).get("artifact_container_kind") in {"storage", "equipped"}:
+            raise ValidationError("Сначала извлеките артефакт из контейнера")
+    return parent, index
+
+
+def _artifact_action_details(data, target, details, selection, in_combat):
+    target_path = details["target_path"]
+    worn = (len(target_path) == 5 and target_path[:3] == ["equipment", "armor", "containers"]
+            and type(target_path[3]) is int and target_path[4] == "item")
+    if not worn:
+        if "installedModules" in target_path:
+            raise ValidationError("Контейнер должен быть доступен в инвентаре или на броне")
+        _validate_source_path(target_path)
+        inventory_slot(data, target_path)
+    installed = _artifact_slot(target)
+    if details["operation"] == "install":
+        if worn and _container_attributes(target).get("artifact_container_kind") == "storage":
+            raise ValidationError("Контейнер хранения нельзя использовать на броне")
+        if installed is not None:
+            raise ValidationError("В контейнере уже есть артефакт")
+        parent, index = _artifact_source(data, details["item_path"])
+        _validate_identity(parent[index], selection.get("source"), label="артефакт")
+        cost = 4
+    else:
+        if installed is None:
+            raise ValidationError("В контейнере нет артефакта")
+        parent, index = installed
+        _validate_identity(parent[index], selection.get("source"), label="артефакт")
+        cost = 8
+    details["action_points"] = cost if in_combat else 0
+    return details
 
 
 def _validate_source_path(path):
@@ -122,6 +186,8 @@ def module_action_details(
         "action_points": 0,
         "inventory_access": None,
     }
+    if slot_type == "artifact":
+        return _artifact_action_details(data, target, details, selection, in_combat)
     if operation == "uninstall":
         if not any(
             isinstance(module, dict) and module.get("slotType") == slot_type
@@ -184,6 +250,8 @@ def apply_module_action(data, details):
     target = _value_at_path(data, details["target_path"], label="экипировку")
     slot_type = details["slot_type"]
     _validate_target(target, slot_type)
+    if slot_type == "artifact":
+        return _apply_artifact_action(data, target, details)
     modules = target.setdefault("installedModules", [])
     existing_index = next((
         index for index, module in enumerate(modules)
@@ -218,6 +286,40 @@ def apply_module_action(data, details):
         "installed": deepcopy(installed),
         "replaced": deepcopy(replaced),
     }
+
+
+def _apply_artifact_action(data, target, details):
+    from app.services.artifact_effects import needs_clocks, sync_clocks
+
+    slot = _artifact_slot(target)
+    if details["operation"] == "install":
+        if slot is not None:
+            raise ConflictError("В контейнере уже есть артефакт")
+        parent, index = _artifact_source(data, details["item_path"])
+        source = parent[index]
+        installed = deepcopy(source)
+        installed.update(quantity=1, slotType="artifact")
+        if source.get("quantity", 1) > 1:
+            source["quantity"] -= 1
+            installed["id"] = str(uuid4())
+        else:
+            parent.pop(index)
+            if not installed.get("id"):
+                installed["id"] = str(uuid4())
+        target["attributes"] = _container_attributes(target)
+        target.setdefault("installedModules", []).append(installed)
+        result = {"installed": deepcopy(installed), "replaced": None}
+    else:
+        if slot is None:
+            raise ConflictError("Артефакт уже извлечён")
+        parent, index = slot
+        item = parent.pop(index)
+        item.pop("slotType", None)
+        data.setdefault("inventory", {}).setdefault("backpack", []).append(item)
+        result = {"removed": deepcopy(item), "installed": None}
+    if needs_clocks(data):
+        data.setdefault("health", {})["effects"] = sync_clocks(data)
+    return {**details, **result}
 
 
 @atomic_operation

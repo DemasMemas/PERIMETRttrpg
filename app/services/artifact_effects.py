@@ -5,8 +5,10 @@ from __future__ import annotations
 import re
 import math
 import random
+from collections import Counter
 from copy import deepcopy
 from hashlib import sha256
+from itertools import chain
 
 CLOCK_PREFIX='artifact-radiation-clear:'
 PERIODIC_PREFIX='artifact-ten-minute:'
@@ -22,28 +24,74 @@ ELECTRIC_BACKLASH=re.compile(r'При получении урона дополн
 ROUND_PAIN_RELIEF=re.compile(r'Облегчает боль на\s*(\d+)(?:\s*уров\w*)?\s+каждый раунд',re.IGNORECASE)
 
 
-def equipped_artifacts(character_data):
+def _artifact_modules(item):
+    return (module for module in item.get('installedModules') or []
+            if isinstance(module, dict) and (module.get('category') == 'artifact' or module.get('slotType') == 'artifact'))
+
+
+def artifact_container_kind(item):
+    if not isinstance(item, dict) or item.get('category') != 'container':
+        return None
+    return (item.get('attributes') or {}).get('artifact_container_kind')
+
+
+def _radiation_limit(item):
+    attrs = item.get('attributes') or {}
+    limit = attrs.get('radiation_limit', 0)
+    if limit is None or (limit == 0 and item.get('name') == 'Контейнер для артефактов СОР-5'
+                         and attrs.get('import_source') == 'equipment_workbook'):
+        return math.inf
+    return limit if type(limit) in (int, float) and math.isfinite(limit) and limit >= 0 else 0
+
+
+def _armor_container_items(data):
+    equipment = data.get('equipment') or {}
+    armor = equipment.get('armor') if isinstance(equipment, dict) else None
+    for slot in (armor.get('containers') or []) if isinstance(armor, dict) else []:
+        if isinstance(slot, dict) and isinstance(slot.get('item'), dict):
+            yield slot['item']
+
+
+def _equipped_artifact_entries(character_data):
     equipment = (character_data.get('equipment') or {}) if isinstance(character_data, dict) else {}
-    if not isinstance(equipment,dict):return []
-    armor = equipment.get('armor')
-    armor = armor if isinstance(armor,dict) else {}
-    found = []
+    if not isinstance(equipment, dict):
+        return
     from app.services.belt_attachments import available,loaded
-    belt=equipment.get('belt')
-    if available(belt,'artifact'):found.extend(item for _,item in loaded(belt,'artifact'))
-    for slot in armor.get('containers') or []:
-        item = slot.get('item') if isinstance(slot, dict) else None
-        if not isinstance(item, dict):
-            continue
+    belt = equipment.get('belt')
+    if available(belt, 'artifact'):
+        yield from ((item, 0) for _, item in loaded(belt, 'artifact'))
+    for item in _armor_container_items(character_data):
         if item.get('category') == 'artifact':
-            found.append(item)
-        for module in item.get('installedModules') or []:
-            if isinstance(module, dict) and (
-                module.get('category') == 'artifact'
-                or module.get('slotType') == 'artifact'
-            ):
-                found.append(module)
-    return found
+            yield item, 0
+        kind = artifact_container_kind(item)
+        if kind != 'storage':
+            limit = _radiation_limit(item) if kind == 'equipped' else 0
+            yield from ((module, limit) for module in _artifact_modules(item))
+
+
+def equipped_artifacts(character_data):
+    return [item for item, _ in _equipped_artifact_entries(character_data)]
+
+
+def _stored_artifact_entries(data):
+    from app.services.combat import CombatService
+
+    if not isinstance(data, dict):
+        return
+    inventory = data.get('inventory') or {}
+    held = (inventory.get('held') or []) if isinstance(inventory, dict) else []
+    carried = chain((item for item, _ in CombatService._iter_inventory_items_with_paths(data)), held)
+    containers = chain(((item, False) for item in carried), ((item, True) for item in _armor_container_items(data)))
+    for container, worn in containers:
+        kind = artifact_container_kind(container)
+        if kind not in ('equipped', 'storage'):
+            continue
+        limit = _radiation_limit(container)
+        if not worn or kind == 'storage':
+            yield from ((item, limit) for item in _artifact_modules(container))
+        for item in container.get('contents') or []:
+            if isinstance(item, dict) and item.get('category') == 'artifact':
+                yield item, limit
 
 
 def ignition_aura_range(character_data):
@@ -126,6 +174,17 @@ def _radiation_value(text, *, positive):
     return total
 
 
+def _artifact_radiation(positive, negative, limit):
+    value = _radiation_value(positive, positive=True) + _radiation_value(negative, positive=False)
+    return max(0, value - limit) if value > 0 else value
+
+
+def _stored_radiation(item, limit):
+    attrs = item.get('attributes') or {}
+    return max(0, _artifact_radiation(str(attrs.get('positive_effect') or ''),
+                                      str(attrs.get('negative_effect') or ''), limit))
+
+
 def _conditional_value(text, pattern, radiation):
     total = 0
     matches = list(re.finditer(
@@ -160,7 +219,7 @@ def artifact_passive_profile(character_data):
     radiation_level = float((health or {}).get('radiation') or 0)
     from app.services.artifact_special import has_daylight_vision, is_special_effect, stat_value
     result['daylight_vision'] = has_daylight_vision(character_data)
-    for artifact in equipped_artifacts(character_data):
+    for artifact, radiation_limit in _equipped_artifact_entries(character_data):
         multiplier = 1
         if artifact.get('id') and artifact.get('name') in {'Хозяин свечения', 'Реактор', 'Ядро мысли', 'Сердце Эха'}:
             multiplier = max(1, stat_value(character_data, 'positive_multiplier', item_id=artifact['id']))
@@ -219,9 +278,7 @@ def artifact_passive_profile(character_data):
         if breath:
             result['breath_duration_bonus'] += int(breath.group(1))
         result['bleeding_severity'] += _signed(text, r'Тяжесть кровотечений')
-        result['radiation_per_movement'] += _radiation_value(
-            positive, positive=True,
-        ) + _radiation_value(negative, positive=False)
+        result['radiation_per_movement'] += _artifact_radiation(positive, negative, radiation_limit)
         health_values = re.findall(r'Общее здоровье\s*([+-]\d+)\s*за перемещение', text, re.IGNORECASE)
         result['health_per_movement'] += sum(map(int, health_values))
         result['pain_relief_per_round']+=sum(map(int,ROUND_PAIN_RELIEF.findall(text)))
@@ -250,6 +307,8 @@ def artifact_passive_profile(character_data):
         if type(value) not in (int,float) or not math.isfinite(value):continue
         if stat in {'physical_protection','chemical_protection'}:result['protection'][stat.removesuffix('_protection')]+=value
         elif stat in {'movement_penalty','bleeding_severity','skill_strength'}:result[stat]+=value
+    result['radiation_per_movement'] += sum(_stored_radiation(item, limit)
+                                            for item, limit in _stored_artifact_entries(character_data))
     return result
 
 
@@ -353,9 +412,21 @@ def _clock_rules(data):
     for item in equipped_artifacts(data):
         if CLEAR_RADIATION.search(str((item.get('attributes') or {}).get('positive_effect') or '')):
             yield item,CLOCK_PREFIX,60
+    for item, _ in _periodic_artifacts(data):
+        yield item, PERIODIC_PREFIX, 600
+
+
+def _periodic_artifacts(data):
+    for item, limit in _equipped_artifact_entries(data):
         profile=_item_profile(data,item)
+        if profile['radiation_per_movement'] > 0:
+            profile['radiation_per_movement'] = max(0, profile['radiation_per_movement'] - limit)
         if any(profile[key] for key in ('health_per_movement','radiation_per_movement','pain_per_movement')):
-            yield item,PERIODIC_PREFIX,600
+            yield item, profile
+    for item, limit in _stored_artifact_entries(data):
+        radiation = _stored_radiation(item, limit)
+        if radiation:
+            yield item, {'health_per_movement': 0, 'radiation_per_movement': radiation, 'pain_per_movement': 0}
 
 
 def needs_clocks(data):
@@ -389,13 +460,22 @@ def sync_clocks(data,effects=None,*,canonical=None):
 
 
 def apply_periodic_clock(data,effect,*,health):
-    item=next((item for item in equipped_artifacts(data)
-        if _clock_source(item,PERIODIC_PREFIX)==effect.get('source')),None)
-    if item:apply_artifact_world_movement(data,artifact=item,health=health)
+    for item, profile in _periodic_artifacts(data):
+        if _clock_source(item, PERIODIC_PREFIX) == effect.get('source'):
+            _apply_movement_profile(data, health, profile)
+            return
 
 
 def preserve(current,incoming):
     from app.services.artifact_special import preserve as preserve_special
+    from app.services.exceptions import ValidationError
+
+    def worn_storage(data):
+        return Counter(str(item.get('id') or item.get('templateId') or item.get('name'))
+                       for item in _armor_container_items(data or {}) if artifact_container_kind(item) == 'storage')
+
+    if worn_storage(incoming) - worn_storage(current):
+        raise ValidationError('Контейнер хранения нельзя закрепить на броне')
     preserve_special(current,incoming)
     canonical=((current or {}).get('health') or {}).get('effects') or []
     incoming_effects=((incoming or {}).get('health') or {}).get('effects') or []
@@ -411,6 +491,10 @@ def apply_artifact_world_movement(character_data,*,artifact=None,health=None):
     """Одно срабатывание свойств «за перемещение»: каждые десять игровых минут."""
     profile = _item_profile(character_data,artifact) if artifact is not None else artifact_passive_profile(character_data)
     health = health if health is not None else character_data.setdefault('health', {})
+    return _apply_movement_profile(character_data, health, profile)
+
+
+def _apply_movement_profile(character_data, health, profile):
     before = {
         key: health.get(key)
         for key in ('current', 'radiation', 'painLevel')

@@ -1,3 +1,5 @@
+import pytest
+
 from app.extensions import db
 from app.models import LobbyCharacter, Location, LocationCharacter, LocationCombatState
 from app.models.templates import ItemTemplate
@@ -280,3 +282,69 @@ def test_changed_filter_selection_is_rejected_without_inventory_mutation(
     stored = db.session.get(LobbyCharacter, character["id"])
     assert stored.data["inventory"]["backpack"][0]["id"] == "new-filter"
     assert stored.data["equipment"]["gasMask"]["installedModules"][0]["id"] == "old-filter"
+
+
+def artifact_fixture(kind, limit):
+    container = {"id": "container", "name": "Контейнер", "category": "container",
+                 "attributes": {"artifact_container_kind": kind, "radiation_limit": limit}}
+    artifact = {"id": "artifact", "name": "Артефакт", "category": "artifact", "quantity": 1,
+                "attributes": {"positive_effect": "Прочие навыки +5",
+                               "negative_effect": "5 Радиации за перемещение Общее здоровье -25 за перемещение"}}
+    return container, artifact
+
+
+@pytest.mark.parametrize("kind,limit,worn,radiation,skill,hp", [
+    ("equipped", 3, True, 2, 5, 675),
+    ("equipped", 5, True, 0, 5, 675),
+    ("equipped", 3, False, 2, 0, 700),
+    ("storage", 3, False, 2, 0, 700),
+    ("storage", None, False, 0, 0, 700),
+])
+def test_artifact_module_prices_identity_and_periodic_radiation(kind, limit, worn, radiation, skill, hp):
+    from app.services.artifact_effects import artifact_passive_profile
+    from app.services.effects import advance_timed_effects
+    from app.services.equipment_module import apply_module_action, module_action_details
+
+    container, artifact = artifact_fixture(kind, limit)
+    health = {"current": 700, "max": 700, "radiation": 0, "effects": []}
+    data = {"health": health, "inventory": {"pockets": [artifact], "backpack": []}, "equipment": {}}
+    if worn:
+        data["equipment"]["armor"] = {"containers": [{"item": container}]}
+        target = ["equipment", "armor", "containers", 0, "item"]
+    else:
+        data["inventory"]["backpack"].append(container)
+        target = ["inventory", "backpack", 0]
+    selection = {"target": {"id": container["id"]}, "source": {"id": artifact["id"]}}
+    install = module_action_details(data, "install", target, "artifact", item_path=["inventory", "pockets", 0],
+                                    selection=selection, in_combat=True)
+    assert install["action_points"] == 4
+    result = apply_module_action(data, install)
+    assert result["installed"]["id"] == artifact["id"]
+    assert data["inventory"]["pockets"] == []
+    profile = artifact_passive_profile(data)
+    assert (profile["radiation_per_movement"], profile["skill_other"]) == (radiation, skill)
+    health["effects"] = advance_timed_effects(health, health["effects"], 599, character_data=data)
+    assert (health["radiation"], health["current"]) == (0, 700)
+    health["effects"] = advance_timed_effects(health, health["effects"], 1, character_data=data)
+    assert (health["radiation"], health["current"]) == (radiation, hp)
+    assert container["attributes"] == {"artifact_container_kind": kind, "radiation_limit": limit}
+    uninstall = module_action_details(data, "uninstall", target, "artifact", selection=selection, in_combat=True)
+    assert uninstall["action_points"] == 8
+    assert apply_module_action(data, uninstall)["removed"] == artifact
+    assert data["inventory"]["backpack"][-1] == artifact
+    assert not health["effects"]
+
+
+def test_storage_container_cannot_be_newly_mounted_but_legacy_can_be_removed():
+    from app.services.artifact_effects import artifact_passive_profile, preserve
+    from app.services.exceptions import ValidationError
+
+    container, artifact = artifact_fixture("storage", 3)
+    container["contents"] = [artifact]
+    carried = {"inventory": {"backpack": [container]}}
+    worn = {"equipment": {"armor": {"containers": [{"item": container}]}}}
+    with pytest.raises(ValidationError, match="нельзя закрепить"):
+        preserve(carried, worn)
+    preserve(worn, worn)
+    assert artifact_passive_profile(worn)["skill_other"] == 0
+    preserve(worn, carried)
