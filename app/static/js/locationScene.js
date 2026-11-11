@@ -17846,7 +17846,15 @@ export function applyLocationTilesUpdate(locationId, updates) {
 }
 
 // ========== Кисть ==========
-export function applyLocationWaterProfile(centers,profile,radius=0,basin=false) {
+function paintLocationPassability(x, z, tile, difficulty) {
+    if (tile.difficult_surface === difficulty) return false;
+    touchStrokeCell(x, z);
+    if (typeof difficulty === 'boolean') tile.difficult_surface = difficulty;
+    else delete tile.difficult_surface;
+    return true;
+}
+
+export function applyLocationWaterProfile(centers,profile,radius=0,basin=false,brushUpdates={}) {
     if(!currentLocationData||!window.isGM)return;
     const tiles=currentLocationData.tiles_data,getTile=(x,z)=>tiles[z]?.[x],targets=new Map();
     for(const [x,z]of centers){
@@ -17855,11 +17863,17 @@ export function applyLocationWaterProfile(centers,profile,radius=0,basin=false) 
         for(const [cx,cz]of cells)if(getTile(cx,cz)?.terrain==='water')targets.set(`${cx},${cz}`,[cx,cz]);
     }
     profile=normalizeWaterProfile(profile);const updates=[];
-    for(const [x,z]of targets.values())if(normalizeWaterProfile(getTile(x,z).water_profile)!==profile){
+    const paintPassability = Object.hasOwn(brushUpdates, 'difficult_surface');
+    let passabilityChanged = false;
+    for(const [x,z]of targets.values()) {
+        const tile = getTile(x,z);
+        if (paintPassability && paintLocationPassability(x,z,tile,brushUpdates.difficult_surface)) passabilityChanged = true;
+        if (normalizeWaterProfile(tile.water_profile) === profile) continue;
         touchStrokeCell(x,z);
-        getTile(x,z).water_profile=profile;locationWaterProfiles?.updateRegion(x,z);
+        tile.water_profile=profile;locationWaterProfiles?.updateRegion(x,z);
         updates.push({x,z,water_profile:profile});
     }
+    if (passabilityChanged) invalidateMovementMapCache();
     if(updates.length && !objectEdit)window.socket?.emit('update_location_tiles',{
         token:localStorage.getItem('access_token'),location_id:window.currentLocationId,updates});
     return updates.length;
@@ -17903,10 +17917,12 @@ export function levelLocationWaterBody(x,z,mode='minimum',requestedHeight=null) 
 }
 
 export function applyLocationBrush(centerX, centerZ, updates, radius) {
+    if (!currentLocationData) return;
+    const paintPassability = Object.hasOwn(updates, 'difficult_surface');
+    if (paintPassability && (objectEdit?.phase !== 'stroke' || locationViewLevel !== 0)) return;
     if(updates.water_profile!==undefined&&(updates.terrain!=='water'||document.getElementById('loc-water-basin')?.checked))return applyLocationWaterProfile(
         Array.isArray(centerX)?centerX:[[centerX,centerZ]],updates.water_profile,radius,
-        document.getElementById('loc-water-basin')?.checked===true);
-    if (!currentLocationData) return;
+        document.getElementById('loc-water-basin')?.checked===true,updates);
     const tiles = currentLocationData.tiles_data;
     const changed = [];
     let heightChanged = false;
@@ -17925,18 +17941,13 @@ export function applyLocationBrush(centerX, centerZ, updates, radius) {
             }
         }
     }
-    if (Object.hasOwn(updates, 'difficult_surface')) {
-        if (objectEdit?.phase !== 'stroke' || locationViewLevel !== 0) return;
-        const difficult = updates.difficult_surface;
+    if (paintPassability) {
+        let passabilityChanged = false;
         for (const {x,z} of targets.values()) {
-            const tile = tiles[z][x];
-            if (tile.difficult_surface === difficult) continue;
-            touchStrokeCell(x,z);
-            if (typeof difficult === 'boolean') tile.difficult_surface = difficult;
-            else delete tile.difficult_surface;
+            if (paintLocationPassability(x,z,tiles[z][x],updates.difficult_surface)) passabilityChanged = true;
         }
-        invalidateMovementMapCache();
-        return;
+        if (passabilityChanged) invalidateMovementMapCache();
+        if (updates.terrain === undefined) return;
     }
     for (const { x, z } of targets.values()) {
             if (x < 0 || x >= currentLocationData.grid_width || z < 0 || z >= currentLocationData.grid_height) continue;
@@ -18741,18 +18752,29 @@ function setupCharacterDragging() {
 }
 
 // ========== Настройка обработчиков редактирования и Drag&Drop спавна ==========
+function terrainBrushMode() {
+    return document.getElementById('loc-terrain-mode')?.value || 'terrain';
+}
+
 function getEditBrushUpdates() {
     const tool = window.locationEditorTool;
     if (eraserMode || tool === 'erase') return { objects: [] };
     if (tool === 'radiation') return { radiation: brushRadiation };
-    if (tool === 'surface') {
-        const mode = document.getElementById('loc-surface-cost')?.value;
-        return {difficult_surface: mode === 'auto' ? undefined : mode === 'difficult'};
-    }
     if (tool === 'decor') return { addObject: true };
-    if (tool === 'terrain') return { terrain: currentBrushTerrain,
-        ...(currentBrushTerrain === 'grass' ? { grass_subtype: currentBrushGrassSubtype } : {}),
-        ...(currentBrushTerrain === 'water' ? {water_profile:document.getElementById('loc-water-profile')?.value||'auto'} : {}) };
+    if (tool === 'terrain') {
+        const mode = terrainBrushMode();
+        const updates = {};
+        if (mode !== 'surface') {
+            updates.terrain = currentBrushTerrain;
+            if (currentBrushTerrain === 'grass') updates.grass_subtype = currentBrushGrassSubtype;
+            if (currentBrushTerrain === 'water') updates.water_profile = document.getElementById('loc-water-profile')?.value || 'auto';
+        }
+        if (mode !== 'terrain') {
+            const cost = document.getElementById('loc-surface-cost')?.value || 'auto';
+            updates.difficult_surface = cost === 'auto' ? undefined : cost === 'difficult';
+        }
+        return updates;
+    }
     if (tool === 'height') return sculpting() ? {} : { height: currentBrushHeight };
     return {};
 }
@@ -18842,7 +18864,7 @@ export function setupLocationEditing() {
                 <b>(${x}, ${z})</b><br>
                 Ландшафт: ${tile.terrain}<br>
                 Высота: ${tile.height}<br>
-                ${window.locationEditorTool==='surface'&&locationViewLevel===0
+                ${window.locationEditorTool==='terrain'&&terrainBrushMode()!=='terrain'&&locationViewLevel===0
                     ? `Проходимость: ${tile.difficult_surface===true?'×2 вручную':tile.difficult_surface===false?'×1 вручную':'автоматически'}<br>` : ''}
                 ${radiationTooltipLine(tile.radiation)}
             `;

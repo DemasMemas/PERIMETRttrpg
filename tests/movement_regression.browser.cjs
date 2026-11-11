@@ -200,16 +200,19 @@ module.exports=async({page,request,token,base,connect,debugPort,safeSession,fixt
             const before=(await preview(42,48)).route;
             assert.equal(before.cost,1.5,'Полметра обычной земли и полметра снега');
             await peer.evaluate("window.surfaceUpdates=[];socket.on('location_editor_objects_changed', event=>surfaceUpdates.push(...(event.cells||[])));true");
-            const waitSurface=async(value,count)=>{
-                await peer.until(`surfaceUpdates.filter(cell=>cell.x===42&&cell.z===48&&cell.state.difficult_surface===${String(value)}).length===${count}`,
+            const waitSurface=async(value,count,terrain='snow')=>{
+                await peer.until(`surfaceUpdates.filter(cell=>cell.x===42&&cell.z===48&&cell.state.terrain===${JSON.stringify(terrain)}&&cell.state.difficult_surface===${String(value)}).length===${count}`,
                     'Переопределение наземного участка дошло до игрока');
                 const saved=await request(url,null,token,'GET');
-                assert.equal(saved.tiles_data[48][42].terrain,'snow');
+                assert.equal(saved.tiles_data[48][42].terrain,terrain);
                 assert.equal(saved.tiles_data[48][42].difficult_surface,value);
+                tile.terrain=terrain;
                 if(value===undefined)delete tile.difficult_surface;else tile.difficult_surface=value;
             };
-            const paint=async(mode)=>{
-                await page.evaluate(`(async()=>{document.querySelector('[data-location-tool=surface]').click();
+            const paint=async(mode,brushMode='surface',terrain='snow')=>{
+                await page.evaluate(`(async()=>{document.querySelector('[data-location-tool=terrain]').click();
+                    const brush=document.getElementById('loc-terrain-mode');brush.value=${JSON.stringify(brushMode)};brush.dispatchEvent(new Event('change'));
+                    const covering=document.getElementById('loc-edit-terrain');covering.value=${JSON.stringify(terrain)};covering.dispatchEvent(new Event('change'));
                     const input=document.getElementById('loc-surface-cost');input.value=${JSON.stringify(mode)};
                     input.dispatchEvent(new Event('change'));(await import('/static/js/ui_interactions.js')).collapseMapToolsPanel();return true})()`);
                 const point=await pointAt(42,48,before.surfaces.at(-1).height,page);
@@ -230,10 +233,20 @@ module.exports=async({page,request,token,base,connect,debugPort,safeSession,fixt
             await waitSurface(false,2);
             await paint('auto');
             await waitSurface(undefined,2);
+            await paint('difficult','both','gravel');
+            await waitSurface(true,1,'gravel');
+            await page.evaluate("document.querySelector('[data-location-undo]').click();true");
+            await waitSurface(undefined,3);
+            await page.evaluate("document.querySelector('[data-location-redo]').click();true");
+            await waitSurface(true,2,'gravel');
+            await paint('auto','terrain');
+            await waitSurface(true,1);
+            await paint('auto');
+            await waitSurface(undefined,4);
             assert.equal((await preview(42,48)).route.cost,1.5);
             await page.evaluate("window.selectLocationEditorTool('select');L.setLocationEditMode(false);true");
             result.phases.push({stage:'surface-override',before:before.cost,ordinary:ordinary.route.cost,
-                automatic:(await preview(42,48)).route.cost,undoRedo:true,network:true});save();
+                automatic:(await preview(42,48)).route.cost,combined:true,undoRedo:true,network:true});save();
         }
         const beforeSelection=await server();
         await armPreview('walk',42,48);await armPreview('run',42,48);

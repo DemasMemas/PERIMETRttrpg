@@ -572,7 +572,6 @@ window.enterLocation = async function(locationId, { scoutView = null } = {}) {
                     select: createToolSection('Выбор', []),
                     brush: createToolSection('Кисть', ['loc-edit-radius']),
                     terrain: createToolSection('Ландшафт', ['loc-edit-terrain', 'loc-grass-subtype']),
-                    surface: createToolSection('Проходимость', []),
                     height: createToolSection('Высота', ['loc-edit-height']),
                     radiation: createToolSection('Радиация', ['loc-edit-radiation']),
                 };
@@ -635,7 +634,6 @@ window.enterLocation = async function(locationId, { scoutView = null } = {}) {
                 toolbar.innerHTML = `
                     <button type="button" data-location-tool="select">Выбор</button>
                     <button type="button" data-location-tool="terrain">Ландшафт</button>
-                    <button type="button" data-location-tool="surface">Проходимость</button>
                     <button type="button" data-location-tool="height">Высота</button>
                     <button type="button" data-location-tool="radiation">Радиация</button>
                     <button type="button" data-location-tool="erase">Ластик</button>
@@ -653,17 +651,35 @@ window.enterLocation = async function(locationId, { scoutView = null } = {}) {
                 const toolSettings = document.createElement('div');
                 toolSettings.className = 'location-tool-settings';
                 hint.after(toolSettings);
-                for (const section of [sections.brush, sections.terrain, sections.surface, sections.height, sections.radiation]) {
+                for (const section of [sections.brush, sections.terrain, sections.height, sections.radiation]) {
                     section.setAttribute('aria-label', section.querySelector('strong').textContent);
                     toolSettings.appendChild(section);
                 }
-                sections.surface.insertAdjacentHTML('beforeend', `<label>Цена прохода
+                const terrainPaintControls = document.createElement('div');
+                terrainPaintControls.style.display = 'contents';
+                terrainPaintControls.append(...Array.from(sections.terrain.children).slice(1));
+                sections.terrain.insertAdjacentHTML('beforeend', `<label>Кисть ландшафта
+                    <select id="loc-terrain-mode" class="form-control" data-canvas-editor-control>
+                        <option value="terrain">Покрытие</option>
+                        <option value="surface">Проходимость</option>
+                        <option value="both">Покрытие и проходимость</option>
+                    </select></label>`);
+                sections.terrain.appendChild(terrainPaintControls);
+                sections.terrain.insertAdjacentHTML('beforeend', `<label>Цена прохода
                     <select id="loc-surface-cost" class="form-control" data-canvas-editor-control>
                         <option value="difficult">Сложная · ×2</option>
                         <option value="normal">Обычная · ×1</option>
                         <option value="auto">Определять автоматически</option>
                     </select></label>`);
-                document.getElementById('loc-surface-cost').onchange = event => event.target.blur();
+                const surfaceCost = document.getElementById('loc-surface-cost');
+                const terrainMode = document.getElementById('loc-terrain-mode');
+                const syncTerrainBrushControls = () => {
+                    terrainPaintControls.hidden = terrainMode.value === 'surface';
+                    surfaceCost.closest('label').hidden = terrainMode.value === 'terrain';
+                };
+                terrainMode.onchange = () => { syncTerrainBrushControls(); terrainMode.blur(); };
+                surfaceCost.onchange = () => surfaceCost.blur();
+                syncTerrainBrushControls();
                 sections.select.classList.add('location-selection-section');
                 for (const id of ['loc-edit-radius', 'loc-edit-height', 'loc-edit-radiation']) {
                     const row = document.getElementById(id).parentElement;
