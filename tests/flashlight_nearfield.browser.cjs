@@ -27,11 +27,12 @@ module.exports=async({page,request,token,lobby,offered,loc,safeSession})=>{
             out.push({distance,lateral,brightness:brightness/25});}return out})()`);
     const shot=async name=>fs.writeFileSync(path.join(safeSession.artifacts,name+'.png'),Buffer.from((await page.call('Page.captureScreenshot',{format:'png'})).data,'base64'));
     const performanceRows=[];
-    const measure=async state=>{
+    const measure=async (state,overviewOnly=false)=>{
         const results=await page.evaluate(`(async()=>{
             const {renderer,camera,controls}=FG,stats=a=>{a.sort((x,y)=>x-y);return{median:a[Math.floor(a.length*.5)],p95:a[Math.floor(a.length*.95)]}};
             const gl=renderer.getContext(),ext=renderer.capabilities.isWebGL2&&gl.getExtension('EXT_disjoint_timer_query_webgl2');
             const out=[];for(const view of [{name:'near',position:[-7,12,31],target:[2.5,1,39]},{name:'tactical',position:[26,32,67],target:[18,1,37]},{name:'overview',position:[86,49,86],target:[36,1,36]},{name:'away',position:[-7,12,31],target:[-25,1,16]}]){
+                if(${overviewOnly}&&view.name!=='overview')continue;
                 controls.target.set(...view.target);camera.position.set(...view.position);controls.update();
                 for(let i=0;i<25;i++)await new Promise(requestAnimationFrame);
                 const cpu=[],frames=[],gpu=[],queries=[],original=renderer.render;let last;
@@ -46,11 +47,22 @@ module.exports=async({page,request,token,lobby,offered,loc,safeSession})=>{
         })()`);performanceRows.push({state,results});
     };
     const rows=[];
+    let reservedSpots = false;
     for(const [index,item]of items.entries()){
         const operate=async(operation,extra={})=>{const fresh=await request('/lobbies/characters/'+owner.id,null,token,'GET');
             return request('/lobbies/characters/'+owner.id+'/portable-lights',{operation,path:['inventory','pockets',index],source_id:item.id,
                 character_revision:fresh.data._revision,...extra},token);};
-        if(index===0)await measure('off');
+        if(index===0){
+            await measure('off');
+            const reservedSlots="FG.scene.children.filter(light=>light.isSpotLight&&light.decay<0&&light.intensity===0)";
+            reservedSpots = await page.evaluate(`${reservedSlots}.filter(light=>light.visible).length===4`);
+            if(reservedSpots){
+                await page.evaluate(`${reservedSlots}.forEach(light=>{light.visible=false});true`);
+                try{await measure('off-without-reserved',true);}
+                finally{await page.evaluate(`${reservedSlots}.forEach(light=>{light.visible=true});true`);}
+                await measure('off-reserved-repeat',true);
+            }
+        }
         const off=await sample();await shot('lamp-'+index+'-off');
         await page.evaluate('(()=>{window.lampFrameGaps=[];window.lampFrameLast=performance.now();window.lampFrameGeneration=(window.lampFrameGeneration||0)+1;const generation=lampFrameGeneration;function lampFrame(t){if(generation!==lampFrameGeneration)return;lampFrameGaps.push(t-lampFrameLast);lampFrameLast=t;if(lampFrameGaps.length<5000)requestAnimationFrame(lampFrame)};requestAnimationFrame(lampFrame);return true})()');
         await operate('prepare',{mount:index===0?'head':'hand'});const programsBefore=await page.evaluate('FG.renderer.info.programs.length'),onStarted=Date.now();await operate('toggle');
@@ -135,6 +147,33 @@ module.exports=async({page,request,token,lobby,offered,loc,safeSession})=>{
     await page.call('Input.dispatchMouseEvent',{type:'mouseMoved',x:pointer.x+90,y:pointer.y+60,button:'left',buttons:1});
     await page.call('Input.dispatchMouseEvent',{type:'mouseReleased',x:pointer.x+90,y:pointer.y+60,button:'left',clickCount:1});
     const afterDrag=await sheetBox();assert.equal(afterDrag.x,beforeDrag.x);assert.equal(afterDrag.y,beforeDrag.y);
+    const multipleLights = {reservedSpots,textureUnits:await page.evaluate('FG.renderer.capabilities.maxTextures')};
+    const saveMultipleLights = stage => {
+        multipleLights.stage = stage;
+        fs.writeFileSync(path.join(safeSession.artifacts,'four-lamps.json'),JSON.stringify(multipleLights,null,2));
+    };
+    await page.evaluate(`(()=>{
+        const gl=FG.renderer.getContext();
+        const samples={programQueries:[],renders:[]};window.multipleLampSamples=samples;
+        for(const method of ['getProgramParameter','getProgramInfoLog','getActiveUniform','linkProgram']){
+            const original=gl[method].bind(gl);
+            gl[method]=(...args)=>{
+                const start=performance.now();
+                try{return original(...args)}finally{
+                    const ms=performance.now()-start;if(ms>25)samples.programQueries.push({method,ms});
+                }
+            };
+        }
+        const render=FG.renderer.render;
+        FG.renderer.render=function(...args){
+            const start=performance.now(),lights=L.getLocationPortableLightDiagnostics().lights;
+            try{return render.apply(this,args)}finally{
+                const ms=performance.now()-start;if(ms>25)samples.renders.push({lights,ms});
+            }
+        };
+        return true;
+    })()`);
+    saveMultipleLights('Включение второго фонаря первого персонажа');
     const lampRow=index=>`document.querySelector('.portable-light-row[data-light-id="nearfield-${index}"]')`;
     await page.evaluate(`${lampRow(1)}.querySelector('[data-light-operation=prepare]').click();true`);
     await page.until(`${lampRow(1)}?.textContent.includes('в руке')`,'Обычный фонарь подготовлен');
@@ -145,18 +184,33 @@ module.exports=async({page,request,token,lobby,offered,loc,safeSession})=>{
     const replaced=await request('/lobbies/characters/'+owner.id,null,token,'GET');
     assert.deepEqual(replaced.data.health.combatMeta.portableLights.filter(entry=>entry.mount==='hand').map(entry=>[entry.id,entry.on]),[['nearfield-2',true]]);
     await shot('lamp-replaced-with-one-click');
+    multipleLights.samples=await page.evaluate('window.multipleLampSamples');
+    saveMultipleLights('Два включённых источника');
     const helperItems=items.slice(0,2).map((item,index)=>({...item,id:'second-source-'+index}));
     const helper=await request(`/lobbies/${lobby.id}/characters`,{name:'Второй носитель света',data:{inventory:{pockets:helperItems,backpack:[]}}},token);
     await request(loc+'/spawn_character',{character_id:helper.id,tile_x:7,tile_y:30},token);
+    saveMultipleLights('Включение источников второго персонажа');
     for(const [index,item] of helperItems.entries())for(const operation of ['prepare','toggle']){
         const state=await request('/lobbies/characters/'+helper.id,null,token,'GET');
         await request('/lobbies/characters/'+helper.id+'/portable-lights',{operation,path:['inventory','pockets',index],source_id:item.id,
             character_revision:state.data._revision,...(operation==='prepare'?{mount:index===0?'head':'hand'}:{})},token);
     }
+    saveMultipleLights('Камера полного обзора');
     await page.evaluate('window.closeCharacterSheet();locationControls.target.set(36,1,36);locationControls.object.position.set(86,49,86);locationControls.update();true');
+    saveMultipleLights('Четыре включённых источника');
     await page.until('L.getLocationPortableLightDiagnostics().lights===4','Четыре настоящих включённых источника');
-    const shaderErrors=await page.evaluate("(()=>{FG.renderer.render(FG.scene,FG.camera);return FG.renderer.info.programs.filter(p=>p.diagnostics?.runnable===false).map(p=>p.diagnostics.programLog.slice(0,200))})()");
+    multipleLights.samples=await page.evaluate('window.multipleLampSamples');
+    saveMultipleLights('Проверка шейдеров');
+    const shaderErrors=await page.evaluate(`(async()=>{
+        await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
+        return FG.renderer.info.programs.filter(program=>program.diagnostics?.runnable===false)
+            .map(program=>program.diagnostics.programLog.slice(0,200));
+    })()`);
     assert.deepEqual(shaderErrors,[],'Несколько фонарей не ломают материалы');
     await shot('four-lamps-terrain');
+    multipleLights.samples=await page.evaluate('window.multipleLampSamples');
+    if(reservedSpots)assert.ok(multipleLights.samples.renders.every(({ms})=>ms<1000),
+        'Переключение нескольких фонарей не должно останавливать отрисовку');
+    saveMultipleLights('Готово');
     console.log('Ближний свет: три фонаря, настоящая ночная Припять, одинаковые камера и пробы земли; результат сохранён.');
 };

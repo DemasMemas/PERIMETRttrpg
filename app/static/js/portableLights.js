@@ -103,6 +103,7 @@ export async function renderPortableLights(container,characterId,data,operate,is
 export function createPortableLightRenderer(THREE,scene) {
     const lights=new Map();
     const materials=new Map(),spotPool=[];
+    let keepSpotSlots = false, textureBudget = 0, seasonalTerrain = false;
     let beamShapes=null,beamUp=null,lensGeometry=null,lensMaterial=null;
     const previousBeforeRender=scene.onBeforeRender;
     const beforeRender=function(renderer,renderScene,camera,...rest){
@@ -163,10 +164,13 @@ export function createPortableLightRenderer(THREE,scene) {
             }
             // За узкой границей луча не нужны ни выборка мягкой тени, ни BRDF.
             const begin=THREE.ShaderChunk.lights_fragment_begin;
-            const call='getSpotDirectLightIrradiance( spotLight, geometry, directLight );';
+            const call=begin.includes('getSpotLightInfo(')
+                ? 'getSpotLightInfo( spotLight, geometryPosition, directLight );'
+                : 'getSpotDirectLightIrradiance( spotLight, geometry, directLight );';
             const start=begin.indexOf(call),end=begin.indexOf('\n\t}',start);
             if(start>=0&&end>start)shader.fragmentShader=shader.fragmentShader.replace('#include <lights_fragment_begin>',
-                begin.slice(0,start)+call+'\n if (directLight.visible) {'+begin.slice(start+call.length,end)+'\n }'+begin.slice(end));
+                begin.slice(0,start)+'if (any(notEqual(spotLight.color, vec3(0.0)))) {\n'
+                +call+'\n if (directLight.visible) {'+begin.slice(start+call.length,end)+'\n }}'+begin.slice(end));
         };
         material.onBeforeCompile=hook;
         material.customProgramCacheKey=()=>`${previousKey?.call(material)||''}:portable-beam-v4`;
@@ -204,9 +208,18 @@ export function createPortableLightRenderer(THREE,scene) {
         light.shadow.bias=-.0002;light.shadow.normalBias=.015;light.shadow.autoUpdate=false;
     }
     function idle(entry) {
-        entry.active=false;entry.signature=null;entry.light.intensity=0;entry.light.visible=false;
+        // Сохраняем число прожекторов и теней в ключе программы. Нулевая
+        // яркость отключает вклад в освещение, карта тени не обновляется.
+        entry.active=false;entry.signature=null;entry.light.intensity=0;entry.light.visible=keepSpotSlots;
         entry.light.position.set(0,-10000,0);entry.light.target.position.set(0,-10000,1);
         entry.light.target.updateMatrixWorld();entry.light.shadow.needsUpdate=false;entry.lens.visible=false;
+    }
+    function refreshSpotSlots() {
+        const hasRadialLight = [...lights.values()].some(({source}) => source.radial);
+        const keep = textureBudget >= 16 && (!seasonalTerrain || textureBudget >= 32) && !hasRadialLight;
+        if (keep === keepSpotSlots) return;
+        keepSpotSlots = keep;
+        for (const {light, active} of spotPool) light.visible = keepSpotSlots || active;
     }
     function prepare() {
         if(spotPool.length)return;
@@ -233,14 +246,27 @@ export function createPortableLightRenderer(THREE,scene) {
     }
     return {
         attach,attachMaterial:attachBeamMaterial,detachMaterial,prepare,
+        useSeasonalTerrain() {
+            seasonalTerrain = true;
+            refreshSpotSlots();
+        },
         warm(renderer,camera){
             prepare();attach(scene);
-            if(spotPool.some(entry=>entry.active)){renderer.compile?.(scene,camera);return;}
-            const slot=spotPool.find(entry=>!entry.active);
-            if(!slot)return;
-            slot.light.visible=true;
-            try{renderer.compile?.(scene,camera);}finally{slot.light.visible=false;}
-            renderer.compile?.(scene,camera);
+            // Снег, лёд и точечные источники используют дополнительные текстуры.
+            // При нехватке слотов оставляем в шейдере только активные фонари.
+            textureBudget = typeof renderer.compileAsync === 'function' ? renderer.capabilities?.maxTextures ?? 0 : 0;
+            refreshSpotSlots();
+            const compile = renderer.compileAsync || renderer.compile;
+            if (!compile) return Promise.resolve();
+            const normal = compile.call(renderer, scene, camera);
+            if (keepSpotSlots || spotPool.some(entry => entry.active)) return Promise.resolve(normal);
+            const slot = spotPool[0];
+            slot.light.visible = true;
+            try {
+                return Promise.all([normal, compile.call(renderer, scene, camera)]);
+            } finally {
+                slot.light.visible = false;
+            }
         },
         update(characters,models,groundSources=[]) {
             const wanted=[];
@@ -290,6 +316,7 @@ export function createPortableLightRenderer(THREE,scene) {
                 entry.light.target.updateMatrixWorld();entry.light.shadow.needsUpdate=true;
                 entry.lens.position.copy(entry.light.position);
             }
+            refreshSpotSlots();
         },
         dirty() { for (const {light} of lights.values()) light.shadow.needsUpdate=true; },
         dispose() {

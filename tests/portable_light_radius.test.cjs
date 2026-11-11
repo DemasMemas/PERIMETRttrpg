@@ -57,14 +57,33 @@ test('ближний свет сохраняет горизонтальную ш
     renderer.update([],new Map());assert.equal(renderer.count,0);
     assert.equal(scene.children.filter(node=>node.isSpotLight).length,4,'Выключение не меняет число графических мест');
     assert.equal(material.version,version,'Выключение не пересобирает материал');
-    const prepared=[];renderer.warm({compile(root){prepared.push(root.children.filter(node=>node.isSpotLight&&node.visible).length);}},null);
-    assert.deepEqual(prepared,[1,0],'Подготовка не включает четыре карты теней одновременно');
+    const prepared=[];
+    const compile = root => prepared.push(root.children.filter(node=>node.isSpotLight&&node.visible).length);
+    await renderer.warm({capabilities:{maxTextures:32},compile},null);
+    assert.deepEqual(prepared,[0,1],'Синхронный компилятор сохраняет прежний прогрев');
+    prepared.length=0;
+    const modern = {capabilities:{maxTextures:16},async compileAsync(root){compile(root);}};
+    await renderer.warm(modern,null);
+    assert.deepEqual(prepared,[4],'Прогревается тот же набор прожекторов, который получит рендерер');
+    assert.ok(scene.children.filter(node=>node.isSpotLight).every(node=>node.visible&&node.intensity===0
+        &&!node.shadow.autoUpdate&&!node.shadow.needsUpdate),'Выключенные прожекторы не светят и не обновляют тени');
     assert.ok(!scene.children.some(node=>node.userData.portableEmitter&&node.visible));
     renderer.update([{character_id:1,posture:'standing',facing_x:0,facing_y:1,
         portable_lights:[{id:'lamp',mount:'head',range:35,end_width:5}]}],new Map([[1,{model}]]));
     assert.equal(material.version,version,'Повторное включение не пересобирает материал');
     const emitter=scene.children.find(node=>node.userData.portableEmitter&&node.visible);
     assert.equal(emitter.position.y,2.65,'Видимый источник находится у головы');
+    const actors = [{character_id:1,posture:'standing',facing_x:0,facing_y:1,
+        portable_lights:[{id:'lamp',mount:'head',range:35,end_width:5}]}];
+    const models = new Map([[1,{model}]]);
+    renderer.update(actors,models,[{id:'glow',radial:true,x:1,y:1,z:1}]);
+    assert.equal(scene.children.filter(node=>node.isSpotLight&&node.visible).length,1,
+        'Радиальный источник получает свой слот тени');
+    renderer.update(actors,models);
+    assert.equal(scene.children.filter(node=>node.isSpotLight&&node.visible).length,4);
+    renderer.useSeasonalTerrain();
+    assert.equal(scene.children.filter(node=>node.isSpotLight&&node.visible).length,1,
+        'В зимней сцене 16 текстурных слотов используются только активными фонарями');
     assert.equal(light.intensity,11.5);renderer.dispose();
     assert.equal(material.onBeforeCompile,previous);assert.equal(renderer.count,0);
 });

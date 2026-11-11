@@ -16728,7 +16728,11 @@ function* buildLocationStages(data) {
     locationWaterProfiles=createWaterProfileLayer(THREE,(x,z)=>currentLocationData?.tiles_data[z]?.[x]);
     locationWaterProfiles.resize(data.grid_width,data.grid_height);
     locationWaterProfiles.updateRegion(0,0,data.grid_width,data.grid_height);
-    locationTerrainMaterials = createTerrainMaterialLayer(THREE);
+    let hasSeasonalSurface = false;
+    locationTerrainMaterials = createTerrainMaterialLayer(THREE, { onSeasonalSurface() {
+        hasSeasonalSurface = true;
+        portableLightRenderer?.useSeasonalTerrain();
+    } });
     locationTerrainMaterials.resize(data.grid_width, data.grid_height);
     locationTerrainMaterials.fill(data.tiles_data);
     waterTileMesh = null;
@@ -16758,6 +16762,7 @@ function* buildLocationStages(data) {
     grassDetailGroup = null;
     clearAllCharacters();
     portableLightRenderer=createPortableLightRenderer(THREE,scene);portableLightRenderer.prepare();
+    if (hasSeasonalSurface) portableLightRenderer.useSeasonalTerrain();
     markLoadStage('resetMs');
     yield { percent: 25, detail: 'Подготавливаем поверхность.' };
     loadStageAt = performance.now();

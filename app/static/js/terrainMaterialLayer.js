@@ -121,7 +121,7 @@ function sharedAtlases(THREE) {
 
 // The tiny nearest-filtered lookup stores material IDs, never color or PBR pixels.
 // A world layer spans the map, so adjacent chunks use precisely the same lookup.
-export function createTerrainMaterialLayer(THREE, { world = false } = {}) {
+export function createTerrainMaterialLayer(THREE, { world = false, onSeasonalSurface } = {}) {
     const atlas = sharedAtlases(THREE);
     // Keep CPU images shared, but give a disposable local renderer its own
     // texture wrappers. Otherwise cached textures retain every renderer's
@@ -181,6 +181,7 @@ export function createTerrainMaterialLayer(THREE, { world = false } = {}) {
             // они нужны картам теней фонарей. Редактор включает их при добавлении.
             for(const [kind,id] of [['snow',6],['ice',12]])if(!seasonal[kind]&&(top===id||side===id)){
                 seasonal[kind]=true;materials.forEach(material=>{material.needsUpdate=true;});
+                onSeasonalSurface?.();
             }
         },
         fill(tiles, originX = 0, originZ = 0) {
