@@ -348,3 +348,46 @@ def test_storage_container_cannot_be_newly_mounted_but_legacy_can_be_removed():
     preserve(worn, worn)
     assert artifact_passive_profile(worn)["skill_other"] == 0
     preserve(worn, carried)
+
+
+def test_artifact_extraction_finishes_next_turn_without_double_charge(client, create_user, auth_headers):
+    user = create_user('artifact-container-owner')
+    lobby = create_lobby(client, user, auth_headers)
+    container, artifact = artifact_fixture('equipped', 3)
+    container['installedModules'] = [{**artifact, 'slotType': 'artifact'}]
+    character = create_character(client, lobby, user, auth_headers, {
+        'equipment': {'armor': {'containers': [{'item': container}]}},
+        'inventory': {'backpack': []},
+    })
+    location = Location(lobby_id=lobby['id'], name='Проверка извлечения', world_tile_x=0, world_tile_z=0)
+    db.session.add(location)
+    db.session.flush()
+    actor = LocationCharacter(location_id=location.id, character_id=character['id'],
+                              controlled_by=user['id'], action_points_current=6, action_points_max=6)
+    db.session.add(actor)
+    db.session.flush()
+    db.session.add(LocationCombatState(location_id=location.id, status='active', round_number=1,
+                                     turn_order=[actor.id], current_location_character_id=actor.id))
+    db.session.commit()
+    base = f"/lobbies/{lobby['id']}/locations/{location.id}/combat/action"
+    headers = auth_headers(user)
+    payload = {'location_character_id': actor.id, 'action_key': 'change_equipment_module'}
+    start = client.post(base, headers=headers, json={**payload, 'module_operation': 'uninstall',
+        'module_slot_type': 'artifact', 'module_target_path': ['equipment', 'armor', 'containers', 0, 'item'],
+        'module_selection': {'target': {'id': 'container'}, 'source': {'id': 'artifact'}},
+        'pending_action_id': 'extract-artifact'})
+    assert start.status_code == 200, start.get_json()
+    assert start.get_json()['pending_action'] is True
+    stored = db.session.get(LobbyCharacter, character['id'])
+    assert stored.data['inventory']['backpack'] == []
+    after_payment = actor.action_points_current
+    assert after_payment == actor.action_points_max - 2
+
+    resume = {**payload, 'resume_pending_action_id': 'extract-artifact'}
+    result = client.post(base, headers=headers, json=resume)
+    assert result.status_code == 200, result.get_json()
+    assert result.get_json()['module_change']['action_points'] == 8
+    assert actor.action_points_current == after_payment
+    client.post(base, headers=headers, json=resume)
+    assert actor.action_points_current == after_payment
+    assert stored.data['inventory']['backpack'] == [artifact]
