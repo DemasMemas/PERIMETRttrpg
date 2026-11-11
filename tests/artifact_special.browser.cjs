@@ -818,22 +818,52 @@ module.exports=async({page,request,token,lobby,loc,locationId,rules,safeSession}
         await equipSpecial(name,id);
         const prepared=await getSponge();
         prepared.data.health.current=700;
+        prepared.data.skills.other.medicine={base:10,bonus:2,xp:0};
+        prepared.data.skills.physical.agility={base:10,bonus:1,xp:0};
         await request(spongeUrl,{data:prepared.data},token,'PUT');
+        let savedMedicineBonus=2;
+        const medicineInput="document.querySelector('input[name=\"skills.other.medicine.bonus\"]')";
+        const agilityInput="document.querySelector('input[name=\"skills.physical.agility.bonus\"]')";
+        const openSkills=()=>page.evaluate(`window.openCharacterSheet(${spongeBearer.id},'skills').then(()=>true)`);
+        const expectSkillFields=multiplier=>page.until(`(()=>{
+            const medicine=${medicineInput},agility=${agilityInput};
+            return Number(medicine?.dataset.transientBonus)===${other*multiplier}
+                &&Number(medicine?.value)===${savedMedicineBonus+other*multiplier}
+                &&Number(agility?.dataset.transientBonus)===${physical*multiplier}
+                &&Number(agility?.value)===${1+physical*multiplier};
+        })()`,`${name}: бонусы навыков в листе, ×${multiplier}`);
         const assertPhase=async (multiplier,health,movement)=>{
             const data=(await getSponge()).data;
             assert.equal(data.health.current,health,name);
             assert.equal(data._artifact_profile.movement_penalty,movement,name);
             assert.equal(data._artifact_profile.skill_other,other*multiplier,name);
             assert.equal(data._artifact_profile.skill_physical,physical*multiplier,name);
+            assert.equal(data.skills.other.medicine.bonus,savedMedicineBonus,name);
+            assert.equal(data.skills.physical.agility.bonus,1,name);
             for(const field of ['pain_per_movement','health_per_movement']){
                 assert.equal(data._artifact_profile[field],prepared.data._artifact_profile[field],name);
             }
         };
         await assertPhase(1,700,0);
+        await openSkills();
+        await expectSkillFields(1);
         await clickSpecial(id);
         await assertPhase(2,700,0);
+        await openSkills();
+        await expectSkillFields(2);
+        savedMedicineBonus++;
+        await page.evaluate(`(()=>{
+            const medicine=${medicineInput};medicine.value=${savedMedicineBonus+other*2};
+            medicine.dispatchEvent(new Event('input',{bubbles:true}));return true;
+        })()`);
+        await page.until(`(async()=>{
+            const {Server}=await import('/static/js/api.js');
+            return (await Server.getCharacter(${spongeBearer.id})).data.skills.other.medicine.bonus===${savedMedicineBonus};
+        })()`,`${name}: сохранена только постоянная часть бонуса`);
+        await page.evaluate(`import('/static/js/api.js').then(({Server})=>Server.waitForCharacterSave(${spongeBearer.id})).then(()=>true)`);
         await changeMinutes(1);
         await assertPhase(1,700-hpCost,movementCost);
+        await expectSkillFields(1);
         if(movementCost){
             await changeMinutes(9);
             // На десятой минуте ношения отдельно срабатывает пассивная потеря 50 ОЗ.
@@ -845,7 +875,8 @@ module.exports=async({page,request,token,lobby,loc,locationId,rules,safeSession}
             await assertPhase(1,700-hpCost,0);
         }
         amplifierResults[id]={name,other:[other,other*2,other],physical:[physical,physical*2,physical],
-            boostSeconds:60,hpCost,movementCost,movementCostSeconds:movementCost?600:0};
+            boostSeconds:60,hpCost,movementCost,movementCostSeconds:movementCost?600:0,openSheetUpdated:true,
+            savedMedicineBonus};
         console.log(`${name}: удвоение после нажатия, возврат через минуту, отложенная цена проверена.`);
     }
 

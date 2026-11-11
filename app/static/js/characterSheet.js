@@ -36,6 +36,7 @@ import { lobbyParticipants } from './ui.js';
 import { getSocket } from './socketHandlers.js';
 import { consumeChangedSheetInputs, rememberCharacterSnapshots } from './characterPersistence.js';
 import { diffCharacterData, pathTouches } from './characterSheetSync.js';
+import { artifactSkillBonus, artifactSkillBonusesChanged } from './artifactSkillBonuses.js';
 import { isWorldDarkTime } from './darknessRules.js';
 import { copyProfileComponent, profileComponentOptions, renderConsumableProfileTree } from './consumableProfileEditor.js';
 import { applyEffectToHealth, createEffectDraft, effectSummary, effectDurationLabel, effectConsequences, getEffectTypeOptions, isAlcoholConsumable, normalizeCharacterEffects, normalizeEffectList, getEffectImpact, syncHealthDerivedStatuses } from './effects.js';
@@ -1206,7 +1207,7 @@ function restoreSheetViewState(state, { restoreWeaponCards = true } = {}) {
     }
 }
 
-async function refreshSavedSheet(characterId) {
+async function refreshSavedSheet(characterId, refreshArtifactSkills = false) {
     if (Number(currentCharacterId) !== Number(characterId)) return;
     const viewState = captureSheetViewState();
     await Promise.all([
@@ -1215,9 +1216,9 @@ async function refreshSavedSheet(characterId) {
     ]);
     if (Number(currentCharacterId) !== Number(characterId)) return;
     const activeTab = document.querySelector('#sheet-tabs .tab-btn.active')?.dataset.tab;
+    if (activeTab === 'skills' || refreshArtifactSkills) await renderSkillsTab(currentCharacterData);
     if (activeTab === 'health') refreshHealthPanel();
     else if (activeTab === 'basic') await renderBasicTab(currentCharacterData);
-    else if (activeTab === 'skills') renderSkillsTab(currentCharacterData);
     else if (activeTab === 'settings') renderSettingsTab(currentCharacterData);
     else if (activeTab === 'notes') renderNotesTab(currentCharacterData);
     applySheetEditPermissions();
@@ -1310,10 +1311,13 @@ async function applyRemoteSheetData(remoteData, characterId = currentCharacterId
     }
     normalizeCharacterEffects(remoteData);
     const changes = diffCharacterData(previousData, remoteData);
+    const artifactSkillsChanged = artifactSkillBonusesChanged(previousData._artifact_profile, remoteData._artifact_profile);
+    const artifactStrengthChanged = artifactSkillBonus(previousData._artifact_profile, 'physical.strength')
+        !== artifactSkillBonus(remoteData._artifact_profile, 'physical.strength');
     currentCharacterData = remoteData;
 
     const allPaths = [...changes.scalarPaths, ...changes.structuralPaths];
-    if (!allPaths.length) return true;
+    if (!allPaths.length && !artifactSkillsChanged) return true;
     const viewState = captureSheetViewState();
     const missingFields = patchRemoteScalarFields(remoteData, changes.scalarPaths);
     const touches = root => allPaths.some(path => pathTouches(path, root));
@@ -1333,6 +1337,7 @@ async function applyRemoteSheetData(remoteData, characterId = currentCharacterId
         || missingTouches('skills')
         || changes.scalarPaths.some(path => /^skills\..+\.(base|xp)$/.test(path))
         || touches('features')
+        || artifactSkillsChanged
     ) tasks.push(renderSkillsTab(remoteData));
     if (touches('equipment') || touches('weapons') || touches('activeWeaponIndex') || touches('inventory')
         || touches('health.prostheses') || touches('health.combatMeta.portableLights')
@@ -1346,6 +1351,7 @@ async function applyRemoteSheetData(remoteData, characterId = currentCharacterId
         || touches('equipment')
         || changes.scalarPaths.some(path => pathTouches(path, 'skills.physical.strength'))
     ) tasks.push(renderInventoryTab(remoteData));
+    else if (artifactStrengthChanged) recalculateInventoryTotals();
     if (touches('ownerId') || touches('ownerUsername') || touches('visible_to') || touches('editable_to')) {
         renderSettingsTab(remoteData);
     }
@@ -1391,12 +1397,13 @@ function persistCurrentSheet() {
     updateDataFromFields();
     const characterId = currentCharacterId;
     const draft = currentCharacterData;
+    const artifactProfile = draft._artifact_profile;
     return Server.updateCharacter(characterId, {
         data: draft, _manual_fields: consumeManualFieldPaths(),
     }).then(async () => {
         const appliedRemote = await applyPendingSheetRemoteUpdate(characterId);
         if (!appliedRemote && currentCharacterData === draft && !autoSaveTimer && !Server.isCharacterSaving(characterId)) {
-            return refreshSavedSheet(characterId);
+            return refreshSavedSheet(characterId, artifactSkillBonusesChanged(artifactProfile, draft._artifact_profile));
         }
     }).catch(error => {
         if (Number(currentCharacterId) !== Number(characterId)) return;
@@ -1946,6 +1953,7 @@ function getSkillEffectiveValue(data, skillPath) {
         ? getExoskeletonPowerProfile(data).strengthLevelBonus
         : 0;
     return (Number.isFinite(base) ? base : 0) + bonus + temporaryValue + equipmentValue
+        + artifactSkillBonus(data?._artifact_profile, skillPath)
         +(skillPath==='social.charisma'?facialProfile(data).charismaLevel:0)
         +(backgroundIs(data,'Пожарный')&&data.health?.combatMeta?.firefighterNearby&&['physical.strength','physical.agility'].includes(skillPath)?2:0);
 }
@@ -4181,6 +4189,7 @@ async function renderSkillsTab(data) {
     function renderSkillRow(label, base, bonus, xp, path) {
         const required = getRequiredXp(base);
         const transientBonus = (path==='physical.strength'&&getExoskeletonPowerProfile(data).powered?8:0)
+            + artifactSkillBonus(data._artifact_profile, path)
             +(backgroundIs(data,'Пожарный')&&data.health?.combatMeta?.firefighterNearby&&['physical.strength','physical.agility'].includes(path)?2:0);
         return `
             <div style="display: flex; align-items: center; gap: 3px; margin-bottom: 5px; flex-wrap: wrap;">

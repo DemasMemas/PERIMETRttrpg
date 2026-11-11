@@ -15,6 +15,7 @@ function sheet(data) {
         renderSpecialTraits() {}, applySheetEditPermissions(){},updateDataFromFields(){},showNotification() {}, scheduleAutoSave() { saves++; },
     });
     vm.runInContext(fs.readFileSync(path.join(__dirname,'../app/static/js/characterTraits.js'),'utf8').replaceAll('export ',''),context);
+    vm.runInContext(fs.readFileSync(path.join(__dirname,'../app/static/js/artifactSkillBonuses.js'),'utf8').replace(/^export /gm,''),context);
     vm.runInContext(source.slice(source.indexOf('function getRequiredXp('), source.indexOf('// ========== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ')), context);
     vm.runInContext(source.slice(source.indexOf('async function renderSkillsTab('), source.indexOf('function renderSpecialTraits(')), context);
     return { context, container, saves: () => saves, render: () => context.renderSkillsTab(data) };
