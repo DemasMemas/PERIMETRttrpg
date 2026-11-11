@@ -192,9 +192,14 @@ else:
         if ((['traits','creation','artifacts'].includes(process.env.VTT_SAFE_SCENARIO) || process.env.VTT_GM_RELOCATION_ONLY === '1' || process.env.VTT_UI_REGRESSION === '1' || process.env.VTT_PRIPYAT === '1' || process.env.VTT_MOVEMENT_ONLY === '1') && !process.env.VTT_WATER_BASELINE_DIR) {
             const modules = path.join(profile, 'regression-modules');
             fs.mkdirSync(modules,{recursive:true});
-            const source = process.env.VTT_PRIPYAT_LEGACY === '1'
+            let source = process.env.VTT_PRIPYAT_LEGACY === '1'
                 ? fs.readFileSync(path.join(root,'tmp/ui-regression-modules/locationScene.js'),'utf8').split(/\nexport \{(?:openCharacterAttackSelection, )?(?:showObjectContextMenu, )?showCombatActionMenu,/)[0]
                 : fs.readFileSync(path.join(root,'app/static/js/locationScene.js'),'utf8');
+            if (safeSession && process.env.VTT_SAFE_SCENARIO === 'terrain') {
+                assert.equal(source.split('if (terrainLineHit(').length, 2);
+                source = source.replace('if (terrainLineHit(', 'if (measuredTerrainLineHit(')
+                    + '\n' + fs.readFileSync(path.join(__dirname,'helpers/terrain_visibility_probe.js'),'utf8');
+            }
             fs.writeFileSync(path.join(modules,'locationScene.js'), source + `
 export {openCharacterAttackSelection, showObjectContextMenu, showCombatActionMenu, showFacingMenu, updateFacingPreview, closeFacingMenu, findMovementPath, hasStoreyNavigation, hasLineOfSight, beginCharacterMoveMode, updateMovementPreview, commitMovementPreview, resolveFacingCell, showMovementTypeMenu, selectEditorAsset};
 export function sceneGraphicsForTest(){return {scene,renderer,camera,controls,sun:locationDirectionalLight,roots:locationObjectMeshes,roofs:roofMeshes,characters:characterModels,cache:locationShadowCache,shadowPass:locationShadowPass,batches:locationRenderBatches,pickAtScreen:getLocationObjectAtScreen};}

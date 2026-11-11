@@ -94,6 +94,17 @@ module.exports=async({page,request,token,lobby,base,connect,debugPort,safeSessio
         assert.equal(afterShot.current_character.action_points_current,finalAp);
         for(const client of [page,peer])await client.until(`L.getCombatState()?.characters?.find(c=>c.character_id===${shooter.id})?.action_points_current===${finalAp}`,'Списание ОД после выстрела видно на обоих клиентах');
         await request(loc+'/combat/end',{},token);
+        await page.call('Page.bringToFront');
+        await page.call('Emulation.setDeviceMetricsOverride',{width:1920,height:1080,deviceScaleFactor:1,mobile:false});
+        const performance=await page.evaluate(`(async()=>{
+            locationControls.target.set(36,1,36);
+            locationControls.object.position.set(80,42,105);
+            locationControls.update();
+            return L.measureTerrainVisibilityForTest(${shooter.id});
+        })()`);
+        assert.deepEqual(performance.viewport,[1920,1080]);
+        assert.ok(performance.runs.filter(run=>run.refresh).every(run=>run.rays.median>0),'Замерен активный обзор');
+        fs.writeFileSync(path.join(safeSession.artifacts,'pripyat-terrain-performance.json'),JSON.stringify(performance,null,2));
         const wall = await request(loc+'/objects', {
             name: 'Стена для проверки проёмов',
             type: 'wall', tile_x: mid, tile_y: z,
