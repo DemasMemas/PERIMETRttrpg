@@ -191,7 +191,7 @@ def artifact_passive_profile(character_data):
             )
         result['skill_physical'] += _signed(text, r'Физические навыки') * multiplier
         result['skill_other'] += _signed(text, r'Прочие навыки') * multiplier
-        result['skill_strength'] += _signed(text, r'Бонус Силы')
+        result['skill_strength'] += _signed(text, r'Сила') + 2 * _signed(text, r'Бонус Силы')
         result['skill_will'] += _signed(text, r'Воля')
         result['skill_awareness'] += _signed(text, r'Внимательность')
         result['skill_stealth'] += _signed(text, r'Скрытность')
