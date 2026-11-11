@@ -253,6 +253,7 @@ function showGroupContextMenu(group, clientX, clientY) {
         <button type="button" data-context-move ${group.has_pending_event || !group.turn_active || group.turn_submitted || group.movement_distance <= 0 ? 'disabled' : ''}>Переместить</button>
         <button type="button" data-context-wait ${group.has_pending_event || !group.turn_active || group.turn_submitted ? 'disabled' : ''}>Ждать 10 минут</button>
         ${group.anomaly_field ? `<button type="button" data-context-anomaly-field>Исследовать поле · ${escapeHtml(group.anomaly_field.name)}</button>` : ''}
+        ${group.members?.length ? '<button type="button" data-context-stashes>Тайники на клетке</button>' : ''}
         ${window.isGM && group.has_pending_event ? '<button type="button" data-context-event>Ожидающее событие</button>' : ''}
         ${window.isGM ? '<button type="button" data-context-delete>Удалить с карты</button>' : ''}
     `;
@@ -294,6 +295,11 @@ function showGroupContextMenu(group, clientX, clientY) {
     contextMenu.querySelector('[data-context-anomaly-field]')?.addEventListener('click', () => {
         hideContextMenu();
         openAnomalyFieldModal(group);
+    });
+    contextMenu.querySelector('[data-context-stashes]')?.addEventListener('click', async () => {
+        hideContextMenu();
+        const {showWorldStashes}=await import('./worldStashDialog.js');
+        showWorldStashes(lobbyId,group);
     });
     contextMenu.querySelector('[data-context-delete]')?.addEventListener('click', async () => {
         hideContextMenu();

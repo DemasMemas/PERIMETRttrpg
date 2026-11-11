@@ -14247,10 +14247,10 @@ class CombatService:
             special_action_cost=controller_prepared['action_points']
             action['label']=LABELS[controller_prepared['operation']]
         if action_key=='trap':
-            from app.services.traps import prepare as trap_plan
+            from app.services.traps import ACTION_NAMES, prepare as trap_plan
             trap_prepared=trap_plan(character,data,attribute_choice,user_id)
             special_action_cost=trap_prepared['action_points']
-            action['label']={'place':'Установка ловушки','mask':'Маскировка ловушки','mask_stash':'Маскировка тайника','defuse':'Обезвреживание ловушки','recover':'Подбор ловушки','detect':'Осмотр клетки','escape_net':'Освободиться из сети','cut_net':'Разрезать сеть'}[trap_prepared['operation']]
+            action['label']=ACTION_NAMES[trap_prepared['operation']]
         if action_key=='place_cover':
             from app.services.crafted_covers import plan as cover_plan
             cover_placement=cover_plan(character,data,attribute_choice)

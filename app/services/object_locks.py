@@ -16,7 +16,8 @@ LOCK_FIELDS={'locked','lock_difficulty','lock_jammed'}
 
 def supported(obj):
     props=obj.properties or {}
-    return bool(obj.type in {'door','window','hatch','chest','box','military_crate','shelf'} or
+    return bool(obj.type in {'door','window','hatch','chest','box','military_crate','shelf',
+                            'household_safe_small','household_safe_large'} or
         isinstance(props.get('contents'),list) and obj.type not in {'ground_item','corpse','body'}
         and not props.get('is_ground_item') and not props.get('is_corpse') and not props.get('portable_station'))
 
@@ -88,9 +89,10 @@ def attempt(lobby_id,object_id,character_id,user_id,payload):
     if type(payload.get('character_revision')) is not int or payload['character_revision']!=character.revision or type(payload.get('object_revision')) is not int or payload['object_revision']!=obj.revision:
         raise ConflictError('Персонаж или объект изменился. Повторите выбор')
     if not supported(obj) or not (obj.properties or {}).get('locked'):raise ValidationError('На объекте нет закрытого замка')
-    from app.services.stashes import visible as stash_visible
-    if not stash_visible(obj,user_id) or (obj.properties or {}).get('gm_hidden') and user_id!=obj.location.lobby.gm_id:
+    from app.services import stashes
+    if not stashes.visible(obj,user_id) or (obj.properties or {}).get('gm_hidden') and user_id!=obj.location.lobby.gm_id:
         raise PermissionDenied('Объект не обнаружен')
+    if stashes.buried(obj):raise ValidationError('Сначала раскопайте ящик')
     if (obj.properties or {}).get('lock_jammed'):raise ValidationError('Замок заклинило; открыть объект больше нельзя')
     footprint=CombatService._object_footprint_tiles(obj) or {(obj.tile_x,obj.tile_y)}
     actor_level=actor.floor_level or 0;level=level_of(obj)

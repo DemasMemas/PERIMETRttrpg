@@ -823,6 +823,21 @@ def wait_world_group(lobby_id, group_id, lobby, participant):
     }), 200
 
 
+@lobbies_bp.route('/<int:lobby_id>/world-groups/<int:group_id>/stashes', methods=['POST'])
+@jwt_required()
+@requires_participant
+def operate_world_stash(lobby_id, group_id, lobby, participant):
+    from app.services.world_stashes import operate
+
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        raise ValidationError('Выберите действие с тайником')
+    character, result = operate(lobby,group_id,participant.user_id,payload)
+    if payload['operation'] == 'transfer':
+        emit_character_update({'character_id':character.id,'updates':{'data':character.data_snapshot()},'source':'world_stash'})
+    return jsonify(result)
+
+
 @lobbies_bp.route('/<int:lobby_id>/world-groups/<int:group_id>/anomaly-field', methods=['POST'])
 @jwt_required()
 @requires_participant
@@ -2666,9 +2681,9 @@ def get_location_detail(lobby_id, location_id, lobby, participant):
         db.session.commit()
 
     objects = LocationObject.query.filter_by(location_id=location.id).all()
-    from app.services.stashes import visible as stash_visible
-    objects = [obj for obj in objects if stash_visible(obj, participant.user_id)]
-    obj_schema = LocationObjectSchema(many=True,reveal_locked=participant.user_id==lobby.gm_id,reveal_stashes=True)
+    from app.services import stashes
+    is_gm = participant.user_id == lobby.gm_id
+    obj_schema = LocationObjectSchema(reveal_locked=is_gm,reveal_stashes=True)
     from app.services.traps import projections
 
     return jsonify({
@@ -2683,7 +2698,10 @@ def get_location_detail(lobby_id, location_id, lobby, participant):
         'tiles_data': location.tiles_data,
         'lighting': location.lighting,
         'spawn_points': location.spawn_points,
-        'objects': obj_schema.dump(objects)+projections(location_id,participant.user_id)
+        'objects': [stashes.project(obj,participant.user_id,reveal_locked=is_gm)
+                    if (obj.properties or {}).get('stash_compartment') else obj_schema.dump(obj)
+                    for obj in objects if stashes.visible(obj,participant.user_id)]
+                    +projections(location_id,participant.user_id)
     }), 200
 
 
@@ -2920,7 +2938,8 @@ def edit_location_objects(lobby_id, location_id, lobby):
     from app.schemas.location import public_location_objects
     socketio.emit('location_editor_objects_changed', public_location_objects(payload), room=f'location_{location_id}')
     from app.services.stashes import publish as publish_stashes
-    publish_stashes(location_id,[obj['id'] for obj in payload.get('objects',[]) if (obj.get('properties') or {}).get('stash_mask')])
+    publish_stashes(location_id,[obj['id'] for obj in payload.get('objects',[])
+                                 if {'stash_mask','stash_compartment'} & (obj.get('properties') or {}).keys()])
     return jsonify(payload)
 
 
@@ -3088,11 +3107,11 @@ def change_location_objects_batch(lobby_id, location_id, lobby):
 @jwt_required()
 @requires_participant
 def get_location_object(lobby_id,object_id,lobby,participant):
-    from app.services.stashes import visible as stash_visible
+    from app.services import stashes
     obj=db.session.get(LocationObject,object_id)
-    if not obj or obj.location.lobby_id!=lobby_id or not stash_visible(obj,participant.user_id):
+    if not obj or obj.location.lobby_id!=lobby_id or not stashes.visible(obj,participant.user_id):
         raise NotFoundError('Объект не найден')
-    return jsonify(LocationObjectSchema(reveal_locked=participant.user_id==lobby.gm_id,reveal_stashes=True).dump(obj))
+    return jsonify(stashes.project(obj,participant.user_id,reveal_locked=participant.user_id==lobby.gm_id))
 
 
 @lobbies_bp.route('/<int:lobby_id>/locations/objects/<int:object_id>/lock',methods=['POST'])
@@ -3100,20 +3119,20 @@ def get_location_object(lobby_id,object_id,lobby,participant):
 @requires_participant
 def attempt_object_lock(lobby_id,object_id,lobby,participant):
     from app.services.object_locks import attempt
-    from app.services.stashes import publish as publish_stashes
+    from app.services import stashes
     payload=request.get_json(silent=True) or {}
     if not isinstance(payload,dict):raise ValidationError('Некорректная попытка вскрытия')
     character,actor,obj,result=attempt(lobby_id,object_id,payload.get('character_id'),participant.user_id,payload)
     if not result['duplicate']:
         emit_character_update({'character_id':character.id,'updates':{'data':character.data_snapshot()},'source':'object_lock'})
-        if (obj.properties or {}).get('stash_mask'):
-            publish_stashes(obj.location_id,[obj.id])
+        if {'stash_mask','stash_compartment'} & (obj.properties or {}).keys():
+            stashes.publish(obj.location_id,[obj.id])
         else:
             socketio.emit('location_object_updated',{'location_id':obj.location_id,'object':LocationObjectSchema().dump(obj)},room=f'location_{obj.location_id}')
         if LocationCombatState.query.filter_by(location_id=obj.location_id,status='active').first():
             socketio.emit('combat_state_updated',CombatService.get_state(obj.location_id,participant.user_id),room=f'location_{obj.location_id}')
     return jsonify({'operation':result,'data':character.data_snapshot(),
-        'object':LocationObjectSchema(reveal_locked=participant.user_id==lobby.gm_id,reveal_stashes=True).dump(obj)})
+        'object':stashes.project(obj,participant.user_id,reveal_locked=participant.user_id==lobby.gm_id)})
 
 
 @lobbies_bp.route('/<int:lobby_id>/locations/objects/<int:object_id>', methods=['DELETE'])
@@ -3152,8 +3171,10 @@ def update_location_object(lobby_id, object_id, lobby, participant):
     if not isinstance(data, dict):
         raise ValidationError('Object update must be an object')
     properties = data.get('properties') if isinstance(data.get('properties'), dict) else {}
-    if 'stash_mask' in properties:
+    if {'stash_mask','stash_compartment','stash_contents'} & properties.keys():
         raise ValidationError('Используйте действие маскировки тайника')
+    if stashes.buried(obj) and participant.user_id!=lobby.gm_id:
+        raise ValidationError('Сначала раскопайте ящик')
     from app.services.object_locks import LOCK_FIELDS,validate_settings
     if LOCK_FIELDS.intersection(properties):
         if participant.user_id!=lobby.gm_id:raise PermissionDenied('Настраивать замок может только ГМ')
@@ -3268,12 +3289,12 @@ def update_location_object(lobby_id, object_id, lobby, participant):
         if should_reveal(location,obj):obj.properties={**obj.properties,'gm_hidden':False}
     db.session.commit()
 
-    if (obj.properties or {}).get('stash_mask'):
+    if {'stash_mask','stash_compartment'} & (obj.properties or {}).keys():
         stashes.publish(location.id, [obj.id])
     else:
         socketio.emit('location_object_updated', {'location_id':location.id,'object':LocationObjectSchema().dump(obj)},
                       room=f'location_{location.id}')
-    return jsonify(LocationObjectSchema(reveal_locked=participant.user_id==lobby.gm_id,reveal_stashes=True).dump(obj)), 200
+    return jsonify(stashes.project(obj,participant.user_id,reveal_locked=participant.user_id==lobby.gm_id)), 200
 
 
 @lobbies_bp.route('/<int:lobby_id>/locations/<int:location_id>/teams', methods=['GET', 'PUT'])
@@ -3736,17 +3757,18 @@ def change_character_visual_pose(lobby_id, location_id, character_id, lobby, par
 @jwt_required()
 @requires_participant
 def transfer_location_item(lobby_id, object_id, lobby, participant):
+    from app.services import stashes
     character, obj, deleted = ContainerTransferService.transfer(
         lobby_id, object_id, participant.user_id, request.get_json() or {},
     )
     emit_character_update({'character_id': character.id, 'updates': {'data': character.data}, 'source': 'container_transfer'})
-    payload = None if deleted else LocationObjectSchema(reveal_stashes=True).dump(obj)
-    if not deleted and (obj.properties or {}).get('stash_mask'):
-        from app.services.stashes import publish
-        publish(obj.location_id, [object_id])
+    payload = None if deleted else stashes.project(obj,participant.user_id,reveal_locked=participant.user_id==lobby.gm_id)
+    if not deleted and {'stash_mask','stash_compartment'} & (obj.properties or {}).keys():
+        stashes.publish(obj.location_id, [object_id])
     else:
         socketio.emit('location_object_deleted' if deleted else 'location_object_updated',
-                      {'location_id': obj.location_id, 'object_id': object_id, 'object': payload},
+                      {'location_id': obj.location_id, 'object_id': object_id,
+                       'object':None if deleted else LocationObjectSchema().dump(obj)},
                       room=f'location_{obj.location_id}')
     return jsonify({'data': character.data_snapshot(), 'object': payload, 'deleted': deleted}), 200
 
@@ -3772,9 +3794,14 @@ def operate_portable_station(lobby_id,location_id,lobby,participant):
     from app.services.portable_stations import operate
     character,obj,created=operate(lobby_id,location_id,participant.user_id,request.get_json() or {})
     emit_character_update({'character_id':character.id,'updates':{'data':character.data},'source':'portable_station'})
-    serialized=LocationObjectSchema().dump(obj)
-    socketio.emit('location_object_created' if created else 'location_object_updated',
-        {'location_id':location_id,'object':serialized},room=f'location_{location_id}')
+    if (obj.properties or {}).get('stash_compartment'):
+        from app.services import stashes
+        serialized=stashes.project(obj,participant.user_id,reveal_locked=participant.user_id==lobby.gm_id)
+        stashes.publish(location_id,[obj.id])
+    else:
+        serialized=LocationObjectSchema().dump(obj)
+        socketio.emit('location_object_created' if created else 'location_object_updated',
+            {'location_id':location_id,'object':serialized},room=f'location_{location_id}')
     return jsonify({'data':character.data_snapshot(),'object':serialized,'created':created})
 
 

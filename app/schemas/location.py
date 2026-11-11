@@ -61,7 +61,12 @@ def public_location_objects(value, *, reveal_stashes=False):
     result={key:public_location_objects(item, reveal_stashes=reveal_stashes) for key,item in value.items()}
     props=result.get('properties')
     if isinstance(props,dict):
-        if props.pop('stash_mask', None): props['stash_masked'] = True
+        props.pop('stash_compartment', None)
+        if mask := props.pop('stash_mask', None):
+            props['stash_masked'] = True
+            if mask.get('mode') == 'buried':
+                props['stash_buried'] = True
+                props['contents'] = []
         if props.get('locked') and 'contents' in props:
             result['properties']={**props,'contents':[],'contents_hidden':True}
     return result

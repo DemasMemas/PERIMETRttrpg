@@ -284,9 +284,127 @@ def test_masked_stash_uses_shared_check_and_is_discovered_per_player(client, tra
         assert response.json['result']['found'] == found
     visible = client.get(url,headers=seeker)
     assert visible.status_code == 200 and 'stash_mask' not in visible.json['properties']
-    assert visible.json['properties']['contents'][0]['id'] == 'private-item'
+    assert visible.json['properties']['stash_buried'] is True and not visible.json['properties']['contents']
     assert any(name=='location_object_updated' and room==seeker_room and event['object']['id']==obj.id
                for name,event,room in events)
+    assert client.post(url+'/transfer',headers=seeker,json={'character_id':other.character_id}).status_code==400
+    excavated=client.post(loc+'/traps',headers=owner,json=request(pair,'dig_up_stash',
+        stash_id=obj.id,stash_revision=obj.revision,tool_path=['inventory','pockets',0]))
+    assert excavated.status_code==200, excavated.json
+    assert client.get(url,headers=seeker).json['properties']['contents'][0]['id']=='private-item'
+
+
+@pytest.mark.parametrize('surface,expected', [('floor',400),('roof',200),('concrete',400),('sand',200)])
+def test_bury_ground_stash_requires_shovel_and_exposed_soil(client, trap_game, auth_headers, surface, expected):
+    pair=trap_game;actor=pair['actor_location'];location=pair['location']
+    data=deepcopy(actor.character.data)
+    data['inventory']['pockets']=[{'id':'spade','name':'Лопата','category':'tool','quantity':1}]
+    actor.character.data=data
+    if surface in {'roof','floor'}:
+        db.session.add(LocationObject(location_id=location.id,type=surface,tile_x=5,tile_y=4,
+            properties={'level':0,'dimensions':{'width':1,'depth':1,'height':.1}}))
+    else:
+        tiles=[[{'terrain':'grass'} for _ in range(location.grid_width)] for _ in range(location.grid_height)]
+        tiles[4][5]['terrain']=surface
+        location.tiles_data=tiles
+    db.session.commit()
+    url=f"/lobbies/{pair['lobby'].id}/locations/{location.id}/traps"
+    headers=auth_headers(pair['actor_user'])
+    assert client.post(url,headers=headers,json=request(pair,'bury_ground_stash')).status_code==400
+    response=client.post(url,headers=headers,json=request(pair,'bury_ground_stash',tool_path=['inventory','pockets',0]))
+    assert response.status_code==expected,response.json
+    if expected==200:
+        stash=LocationObject.query.filter_by(type='ground_stash',location_id=location.id).one()
+        assert stash.properties['stash_mask']['mode']=='ground'
+        assert stash.properties['contents']==[]
+
+
+def test_host_has_separate_compartment_and_normal_container(client, trap_game, auth_headers, monkeypatch):
+    pair=trap_game;actor,other=pair['actor_location'],pair['target_location']
+    other.facing_x,other.facing_y=-1,0
+    item={'id':'kept','name':'Скрытые детали','quantity':2}
+    data=deepcopy(actor.character.data);data['inventory']['pockets']=[item]
+    actor.character.data=data
+    obj=LocationObject(location_id=actor.location_id,type='household_stump',name='Пень',tile_x=5,tile_y=4,
+        properties={'contents':[{'id':'open','name':'Открытые вещи','quantity':1}]})
+    db.session.add(obj);db.session.commit()
+    root=f"/lobbies/{pair['lobby'].id}/locations"
+    loc=root+f'/{actor.location_id}'
+    url=root+f'/objects/{obj.id}'
+    owner,seeker=auth_headers(pair['actor_user']),auth_headers(pair['target_user'])
+    response=client.post(loc+'/traps',headers=owner,json=request(pair,'mask_stash',stash_id=obj.id,stash_revision=obj.revision))
+    assert response.status_code==200,response.json
+    response=client.post(url+'/transfer',headers=owner,json={'stash_compartment':True,'character_id':actor.character_id,
+        'character_revision':actor.character.revision,'object_revision':obj.revision,'amount':2,
+        'direction':'to_container','item_path':['inventory','pockets',0],'expected_item':item})
+    assert response.status_code==200,response.json
+    public=client.get(url,headers=seeker).json['properties']
+    assert public['contents'][0]['id']=='open' and 'stash_compartment' not in public and 'stash_contents' not in public
+    denied=client.post(loc+'/traps',headers=seeker,json={'operation':'mask_stash','operation_id':'steal-compartment',
+        'character_id':other.character_id,'character_revision':other.character.revision,'stash_id':obj.id,'stash_revision':obj.revision})
+    assert denied.status_code==400
+    monkeypatch.setattr('app.services.combat.random.randint',lambda *_:20)
+    found=client.post(loc+'/traps',headers=seeker,json={'operation':'detect','operation_id':'find-compartment',
+        'character_id':other.character_id,'character_revision':other.character.revision,'x':5,'y':4})
+    assert found.status_code==200 and found.json['result']['found']==1,found.json
+    visible=client.get(url,headers=seeker).json['properties']
+    assert visible['contents'][0]['id']=='open' and visible['stash_contents'][0]['id']=='kept'
+
+
+def test_crate_can_be_moved_from_floor_to_soil_before_burial(client,trap_game,auth_headers):
+    pair=trap_game;actor=pair['actor_location']
+    data=deepcopy(actor.character.data)
+    data['inventory']['pockets']=[{'id':'shovel','name':'Лопата','category':'tool','quantity':1}]
+    actor.character.data=data
+    crate=LocationObject(location_id=actor.location_id,type='box',name='Ящик',tile_x=5,tile_y=4,
+        properties={'contents':[{'id':'retained','name':'Лом','quantity':1}]})
+    floor=LocationObject(location_id=actor.location_id,type='floor',name='Пол',tile_x=5,tile_y=4,
+        properties={'level':0,'dimensions':{'width':1,'depth':1,'height':.15}})
+    db.session.add_all([crate,floor]);db.session.commit()
+    root=f"/lobbies/{pair['lobby'].id}/locations"
+    headers=auth_headers(pair['actor_user'])
+    def bury():
+        return client.post(root+f'/{actor.location_id}/traps',headers=headers,json=request(pair,'mask_stash',
+            stash_id=crate.id,stash_revision=crate.revision,tool_path=['inventory','pockets',0]))
+    assert bury().status_code==400
+    moved=client.patch(root+f'/objects/{crate.id}',headers=headers,json={'tile_x':4,'tile_y':5})
+    assert moved.status_code==200,moved.json
+    assert bury().status_code==200
+    assert crate.properties['stash_mask']['mode']=='buried'
+    assert crate.properties['contents'][0]['id']=='retained'
+
+
+def test_world_stash_visibility_transfer_and_position(client,trap_game,auth_headers,monkeypatch):
+    from app.models import MapChunk, WorldGroup
+
+    pair=trap_game;lobby=pair['lobby']
+    actor,other=pair['actor_character'],pair['target_location'].character
+    shovel={'id':'spade','name':'Саперная лопатка','category':'tool','quantity':1}
+    item={'id':'saved','name':'Детали','category':'material','quantity':3}
+    data=deepcopy(actor.data);data['inventory']['pockets']=[shovel,item];actor.data=data
+    db.session.add(MapChunk(lobby_id=lobby.id,chunk_x=0,chunk_y=0,data=[[{'terrain':'grass'},{'terrain':'grass'}]]))
+    groups=[WorldGroup(lobby_id=lobby.id,name=character.name,tile_x=0,tile_y=0,
+        member_character_ids=[character.id],created_by=lobby.gm_id) for character in (actor,other)]
+    db.session.add_all(groups);db.session.commit()
+    owner,seeker=auth_headers(pair['actor_user']),auth_headers(pair['target_user'])
+    def operate(index, operation, **payload):
+        return client.post(f'/lobbies/{lobby.id}/world-groups/{groups[index].id}/stashes',
+            headers=(owner,seeker)[index],json={'operation':operation,'character_id':(actor,other)[index].id,**payload})
+    burial={'tool_path':['inventory','pockets',0],'operation_id':'same-dig','tile_x':0,'tile_y':0}
+    stash,=operate(0,'bury',**burial).json['stashes']
+    assert operate(0,'bury',**burial).json['stashes']==[stash]
+    assert operate(1,'list').json['stashes']==[]
+    sent=operate(0,'transfer',stash_id=stash['id'],stash_revision=stash['revision'],
+        character_revision=actor.revision, direction='to_container',item_path=['inventory','pockets',1],
+        amount=3,expected_item=item)
+    assert sent.status_code==200,sent.json
+    monkeypatch.setattr('app.services.combat.random.randint',lambda *_:20)
+    result=operate(1,'search').json
+    assert result['found']==1 and result['stashes'][0]['contents'][0]['id']=='saved'
+    groups[1].tile_x=1;db.session.commit()
+    assert operate(1,'list',tile_x=0,tile_y=0).status_code==409
+    assert operate(1,'list').json['stashes']==[]
+    assert operate(1,'transfer',stash_id=stash['id']).status_code==404
 
 
 def test_net_stops_movement_and_strength_check_releases_character(trap_game,monkeypatch):

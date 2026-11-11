@@ -138,6 +138,10 @@ export const LOCATION_ASSETS = Object.freeze([
         ['rubble','Куча строительного мусора','Мусор и обломки',[1.8,1.5,.6]],
         ['stones','Россыпь камней','Мусор и обломки',[1.5,1.2,.25],true],
         ['fallen_tree','Поваленное дерево','Мусор и обломки',[4,1.8,.9]],
+        ['stump','Пень','Мусор и обломки',[.75,.68,.48]],
+        ['hollow_tree','Дерево с дуплом','Мусор и обломки',[1.05,.95,2.15]],
+        ['safe_small','Маленький сейф','Мебель',[.37,.34,.32]],
+        ['safe_large','Большой сейф','Мебель',[.58,.53,.85]],
         ['sandbag','Мешок с песком','Укрепления',[.65,.35,.22]],
         ['sandbag_wall','Укрытие из мешков с песком','Укрепления',[2,.55,.85]],
         ['bottle','Брошенная бутылка','Мусор и обломки',[.08,.08,.28],true],
@@ -158,7 +162,9 @@ export const LOCATION_ASSETS = Object.freeze([
         id:`household_${modelId}`,label,group,dimensions,passable,kind:'structure',icon:'▤',color:'#86735b',
         ...(mount?{mount,elevation}:{}),
         ...(['tv_stand','tool_cabinet','medical_cabinet','shop_counter','display_case','refrigerated_display',
-            'laundry_basket','shopping_basket','trash_bin','dumpster','mailbox'].includes(modelId)?{container:true}:{}),
+            'laundry_basket','shopping_basket','trash_bin','dumpster','mailbox','fallen_tree','stump',
+            'hollow_tree','sauna_stove','safe_small','safe_large'].includes(modelId)?{container:true}:{}),
+        ...(['safe_small','safe_large'].includes(modelId)?{lockDifficulty:modelId==='safe_small'?8:13}:{}),
         visual:{renderMode:'procedural',family:'household',modelId,pivot:'bottom-center',orientation:0}
     })),
     ...[

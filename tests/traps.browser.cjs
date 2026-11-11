@@ -64,11 +64,11 @@ module.exports=async({page,request,token,lobby,base,safeSession})=>{
     await project(42.5,48.5);const screenshot=await page.call('Page.captureScreenshot',{format:'png'});
     fs.writeFileSync(path.join(safeSession.artifacts,'traps-scene.png'),Buffer.from(screenshot.data,'base64'));
     await checkTripwireChoices({page,request,token,api,safeSession});
-    await checkStashAndBuckshot({page,request,token,api,loc,lobby,location});
+    await checkStashAndBuckshot({page,request,token,api,loc,lobby,location,safeSession});
     console.log('Ловушки в Припяти: модели, установка мышью, сетевое появление, маскировка, reload, срабатывание и освобождение из сети проверены.');
 };
 
-async function checkStashAndBuckshot({page,request,token,api,loc,lobby,location}){
+async function checkStashAndBuckshot({page,request,token,api,loc,lobby,location,safeSession}){
     const actor=await request(api+'/characters',{name:'Проверка тайника и картечи',data:{
         basic:{background:{ruleId:'background-av'}},
         features:{specialTraits:[{name:'Мастер маскировки'}]},
@@ -80,24 +80,26 @@ async function checkStashAndBuckshot({page,request,token,api,loc,lobby,location}
     }},token);
     const sheet='/lobbies/characters/'+actor.id;
     await request(loc+'/spawn_character',{character_id:actor.id,tile_x:45,tile_y:48},token);
-    const crate=await request(loc+'/objects',{name:'Проверочный ящик',type:'box',tile_x:46,tile_y:48,
-        properties:{contents:[],floor_level:0}},token);
+    const crate=await request(loc+'/objects',{name:'Пень',type:'household_stump',tile_x:46,tile_y:48,
+        properties:{contents:[{id:'visible-nail',name:'Гвозди',quantity:1}],floor_level:0}},token);
     await page.evaluate(`window.closeCharacterSheet();window.currentLocationCharacterId=${actor.id};
         L.showObjectContextMenu(650,350,${JSON.stringify(crate)});true`);
-    const action="[...document.querySelectorAll('button')].find(b=>b.textContent.includes('Замаскировать как тайник'))";
-    await page.until(action,'Действие на ящике');
+    const action="[...document.querySelectorAll('button')].find(b=>b.textContent.includes('Устроить тайник'))";
+    await page.until(action,'Действие на пне');
     await page.evaluate(`${action}.click();true`);
     await page.until("document.querySelector('#trap-action-modal select')",'Форма маскировки тайника');
     await page.evaluate(`(()=>{
         const modal=document.getElementById('trap-action-modal'), select=modal.querySelector('select');
         select.selectedIndex=1;
-        [...modal.querySelectorAll('button')].find(b=>b.textContent==='Замаскировать тайник').click();
+        [...modal.querySelectorAll('button')].find(b=>b.textContent==='Устроить тайник').click();
         return true;
     })()`);
-    await page.until("!document.getElementById('trap-action-modal')",'Маскировка ящика завершена');
+    await page.until("!document.getElementById('trap-action-modal')",'Тайник в пне готов');
     const hidden=(await request(loc,null,token,'GET')).objects.find(obj=>obj.id===crate.id);
     const masked=(await request(sheet,null,token,'GET')).data.crafting.trap_receipts.at(-1).result;
-    assert.equal(hidden.properties.stash_mask.dc,masked.check.total);
+    assert.equal(hidden.properties.stash_compartment.dc,masked.check.total);
+    assert.equal(hidden.properties.contents[0].id,'visible-nail');
+    assert.deepEqual(hidden.properties.stash_compartment.contents,[]);
     assert.equal(masked.check.tool_bonus,3);
     assert.equal(masked.check.masking_bonus,4);
 
@@ -120,7 +122,40 @@ async function checkStashAndBuckshot({page,request,token,api,loc,lobby,location}
     assert.equal(items.find(item=>item.id==='stash-buckshot').quantity,2);
     assert.equal(items.find(item=>item.attributes?.tuned_buckshot).quantity,10);
     await page.evaluate("document.getElementById('crafting-modal').closeCrafting();true");
-    console.log('Ящик замаскирован из меню сцены, лопата +3 и черта +4. Десять патронов доработаны через интерфейс за час, два остались обычными.');
+    const visualTypes=['household_hollow_tree','household_safe_small','household_safe_large'];
+    const previews=[];
+    for(const [index,type] of visualTypes.entries()){
+        previews.push(await request(loc+'/objects',{name:['Дупло','Маленький сейф','Большой сейф'][index],type,
+            tile_x:47+index,tile_y:48,properties:{contents:[],...(index?{locked:true,lock_difficulty:index===1?8:13}:{})}},token));
+    }
+    await page.until(`${JSON.stringify(previews.map(obj=>obj.id))}.every(id=>L.sceneGraphicsForTest().roots.some(root=>root.userData.locationObjectId===id))`,
+        'Дупло и два сейфа загружены в Припяти');
+    for(const [i,x,z] of [[0,51,54],[1,42,52]]){
+        await page.evaluate(`(()=>{const {controls,camera}=L.sceneGraphicsForTest();
+            controls.target.set(48,1,48.5);camera.position.set(${x},4,${z});controls.update();return true;})()`);
+        const screenshot=await page.call('Page.captureScreenshot',{format:'png'});
+        fs.writeFileSync(path.join(safeSession.artifacts,`stash-assets-${i}.png`),Buffer.from(screenshot.data,'base64'));
+    }
+    for(const safe of previews.slice(1)){
+        await page.evaluate(`L.showObjectContextMenu(650,350,${JSON.stringify(safe)});true`);
+        assert.equal(await page.evaluate(`Boolean(${action})`),false);
+    }
+    await request(api+'/chunks?min_chunk_x=0&max_chunk_x=0&min_chunk_y=0&max_chunk_y=0',null,token,'GET');
+    await request(api+'/chunks/0/0/tile/2/2',{terrain:'grass'},token,'PATCH');
+    const group=await request(api+'/world-groups',{name:'Группа проверки тайников',tile_x:2,tile_y:2},token);
+    await request(api+'/world-groups/'+group.id+'/members',{character_ids:[actor.id]},token,'PATCH');
+    await page.evaluate(`import('/static/js/worldStashDialog.js').then(m=>m.showWorldStashes(${lobby.id},{
+        id:${group.id},tile_x:2,tile_y:2,members:[{id:${actor.id},name:${JSON.stringify(actor.name)}}]})).then(()=>true)`);
+    const worldButton=label=>`[...document.querySelectorAll('#world-stash-dialog button')].find(button=>button.textContent===${JSON.stringify(label)})`;
+    await page.until(worldButton('Прикопать тайник'),'Прикапывание через форму группы');
+    await page.evaluate(`${worldButton('Прикопать тайник')}.click();true`);
+    await page.until(worldButton('Положить в тайник'),'Мировой тайник доступен для вещей');
+    await page.evaluate(`${worldButton('Положить в тайник')}.click();true`);
+    await page.until(worldButton('Забрать из тайника'),'Предмет сохранён в тайнике на мировой клетке');
+    await page.evaluate(`${worldButton('Забрать из тайника')}.click();true`);
+    await page.until(`!${worldButton('Забрать из тайника')} && ${worldButton('Положить в тайник')}`,'Предмет забран из мирового тайника');
+    await page.evaluate(`${worldButton('Закрыть')}.click();true`);
+    console.log('В Припяти: тайник в пне отделён от открытых вещей, дупло и два сейфа в сцене. Мировой тайник принял и вернул предмет. Картечь доработана через интерфейс.');
 }
 
 async function checkTrapTraits({page,request,token,api,loc,lobby,location,template,trap,safeSession}){

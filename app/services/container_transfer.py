@@ -67,9 +67,9 @@ class ContainerTransferService:
 
     @staticmethod
     def _transfer(lobby_id, object_id, user_id, payload, *, dropped=False):
-        from app.services.stashes import visible as stash_visible
+        from app.services import stashes
         obj = db.session.get(LocationObject, object_id)
-        if not obj or obj.location.lobby_id != lobby_id or not stash_visible(obj, user_id):
+        if not obj or obj.location.lobby_id != lobby_id or not stashes.visible(obj, user_id):
             raise NotFoundError('Container not found')
         character = db.session.get(LobbyCharacter, payload.get('character_id'))
         if not character or character.lobby_id != lobby_id:
@@ -85,11 +85,33 @@ class ContainerTransferService:
                 raise PermissionDenied("It is not this character's turn")
             if max(abs(actor.pos_x - obj.tile_x), abs(actor.pos_y - obj.tile_y)) > 1:
                 raise ValidationError('Контейнер должен быть на соседней клетке')
-        if (obj.properties or {}).get('locked'):
+        if stashes.buried(obj):
+            raise ValidationError('Сначала раскопайте ящик')
+        compartment = payload.get('stash_compartment') is True
+        if compartment and not stashes.compartment_visible(obj, user_id):
+            raise NotFoundError('Тайник не найден')
+        if compartment or obj.type=='ground_stash':
+            from app.services.location_navigation import level_of
+            if (actor.floor_level or 0) != level_of(obj) or max(abs(actor.pos_x-obj.tile_x),abs(actor.pos_y-obj.tile_y))>1:
+                raise ValidationError('Подойдите к тайнику на том же этаже')
+        if not compartment and (obj.properties or {}).get('locked'):
             raise ValidationError('Контейнер закрыт')
         for key, expected in [('character_revision', character.revision), ('object_revision', obj.revision)]:
             if type(payload.get(key)) is not int or payload[key] != expected:
                 raise ConflictError()
+        data = deepcopy(character.data or {})
+        properties = deepcopy(obj.properties or {})
+        storage = properties['stash_compartment'] if compartment else properties
+        contents = ContainerTransferService.exchange_items(data, storage, payload, dropped=dropped)
+        character.data = data
+        obj.properties = properties
+        deleted = not compartment and not contents and (obj.type == 'ground_item' or properties.get('is_ground_item'))
+        if deleted:
+            db.session.delete(obj)
+        return character, obj, deleted
+
+    @staticmethod
+    def exchange_items(data, properties, payload, *, dropped=False):
         direction = payload.get('direction')
         if direction not in {'to_container', 'to_character'}:
             raise ValidationError('Invalid transfer direction')
@@ -102,8 +124,6 @@ class ContainerTransferService:
         allowed = {'inventory', 'equipment'} if direction == 'to_container' else {'contents'}
         if not isinstance(path[0], str) or path[0] not in allowed:
             raise ValidationError('Invalid item path')
-        data = deepcopy(character.data or {})
-        properties = deepcopy(obj.properties or {})
         contents = properties.setdefault('contents', [])
         if not isinstance(contents, list):
             raise ValidationError('Invalid container contents')
@@ -150,10 +170,4 @@ class ContainerTransferService:
                 raise ValidationError('Invalid character inventory')
             backpack.append(moved)
         normalize_inventory_ammo_stacks(data)
-        character.data = data
-        obj.properties = properties
-        deleted = not contents and (obj.type == 'ground_item' or properties.get('is_ground_item'))
-        if deleted:
-            db.session.delete(obj)
-        # Both version-checked writes (including deletion of a ground item) commit together.
-        return character, obj, deleted
+        return contents

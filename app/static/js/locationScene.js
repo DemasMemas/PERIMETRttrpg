@@ -837,12 +837,13 @@ const objectInteractions = {
     door: ['toggle_door'],
     window: ['toggle_door'],
     shelf: ['open_container'],
-    chest: ['open_container', 'climb'],
+    chest: ['open_container', 'move', 'climb'],
     corpse: ['open_container'],
     table: ['move', 'climb'],
     chair: ['move', 'climb'],
     box: ['open_container', 'move', 'climb'],
     military_crate: ['open_container', 'move', 'climb'],
+    household_wood_crate: ['open_container', 'move'],
     barrel: ['move'],
     fence: ['climb'],
     campfire: ['toggle_fire'],
@@ -9026,9 +9027,21 @@ export async function useLocationVerticalAccess(objectId, direction, characterId
     return true;
 }
 
+const stashHosts = new Set(['household_stump','household_hollow_tree','household_fallen_tree',
+    'household_wood_stove','household_sauna_stove']);
+const stashCrates = new Set(['box','military_crate','chest','household_wood_crate']);
+const buriedStash = object => object.properties?.stash_buried || object.properties?.stash_mask?.mode==='buried';
+const stashContents = object => object.properties?.stash_contents ?? object.properties?.stash_compartment?.contents;
+
 function getObjectActions(object) {
+    if (buriedStash(object)) return ['trap_dig_up_stash'];
     const actions = [...(object.properties?.interactions || objectInteractions[object.type] || [])];
-    if (['box','military_crate','chest'].includes(object.type)) actions.push('trap_mask_stash');
+    if (stashCrates.has(object.type) || stashHosts.has(object.type)) actions.push('trap_mask_stash');
+    if (stashCrates.has(object.type) && !actions.includes('move')) actions.push('move');
+    if (stashHosts.has(object.type)) {
+        actions.push('trap_detect');
+        if (Array.isArray(stashContents(object))) actions.push('open_stash_compartment');
+    }
     if (['ladder','stairs','hatch','floor_opening'].includes(object.type) && !actions.includes('drop_down')) actions.push('drop_down');
     if (isFireObject(object) && !actions.includes('toggle_fire')) actions.push('toggle_fire');
     if ((findLocationAsset(object.type)?.container || object.type === 'chest')
@@ -9044,6 +9057,7 @@ function getObjectActions(object) {
 }
 
 function getStructureActions(object) {
+    if (buriedStash(object)) return getObjectActions(object);
     const actions = [...getObjectActions(object)].filter(action=>action!=='climb');
     if (['door', 'window', 'table', 'chair', 'shelf', 'chest'].includes(object.type) && !actions.includes('rotate')) {
         actions.push('rotate');
@@ -9085,7 +9099,10 @@ function getActionRequirement(object, actionKey) {
 function getStructureActionLabel(object, actionKey) {
     if(actionKey==='open_lock')return object.properties?.lock_jammed?'Замок заклинило':'Вскрыть замок';
     if(actionKey==='trap_mask')return 'Замаскировать · 5 ОД';
-    if(actionKey==='trap_mask_stash')return 'Замаскировать как тайник · 5 ОД';
+    if(actionKey==='trap_mask_stash')return stashCrates.has(object.type)?'Закопать ящик · 5 ОД':'Устроить тайник · 5 ОД';
+    if(actionKey==='trap_dig_up_stash')return 'Раскопать ящик · 5 ОД';
+    if(actionKey==='open_stash_compartment')return 'Открыть тайник';
+    if(actionKey==='trap_detect')return 'Осмотреть клетку';
     if(actionKey==='trap_defuse')return 'Обезвредить · 2 ОД';
     if(actionKey==='trap_recover')return 'Подобрать';
     if(actionKey==='trap_escape_net')return 'Освободиться из сети · 2 ОД';
@@ -9109,7 +9126,7 @@ function getStructureActionLabel(object, actionKey) {
 
 function getStructureActionIcon(actionKey) {
     if(actionKey==='open_lock')return '⚿';
-    if(actionKey==='trap_mask'||actionKey==='trap_mask_stash')return '◌';
+    if(['trap_mask','trap_mask_stash','trap_dig_up_stash','open_stash_compartment'].includes(actionKey))return '◌';
     if(actionKey==='trap_defuse')return '⚒';
     if(actionKey==='trap_recover')return '↑';
     if(actionKey==='trap_escape_net')return '↗';
@@ -10529,9 +10546,16 @@ async function executeStructureAction(object, actionKey, actorCharacterId = pend
     }
     if(actionKey.startsWith('trap_')){
         const {showTrapAction}=await import('./traps.js');
+        const operation=actionKey.slice(5);
         await showTrapAction({characterId:actorCharacterId,lobbyId:window.currentLobbyId,locationId:currentLocationId,
-            trap:object,operation:actionKey.slice(5),inCombat:combatState?.status==='active',
-            locationCharacterId:findCombatCharacterByCharacterId(actorCharacterId)?.location_character_id});
+            trap:object,operation,inCombat:combatState?.status==='active',
+            locationCharacterId:findCombatCharacterByCharacterId(actorCharacterId)?.location_character_id,
+            cell:operation==='detect'?{x:object.tile_x,y:object.tile_y}:undefined,
+            requireShovel:stashCrates.has(object.type)});
+        return true;
+    }
+    if(actionKey==='open_stash_compartment'){
+        await showContainerInteractionMenu(object,true);
         return true;
     }
 
@@ -11245,7 +11269,7 @@ function showObjectContextMenu(clientX, clientY, object) {
         }
     }
     getObjectActions(object).forEach(action => {
-        if(action.startsWith('trap_')){
+        if(action.startsWith('trap_')||action==='open_stash_compartment'){
             const characterId=getCurrentInteractionActor()?.model?.userData?.characterId;
             if(characterId&&canControlCharacter(characterId))actions.push({label:getStructureActionLabel(object,action),action:()=>executeStructureAction(object,action,characterId)});
             return;
@@ -11684,6 +11708,7 @@ function batchStructureParts(group) {
 function createLocationObjectMesh(obj, forPreview = false, relatedObjects = currentLocationData?.objects) {
     const properties = obj.properties || {};
     const asset = visualAssetForLocationObject(obj.type, properties);
+    const groundCache = obj.type==='ground_stash' || buriedStash(obj);
     const household = asset?.visual?.family === 'household';
     const floorPose = obj.type === 'floor' ? floorVisualPose(obj, relatedObjects) : null;
     const dimensions = properties.dimensions || floorPose
@@ -11695,7 +11720,7 @@ function createLocationObjectMesh(obj, forPreview = false, relatedObjects = curr
         && (asset?.visual?.renderMode !== 'pbr'
             || asset.id === 'art_worn_plaster' || asset.id === 'art_aged_wood');
     const usePbrMaterial = asset?.visual?.renderMode === 'pbr' && !quietHouseFinish;
-    const hasSeparateMaterials = ['anomaly','poster','placed_trap'].includes(obj.type) || household || ['fence', 'window', 'box', 'military_crate', 'shelf', 'ground_item'].includes(obj.type)
+    const hasSeparateMaterials = groundCache || ['anomaly','poster','placed_trap'].includes(obj.type) || household || ['fence', 'window', 'box', 'military_crate', 'shelf', 'ground_item'].includes(obj.type)
         || properties.is_ground_item || isFireObject(obj) || isElectricFixture(obj);
     const material = hasSeparateMaterials ? null
         : new THREE.MeshStandardMaterial({
@@ -11733,6 +11758,9 @@ function createLocationObjectMesh(obj, forPreview = false, relatedObjects = curr
         group.add(createWallDebris(THREE,{width,depth,height},debrisMaterial,kind,properties.structural_debris.seed));
     } else if(obj.type==='placed_trap'){
         group.add(createHouseholdModel(THREE,{id:'placed_trap',color:'#777367',visual:{modelId:'trap_'+(properties.trap_kind||'mine')}},{width,depth,height},properties.color));
+    } else if (groundCache) {
+        group.add(createHouseholdModel(THREE,{id:'ground_stash',visual:{modelId:'ground_stash'}},
+            {width:.72,height:.045,depth:.6}));
     } else if (household) {
         group.add(createHouseholdModel(THREE, asset, {width, depth, height}, properties.color));
     } else if (['ladder','hatch','floor_opening'].includes(obj.type)) {
@@ -14010,6 +14038,7 @@ async function placeStructureAtTileImpl(x, z, client = null) {
                 }, {}),
                 contents: (findLocationAsset(placedType)?.container
                     || ['shelf', 'box', 'military_crate', 'chest'].includes(placedType)) ? [] : undefined,
+                ...(selectedLocationAsset?.lockDifficulty ? {locked:true,lock_difficulty:selectedLocationAsset.lockDifficulty} : {}),
                 is_open: placement.visualAsset === 'opening',
                 ...(isFireObject({ type: placedType }) ? { is_lit: true } : {}),
                 ...(isElectricFixture({ type: placedType }) ? { is_on: true } : {}),
@@ -18543,12 +18572,16 @@ function setupCharacterDragging() {
             const actor=getCurrentInteractionActor(),characterId=actor?.model?.userData?.characterId,point=localMapToolPoint(e.clientX,e.clientY);
             if(!characterId||!canControlCharacter(characterId)||!point)return;
             createContextMenu();contextMenu.replaceChildren();
-            const search=document.createElement('button');search.type='button';search.textContent='Осмотреть клетку';search.className='btn btn-secondary';
-            search.onclick=async()=>{contextMenu.style.display='none';const {showTrapAction}=await import('./traps.js');
-                await showTrapAction({characterId,lobbyId:window.currentLobbyId,locationId:currentLocationId,operation:'detect',
-                    inCombat:combatState?.status==='active',locationCharacterId:findCombatCharacterByCharacterId(characterId)?.location_character_id,
-                    cell:{x:Math.floor(point.x),y:Math.floor(point.z)}});};
-            contextMenu.append(search);contextMenu.style.left=e.clientX+'px';contextMenu.style.top=e.clientY+'px';contextMenu.style.display='block';
+            for(const [operation,label] of [['detect','Осмотреть клетку'],['bury_ground_stash','Прикопать тайник']]){
+                const button=document.createElement('button');button.type='button';button.textContent=label;button.className='btn btn-secondary';
+                button.onclick=async()=>{contextMenu.style.display='none';const {showTrapAction}=await import('./traps.js');
+                    await showTrapAction({characterId,lobbyId:window.currentLobbyId,locationId:currentLocationId,operation,
+                        requireShovel:operation==='bury_ground_stash',inCombat:combatState?.status==='active',
+                        locationCharacterId:findCombatCharacterByCharacterId(characterId)?.location_character_id,
+                        cell:{x:Math.floor(point.x),y:Math.floor(point.z)}});};
+                contextMenu.append(button);
+            }
+            contextMenu.style.left=e.clientX+'px';contextMenu.style.top=e.clientY+'px';contextMenu.style.display='block';
             return;
         }
         if (combatState?.status === 'active') {
@@ -20290,8 +20323,8 @@ function closeContainerInteractionMenu() {
     containerInteractionRefresh = null;
 }
 
-async function showContainerInteractionMenu(object) {
-    if(object.properties?.locked&&!window.isGM){showNotification('Объект заперт. Сначала вскройте замок','system');return;}
+async function showContainerInteractionMenu(object, compartment = false) {
+    if(!compartment&&object.properties?.locked&&!window.isGM){showNotification('Объект заперт. Сначала вскройте замок','system');return;}
     closeContainerInteractionMenu();
     containerExchangeTarget = object;
 
@@ -20335,7 +20368,7 @@ async function showContainerInteractionMenu(object) {
 
     containerInteractionMenu.innerHTML = `
         <div class="container-drag-handle" style="display:flex; justify-content:space-between; align-items:center; gap:10px; padding:12px 14px; border-bottom:1px solid rgba(255,255,255,0.08); cursor:move; user-select:none; touch-action:none;">
-            <div style="font-weight:700;">${locationObjectLabel(object)}</div>
+            <div style="font-weight:700;">${compartment?'Тайник · ':''}${locationObjectLabel(object)}</div>
             <button type="button" class="container-close-btn" style="width:32px; height:32px; border-radius:999px; border:0; background:rgba(255,255,255,0.08); color:#fff; cursor:pointer; font-size:18px; line-height:1;">×</button>
         </div>
         <div style="padding:10px 14px; border-bottom:1px solid rgba(255,255,255,0.06); display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
@@ -20392,7 +20425,7 @@ async function showContainerInteractionMenu(object) {
                 const result = await Server.transferLocationItem(window.currentLobbyId, object.id, {
                     character_id: selectedCharacterId, character_revision: fresh.data._revision,
                     object_revision: object.revision, direction, item_path: entry.path,
-                    expected_item: entry.item, amount,
+                    expected_item: entry.item, amount, stash_compartment:compartment,
                 });
                 if (result.deleted) {
                     removeLocationObject(object.id);
@@ -20400,7 +20433,7 @@ async function showContainerInteractionMenu(object) {
                 } else {
                     object = result.object;
                     updateLocationObject(object);
-                    await showContainerInteractionMenu(object);
+                    await showContainerInteractionMenu(object,compartment);
                 }
                 showNotification('Предмет перемещён', 'success');
             } finally {
@@ -20422,7 +20455,7 @@ async function showContainerInteractionMenu(object) {
         rightPanel.innerHTML = `
             <div style="padding:10px 12px; border-bottom:1px solid rgba(255,255,255,0.06); display:flex; justify-content:space-between; gap:10px; align-items:center;">
                 <div style="font-weight:700;">${locationObjectLabel(object)}</div>
-                ${window.isGM ? '<button type="button" class="btn btn-sm btn-secondary container-add-item-btn">Добавить предмет</button>' : ''}
+                ${window.isGM && !compartment ? '<button type="button" class="btn btn-sm btn-secondary container-add-item-btn">Добавить предмет</button>' : ''}
             </div>
             <div class="exchange-list exchange-list-target" style="padding:10px 12px; max-height:100%; overflow:auto;"></div>
         `;
@@ -20446,7 +20479,7 @@ async function showContainerInteractionMenu(object) {
         }
 
         const renderContainerEntries = () => {
-            const currentItems = getContainerItems(object);
+            const currentItems = compartment ? stashContents(object) || [] : getContainerItems(object);
             const currentEntries = getContainerTransferEntries(currentItems);
             targetList.innerHTML = '';
             if (!currentEntries.length) {

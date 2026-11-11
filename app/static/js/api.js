@@ -304,6 +304,12 @@ export const Server = {
         });
     },
 
+    operateWorldStash(lobbyId, groupId, payload) {
+        return apiFetch(`/lobbies/${lobbyId}/world-groups/${groupId}/stashes`, {
+            method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload),
+        });
+    },
+
     async createWorldGroup(lobbyId, payload) {
         return apiFetch(`/lobbies/${lobbyId}/world-groups`, {
             method: 'POST',

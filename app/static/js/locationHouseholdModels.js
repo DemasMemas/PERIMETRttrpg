@@ -626,6 +626,44 @@ function buildAdditionalHouseholdModel(T,id,{B,C,add,legs,markTrunk}) {
         B(0,.3,.506,.23,.035,.012,'#a19e89',2);
         for(const x of [-.18,.18])B(x,.48,.1,.26,.18,.17,'#464b40',1);
         B(0,.37,-.508,.4,.055,.012,dark,2);
+    } else if(id==='stump'||id==='hollow_tree') {
+        const tall=id==='hollow_tree', top=tall ? .87 : .56;
+        const bark='#504339',cut='#97846a';
+        if(tall){
+            C(0,.16,0,.35,.32,bark,0,0,0,.92);
+            add(new T.CylinderGeometry(.305,.322,.32,16,1,true,.43,Math.PI*2-.86),
+                0,.48,0,1,1,1,bark);
+            C(0,.755,0,.305,.23,bark,0,0,0,.94);
+            C(0,.48,0,.195,.32,'#30291f',0);
+            for(const side of [-1,1])rod([side*.135,.32,.292],[side*.127,.64,.276],.029,edge);
+        }else C(0,top/2,0,.35,top,bark,0,0,0,.85);
+        C(0,top+.012,0,.291,.026,cut,0);
+        for(const radius of [.09,.16,.23])ring(0,top+.027,0,radius,.007,wood);
+        for(let i=0;i<7;i++){
+            const angle=i*2.4,x=Math.cos(angle),z=Math.sin(angle);
+            rod([x*.21,.21,z*.21],[x*.49,.02,z*.47],.035+.005*(i%3),bark);
+            if(!tall||z<.85)rod([x*.32,.08,z*.32],[x*.28,top-.04,z*.28],.022,i%2?edge:bark);
+        }
+        if(tall){
+            rod([-.03,.54,0],[-.33,.96,-.18],.071,bark);
+        }
+    } else if(id==='safe_small'||id==='safe_large') {
+        B(0,.50,0,.96,.98,.92,'#4a514b',2);
+        B(0,.51,.465,.88,.89,.022,'#292d29',2);
+        B(0,.51,.483,.81,.82,.035,'#5a5d53',2);
+        for(const y of [.23,.77])B(-.37,y,.511,.075,.13,.047,iron,2);
+        if(id==='safe_large'){
+            ring(.06,.53,.525,.137,.019,iron,0);
+            for(const angle of [0,Math.PI/3,-Math.PI/3])
+                B(.06,.53,.525,.245,.029,.023,iron,2,0,angle);
+        }else B(.13,.51,.531,.14,.034,.052,iron,2);
+        add(new T.CylinderGeometry(.055,.055,.024,12),.27,.63,.521,1,1,1,dark,2,Math.PI/2);
+        B(.27,.63,.535,.008,.026,.004,enamel,2);
+    } else if(id==='ground_stash') {
+        for(let i=0;i<9;i++){
+            const angle=i*2.4,r=.32*Math.sqrt(i/9);
+            stone(Math.cos(angle)*r,.23,Math.sin(angle)*r,.09+(i%3)*.047,.16,.12,i%2?'#695847':'#55473a',angle);
+        }
     } else if(['brick','concrete_chunk','broken_boards','rubble','stones','fallen_tree','bottle','tin_can','litter'].includes(id)) {
         if(id==='brick') {B(0,.14,0,.9,.28,.9,'#93644e',2,0,.08);for(const x of [-.23,0,.23])C(x,.29,0,.06,.008,dark);}
         if(id==='concrete_chunk'){stone(0,.28,0,.45,.3,.4);for(const x of [-.2,.2])rod([x,.3,0],[x+.15,.75,.2],.012,rust);}

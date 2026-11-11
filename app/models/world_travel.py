@@ -78,3 +78,18 @@ class WorldMapEvent(db.Model):
         backref=db.backref("world_map_events", cascade="all, delete-orphan"),
     )
     travel_events = db.relationship("WorldTravelEvent", backref="world_map_event")
+
+
+class WorldStash(db.Model):
+    __tablename__ = 'world_stashes'
+    __table_args__ = (db.Index('ix_world_stashes_tile', 'lobby_id', 'tile_x', 'tile_y'),)
+
+    id = db.Column(db.Integer, primary_key=True)
+    lobby_id = db.Column(db.Integer, db.ForeignKey('lobbies.id', ondelete='CASCADE'), nullable=False)
+    tile_x = db.Column(db.Integer, nullable=False)
+    tile_y = db.Column(db.Integer, nullable=False)
+    properties = db.Column(db.JSON, nullable=False, default=dict)
+    revision = db.Column(db.Integer, nullable=False, default=1, server_default='1')
+    __mapper_args__ = {'version_id_col':revision}
+
+    lobby = db.relationship('Lobby', backref=db.backref('world_stashes', cascade='all, delete-orphan'))
