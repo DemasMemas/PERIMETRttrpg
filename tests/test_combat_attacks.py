@@ -7,6 +7,59 @@ import app.services.combat as combat_module
 from app.services.combat import CombatService
 from app.services.effects import sync_health_derived_statuses
 from app.services.exceptions import ValidationError
+from test_grenade_rules import grenade_game
+
+
+def test_hill_blocks_aimed_fire_until_clear_then_shot_spends_ammo_and_ap(grenade_game, monkeypatch):
+    from app.extensions import db
+
+    case = grenade_game
+    location = case['location']
+    actor, target = case['actor_location'], case['target_location']
+    actor.pos_x, actor.pos_y = 2, 5
+    target.pos_x, target.pos_y = 8, 5
+    actor.height = target.height = 1
+    flat = deepcopy(location.tiles_data)
+    raised = deepcopy(flat)
+    for row in raised:
+        row[5]['height'] = 7
+    location.tiles_data = raised
+    data = deepcopy(actor.character.data)
+    data['weapons'] = [{'id': 'hill-rifle', 'category': 'weapon', 'subcategory': 'Винтовки',
+                        'accuracy': 100, 'ergonomics': 100, 'range': 20, 'ammo': 3,
+                        'attributes': {'damage': 10, 'armor_piercing': 100, 'range': 20, 'min_strength': 0}}]
+    actor.character.data = data
+    target_data = deepcopy(target.character.data)
+    target_data['health'] = {'current': 700, 'max': 700, 'effects': []}
+    target.character.data = target_data
+    actor.drawn_weapon_index = actor.aimed_weapon_index = 0
+    actor.aimed_target_character_id = target.character_id
+    db.session.commit()
+    monkeypatch.setattr('app.services.combat.random.randint', lambda _low, high: high)
+    before_hp = target.character.data['health']['current']
+    before_ap = actor.action_points_current
+    cost = CombatService._weapon_ergonomics_profile(actor, data['weapons'][0], 0)['aimed_shot_action_points']
+    assert before_ap >= cost
+
+    def shoot(operation_id):
+        return CombatService.perform_action(location.id, case['lobby'].gm_id, actor.id, 'attack',
+            weapon_index=0, fire_mode='aimed', target_zone='chest', shot_count=1, action_points=cost,
+            target_character_id=target.character_id, pending_action_id=operation_id)
+
+    with pytest.raises(ValidationError, match='закрыта укрытием'):
+        shoot('shot-behind-hill')
+    assert actor.action_points_current == before_ap
+    assert actor.character.data['weapons'][0]['ammo'] == 3
+    assert target.character.data['health']['current'] == before_hp
+
+    location.tiles_data = flat
+    db.session.commit()
+    result = shoot('shot-with-clear-view')
+    assert result['attack']['hits'] == 1
+    assert result['attack']['action_points'] == cost
+    assert actor.action_points_current == before_ap - cost
+    assert actor.character.data['weapons'][0]['ammo'] == 2
+    assert target.character.data['health']['current'] < before_hp
 
 
 def test_ranged_hit_zone_boundaries_follow_rules():
