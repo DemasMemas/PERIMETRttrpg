@@ -62,8 +62,10 @@ module.exports=async({page,request,token,lobby,offered,loc,npc,safeSession})=>{
     await shot('belt-light-other-angle.png');
     await request(loc+'/combat/action',{location_character_id:placed.location_character_id,action_key:'stow_weapon'},token);
     await request(loc+'/combat/end',{},token);await open();
+    await page.until(`${row(lamp.id)}?.querySelector('[data-light-operation=stow]:not(:disabled)')`,'Доступно снятие фонаря с пояса');
     await page.evaluate(`${row(lamp.id)}.querySelector('[data-light-operation=stow]').click();true`);
-    await page.until(`!${row(lamp.id)}?.textContent.includes('на поясе')`,'Крепление освобождено');
+    await page.until(`${row(lamp.id)}?.querySelector('[data-light-operation=prepare]:not(:disabled)')
+        && ${row(his.id)}?.querySelector('[data-light-operation=ignite]:not(:disabled)')`,'Крепление освобождено');
     await page.evaluate(`${row(his.id)}.querySelector('[data-light-operation=ignite]').click();true`);
     await page.until(`${row(his.id)}?.textContent.includes('30 мин')`,'ХИС активирован');
     await page.evaluate(`[...${row(his.id)}.querySelectorAll('button')].find(b=>b.textContent.startsWith('На пояс')).click();true`);
