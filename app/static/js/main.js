@@ -1161,7 +1161,7 @@ window.enterLocation = async function(locationId, { scoutView = null } = {}) {
                             <summary>Настройка замка</summary>
                             <div class="location-cover-fields">
                                 <label><input type="checkbox" data-lock-setting="locked"> Заперт</label>
-                                <label>Сложность <select class="form-control" data-lock-setting="difficulty">
+                                <label>СЛ взлома <select class="form-control" data-lock-setting="difficulty">
                                     <option value="3">Очень лёгкий · 3</option><option value="5">Лёгкий · 5</option>
                                     <option value="8">Средний · 8</option><option value="10">Тяжёлый · 10</option>
                                     <option value="13">Очень тяжёлый · 13</option><option value="15">Безумный · 15</option>

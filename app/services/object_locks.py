@@ -12,12 +12,15 @@ from app.services.action_journal import journaled
 
 DIFFICULTIES={3:'Очень лёгкий',5:'Лёгкий',8:'Средний',10:'Тяжёлый',13:'Очень тяжёлый',15:'Безумный',18:'Невозможный'}
 LOCK_FIELDS={'locked','lock_difficulty','lock_jammed'}
+LOCKABLE_TYPES = {
+    'door', 'window', 'hatch', 'chest', 'box', 'military_crate', 'shelf',
+    'household_wood_crate', 'household_cardboard_box', 'household_safe_small', 'household_safe_large',
+}
 
 
 def supported(obj):
     props=obj.properties or {}
-    return bool(obj.type in {'door','window','hatch','chest','box','military_crate','shelf',
-                            'household_safe_small','household_safe_large'} or
+    return bool(obj.type in LOCKABLE_TYPES or
         isinstance(props.get('contents'),list) and obj.type not in {'ground_item','corpse','body'}
         and not props.get('is_ground_item') and not props.get('is_corpse') and not props.get('portable_station'))
 

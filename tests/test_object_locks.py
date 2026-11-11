@@ -143,6 +143,27 @@ def test_old_open_and_lock_patch_cannot_bypass_player_permissions(client,locked,
     assert attempt(client,game,auth_headers,user=game['target_user']).status_code==403
 
 
+@pytest.mark.parametrize('object_type', ['household_wood_crate', 'household_cardboard_box'])
+def test_empty_legacy_crate_can_be_locked_and_uses_gm_difficulty(client, locked, auth_headers, monkeypatch, object_type):
+    locked['object'].type = object_type
+    locked['object'].properties = {}
+    db.session.commit()
+
+    settings = {'locked': True, 'lock_difficulty': 13}
+    assert patch(client, locked, auth_headers, settings, locked['target_user']).status_code == 403
+    saved = patch(client, locked, auth_headers, settings)
+    assert saved.status_code == 200, saved.json
+    assert saved.json['properties']['locked'] is True
+    assert saved.json['properties']['lock_difficulty'] == 13
+
+    monkeypatch.setattr('app.services.object_locks.random.randint', lambda *_: 20)
+    result = attempt(client, locked, auth_headers)
+    assert result.status_code == 200, result.json
+    assert result.json['operation']['base_difficulty'] == 13
+    assert result.json['operation']['success'] is True
+    assert locked['object'].properties['locked'] is False
+
+
 def test_attempt_requires_same_floor_nearby_own_turn_and_resource(client,locked,auth_headers):
     game=locked;actor=game['actor_location'];actor.floor_level=1;db.session.commit()
     assert attempt(client,game,auth_headers).status_code==400

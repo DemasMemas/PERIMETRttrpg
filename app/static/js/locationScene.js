@@ -14846,6 +14846,11 @@ function getPrimaryLocationEditorAsset() {
     };
 }
 
+const lockableObjectTypes = new Set([
+    'door', 'window', 'hatch', 'chest', 'box', 'military_crate', 'shelf',
+    'household_wood_crate', 'household_cardboard_box', 'household_safe_small', 'household_safe_large',
+]);
+
 export function getSelectedLocationEditorAsset() {
     const asset = getPrimaryLocationEditorAsset();
     const source = getSelectedEditorSource();
@@ -14861,7 +14866,7 @@ export function getSelectedLocationEditorAsset() {
             hp:source.properties?.cover_hp??source.properties?.cover_max_hp??COVER_CLASS_DEFAULTS[source.properties?.cover_class||'medium']?.maxHp??COVER_CLASS_DEFAULTS.medium.maxHp,
             protection:source.properties?.cover_physical_protection??source.properties?.cover_base_physical_protection??COVER_CLASS_DEFAULTS[source.properties?.cover_class||'medium']?.protection??COVER_CLASS_DEFAULTS.medium.protection,
         } : null,
-        lock:editorSelection.kind==='structure'&&(['door','window','hatch','chest','box','military_crate','shelf'].includes(source?.type)
+        lock:editorSelection.kind==='structure'&&(lockableObjectTypes.has(source?.type)
             ||Array.isArray(source?.properties?.contents)&&!['ground_item','corpse','body'].includes(source?.type)
             &&!source?.properties?.is_ground_item&&!source?.properties?.is_corpse&&!source?.properties?.portable_station)
             ?{locked:Boolean(source.properties?.locked),difficulty:source.properties?.lock_difficulty??8,jammed:Boolean(source.properties?.lock_jammed)}:null,

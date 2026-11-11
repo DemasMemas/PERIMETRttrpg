@@ -19,6 +19,8 @@ module.exports=async({page,request,token,lobby,base,connect,debugPort,safeSessio
         properties:{locked:true,lock_difficulty:8,contents:[{id:'sealed-supply',name:'Секретный запас №232',category:'misc',quantity:1,weight:1,volume:1}]}},token);
     const door=await request(loc+'/objects',{name:'Запертая дверь',type:'door',tile_x:43,tile_y:49,
         properties:{locked:true,lock_difficulty:5,is_open:false}},token);
+    const crate=await request(loc+'/objects',{name:'Старый дощатый ящик',type:'household_wood_crate',
+        tile_x:46,tile_y:48,properties:{}},token);
     const objectUrl=id=>api+'/locations/objects/'+id;
     const enter=async(client,auth,user)=>{
         const href=base+api+'/page?location='+location.id,epoch=await client.evaluate('performance.timeOrigin');
@@ -52,9 +54,15 @@ module.exports=async({page,request,token,lobby,base,connect,debugPort,safeSessio
             await page.until("!document.querySelector('[data-selected-lock-fields]').hidden",'Настройка замка на вкладке Выбор');
         };
         const setDifficulty=async difficulty=>{
-            await page.evaluate(`document.querySelector('[data-lock-setting=difficulty]').value='${difficulty}';document.querySelector('[data-lock-save]').click();true`);
-            await page.until(`L.getSelectedLocationEditorAsset()?.lock?.difficulty===${difficulty}&&!L.getLocationEditorHistoryState().busy`,'Замок сохранён редактором');
+            await page.evaluate(`(()=>{document.querySelector('[data-lock-setting=difficulty]').value='${difficulty}';
+                const locked=document.querySelector('[data-lock-setting=locked]');if(!locked.checked)locked.click();
+                document.querySelector('[data-lock-save]').click();return true})()`);
+            await page.until(`L.getSelectedLocationEditorAsset()?.lock?.difficulty===${difficulty}
+                &&L.getSelectedLocationEditorAsset()?.lock?.locked&&!L.getLocationEditorHistoryState().busy`,'Замок сохранён редактором');
         };
+        await select(crate);await setDifficulty(13);
+        const playerCrate=await request(objectUrl(crate.id),null,playerToken,'GET');
+        assert.equal(playerCrate.properties.locked,true);assert.equal(playerCrate.properties.lock_difficulty,13);
         await select(chest);await setDifficulty(10);await setDifficulty(8);
         assert.equal((await request(objectUrl(chest.id),null,token,'GET')).properties.contents[0].id,'sealed-supply');
         await page.evaluate('L.setLocationEditMode(false);UI.collapseMapToolsPanel();true');
@@ -97,6 +105,6 @@ module.exports=async({page,request,token,lobby,base,connect,debugPort,safeSessio
         await request(objectUrl(door.id),{actor_character_id:owner.id,properties:{is_open:true}},playerToken,'PATCH');
         assert.ok((await request(objectUrl(door.id),null,playerToken,'GET')).properties.is_open);
         await request(loc+'/combat/end',{},token);
-        console.log('Замки: два клиента копии Припяти/GPU; реальная настройка ГМа в Выборе, секретное содержимое скрыто в HTTP/сети, отмычка ломается из стопки, 3 ОД за попытку, успешный взлом, силовое заклинивание/сброс/открытие двери, четыре размера диалога.');
+        console.log('Замки: два клиента копии Припяти/GPU; реальная настройка ГМа в Выборе, пустой старый дощатый ящик запирается с СЛ 13, секретное содержимое скрыто в HTTP/сети, отмычка ломается из стопки, 3 ОД за попытку, успешный взлом, силовое заклинивание/сброс/открытие двери, четыре размера диалога.');
     }finally{peer?.close();if(context)await protocol.call('Target.disposeBrowserContext',{browserContextId:context.browserContextId});protocol?.close();}
 };
