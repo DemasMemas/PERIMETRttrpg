@@ -598,8 +598,9 @@ class CharacterService:
             _preserve_intoxication_status(character.data, character_data, is_gm=is_gm)
             from app.services.liquid_containers import preserve_and_validate
             preserve_and_validate(character.data, character_data)
-            from app.services.equipment_modifications import validate_belt_pouches
+            from app.services.equipment_modifications import validate_belt_pouches, validate_visor_mounts
             validate_belt_pouches(character.data,character_data,character.lobby_id)
+            validate_visor_mounts(character.data, character_data)
             incoming_health = character_data.get('health') or {}
             try:
                 old_intoxication = float((character.data.get('health') or {}).get('intoxication') or 0)

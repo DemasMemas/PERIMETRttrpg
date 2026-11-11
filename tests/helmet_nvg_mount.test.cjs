@@ -20,11 +20,19 @@ test('крепление ПНВ добавляет слот шлему и не �
     assert.deepEqual(Array.from(context.getItemSlots(helmet),slot=>slot.type),['visor','nvg']);
 });
 
-test('крепление забрала даёт отдельные места для ПНВ и фонаря без новой категории предметов',()=>{
-    const visor={slotType:'visor',modifications:[{ruleId:'armor-g18'}],attributes:{slots:[]}};
-    assert.deepEqual(Array.from(context.getItemSlots(visor),slot=>slot.type),['nvg','light']);
-    visor.attributes.slots=[{type:'nvg'},{type:'light'}];
-    assert.deepEqual(Array.from(context.getItemSlots(visor),slot=>slot.type),['nvg','light']);
+test('крепление забрала даёт одно место, старые приборы можно снять',()=>{
+    const visor={slotType:'visor',attributes:{slots:[{type:'nvg'},{type:'light'}]}};
+    const slots=()=>Array.from(context.getItemSlots(visor),slot=>slot.type);
+    assert.deepEqual(slots(),[]);
+    visor.modifications=[{ruleId:'armor-g18'}];
+    assert.deepEqual(slots(),['visor_device']);
+    visor.installedModules=[{slotType:'nvg'}];
+    assert.deepEqual(slots(),['nvg']);
+    visor.installedModules.push({slotType:'light'});
+    assert.deepEqual(slots(),['nvg','light']);
+    visor.installedModules=[];
+    visor.protectionDisabled=true;
+    assert.deepEqual(slots(),[]);
 });
 
 test('вложенный ПНВ учитывается листом только на надетом исправном забрале',()=>{

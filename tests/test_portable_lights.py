@@ -157,6 +157,52 @@ def test_visor_mount_light_and_nvg_keep_real_power_and_stop_when_visor_is_remove
     assert not uses_nvg(owned) and ready_sources(actor)==[]
 
 
+def test_visor_accepts_one_device_with_mount_and_preserves_legacy_items(client, grenade_game, auth_headers):
+    from app.services.equipment_modifications import make_record
+
+    actor = grenade_game['actor_location']
+    data = deepcopy(actor.character.data)
+    nvg = {'id':'visor-nvg', 'name':'ПНВ', 'slotType':'nvg', 'lightPower':{'uses_left':8}}
+    light = {'id':'visor-light', 'name':'Фонарик', 'slotType':'light', 'lightPower':{'uses_left':7}}
+    visor = {'id':'mounted-visor', 'name':'Забрало', 'slotType':'visor', 'installedModules':[]}
+    data.setdefault('equipment', {})['helmet'] = {'id':'helmet', 'category':'helmet', 'installedModules':[visor]}
+    actor.character.data = deepcopy(data)
+    db.session.commit()
+    endpoint = f'/lobbies/characters/{actor.character_id}'
+    headers = auth_headers(grenade_game['actor_user'])
+
+    def save():
+        return client.put(endpoint, headers=headers, json={'data':{**data, '_revision':actor.character.revision}})
+
+    visor['installedModules'] = [nvg]
+    assert save().status_code == 400
+    mounted = deepcopy(actor.character.data)
+    mounted['equipment']['helmet']['installedModules'][0]['modifications'] = [
+        {**make_record('armor-g18'), 'description':'Позволяет вешать фонарик и ПНВ'},
+    ]
+    actor.character.data = mounted
+    db.session.commit()
+    snapshot = client.get(endpoint, headers=headers).json['data']
+    assert snapshot['equipment']['helmet']['installedModules'][0]['modifications'][0]['description'].endswith('фонарик или ПНВ.')
+    visor['modifications'] = deepcopy(mounted['equipment']['helmet']['installedModules'][0]['modifications'])
+    response = save()
+    assert response.status_code == 200, response.json
+    visor['installedModules'] = [nvg, light]
+    assert save().status_code == 400
+
+    # Существовавшее двойное крепление можно сохранить и освободить, не меняя экземпляры.
+    actor.character.data = deepcopy(data)
+    db.session.commit()
+    assert save().status_code == 200
+    visor['installedModules'] = [light]
+    data['inventory']['backpack'] = [nvg]
+    response = save()
+    assert response.status_code == 200, response.json
+    stored = actor.character.data
+    assert stored['equipment']['helmet']['installedModules'][0]['installedModules'][0]['lightPower']['uses_left'] == 7
+    assert stored['inventory']['backpack'][0]['lightPower']['uses_left'] == 8
+
+
 def test_exact_ten_minutes_do_not_charge_again_at_same_battle_end(grenade_game):
     actor=install(grenade_game['actor_location'],on=True);data=actor.character.data
     start_battle(data)

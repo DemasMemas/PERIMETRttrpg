@@ -30,16 +30,30 @@ module.exports=async({page,request,token,lobby,offered,loc,safeSession})=>{
     await page.evaluate(`window.openCharacterSheet(${actor.id},'equipment').then(()=>true)`);
     await page.until("document.querySelector('.loadout-slot[data-equipment-open=helmet]')",'Шлем в листе');
     await page.evaluate("document.querySelector('.loadout-slot[data-equipment-open=helmet]').click();true");
-    for(const [slot,name]of [['nvg',nvg.name],['light',light.name]]){
-        await page.evaluate(`window.installModuleFromSlot(${JSON.stringify(JSON.stringify(payload.target_path))},${JSON.stringify(slot)});true`);
-        await page.until("document.querySelector('#universal-module-select-modal option')",'Выбор прибора на забрало');
-        assert.ok(await page.evaluate(`document.querySelector('#universal-module-select-modal').textContent.includes(${JSON.stringify(name)})`));
-        await page.evaluate("(async()=>{document.querySelector('#universal-module-select').selectedIndex=0;await document.querySelector('#confirm-universal-module').onclick();return true})()");
-        await page.until(`document.querySelector('[data-widget-slots="equipment.helmet.installedModules.0"]')?.textContent.includes(${JSON.stringify(name)})`,'Прибор установлен');
-    }
+    const visorSlots='[data-widget-slots="equipment.helmet.installedModules.0"]';
+    const installButton=`${visorSlots} button[onclick*="visor_device"]`;
+    const install=async name=>{
+        await page.until(`document.querySelector(${JSON.stringify(installButton)})`,'Свободное крепление');
+        await page.evaluate(`document.querySelector(${JSON.stringify(installButton)}).click();true`);
+        await page.until("document.querySelectorAll('#universal-module-select option').length===2",'Выбор фонарика или ПНВ');
+        await page.evaluate(`(async()=>{
+            const choice=document.querySelector('#universal-module-select');
+            choice.selectedIndex=[...choice.options].findIndex(option=>option.textContent===${JSON.stringify(name)});
+            await document.querySelector('#confirm-universal-module').onclick();
+            return choice.selectedIndex>=0;
+        })()`);
+        await page.until(`document.querySelector(${JSON.stringify(visorSlots)})?.textContent.includes(${JSON.stringify(name)})
+            && !document.querySelector(${JSON.stringify(installButton)})`,'Прибор занял единственное крепление');
+    };
+    await install(nvg.name);
+    const withNvg=await request('/lobbies/characters/'+actor.id,null,token,'GET');
+    assert.deepEqual(withNvg.data.equipment.helmet.installedModules[0].installedModules.map(m=>m.id),[nvg.id]);
+    await page.evaluate(`window.universalUninstallModuleByPath(${JSON.stringify(payload.target_path)},'nvg').then(()=>true)`);
+    await install(light.name);
     const saved=await request('/lobbies/characters/'+actor.id,null,token,'GET');
     const modules=saved.data.equipment.helmet.installedModules[0].installedModules;
-    assert.equal(modules.length,2);assert.deepEqual(modules.map(m=>m.id).sort(),[nvg.id,light.id].sort());
+    assert.deepEqual(modules.map(m=>m.id),[light.id]);
+    assert.equal(saved.data.inventory.backpack.find(m=>m.id===nvg.id).id,nvg.id);
     const selectDevices=()=>page.evaluate("document.querySelector('.equipment-panel-tab[data-panel=detector]').click();true");
     const selectHelmet=()=>page.evaluate("document.querySelector('.loadout-slot[data-equipment-open=helmet]').click();true");
     await selectDevices();
@@ -52,7 +66,7 @@ module.exports=async({page,request,token,lobby,offered,loc,safeSession})=>{
     assert.equal(status.lights.find(l=>l.id===light.id).binding.mount,'head');
     fs.writeFileSync(path.join(safeSession.artifacts,'visor-mount.png'),Buffer.from((await page.call('Page.captureScreenshot',{format:'png'})).data,'base64'));
     await selectHelmet();
-    console.log('Забрало: настоящая платная установка g18, два прибора через существующий выбор модулей, сохранённые физические ID, ПНВ и фонарь на голове, включение света. Припять/GPU.');
+    console.log('Забрало: платная установка g18, ПНВ занял единственное место, снят с сохранением ID, затем установлен и включён фонарик. Припять/GPU.');
     const service=async(details,id)=>{
         const owner=await request('/lobbies/characters/'+actor.id,null,token,'GET');
         const master=await request('/lobbies/characters/'+npc.id,null,token,'GET');
@@ -82,12 +96,12 @@ module.exports=async({page,request,token,lobby,offered,loc,safeSession})=>{
     await page.until("document.querySelector('[data-widget-slots="+JSON.stringify('equipment.helmet')+"]')?.textContent.includes('разрушено Стоп-слоем')",'Забрало разрушено по сетевому обновлению');
     const after=await request('/lobbies/characters/'+actor.id,null,token,'GET');
     assert.ok(after.data.equipment.helmet.installedModules[0].stopLayerBroken);
-    assert.equal(after.data.equipment.helmet.installedModules[0].installedModules.length,2);
+    assert.deepEqual(after.data.equipment.helmet.installedModules[0].installedModules.map(m=>m.id),[light.id]);
     fs.writeFileSync(path.join(safeSession.artifacts,'visor-stop-layer.png'),Buffer.from((await page.call('Page.captureScreenshot',{format:'png'})).data,'base64'));
     for(const [width,height]of [[1920,1080],[1600,900],[1366,768],[1280,720]]){
         await page.call('Emulation.setDeviceMetricsOverride',{width,height,deviceScaleFactor:1,mobile:false});
         await selectDevices();
-        await page.until("(()=>{const root=document.getElementById('sheet-tab-equipment').getBoundingClientRect();const slots=[...document.querySelectorAll('.equipment-loadout .loadout-slot')];const devices=[...document.querySelectorAll('.portable-light-row')].filter(row=>row.getClientRects().length);return slots.length===18&&devices.length===2&&[...slots,...devices].every(item=>{const b=item.getBoundingClientRect();return b.width>0&&b.y>=root.y&&b.bottom<=Math.min(innerHeight,root.bottom)+1&&b.right<=root.right+1})})()",'Все слоты и два прибора видимы '+width+'×'+height);
+        await page.until("(()=>{const root=document.getElementById('sheet-tab-equipment').getBoundingClientRect();const slots=[...document.querySelectorAll('.equipment-loadout .loadout-slot')];const devices=[...document.querySelectorAll('.portable-light-row')].filter(row=>row.getClientRects().length);return slots.length===18&&devices.length===1&&[...slots,...devices].every(item=>{const b=item.getBoundingClientRect();return b.width>0&&b.y>=root.y&&b.bottom<=Math.min(innerHeight,root.bottom)+1&&b.right<=root.right+1})})()",'Все слоты и прибор видимы '+width+'×'+height);
         await selectHelmet();
         await page.until("(()=>{const root=document.getElementById('sheet-tab-equipment').getBoundingClientRect();const controls=[...document.querySelectorAll('[data-equipment-panel=helmet] input,[data-equipment-panel=helmet] select,[data-equipment-panel=helmet] button')].filter(e=>e.getClientRects().length);return controls.length>0&&controls.every(e=>{const r=e.getBoundingClientRect();return r.y>=root.y&&r.bottom<=Math.min(innerHeight,root.bottom)+1&&r.right<=root.right+1})})()",'Шлем целиком без прокрутки '+width+'×'+height);
         await page.until(`(()=>{const slots=document.querySelector('[data-widget-slots="equipment.helmet"]');

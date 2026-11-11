@@ -1451,13 +1451,25 @@ function getItemSlots(item) {
         }
     }
     slots = [...(slots || [])];
-    if ((item.modifications || []).some(record => ['armor-g25','armor-g18'].includes(record?.ruleId))
+    if (item.slotType === 'visor' || item.attributes?.slot_type === 'visor') {
+        const visorSlots = slots.filter(slot => !['nvg', 'light'].includes(slot.type));
+        const installed = item.installedModules || [];
+        for (const [type, label] of [['nvg', 'ПНВ'], ['light', 'Фонарь']]) {
+            if (installed.some(module => module?.slotType === type)) visorSlots.push({type, label});
+        }
+        if (canInstallVisorDevice(item)) visorSlots.push({type:'visor_device', label:'Фонарик или ПНВ'});
+        return visorSlots;
+    }
+    if ((item.modifications || []).some(record => record?.ruleId === 'armor-g25')
         && !slots.some(slot => slot?.type === 'nvg')) {
         slots.push({ type: 'nvg', label: 'ПНВ', maxItems: 1 });
     }
-    if ((item.modifications || []).some(record => record?.ruleId === 'armor-g18')
-        && !slots.some(slot => slot?.type === 'light')) slots.push({type:'light',label:'Фонарь',maxItems:1});
     return slots;
+}
+
+function canInstallVisorDevice(item) {
+    return !item.protectionDisabled && (item.modifications || []).some(record => record?.ruleId === 'armor-g18')
+        && !(item.installedModules || []).some(module => ['nvg', 'light'].includes(module?.slotType));
 }
 
 function getEffectiveTorsoProtection() {
@@ -1525,6 +1537,9 @@ function addToBackpack(item) {
 
 // Универсальная установка модуля в слот.
 function universalInstallModule(targetItem, targetPath, moduleItem, modulePath, slotType) {
+    if (['nvg', 'light'].includes(slotType)
+        && (targetItem.slotType === 'visor' || targetItem.attributes?.slot_type === 'visor')
+        && !canInstallVisorDevice(targetItem)) return false;
     if (!targetItem.installedModules) targetItem.installedModules = [];
 
     if (slotType === 'filter') {
@@ -17829,12 +17844,17 @@ window.universalInstallModulePrompt = async function(targetPath, slotType) {
         showNotification('Целевой предмет не найден');
         return;
     }
+    if (slotType === 'visor_device' && !canInstallVisorDevice(targetItem)) {
+        showNotification('На забрале должно быть свободное крепление');
+        return;
+    }
 
     const candidateModules = [];
     const collect = (items, path) => {
         if (!Array.isArray(items)) return;
         items.forEach((it, idx) => {
             let matches = false;
+            let type = slotType;
             if (slotType === 'battery') {
                 matches = (it.category === 'device' && it.subcategory === 'battery');
             } else if (slotType === 'exoskeleton_battery') {
@@ -17854,13 +17874,17 @@ window.universalInstallModulePrompt = async function(targetPath, slotType) {
                 );
             } else if (slotType === 'artifact') {
                 matches = (it.category === 'artifact');
-            } else if (slotType === 'light') {
+            } else if (slotType === 'light' || slotType === 'visor_device') {
                 matches = it.category !== 'weapon_module' && (['hand','improved','head'].includes(it.attributes?.portable_light)
                     || ['фонарик','улучшенный фонарик','налобный фонарик','налобный фонарь'].includes((it.name||'').trim().toLowerCase()));
+                if (slotType === 'visor_device') {
+                    type = matches ? 'light' : 'nvg';
+                    matches ||= (it.slot_type ?? it.attributes?.slot_type) === 'nvg';
+                }
             } else {
                 matches = (it.slot_type === slotType) || (it.attributes?.slot_type === slotType);
             }
-            if (matches) candidateModules.push({ item: it, path: path.concat(idx) });
+            if (matches) candidateModules.push({ item: it, path: path.concat(idx), type });
             if (it.contents) collect(it.contents, path.concat(idx, 'contents'));
         });
     };
@@ -17886,7 +17910,7 @@ window.universalInstallModulePrompt = async function(targetPath, slotType) {
     modal.innerHTML = `
         <div class="modal-content">
             <span class="close" onclick="this.closest('.modal').remove()">&times;</span>
-            <h3>Выберите модуль</h3>
+            <h3>${slotType === 'visor_device' ? 'Выберите фонарик или ПНВ' : 'Выберите модуль'}</h3>
             <select id="universal-module-select" class="form-control" size="5"></select>
             <div class="form-actions" style="margin-top:15px;">
                 <button class="btn btn-primary" id="confirm-universal-module">Установить</button>
@@ -17936,7 +17960,7 @@ window.universalInstallModulePrompt = async function(targetPath, slotType) {
         if(!currentTarget||!currentModule||currentTarget.id!==targetItem.id||currentModule.id!==selected.item.id){
             showNotification('Предмет перемещён. Выберите модуль заново');return;
         }
-        const success = universalInstallModule(currentTarget, targetPath, currentModule, selected.path, slotType);
+        const success = universalInstallModule(currentTarget, targetPath, currentModule, selected.path, selected.type);
         if (success) {
             // Обновить слоты – удалить старый блок, вставить новый
             const targetDiv = document.querySelector(`[data-path="${targetPath.join(',')}"]`);

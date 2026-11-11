@@ -1,4 +1,5 @@
 """Установленные модификации: численные эффекты и правила конкретного экземпляра."""
+from collections import Counter
 from copy import deepcopy
 import re
 from app.services.crafting_rules import catalog
@@ -198,6 +199,36 @@ def consume_stop_layer(visor,data):
     return {'item_id':visor.get('id'),'name':visor.get('name') or 'Забрало','destroyed':True}
 
 
+def validate_visor_mounts(current, updated):
+    from app.services.portable_lights import walk
+
+    def mounts(data):
+        for path, visor in walk(data, all_items=True):
+            if visor.get('slotType') != 'visor' and (visor.get('attributes') or {}).get('slot_type') != 'visor':
+                continue
+            devices = Counter(
+                (module['slotType'], str(module.get('id') or module.get('templateId') or module.get('name')))
+                for module in visor.get('installedModules') or []
+                if isinstance(module, dict) and module.get('slotType') in ('nvg', 'light')
+            )
+            if devices:
+                yield (visor.get('id') or tuple(path)), visor, devices
+
+    previous = None
+    for identity, visor, devices in mounts(updated):
+        available = bool(rule(visor, 'visor_light_mount') and not visor.get('protectionDisabled'))
+        if available and sum(devices.values()) == 1:
+            continue
+        # Старые наборы можно снять без потери предметов и без блокировки листа.
+        if previous is None:
+            previous = {key: installed for key, _, installed in mounts(current)}
+        if not devices - previous.get(identity, Counter()):
+            continue
+        if not available:
+            raise ValidationError('Для установки прибора на забрало нужна исправная Система креплений')
+        raise ValidationError('На забрало можно установить только один прибор: фонарик или ПНВ')
+
+
 def visor_light_mount(data,path):
     """Фонарь действительно установлен на модифицированном забрале надетого шлема."""
     if not isinstance(path,list) or len(path)!=6 or path[:3]!=['equipment','helmet','installedModules'] or path[4]!='installedModules':return False
@@ -332,6 +363,9 @@ def normalize_legacy_gear(data):
     for _,item in walk(data,True):
         corrected=effective_item(item)
         if corrected is not item:item.update(corrected)
+        for record in installed(item):
+            if record['ruleId'] == 'armor-g18':
+                record['description'] = definition('armor-g18')['description']
 
 
 def stat(item,key,base):
