@@ -64,8 +64,64 @@ module.exports=async({page,request,token,lobby,base,safeSession})=>{
     await project(42.5,48.5);const screenshot=await page.call('Page.captureScreenshot',{format:'png'});
     fs.writeFileSync(path.join(safeSession.artifacts,'traps-scene.png'),Buffer.from(screenshot.data,'base64'));
     await checkTripwireChoices({page,request,token,api,safeSession});
+    await checkStashAndBuckshot({page,request,token,api,loc,lobby,location});
     console.log('Ловушки в Припяти: модели, установка мышью, сетевое появление, маскировка, reload, срабатывание и освобождение из сети проверены.');
 };
+
+async function checkStashAndBuckshot({page,request,token,api,loc,lobby,location}){
+    const actor=await request(api+'/characters',{name:'Проверка тайника и картечи',data:{
+        basic:{background:{ruleId:'background-av'}},
+        features:{specialTraits:[{name:'Мастер маскировки'}]},
+        inventory:{pockets:[
+            {id:'stash-shovel',name:'Лопата',category:'tool',quantity:1},
+            {id:'stash-buckshot',name:'12x70 Картечь',category:'ammo',quantity:12,
+                attributes:{caliber:'12x70 Картечь',damage:250}},
+        ],backpack:[]},
+    }},token);
+    const sheet='/lobbies/characters/'+actor.id;
+    await request(loc+'/spawn_character',{character_id:actor.id,tile_x:45,tile_y:48},token);
+    const crate=await request(loc+'/objects',{name:'Проверочный ящик',type:'box',tile_x:46,tile_y:48,
+        properties:{contents:[],floor_level:0}},token);
+    await page.evaluate(`window.closeCharacterSheet();window.currentLocationCharacterId=${actor.id};
+        L.showObjectContextMenu(650,350,${JSON.stringify(crate)});true`);
+    const action="[...document.querySelectorAll('button')].find(b=>b.textContent.includes('Замаскировать как тайник'))";
+    await page.until(action,'Действие на ящике');
+    await page.evaluate(`${action}.click();true`);
+    await page.until("document.querySelector('#trap-action-modal select')",'Форма маскировки тайника');
+    await page.evaluate(`(()=>{
+        const modal=document.getElementById('trap-action-modal'), select=modal.querySelector('select');
+        select.selectedIndex=1;
+        [...modal.querySelectorAll('button')].find(b=>b.textContent==='Замаскировать тайник').click();
+        return true;
+    })()`);
+    await page.until("!document.getElementById('trap-action-modal')",'Маскировка ящика завершена');
+    const hidden=(await request(loc,null,token,'GET')).objects.find(obj=>obj.id===crate.id);
+    const masked=(await request(sheet,null,token,'GET')).data.crafting.trap_receipts.at(-1).result;
+    assert.equal(hidden.properties.stash_mask.dc,masked.check.total);
+    assert.equal(masked.check.tool_bonus,3);
+    assert.equal(masked.check.masking_bonus,4);
+
+    await page.evaluate(`import('/static/js/crafting.js').then(m=>m.showCrafting({characterId:${actor.id},lobbyId:${lobby.id}})).then(()=>true)`);
+    await page.until("document.querySelector('#crafting-modal [data-crafting-tab=other]')",'Работы Утиного стрелка');
+    await page.evaluate("document.querySelector('#crafting-modal [data-crafting-tab=other]').click();true");
+    const button=label=>`[...document.querySelectorAll('#crafting-modal button')].find(b=>b.textContent===${JSON.stringify(label)})`;
+    await page.evaluate(`document.querySelector('[aria-label="Количество картечи для доработки"]').value=10;
+        ${button('Начать доработку')}.click();true`);
+    const collect=button('Забрать картечь');
+    await page.until(`${collect}?.disabled`,'Партия зарезервирована и ожидает час');
+    const clock=await request(api,null,token,'GET');
+    const next=clock.game_day*1440+clock.game_time_minutes+60;
+    await request(api+'/time',{game_day:Math.floor(next/1440),game_time_minutes:next%1440},token,'PATCH');
+    await page.evaluate(`${button('Обновить')}.click();true`);
+    await page.until(`${collect} && !${collect}.disabled`,'Картечь можно забрать');
+    await page.evaluate(`${collect}.click();true`);
+    await page.until(`!${collect} && document.querySelector('#crafting-modal [data-crafting-tab=other]')`,'Работа завершена');
+    const items=(await request(sheet,null,token,'GET')).data.inventory.pockets;
+    assert.equal(items.find(item=>item.id==='stash-buckshot').quantity,2);
+    assert.equal(items.find(item=>item.attributes?.tuned_buckshot).quantity,10);
+    await page.evaluate("document.getElementById('crafting-modal').closeCrafting();true");
+    console.log('Ящик замаскирован из меню сцены, лопата +3 и черта +4. Десять патронов доработаны через интерфейс за час, два остались обычными.');
+}
 
 async function checkTrapTraits({page,request,token,api,loc,lobby,location,template,trap,safeSession}){
     const engineer=await request(api+'/characters',{name:'Инженер и маскировка',data:{

@@ -1,7 +1,7 @@
 import {Server} from './api.js';
 import {showNotification} from './utils.js';
 
-const names={mask:'Замаскировать',defuse:'Обезвредить',recover:'Подобрать',detect:'Осмотреть клетку',escape_net:'Освободиться из сети',cut_net:'Разрезать сеть'};
+const names={mask:'Замаскировать',mask_stash:'Замаскировать тайник',defuse:'Обезвредить',recover:'Подобрать',detect:'Осмотреть клетку',escape_net:'Освободиться из сети',cut_net:'Разрезать сеть'};
 export async function showTrapAction({characterId,lobbyId,locationId,trap,operation,inCombat,locationCharacterId,cell}){
     document.getElementById('trap-action-modal')?.remove();
     const modal=document.createElement('div');modal.id='trap-action-modal';modal.className='modal';
@@ -11,6 +11,7 @@ export async function showTrapAction({characterId,lobbyId,locationId,trap,operat
     const node=(tag,text)=>{const el=document.createElement(tag);el.textContent=text;return el;};
     const close=node('button','Закрыть');close.type='button';close.className='btn btn-secondary';close.onclick=()=>modal.remove();
     panel.append(node('h3',`${names[operation]}${trap?' · '+trap.name:''}`));
+    const masking=['mask','mask_stash'].includes(operation);
     try{
         const snapshot=await Server.getCrafting(characterId),character=await Server.getCharacter(characterId);
         if(!modal.isConnected)return;
@@ -19,20 +20,20 @@ export async function showTrapAction({characterId,lobbyId,locationId,trap,operat
         const tools=inventory.filter(e=>{
             if(!['tool','misc','weapon','melee_weapon'].includes(e.item.category))return false;
             const name=(e.item.name||'').toLocaleLowerCase('ru').replaceAll('ё','е');
-            if(operation==='mask')return /нож|лопат/.test(name);
+            if(masking)return /нож|лопат/.test(name);
             if(operation==='cut_net')return (e.item.attributes?.allowed_attacks||[]).some(a=>/реж|руб|cut|slash/i.test(a));
             return /мультитул/.test(name)||kind==='beartrap'&&/грузик/.test(name)
                 ||['net','alarm','mine','tripwire'].includes(kind)&&/нож/.test(name)&&!/кустар/.test(name)
                 ||kind==='mine'&&/отвертка|лопат/.test(name)||kind==='tripwire'&&/кусач/.test(name);
         });
-        const choice=document.createElement('select');choice.className='form-control';choice.setAttribute('aria-label','Инструмент для ловушки');
+        const choice=document.createElement('select');choice.className='form-control';choice.setAttribute('aria-label','Инструмент');
         const none=node('option',operation==='cut_net'?'Выберите острое оружие':'Без инструмента');none.value='';choice.append(none);
         for(const [index,entry]of tools.entries()){const option=node('option',entry.item.name);option.value=index;choice.append(option);}
-        if(['mask','defuse','cut_net'].includes(operation))panel.append(node('label','Инструмент'),choice);
+        if(masking||['defuse','cut_net'].includes(operation))panel.append(node('label','Инструмент'),choice);
         const toolMultiplier=snapshot.trap_rules?.tool_multiplier||1;
-        if(operation==='mask')panel.append(node('p',`5 ОД. К20 + Скрытность + инструмент. Нож: +${Math.ceil(toolMultiplier)}; лопата или саперная лопатка: +${Math.ceil(3*toolMultiplier)}. Результат — СЛ обнаружения по Внимательности.`));
-        if(operation==='mask'&&snapshot.trap_rules?.masking_bonus)panel.append(node('p',`Мастер маскировки: +${snapshot.trap_rules.masking_bonus} к броску.`));
-        if(['mask','defuse'].includes(operation)&&snapshot.trap_rules?.tool_multiplier>1)panel.append(node('p','Полевой инженер: бонус инструмента ×1,5 с округлением вверх.'));
+        if(masking)panel.append(node('p',`5 ОД. К20 + Скрытность + инструмент. Нож: +${Math.ceil(toolMultiplier)}; лопата или саперная лопатка: +${Math.ceil(3*toolMultiplier)}. Результат — СЛ обнаружения по Внимательности.`));
+        if(masking&&snapshot.trap_rules?.masking_bonus)panel.append(node('p',`Мастер маскировки: +${snapshot.trap_rules.masking_bonus} к броску.`));
+        if((masking||operation==='defuse')&&snapshot.trap_rules?.tool_multiplier>1)panel.append(node('p','Полевой инженер: бонус инструмента ×1,5 с округлением вверх.'));
         if(operation==='defuse')panel.append(node('p','2 ОД. При неудаче ловушка сработает. Инструмент не обязателен.'));
         if(operation==='escape_net')panel.append(node('p','2 ОД. Проверка Силы: СЛ 12.'));
         if(operation==='cut_net')panel.append(node('p','3 ОД. Нужна режущая или рубящая атака выбранного оружия.'));
@@ -42,6 +43,7 @@ export async function showTrapAction({characterId,lobbyId,locationId,trap,operat
             submit.disabled=true;choice.disabled=true;
             pending ||= {operation,operation_id:crypto.randomUUID(),character_id:characterId,character_revision:character.data._revision,
                 trap_id:trap?.properties?.trap_id,trap_revision:trap?.revision,
+                stash_id:operation==='mask_stash'?trap?.id:undefined,stash_revision:operation==='mask_stash'?trap?.revision:undefined,
                 target_character_id:trap?.properties?.trap_victim_id,x:cell?.x,y:cell?.y,
                 tool_path:choice.value!==''?tools[Number(choice.value)]?.path:undefined};
             try{
@@ -49,7 +51,8 @@ export async function showTrapAction({characterId,lobbyId,locationId,trap,operat
                     location_character_id:locationCharacterId,action_key:'trap',attribute_choice:pending,pending_action_id:pending.operation_id,
                 }):await Server.operateTrap(lobbyId,locationId,pending);
                 const detail=result.result||result.narrative_action;
-                showNotification(result.pending_action?'Действие начато':detail?.check?`${detail.name}: ${detail.check.total}${detail.difficulty!=null?' · СЛ '+detail.difficulty:''}${detail.check.success===false?' · неудача':''}`:detail?.name||'Готово','system');
+                const found=operation==='detect'&&detail ? (detail.found ? ` · найдено ${detail.found}` : ' · ничего не найдено') : '';
+                showNotification(result.pending_action?'Действие начато':detail?.check?`${detail.name}: ${detail.check.total}${detail.difficulty!=null?' · СЛ '+detail.difficulty:''}${detail.check.success===false?' · неудача':''}${found}`:detail?.name||'Готово','system');
                 modal.remove();
             }catch(error){
                 showNotification(error.message,'system');

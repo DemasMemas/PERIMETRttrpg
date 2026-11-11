@@ -67,8 +67,9 @@ class ContainerTransferService:
 
     @staticmethod
     def _transfer(lobby_id, object_id, user_id, payload, *, dropped=False):
+        from app.services.stashes import visible as stash_visible
         obj = db.session.get(LocationObject, object_id)
-        if not obj or obj.location.lobby_id != lobby_id:
+        if not obj or obj.location.lobby_id != lobby_id or not stash_visible(obj, user_id):
             raise NotFoundError('Container not found')
         character = db.session.get(LobbyCharacter, payload.get('character_id'))
         if not character or character.lobby_id != lobby_id:

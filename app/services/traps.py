@@ -96,8 +96,9 @@ def _near(actor,trap):
 def _tool_bonus(item,profile,mask=False):
     from app.services.crafting import normalized
     if item and item.get('category') not in {'tool','misc','weapon','melee_weapon'}:return 0
-    name=normalized((item or {}).get('name'));kind=profile['kind']
+    name=normalized((item or {}).get('name'))
     if mask:return 3 if 'лопат' in name else 1 if 'нож' in name else 0
+    kind=profile['kind']
     if 'мультитул' in name:return 2
     if 'грузик' in name and kind=='beartrap':return 'automatic'
     if 'нож' in name and 'кустар' not in name:return 5 if kind in {'net','alarm'} else 1 if kind in {'mine','tripwire'} else 0
@@ -112,7 +113,7 @@ def prepare(actor,data,payload,user_id):
     from app.services.location_navigation import surface
     if not enabled():raise ValidationError('Ловушки пока недоступны. Обновите сервер.')
     if not isinstance(payload,dict):raise ValidationError('Выберите действие ловушки')
-    operation=payload.get('operation');trap=None;item=None;tool=None
+    operation=payload.get('operation');trap=None;item=None;tool=None;stash=None
     if operation in {'escape_net','cut_net'}:
         victim=actor if operation=='escape_net' else LocationCharacter.query.filter_by(location_id=actor.location_id,character_id=payload.get('target_character_id')).first()
         held=(((victim.character.data or {}).get('health') or {}).get('combatMeta') or {}).get('trappedNet') if victim else None
@@ -167,6 +168,13 @@ def prepare(actor,data,payload,user_id):
         if payload.get('tool_path') is not None:
             tool=_item(data,payload['tool_path'])
             if not tool or not _tool_bonus(tool,p,operation=='mask'):raise ValidationError('Выберите подходящий инструмент')
+    elif operation=='mask_stash':
+        from app.services import stashes
+        stash=stashes.prepare(actor,payload,user_id)
+        key=None;p=None;cost=5
+        if payload.get('tool_path') is not None:
+            tool=_item(data,payload['tool_path'])
+            if not tool or not _tool_bonus(tool,p,True):raise ValidationError('Выберите подходящий инструмент')
     elif operation=='detect':
         # Поиск задаётся клеткой: клиент не получает ID/координаты скрытых ловушек.
         x,y=payload.get('x'),payload.get('y')
@@ -175,14 +183,19 @@ def prepare(actor,data,payload,user_id):
         if any(type(v) is not int for v in (x,y)):raise ValidationError('Выберите клетку для осмотра')
         if not (0<=x<actor.location.grid_width and 0<=y<actor.location.grid_height):raise ValidationError('Клетка вне подлокации')
         from types import SimpleNamespace
-        from app.services.location_navigation import ground
+        from app.services.location_navigation import ground, level_of
+        from app.services.stashes import CONTAINER_TYPES
         target=SimpleNamespace(**{k:v for k,v in actor.__dict__.items() if not k.startswith('_')})
         target.id=-1;target.character_id=-1;target.character=actor.character;target.location=actor.location
         target.pos_x,target.pos_y=x,y;target.height=ground(actor.location,x,y)+(actor.floor_level or 0)*2.4;target.posture='prone'
-        if not CombatService._can_see_location_character(actor,target):raise ValidationError('Эта клетка не видна персонажу')
+        # Контейнер в осматриваемой клетке сам не закрывает её от наблюдателя.
+        objects=[obj for obj in LocationObject.query.filter_by(location_id=actor.location_id)
+                 if not (obj.type in CONTAINER_TYPES and (obj.tile_x,obj.tile_y)==(x,y)
+                         and level_of(obj)==(actor.floor_level or 0))]
+        if not CombatService._can_see_location_character(actor,target,objects=objects):raise ValidationError('Эта клетка не видна персонажу')
         cost=0;key=None;p=None
     else:raise ValidationError('Неизвестное действие ловушки')
-    return {'operation':operation,'trap':trap,'key':key,'profile':p,'item':item,'tool':tool,'action_points':cost}
+    return {'operation':operation,'trap':trap,'key':key,'profile':p,'item':item,'tool':tool,'stash':stash,'action_points':cost}
 
 
 def execute(actor,data,payload,user_id,state=None):
@@ -193,7 +206,7 @@ def execute(actor,data,payload,user_id,state=None):
     db.session.execute(db.update(Location).where(Location.id==actor.location_id).values(updated_at=Location.updated_at))
     plan=prepare(actor,data,payload,user_id);operation=plan['operation'];trap=plan['trap'];p=plan['profile']
     actor.character.data=data
-    result={'name':{'place':'Установка ловушки','defuse':'Обезвреживание ловушки','mask':'Маскировка ловушки','recover':'Подбор ловушки','detect':'Поиск ловушек','escape_net':'Освободиться из сети','cut_net':'Разрезать сеть'}[operation],
+    result={'name':{'place':'Установка ловушки','defuse':'Обезвреживание ловушки','mask':'Маскировка ловушки','mask_stash':'Маскировка тайника','recover':'Подбор ловушки','detect':'Осмотр клетки','escape_net':'Освободиться из сети','cut_net':'Разрезать сеть'}[operation],
         'action_points':plan['action_points'],'roll_required':False,'trap_ids':[]}
     if operation in {'escape_net','cut_net'}:
         check=CombatService._narrative_skill_check(data,'skills.physical.strength') if operation=='escape_net' else None
@@ -216,12 +229,20 @@ def execute(actor,data,payload,user_id,state=None):
         db.session.add(trap);db.session.flush()
     elif operation=='recover':
         data.setdefault('inventory',{}).setdefault('backpack',[]).append(deepcopy(trap.data['item']));trap.status='recovered'
-    elif operation=='mask':
+    elif operation in {'mask','mask_stash'}:
         masking_bonus=4*trait_count(data,'Мастер маскировки')
         check=CombatService._narrative_skill_check(data,'skills.other.stealth',roll_bonus=masking_bonus)
-        bonus=personal_tool_bonus(data,_tool_bonus(plan['tool'],p,True));trap.detection_dc=check['total']+bonus
+        bonus=personal_tool_bonus(data,_tool_bonus(plan['tool'],p,True))
+        total=check['total']+bonus
+        result.update(check={**check,'total':total,'tool_bonus':bonus,'masking_bonus':masking_bonus},roll_required=True)
+        if operation=='mask_stash':
+            from app.services import stashes
+            stash=plan['stash']
+            stashes.conceal(stash,actor,user_id,total)
+            result['stash_ids']=[stash.id]
+            return result
+        trap.detection_dc=total
         trap.known_users=list(set([*(trap.known_users or []),user_id]))
-        result.update(check={**check,'total':check['total']+bonus,'tool_bonus':bonus,'masking_bonus':masking_bonus},roll_required=True)
     elif operation=='defuse':
         bonus=personal_tool_bonus(data,_tool_bonus(plan['tool'],p))
         difficulty=p['difficulty']-CombatService._base_skill_modifier(data,'skills.other.engineering')-CombatService._base_skill_modifier(data,'skills.physical.awareness')-(bonus if isinstance(bonus,int) else 0)
@@ -243,7 +264,9 @@ def execute(actor,data,payload,user_id,state=None):
             if candidate.status=='recovered' or candidate.detection_dc is None:continue
             if check['roll']==20 or check['roll']!=1 and check['total']>=candidate.detection_dc:
                 candidate.known_users=list(set([*(candidate.known_users or []),user_id]));found.append(candidate.id)
-        result.update(check=check,roll_required=True,trap_ids=found,found=len(found))
+        from app.services import stashes
+        stash_ids=stashes.discover(actor,user_id,payload['x'],payload['y'],check)
+        result.update(check=check,roll_required=True,trap_ids=found,stash_ids=stash_ids,found=len(found)+len(stash_ids))
         return result
     result['trap_ids']=[trap.id]
     return result

@@ -2,7 +2,7 @@
 from copy import deepcopy
 import pytest
 from app.extensions import db
-from app.models import LocationTrap,LocationCombatState
+from app.models import LocationTrap,LocationCombatState,LocationObject
 from app.models.templates import ItemTemplate
 from app.services.character_starting_purchase import item_from_template
 from app.services.trap_catalog import templates
@@ -224,6 +224,69 @@ def test_hidden_trap_can_be_found_by_awareness_without_receiving_secret_id(trap_
         'operation_id':'find-trap','character_id':other.character_id,'character_revision':other.character.revision,'x':5,'y':4})
     assert result['found']==1
     assert projections(pair['location'].id,pair['target_user']['id'])[0]['properties']['trap_id']==trap.id
+
+
+@pytest.mark.parametrize('in_combat', [False, True])
+def test_masked_stash_uses_shared_check_and_is_discovered_per_player(client, trap_game, auth_headers, monkeypatch, in_combat):
+    from app.services.combat import CombatService
+    from app.services import stashes
+
+    pair = trap_game
+    actor, other = pair['actor_location'], pair['target_location']
+    other.facing_x, other.facing_y = -1, 0
+    data = deepcopy(actor.character.data)
+    data.setdefault('features', {})['specialTraits'] = [{'name':'Мастер маскировки'}]
+    data['inventory']['pockets'] = [{'id':'spade','name':'Саперная лопатка','category':'tool','quantity':1}]
+    actor.character.data = data
+    obj = LocationObject(location_id=actor.location_id,type='box',name='Ящик',tile_x=5,tile_y=4,
+        properties={'contents':[{'id':'private-item','name':'Содержимое тайника','quantity':1}]})
+    db.session.add(obj)
+    if in_combat:
+        CombatService.start_combat(actor.location_id,pair['lobby'].gm_id,[actor.id],actor.id)
+        actor.action_points_current = 20
+    db.session.commit()
+    root = f"/lobbies/{pair['lobby'].id}/locations"
+    loc = root + f'/{actor.location_id}'
+    url = root + f'/objects/{obj.id}'
+    owner, seeker = auth_headers(pair['actor_user']), auth_headers(pair['target_user'])
+    seeker_room = f"user_{pair['target_user']['id']}"
+    events = []
+    monkeypatch.setattr(stashes.socketio,'emit',lambda name, data, **options: events.append((name,data,options.get('room'))))
+    monkeypatch.setattr('app.services.combat.random.randint', lambda *_: 12)
+    mask = request(pair,'mask_stash',stash_id=obj.id,stash_revision=obj.revision,tool_path=['inventory','pockets',0])
+    if in_combat:
+        response = client.post(loc+'/combat/action', headers=owner, json={
+            'location_character_id':actor.id,'action_key':'trap','attribute_choice':mask,'pending_action_id':'mask-crate',
+        })
+        assert response.status_code == 200, response.json
+        result = response.json['narrative_action']
+        assert actor.action_points_current == 15
+        CombatService.end_combat(actor.location_id,pair['lobby'].gm_id)
+    else:
+        response = client.post(loc+'/traps',headers=owner,json=mask)
+        assert response.status_code == 200, response.json
+        result = response.json['result']
+    assert result['check']['masking_bonus'] == 4 and result['check']['tool_bonus'] == 3
+    assert obj.properties['stash_mask']['dc'] == result['check']['total']
+    assert any(name=='location_object_deleted' and room==seeker_room and event['object_id']==obj.id
+               for name,event,room in events)
+    assert client.get(url,headers=seeker).status_code == 404
+    assert obj.id not in {o['id'] for o in client.get(loc,headers=seeker).json['objects']}
+    assert client.post(url+'/transfer',headers=seeker,json={'character_id':other.character_id}).status_code == 404
+    assert client.get(url,headers=owner).status_code == 200
+    for roll, found in [(1,0),(20,1)]:
+        monkeypatch.setattr('app.services.combat.random.randint',lambda *_:roll)
+        response=client.post(loc+'/traps',headers=seeker,json={
+            'operation':'detect','operation_id':f'stash-search-{roll}','character_id':other.character_id,
+            'character_revision':other.character.revision,'x':5,'y':4,
+        })
+        assert response.status_code == 200, response.json
+        assert response.json['result']['found'] == found
+    visible = client.get(url,headers=seeker)
+    assert visible.status_code == 200 and 'stash_mask' not in visible.json['properties']
+    assert visible.json['properties']['contents'][0]['id'] == 'private-item'
+    assert any(name=='location_object_updated' and room==seeker_room and event['object']['id']==obj.id
+               for name,event,room in events)
 
 
 def test_net_stops_movement_and_strength_check_releases_character(trap_game,monkeypatch):

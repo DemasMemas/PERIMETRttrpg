@@ -9028,6 +9028,7 @@ export async function useLocationVerticalAccess(objectId, direction, characterId
 
 function getObjectActions(object) {
     const actions = [...(object.properties?.interactions || objectInteractions[object.type] || [])];
+    if (['box','military_crate','chest'].includes(object.type)) actions.push('trap_mask_stash');
     if (['ladder','stairs','hatch','floor_opening'].includes(object.type) && !actions.includes('drop_down')) actions.push('drop_down');
     if (isFireObject(object) && !actions.includes('toggle_fire')) actions.push('toggle_fire');
     if ((findLocationAsset(object.type)?.container || object.type === 'chest')
@@ -9084,6 +9085,7 @@ function getActionRequirement(object, actionKey) {
 function getStructureActionLabel(object, actionKey) {
     if(actionKey==='open_lock')return object.properties?.lock_jammed?'Замок заклинило':'Вскрыть замок';
     if(actionKey==='trap_mask')return 'Замаскировать · 5 ОД';
+    if(actionKey==='trap_mask_stash')return 'Замаскировать как тайник · 5 ОД';
     if(actionKey==='trap_defuse')return 'Обезвредить · 2 ОД';
     if(actionKey==='trap_recover')return 'Подобрать';
     if(actionKey==='trap_escape_net')return 'Освободиться из сети · 2 ОД';
@@ -9107,7 +9109,7 @@ function getStructureActionLabel(object, actionKey) {
 
 function getStructureActionIcon(actionKey) {
     if(actionKey==='open_lock')return '⚿';
-    if(actionKey==='trap_mask')return '◌';
+    if(actionKey==='trap_mask'||actionKey==='trap_mask_stash')return '◌';
     if(actionKey==='trap_defuse')return '⚒';
     if(actionKey==='trap_recover')return '↑';
     if(actionKey==='trap_escape_net')return '↗';
@@ -14215,6 +14217,7 @@ function buildingGrassChangedTiles(previous, next, changed) {
 
 export function applyLocationObjectsChange({ location_id, objects = [], deleted_ids = [] }) {
     if (!currentLocationData || Number(location_id) !== Number(currentLocationId)) return;
+    objects = objects.filter(object => !object.properties?.stash_obscured);
     if (objectEdit?.phase === 'preview') {
         const removed = new Set(deleted_ids);
         const ids = new Set(currentLocationData.objects.map(o => o.id));
@@ -14279,7 +14282,7 @@ async function deleteSelectedLocationBuildingImpl(wholeBuilding = false) {
 }
 
 export function addLocationObject(object) {
-    if (!currentLocationData) return;
+    if (!currentLocationData || object.properties?.stash_obscured) return;
     currentLocationData.objects = currentLocationData.objects || [];
     if (currentLocationData.objects.some(item => String(item.id) === String(object.id))) return;
     currentLocationData.objects.push(object);
@@ -14326,7 +14329,7 @@ export function removeLocationObject(objectId) {
 window.removeLocationObject = removeLocationObject;
 
 export function updateLocationObject(object) {
-    if (!currentLocationData) return;
+    if (!currentLocationData || object.properties?.stash_obscured) return;
     currentLocationData.objects = currentLocationData.objects || [];
     const index = currentLocationData.objects.findIndex(item => String(item.id) === String(object.id));
     const previous = index === -1 ? null : currentLocationData.objects[index];

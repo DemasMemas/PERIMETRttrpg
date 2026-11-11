@@ -82,7 +82,8 @@ export async function showCrafting({characterId,lobbyId,onSaved,recipeId='',stat
                 return;
             }
             if(job.kind==='salvage')body.append(el('p',`Разбор: к100 + ${job.bonus} по таблице добычи.`));
-            else if(job.kind!=='book')body.append(el('p',`Итоговая СЛ: ${job.quote.difficulty}. ${job.quote.automatic_success?'Автоуспех.':'Успех: к100 строго выше СЛ.'}`));
+            else if(job.kind==='buckshot_tuning')body.append(el('p','Доработанная картечь теряет 25 урона за метр после пятого.'));
+            else body.append(el('p',`Итоговая СЛ: ${job.quote.difficulty}. ${job.quote.automatic_success?'Автоуспех.':'Успех: к100 строго выше СЛ.'}`));
             const choices=[];
             if(!job.quote.automatic_success&&!job.quote.failure_loss.all){
                 for(let i=0;i<job.quote.failure_loss.chosen;i++){
@@ -90,7 +91,8 @@ export async function showCrafting({characterId,lobbyId,onSaved,recipeId='',stat
                     const choice=select('Компонент при неудаче',job.escrow.map((e,index)=>[index,`${e.item.name} · зарезервировано ${e.amount}`]));body.append(choice);choices.push(choice);
                 }
             }
-            const finish=button(job.phase?'Забрать результат · к100':'Завершить · к100',()=>act('finish',{job_id:job.id,chosen_loss:choices.map(e=>Number(e.value))}));
+            const finish=button(job.kind==='buckshot_tuning'?'Забрать картечь':job.phase?'Забрать результат · к100':'Завершить · к100',
+                ()=>act('finish',{job_id:job.id,chosen_loss:choices.map(e=>Number(e.value))}));
             finish.disabled=job.remaining_seconds>0||Boolean(job.phase&&!job.at_station);body.append(finish);
             if(job.salvage_roll?.awaiting_gm){
                 finish.disabled=true;
@@ -227,6 +229,18 @@ export async function showCrafting({characterId,lobbyId,onSaved,recipeId='',stat
         else panes.modifications.append(el('p','Нет снаряжения для модификации.'));
         renderSalvage(panes.salvage);
         renderFlamethrowers(panes.other);
+        if(snapshot.buckshot_tuning!=null){
+            const tuning=el('section');tuning.append(el('h4','Доработка картечи 12×70'));
+            tuning.append(el('p','Один игровой час, до 100 патронов. Урон падает на 25 за метр после пятого.'));
+            if(snapshot.buckshot_tuning){
+                const amount=el('input',null,'form-control');
+                Object.assign(amount,{type:'number',min:1,max:snapshot.buckshot_tuning,step:1,value:snapshot.buckshot_tuning});
+                amount.setAttribute('aria-label','Количество картечи для доработки');
+                const start=button('Начать доработку',()=>{if(amount.reportValidity())return act('tune_buckshot',{quantity:Number(amount.value)});});
+                amount.required=true;tuning.append(amount,start);
+            }else tuning.append(el('p','В инвентаре нет картечи для доработки.'));
+            panes.other.append(tuning);
+        }
         if(snapshot.state.history?.length){panes.other.append(el('h4','Последние работы'));for(const result of snapshot.state.history.slice(-5).reverse())panes.other.append(el('p',`${result.name}: ${result.cancelled?'отменено':result.spoiled_by_station?'результат испорчен кустарным станком':result.success?'готово':'неудача'}${result.roll!=null?(result.kind==='salvage'?` · к100 ${result.roll} + ${result.bonus} = ${result.total} · ${result.materials.map(m=>`${m.name} ×${m.quantity}`).join(', ')||'без добычи'}`:` · к100 ${result.roll}, СЛ ${result.difficulty}`):''}`));}
     };
     const renderFlamethrowers=container=>{

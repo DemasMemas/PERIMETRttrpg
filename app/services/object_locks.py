@@ -88,7 +88,9 @@ def attempt(lobby_id,object_id,character_id,user_id,payload):
     if type(payload.get('character_revision')) is not int or payload['character_revision']!=character.revision or type(payload.get('object_revision')) is not int or payload['object_revision']!=obj.revision:
         raise ConflictError('Персонаж или объект изменился. Повторите выбор')
     if not supported(obj) or not (obj.properties or {}).get('locked'):raise ValidationError('На объекте нет закрытого замка')
-    if (obj.properties or {}).get('gm_hidden') and user_id!=obj.location.lobby.gm_id:raise PermissionDenied('Объект не обнаружен')
+    from app.services.stashes import visible as stash_visible
+    if not stash_visible(obj,user_id) or (obj.properties or {}).get('gm_hidden') and user_id!=obj.location.lobby.gm_id:
+        raise PermissionDenied('Объект не обнаружен')
     if (obj.properties or {}).get('lock_jammed'):raise ValidationError('Замок заклинило; открыть объект больше нельзя')
     footprint=CombatService._object_footprint_tiles(obj) or {(obj.tile_x,obj.tile_y)}
     actor_level=actor.floor_level or 0;level=level_of(obj)

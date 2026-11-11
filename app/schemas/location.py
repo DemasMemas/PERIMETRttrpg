@@ -32,13 +32,14 @@ class LocationSchema(Schema):
     updated_at = fields.DateTime(dump_only=True)
 
 class LocationObjectSchema(Schema):
-    def __init__(self,*args,reveal_locked=False,**kwargs):
+    def __init__(self,*args,reveal_locked=False,reveal_stashes=False,**kwargs):
         super().__init__(*args,**kwargs)
         self.reveal_locked=reveal_locked
+        self.reveal_stashes=reveal_stashes
 
     @post_dump
     def protect_contents(self,data,**kwargs):
-        return data if self.reveal_locked else public_location_objects(data)
+        return data if self.reveal_locked else public_location_objects(data, reveal_stashes=self.reveal_stashes)
 
     revision = fields.Int(dump_only=True)
     id = fields.Int(dump_only=True)
@@ -50,12 +51,17 @@ class LocationObjectSchema(Schema):
     properties = fields.Dict()
 
 
-def public_location_objects(value):
+def public_location_objects(value, *, reveal_stashes=False):
     """Редактирование и история остаются полными; сетевой общий снимок скрывает закрытые вещи."""
-    if isinstance(value,list):return [public_location_objects(item) for item in value]
+    if isinstance(value,list):return [public_location_objects(item, reveal_stashes=reveal_stashes) for item in value]
     if not isinstance(value,dict):return value
-    result={key:public_location_objects(item) for key,item in value.items()}
+    props = value.get('properties')
+    if isinstance(props, dict) and props.get('stash_mask') and not reveal_stashes:
+        return {'id':value.get('id'), 'properties':{'stash_obscured':True}}
+    result={key:public_location_objects(item, reveal_stashes=reveal_stashes) for key,item in value.items()}
     props=result.get('properties')
-    if isinstance(props,dict) and props.get('locked') and 'contents' in props:
-        result['properties']={**props,'contents':[],'contents_hidden':True}
+    if isinstance(props,dict):
+        if props.pop('stash_mask', None): props['stash_masked'] = True
+        if props.get('locked') and 'contents' in props:
+            result['properties']={**props,'contents':[],'contents_hidden':True}
     return result

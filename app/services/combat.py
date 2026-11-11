@@ -3196,6 +3196,7 @@ class CombatService:
             or attributes.get('ammo_kind')
         )
         profile['ammo_name'] = stack.get('name') or attributes.get('name')
+        profile['tuned_buckshot'] = attributes.get('tuned_buckshot') is True
         caliber = CombatService._normalize_caliber(profile['caliber'])
         if re.fullmatch(r'18x45\s*т', caliber):
             profile['pain_on_penetration'] = 3
@@ -3715,11 +3716,13 @@ class CombatService:
 
     @staticmethod
     def _is_buckshot_profile(profile):
+        from app.services.inventory import normalize_caliber
+
         profile = profile if isinstance(profile, dict) else {}
         variant = str(profile.get('ammo_variant') or '').strip().lower()
         ammo_name = str(profile.get('ammo_name') or '').strip().lower()
         return (
-            bool(re.match(r'^12x70(?:$|[^0-9])', CombatService._normalize_caliber(profile.get('caliber'))))
+            bool(re.match(r'^12x70(?:$|[^0-9])', normalize_caliber(profile.get('caliber'))))
             and (variant == 'buckshot' or 'картеч' in ammo_name)
         )
 
@@ -4869,7 +4872,7 @@ class CombatService:
         return any('жмурк' in str(value or '').casefold() for value in labels)
 
     @staticmethod
-    def _can_see_location_character(observer, target, max_distance=25):
+    def _can_see_location_character(observer, target, max_distance=25, *, objects=None):
         if not observer or not target or observer.id == target.id:
             return False
         distance = max(
@@ -4881,7 +4884,7 @@ class CombatService:
         if not CombatService._is_in_facing_arc(observer, target.pos_x, target.pos_y):
             return False
         return CombatService._cover_analysis(
-            observer.location_id, observer, target,
+            observer.location_id, observer, target, objects=objects,
         ).get('grade') != 'full'
 
     @staticmethod
@@ -8589,7 +8592,8 @@ class CombatService:
                     and CombatService._is_buckshot_profile(profile)
                 ):
                     distance_over = max(0, attack_details['target_distance'] - 5)
-                    profile['damage'] = max(0, profile['damage'] - 50 * distance_over)
+                    damage_falloff = 25 if profile.get('tuned_buckshot') else 50
+                    profile['damage'] = max(0, profile['damage'] - damage_falloff * distance_over)
                     profile['armor_piercing'] = max(
                         0,
                         profile['armor_piercing'] - 5 * distance_over,
@@ -14246,7 +14250,7 @@ class CombatService:
             from app.services.traps import prepare as trap_plan
             trap_prepared=trap_plan(character,data,attribute_choice,user_id)
             special_action_cost=trap_prepared['action_points']
-            action['label']={'place':'Установка ловушки','mask':'Маскировка ловушки','defuse':'Обезвреживание ловушки','recover':'Подбор ловушки','detect':'Поиск ловушек','escape_net':'Освободиться из сети','cut_net':'Разрезать сеть'}[trap_prepared['operation']]
+            action['label']={'place':'Установка ловушки','mask':'Маскировка ловушки','mask_stash':'Маскировка тайника','defuse':'Обезвреживание ловушки','recover':'Подбор ловушки','detect':'Осмотр клетки','escape_net':'Освободиться из сети','cut_net':'Разрезать сеть'}[trap_prepared['operation']]
         if action_key=='place_cover':
             from app.services.crafted_covers import plan as cover_plan
             cover_placement=cover_plan(character,data,attribute_choice)

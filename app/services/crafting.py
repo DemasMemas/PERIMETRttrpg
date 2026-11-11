@@ -554,6 +554,24 @@ def _return_materials(data,escrow,lost):
         destination.append(item)
 
 
+def _buckshot_stacks(data):
+    from app.services.combat import CombatService
+
+    for path, item in entries(data):
+        if item.get('category') != 'ammo':
+            continue
+        attributes = CombatService._template_attributes(item)
+        quantity = item.get('quantity', 1)
+        if type(quantity) is int and quantity > 0 and not attributes.get('tuned_buckshot'):
+            profile = {
+                'caliber': attributes.get('caliber') or item.get('caliber') or item.get('subcategory'),
+                'ammo_variant': attributes.get('ammo_variant') or item.get('ammo_variant'),
+                'ammo_name': item['name'],
+            }
+            if CombatService._is_buckshot_profile(profile):
+                yield path, item, quantity
+
+
 def snapshot(character,user_id):
     from app.services.character_creation import _catalog
     from app.services.character_traits import background_is, trait_count
@@ -579,6 +597,8 @@ def snapshot(character,user_id):
     for entry in rules['modifications']:entry['automatic_installation']=supported(entry)
     return {'catalog':rules,'ammo_options':available_ammo(),'state':state,'inventory':[{'path':path,'item':item,'uses':_available_uses(item),'salvage_kind':kind_of(item),'salvage_tool_bonus':tool_bonus(item,data),'tripwire_compatible':tripwire_grenade_allowed(item,character.lobby_id)} for path,item in entries(data)],
         'targets':modification_targets(data),'is_gm':character.lobby.gm_id==user_id,'revision':character.revision,
+        'buckshot_tuning': min(100, sum(quantity for _, _, quantity in _buckshot_stacks(data)))
+            if background_is(data,'Утиный стрелок') else None,
         'trap_rules':{'placement_allowed':not background_is(data,'Полевой инженер'),
             'tool_multiplier':1.5 if background_is(data,'Полевой инженер') else 1,
             'masking_bonus':4*trait_count(data,'Мастер маскировки')},
@@ -708,7 +728,7 @@ def operate(character_id,user_id,payload):
     previous=next((r['result'] for r in state.get('receipts',[]) if r['id']==operation_id),None)
     if previous is not None:return character,{**deepcopy(previous),'replayed':True}
     if type(payload.get('character_revision')) is not int or payload['character_revision']!=character.revision:raise ConflictError()
-    if action in {'start','read_book','modify','finish','salvage','install_pda_modification'}:
+    if action in {'start','read_book','modify','finish','salvage','install_pda_modification','tune_buckshot'}:
         from app.services.combat import CombatService
         if CombatService._character_condition(data)['state']!='active':raise ValidationError('Персонаж не может работать')
         if LocationCharacter.query.join(LocationCombatState,LocationCombatState.location_id==LocationCharacter.location_id).filter(
@@ -783,6 +803,36 @@ def operate(character_id,user_id,payload):
             'escrow':[],'spent_materials':paid_materials,'material_value':plan['material_value'],'output_count':0,'started_at':now(character),'ready_at':now(character)+plan['duration_seconds']}
         state['current']=result
         if plan['approval_id']:next(r for r in state['tool_requests'] if r['id']==plan['approval_id'])['used']=True
+    elif action=='tune_buckshot':
+        from app.services.character_traits import background_is
+
+        if not background_is(data, 'Утиный стрелок'):
+            raise ValidationError('Доработка картечи доступна Утиному стрелку')
+        if state.get('current'):
+            raise ConflictError('Сначала завершите или отмените текущую работу')
+        quantity = payload.get('quantity')
+        if type(quantity) is not int or not 1 <= quantity <= 100:
+            raise ValidationError('Выберите от 1 до 100 патронов')
+        remaining = quantity
+        allocations = []
+        for path, item, available in _buckshot_stacks(data):
+            amount = min(remaining, available)
+            allocations.append({'component':0, 'path':path, 'item':deepcopy(item), 'amount':amount, 'whole':True})
+            remaining -= amount
+            if not remaining:
+                break
+        if remaining:
+            raise ValidationError('Недостаточно обычной картечи 12×70')
+        started = now(character)
+        result = {
+            'id':str(uuid4()), 'kind':'buckshot_tuning', 'name':'Доработка картечи 12×70',
+            'escrow':_escrow(data, allocations), 'output_count':quantity,
+            'quote':{'difficulty':0, 'automatic_success':True, 'failure_loss':{'random':0, 'chosen':0, 'all':False}},
+            'started_at':started, 'ready_at':started + 3600,
+        }
+        from app.services.inventory import normalize_inventory_ammo_stacks
+        normalize_inventory_ammo_stacks(data)
+        state['current'] = result
     elif action=='salvage':
         from app.services.salvage import plan
         if state.get('current'):raise ConflictError('Сначала завершите или отмените текущую работу')
@@ -920,7 +970,13 @@ def operate(character_id,user_id,payload):
                 output=_template(material['name'])
                 if not output:raise ConflictError('Шаблон компонента результата удалён')
                 data.setdefault('inventory',{}).setdefault('pockets',[]).append(item_from_template(output,material['quantity']))
-        if action=='finish' and job['kind'] not in {'book','salvage'}:
+        if action=='finish' and job['kind']=='buckshot_tuning':
+            for entry in job['escrow']:
+                item = entry['item']
+                item.setdefault('attributes', {})['tuned_buckshot'] = True
+                item['name'] += ' · доработанная'
+            success = True
+        if action=='finish' and job['kind'] not in {'book','salvage','buckshot_tuning'}:
             loss=job['quote']['failure_loss'];choices=payload.get('chosen_loss',[])
             pool=[index for index,entry in enumerate(job['escrow'])
                   for _ in range(1 if entry.get('liquid_liters') else entry['amount'])]
@@ -944,6 +1000,9 @@ def operate(character_id,user_id,payload):
                 station_spoil=random.SystemRandom().randint(1,100)
                 if station_spoil<=chance:success=False
         _return_materials(data,job['escrow'],lost)
+        if job['kind']=='buckshot_tuning':
+            from app.services.inventory import normalize_inventory_ammo_stacks
+            normalize_inventory_ammo_stacks(data)
         if success and job['kind']=='modification':
             from app.services.equipment_modifications import installed,install
             target=next((item for _,item in walk(data,True) if item.get('id')==job['target_id']),None)

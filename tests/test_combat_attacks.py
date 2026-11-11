@@ -2731,7 +2731,8 @@ def test_arm_drop_trauma_removes_drawn_weapon_and_applies_fall_wear(monkeypatch)
     assert trauma["fall_or_drop"]["weapon_wear"]["after"] == 97
 
 
-def test_buckshot_loses_fixed_damage_and_penetration_after_five_meters(monkeypatch):
+@pytest.mark.parametrize('tuned,damage,traumas', [(False,150,3), (True,200,4)])
+def test_buckshot_loses_fixed_damage_and_penetration_after_five_meters(monkeypatch,tuned,damage,traumas):
     captured = {}
     monkeypatch.setattr(
         CombatService,
@@ -2742,6 +2743,7 @@ def test_buckshot_loses_fixed_damage_and_penetration_after_five_meters(monkeypat
             "bleeding": "",
             "caliber": "12x70",
             "ammo_name": "12х70 Картечь",
+            "tuned_buckshot": tuned,
             "effective_range": 10,
         }, None),
     )
@@ -2769,9 +2771,9 @@ def test_buckshot_loses_fixed_damage_and_penetration_after_five_meters(monkeypat
         forced_roll=20,
     )
 
-    assert captured["damage"] == 150
+    assert captured["damage"] == damage
     assert captured["profile"]["armor_piercing"] == 15
-    assert captured["trauma_checks"] == 3
+    assert captured["trauma_checks"] == traumas
     assert captured["trauma_difficulty_modifier"] == -20
 
 

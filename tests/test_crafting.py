@@ -63,6 +63,52 @@ def assert_recipe_wait(client, workshop, auth_headers, job, minutes, **finish_pa
     advance(1)
 
 
+@pytest.mark.parametrize('finish', [False, True])
+def test_duck_shooter_reserves_buckshot_and_preserves_variants(client, workshop, auth_headers, finish):
+    from app.services.combat import CombatService
+
+    character = workshop['actor_character']
+    data = deepcopy(character.data)
+    template = catalog_template('12x70 Картечь')
+    original = {'templateId':template.id,'name':template.name,'category':'ammo','attributes':deepcopy(template.attributes)}
+    data['inventory']['pockets'] = [
+        {**deepcopy(original),'id':'standard','quantity':60},
+        {**deepcopy(original),'id':'incendiary','quantity':50,'attributes':{**original['attributes'],'ammo_variant':'incendiary'}},
+        {'id':'slug','name':'12x70 Пуля','category':'ammo','quantity':20,'attributes':{'caliber':'12x70'}},
+    ]
+    character.data = data
+    db.session.commit()
+    assert call(client,workshop,auth_headers,'tune_buckshot',quantity=100).status_code == 400
+    data.setdefault('basic', {})['background'] = {'ruleId':'background-av'}
+    character.data = deepcopy(data)
+    db.session.commit()
+    assert call(client,workshop,auth_headers,'tune_buckshot',quantity=101).status_code == 400
+    response = call(client,workshop,auth_headers,'tune_buckshot',quantity=100)
+    assert response.status_code == 200, response.json
+    job = response.json['result']
+    assert [entry['amount'] for entry in job['escrow']] == [60,40]
+    assert units(character.data, '12x70 Картечь') == 10
+    assert units(character.data, '12x70 Пуля') == 20
+    if finish:
+        assert_recipe_wait(client,workshop,auth_headers,job,60)
+    action = 'finish' if finish else 'cancel'
+    result = call(client,workshop,auth_headers,action,job_id=job['id'])
+    assert result.status_code == 200, result.json
+    assert result.json['result']['output_count'] == (100 if finish else 0)
+    assert result.json['result']['roll'] is None
+    items = character.data['inventory']['pockets']
+    assert sum(item['quantity'] for item in items) == 130
+    tuned = [item for item in items if item['attributes'].get('tuned_buckshot')]
+    assert sum(item['quantity'] for item in tuned) == (100 if finish else 0)
+    if finish:
+        for item in tuned:
+            profile, _ = CombatService._ranged_damage_profile({'fixedAmmo':[item]})
+            assert profile['tuned_buckshot'] and CombatService._is_buckshot_profile(profile)
+        assert sum(item['quantity'] for item in tuned if item['attributes']['ammo_variant']=='incendiary') == 40
+    replay = call(client,workshop,auth_headers,action,job_id=job['id'])
+    assert replay.json['result']['replayed'] and character.data['inventory']['pockets'] == items
+
+
 @pytest.mark.parametrize('recipe_id,name,materials',[('recipe-m29','Отвертка',[('Металлические детали',3),('Веревка 10м',1)]),
     ('recipe-m30','Кусачки',[('Металлические детали',4),('Резина',1)])])
 def test_handmade_recipe_creates_the_ordinary_catalog_tool(client,workshop,auth_headers,monkeypatch,recipe_id,name,materials):
