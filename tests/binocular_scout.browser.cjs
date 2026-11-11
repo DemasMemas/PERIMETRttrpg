@@ -24,6 +24,8 @@ module.exports = async ({page, request, token, lobby, offered, loc, locationId})
     const current = await request(api, null, token, 'GET');
     const nightDay = current.game_day+1;
     await request(api+'/time', {game_day:nightDay, game_time_minutes:120}, token, 'PATCH');
+    await request(api+'/weather', {rain:{enabled:false,intensity:0},fog:{enabled:false,intensity:0},
+        emission:{enabled:false,intensity:0}}, token, 'PATCH');
 
     const ownerUrl = '/lobbies/characters/'+observer.id;
     const scoutUrl = ownerUrl+'/location-scout';
@@ -33,6 +35,7 @@ module.exports = async ({page, request, token, lobby, offered, loc, locationId})
         assert.equal(result.check.item_bonus, bonus, name);
         assert.equal(result.check.darkness, darkness, name);
         assert.equal(result.check.equipment_modifier, darkness ? -5 : 0, name);
+        assert.equal(result.check.weather_modifier,0,name);
         assert.equal(result.check.success, true, name);
         const ids = result.targets.map(person => person.character_id);
         assert.equal(ids.includes(target.id), !darkness, name);

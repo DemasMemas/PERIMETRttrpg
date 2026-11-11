@@ -53,12 +53,13 @@ def test_loot_filters_class_type_price_and_stays_within_budget(prepared):
     assert all(not item.get('createdByPlayer') for item in items)
 
 
-def test_retired_sport_gloves_are_not_offered_or_generated(client,prepared,auth_headers):
+@pytest.mark.parametrize('name', ['Спортивные', 'Спортивные перчатки', 'Перчатки спортивные'])
+def test_retired_sport_gloves_are_not_offered_or_generated(client,prepared,auth_headers,name):
     from app.services.equipment_catalog import load_catalog
     from app.services.character_starting_purchase import eligible
     from app.services.npc_loot import candidates
 
-    sport=ItemTemplate(name='Спортивные',category='gloves',subcategory='Перчатки',price=3500,attributes={})
+    sport=ItemTemplate(name=name,category='gloves',subcategory='Перчатки',price=3500,attributes={})
     working=ItemTemplate(name='Рабочие',category='gloves',subcategory='Перчатки',price=1500,attributes={})
     db.session.add_all([sport,working]);db.session.commit()
     assert not any(t['category']=='gloves' and t['name']=='Спортивные' for t in load_catalog())

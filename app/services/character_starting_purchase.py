@@ -49,8 +49,10 @@ def available_templates():
 
 
 def catalog():
+    from app.services.catalog_descriptions import glove_description
     return [{'id':t.id,'name':t.name,'category':t.category,'subcategory':t.subcategory,
-             'item_class':t.item_class,'price':max(0,t.price or 0),'description':t.description or '',
+             'item_class':t.item_class,'price':max(0,t.price or 0),
+             'description':glove_description({'name':t.name,'category':t.category}) or t.description or '',
              'attributes':{key:value for key,value in (t.attributes or {}).items() if key in {
                  'section','caliber','ammo_group','ammo_kind','ammo_variant','capacity','damage','penetration','range','isLoader',
                  'book_kind','book_subject'}}}
@@ -58,12 +60,14 @@ def catalog():
 
 
 def item_from_template(template,quantity=1):
+    from app.services.catalog_descriptions import glove_description
     attrs=deepcopy(template.attributes or {})
     item={**attrs,'id':uuid.uuid4().hex,'templateId':template.id,'name':template.name,
           'category':template.category,'subcategory':template.subcategory,'itemClass':template.item_class,
           'description':template.description,'price':template.price or 0,'weight':template.weight or 0,
           'volume':0 if attrs.get('book_kind') else template.volume or 0,'quantity':quantity,'attributes':attrs,
           'installedModules':[],'modifications':[],'contents':[], 'compatible_ids':deepcopy(template.compatible_ids or [])}
+    item['description']=glove_description(item) or item['description']
     from app.services.liquid_containers import is_canister
     if template.category in {'container', 'backpack', 'pouch'} or is_canister(item):
         item.update(isContainer=True, capacity=attrs.get('liquid_capacity_liters',

@@ -84,7 +84,8 @@ def retired_catalog_template(template):
     attributes = template.attributes if hasattr(template, 'attributes') else template.get('attributes')
     return (((attributes or {}).get('craft_workbench') is True)
             or category == 'helmet_module'
-            or (category == 'gloves' and name == 'Спортивные')
+            or (category == 'gloves' and _normalize_equipment_name(name) in {
+                'спортивные', 'спортивные перчатки', 'перчатки спортивные'})
             or (category == 'misc' and (name or '').casefold().startswith(('лента на ', 'спидлоадер для ', 'подавач')))
             or (category == 'ammo' and _is_legacy_grenade_ammo(name))
             or ((attributes or {}).get('import_source') == 'equipment_workbook'

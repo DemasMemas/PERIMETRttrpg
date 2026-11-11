@@ -47,7 +47,21 @@ def clean_description(value):
     return result + ('.' if result and result[-1] not in '.!?' else '')
 
 
+def glove_description(item):
+    if item.get('category') != 'gloves':
+        return None
+    name = _name(item.get('name'))
+    if name == 'обвязки на руки':
+        return 'Обвязки усиливают удары руками. Урон удара равен 15 × бонус Силы, минимум 25.'
+    if name in {'военные м2', 'военные перчатки м2', 'перчатки военные м2'}:
+        return 'Пока перчатки надеты, дают +5% к аномальной защите и +1 к броскам Харизмы.'
+    return None
+
+
 def describe_template(item):
+    gloves = glove_description(item)
+    if gloves:
+        return gloves
     category = item['category']
     attrs = item.get('attributes') or {}
     original = clean_description(attrs.get('source_description', item.get('description')))

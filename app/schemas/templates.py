@@ -3,7 +3,11 @@ from marshmallow import Schema, fields, post_dump
 class ItemTemplateSchema(Schema):
     @post_dump
     def weapon_compatibility(self, data, **kwargs):
+        from app.services.catalog_descriptions import glove_description
         from app.services.weapon_catalog import normalize_template
+        gloves = glove_description(data)
+        if gloves:
+            data['description'] = gloves
         if data.get('category') == 'consumable':
             from app.services.consumable_effects import enrich_imported_consumable
             attributes = data.get('attributes') or {}

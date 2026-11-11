@@ -13435,7 +13435,7 @@
       "price": 500,
       "weight": 0,
       "volume": 1.0,
-      "description": "Увеличивает урон от ударов руками. Урон 15 * Бонус силы, но не меньше 25.",
+      "description": "Обвязки усиливают удары руками. Урон удара равен 15 × бонус Силы, минимум 25.",
       "attributes": {
         "import_source": "equipment_workbook",
         "charisma_bonus": 0.0,
@@ -13472,7 +13472,7 @@
       "price": 9500,
       "weight": 0,
       "volume": 3.0,
-      "description": "+5% Аномальных защит.",
+      "description": "Пока перчатки надеты, дают +5% к аномальной защите и +1 к броскам Харизмы.",
       "attributes": {
         "import_source": "equipment_workbook",
         "charisma_bonus": 1.0,

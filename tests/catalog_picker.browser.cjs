@@ -19,6 +19,10 @@ module.exports=async({page,request,token,lobby,base,safeSession})=>{
     await page.evaluate("window.openInventoryTemplatePicker('pockets').then(()=>true)");
     await page.until("document.querySelector('#inventory-template-picker-content [data-item-template-id]')",'Каталог загружен настоящим API');
     const offered=await request(api+'/templates',null,token,'GET'),grenades=offered.global.filter(t=>t.category==='grenade');
+    const gloves=offered.global.filter(item=>item.category==='gloves');
+    assert.ok(!gloves.some(item=>/спортивные/i.test(item.name)));
+    assert.match(gloves.find(item=>item.name==='Обвязки на руки').description,/15 × бонус Силы, минимум 25/);
+    assert.match(gloves.find(item=>item.name==='Военные М2').description,/\+5%.*\+1.*Харизмы/);
     const displayed=await page.evaluate("[...document.querySelectorAll('#inventory-template-picker-content [data-item-template-id]')].map(b=>({id:Number(b.dataset.itemTemplateId),name:b.firstElementChild.firstElementChild.textContent.trim(),text:b.textContent.trim()}))");
     assert.ok(grenades.length>10);assert.equal(new Set(grenades.map(t=>t.name)).size,grenades.length);
     assert.ok(!displayed.some(row=>row.id>=156&&row.id<200||row.id>=9500&&row.id<=9508),'Старые шаблоны не предлагаются');
