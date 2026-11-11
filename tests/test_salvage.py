@@ -97,9 +97,112 @@ def test_low_empty_ammo_band_stays_empty():
 
 def test_utilizer_failure_does_not_wait_for_an_empty_table_row():
     job={'salvage_kind':'armor','bonus':100,'modifications':0,'escrow':[{'item':{'name':'Костюм'}}]}
-    data={'features':{'specialTraits':[{'name':'Утилизатор','active':True}]}}
+    data={'basic':{'background':{'name':'Утилизатор','ruleId':'background-o'}}}
     result=resolve(data,job,rng=Die(1,100))
     assert result['salvage_lost'] and not result.get('awaiting_gm') and not result['materials']
+
+
+@pytest.mark.parametrize('background', [{'name':'Утилизатор'}, {'ruleId':'background-o'}])
+@pytest.mark.parametrize('risk,lost', [(10,True),(11,False)])
+def test_utilizer_background_risk_and_yield(background,risk,lost):
+    job={'salvage_kind':'weapon','bonus':0,'modifications':1,
+         'escrow':[{'item':{'name':'Пистолет'}}]}
+    result=resolve({'basic':{'background':background}},job,rng=Die(risk,31))
+    assert result['roll']==31
+    assert result['salvage_lost'] is lost
+    assert result['materials']==([] if lost else [{'name':'Металлические детали','quantity':5}])
+
+
+def test_custom_trait_with_background_name_does_not_grant_utilizer_yield():
+    job={'salvage_kind':'weapon','bonus':0,'modifications':0,
+         'escrow':[{'item':{'name':'Пистолет'}}]}
+    data={'features':{'specialTraits':[{'name':'Утилизатор'}]}}
+    result=resolve(data,job,rng=Die(31))
+    assert result['materials']==[{'name':'Металлические детали','quantity':3}]
+
+
+@pytest.mark.parametrize('traits,roll,expected', [
+    ([{'name':'Руки-ножи'}],30,3),
+    ([{'ruleId':'trait-b10'}],30,3),
+    ([{'name':'Торопыга'}],31,2),
+    ([{'ruleId':'trait-b38'}],31,2),
+    ([{'name':'Торопыга'}],1,2),
+    ([{'name':'Руки-ножи'}],150,20),
+    ([{'name':'Руки-ножи'},{'name':'Торопыга'}],31,3),
+    ([{'name':'Руки-ножи','active':False}],30,2),
+])
+def test_salvage_category_traits_shift_table_row(traits,roll,expected):
+    data={'features':{'specialTraits':traits}}
+    job={'salvage_kind':'weapon','bonus':0,'modifications':0,'escrow':[{'item':{'name':'Пистолет'}}]}
+    result=resolve(data,job,rng=Die(roll))
+    assert result['roll']==roll and result['total']==roll
+    assert result['materials']==[{'name':'Металлические детали','quantity':expected}]
+
+
+def test_utilizer_ammo_totals_are_rounded_after_combining_materials():
+    job={'salvage_kind':'ammo','bonus':0,'quantity':50,
+         'escrow':[{'item':{'name':'9х18','itemClass':'1'}}]}
+    data={'basic':{'background':{'ruleId':'background-o'}}}
+    result=resolve(data,job,rng=Die(11,80))
+    # 0,5 пороха из строки и 1 за количество суммируются до умножения на1,5.
+    assert {m['name']:m['quantity'] for m in result['materials']}=={'Металлические детали':3,'Порох':2}
+
+
+@pytest.mark.parametrize('risk', [10,11])
+def test_actual_utilizer_job_consumes_source_and_finishes_once(client,salvage_workshop,auth_headers,monkeypatch,risk):
+    case=salvage_workshop
+    data=deepcopy(case['actor_character'].data)
+    data.setdefault('basic',{})['background']={'ruleId':'background-o'}
+    case['actor_character'].data=data
+    db.session.commit()
+    started=call(client,case,auth_headers,'salvage',path=['inventory','pockets',4])
+    assert started.status_code==200,started.json
+    job=started.json['result']
+    case['lobby'].game_time_minutes+=20
+    db.session.commit()
+    original=resolve
+    baseline=original({},job,rng=Die(100))
+    calls=[]
+
+    def fixed(data,job):
+        calls.append(1)
+        return original(data,job,rng=Die(risk,100))
+
+    monkeypatch.setattr('app.services.salvage.resolve',fixed)
+    finished=call(client,case,auth_headers,'finish',job_id=job['id'])
+    assert finished.status_code==200,finished.json
+    result=finished.json['result']
+    assert result['roll']==100
+    assert result['salvage_lost'] is (risk==10)
+    expected=[] if risk==10 else [{'name':m['name'],'quantity':int(m['quantity']*1.5)} for m in baseline['materials']]
+    assert result['materials']==expected
+    assert not any(item.get('id')=='scrap-gun' for item in finished.json['data']['inventory']['pockets'])
+    repeated=call(client,case,auth_headers,'finish',job_id=job['id'],character_revision=0)
+    assert repeated.status_code==200,repeated.json
+    assert repeated.json['result']['replayed'] and len(calls)==1
+    assert repeated.json['data']['inventory']==finished.json['data']['inventory']
+
+
+@pytest.mark.parametrize('lost', [False,True])
+def test_legacy_saved_utilizer_roll_keeps_roll_and_risk(client,salvage_workshop,auth_headers,lost):
+    case=salvage_workshop
+    data=deepcopy(case['actor_character'].data)
+    data.setdefault('basic',{})['background']={'name':'Утилизатор'}
+    case['actor_character'].data=data
+    db.session.commit()
+    started=call(client,case,auth_headers,'salvage',path=['inventory','pockets',4])
+    assert started.status_code==200,started.json
+    data=deepcopy(case['actor_character'].data)
+    data['crafting']['current']['salvage_roll']={'roll':31,'salvage_lost':lost,'awaiting_gm':True}
+    case['actor_character'].data=data
+    case['lobby'].game_time_minutes+=20
+    db.session.commit()
+    # Старая отложенная работа сохраняет оба броска при выборе строки ГМом.
+    finished=call(client,case,auth_headers,'finish',job_id=started.json['result']['id'],salvage_band=0)
+    assert finished.status_code==200,finished.json
+    assert finished.json['result']['roll']==31
+    assert finished.json['result']['salvage_lost'] is lost
+    assert finished.json['result']['materials']==([] if lost else [{'name':'Металлические детали','quantity':3}])
 
 
 def test_high_result_finishes_once_without_gm_ruling(client,salvage_workshop,auth_headers,monkeypatch):

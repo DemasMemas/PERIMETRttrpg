@@ -69,14 +69,17 @@ def plan(data,payload):
 
 def resolve(data,job,*,rng=None,band_override=None):
     from app.services.crafting import normalized
-    from app.services.character_traits import trait_count
+    from app.services.character_traits import background_is, trait_count
     rng=rng or random.SystemRandom()
-    lost=bool(trait_count(data,'Утилизатор') and rng.randint(1,100)<=10)
+    utilizer = background_is(data, 'Утилизатор')
+    lost=bool(utilizer and rng.randint(1,100)<=10)
     roll=rng.randint(1,100);total=roll+job['bonus'];kind=job['salvage_kind']
-    band=next(b for b in catalog()['salvage'][kind] if b['maximum'] is None or total<=b['maximum'])
-    if band_override is not None:band=catalog()['salvage'][kind][band_override]
+    bands = catalog()['salvage'][kind]
+    index = next(i for i, band in enumerate(bands) if band['maximum'] is None or total <= band['maximum'])
+    shift = trait_count(data, 'Руки-ножи') - trait_count(data, 'Торопыга')
+    band = bands[max(0, min(len(bands) - 1, index + shift))]
+    if band_override is not None:band=bands[band_override]
     if not band['materials'] and total>99 and band_override is None:
-        bands=catalog()['salvage'][kind]
         index=bands.index(band)
         band=next((previous for previous in reversed(bands[:index]) if previous['materials']),band)
     materials=deepcopy(band['materials']);name=normalized(job['escrow'][0]['item']['name'])
@@ -93,7 +96,7 @@ def resolve(data,job,*,rng=None,band_override=None):
         for material in materials:material['quantity']*=powder if normalized(material['name'])=='порох' else metal
         if job['quantity']>=40:materials.append({'name':'Металлические детали','quantity':1})
         if job['quantity']>=50:materials.append({'name':'Порох','quantity':1})
-    multiplier=(1+.25*job.get('modifications',0))*(1.5 if trait_count(data,'Утилизатор') else 1)
+    multiplier=(1+.25*job.get('modifications',0))*(1.5 if utilizer else 1)
     totals={}
     for m in materials:totals[m['name']]=totals.get(m['name'],0)+m['quantity']
     return {'roll':roll,'total':total,'bonus':job['bonus'],'salvage_lost':lost,'source_band':band['source_text'],

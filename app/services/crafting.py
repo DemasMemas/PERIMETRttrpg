@@ -335,10 +335,11 @@ def quote(character,data,payload):
     from app.services.distillery import PREPARATION_RECIPES,RECIPES,is_distillery,occupied
     from app.services.equipment_passives import craft_difficulty_modifier
     from app.services.crafting_ammo import chosen_ammo
+    from app.services.character_traits import background_is, ammo_crafting_modifier
     recipe=recipe_by_id(payload.get('recipe_id'));option=payload.get('tool_option',0)
     recipe,ammo_template,ammo_variant=chosen_ammo(recipe,payload)
     if recipe.get('requires_tool_crafting'):
-        from app.services.character_traits import trait_count,background_is
+        from app.services.character_traits import trait_count
         if not trait_count(data,'Мастер на все руки') and not background_is(data,'Полевой ученый'):raise ValidationError('Изготовление инструментов требует «Мастера на все руки» или предыстории «Полевой учёный»')
     missing_tools=_tools(character,data,recipe,option)
     mutant_corpse=False
@@ -358,13 +359,18 @@ def quote(character,data,payload):
     if environment and not (approval and approval.get('environment')):missing.append('Нужно подтверждение условий ГМом: '+', '.join(environment))
     if any(normalized(c['name'])=='трава' for c in recipe['components']) and not _grass_at_location(character):
         missing.append('На подлокации нужна хотя бы одна клетка с травой')
-    level=CombatService._skill_value(data,'skills.'+recipe['skill'])
-    difficulty=recipe['difficulty_options'][option] if recipe['difficulty_options'] else 0
-    result=({'difficulty':0,'automatic_success':True,'failure_loss':{'random':0,'chosen':0,'all':False}}
-        if recipe.get('maintenance') else creation_quote(level,difficulty,base_automatic=recipe['automatic'],
-            difficulty_modifier=craft_difficulty_modifier(data)))
     tool_output=CRAFTED_TOOLS.get(recipe['id'])
     output=ammo_template or _template(tool_output[0] if tool_output else recipe['output_name'])
+    level=CombatService._skill_value(data,'skills.'+recipe['skill'])
+    difficulty=recipe['difficulty_options'][option] if recipe['difficulty_options'] else 0
+    difficulty_modifier = craft_difficulty_modifier(data)
+    if recipe['skill'] == 'other.medicine' and background_is(data, 'Фармацевт'):
+        difficulty_modifier -= 40
+    if output and output.category == 'ammo':
+        difficulty_modifier += ammo_crafting_modifier(data, (output.attributes or {}).get('caliber'))
+    result=({'difficulty':0,'automatic_success':True,'failure_loss':{'random':0,'chosen':0,'all':False}}
+        if recipe.get('maintenance') else creation_quote(level,difficulty,base_automatic=recipe['automatic'],
+            difficulty_modifier=difficulty_modifier))
     if not output:missing.append('В каталоге нет шаблона результата: '+recipe['output_name'])
     if tool_output and output and (output.category!='tool' or type((output.attributes or {}).get('uses')) is not int
             or not tool_output[1]<output.attributes['uses']):
@@ -833,8 +839,8 @@ def operate(character_id,user_id,payload):
                 class SavedRoll:
                     def __init__(self,values):self.values=iter(values)
                     def randint(self,*_):return next(self.values)
-                from app.services.character_traits import trait_count
-                values=([1 if salvage_result['salvage_lost'] else 100] if trait_count(data,'Утилизатор') else [])+[salvage_result['roll']]
+                from app.services.character_traits import background_is
+                values=([1 if salvage_result['salvage_lost'] else 100] if background_is(data,'Утилизатор') else [])+[salvage_result['roll']]
                 salvage_result=resolve(data,job,rng=SavedRoll(values),band_override=override)
             if salvage_result.get('awaiting_gm'):
                 job['salvage_roll']=salvage_result

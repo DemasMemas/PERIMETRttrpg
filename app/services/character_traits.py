@@ -40,6 +40,25 @@ def skill_learning_multiplier(data,path):
     return 3 if amount>=3 else 2 if amount==2 else 1.5 if amount else 1
 
 
+def ammo_crafting_modifier(data, caliber):
+    from app.services.inventory import normalize_caliber
+
+    caliber = normalize_caliber(caliber)
+    if not caliber:
+        return 0
+    selected = 0
+    for trait in _traits(data):
+        if not trait.get('active', True) or not (
+            _name(trait.get('name')) == _name('Патронщик')
+            or trait.get('ruleId') == _known_id('traits', 'Патронщик')
+        ):
+            continue
+        choices = trait.get('choices') or {}
+        if isinstance(choices, dict) and normalize_caliber(choices.get('caliber')) == caliber:
+            selected += 1
+    return -15 * selected
+
+
 def passive_profile(data):
     n=lambda name:trait_count(data,name)
     from app.services.equipment_modifications import worn_stat
