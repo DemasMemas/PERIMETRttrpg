@@ -5446,12 +5446,9 @@ class CombatService:
             })
         mechanical=bool(limb_hit and limb_hit.get('mechanical'))
         if mechanical:total=min(100,total+limb_hit.get('protection',0))
-        artifact_protection = 0 if mechanical else max(
-            0,
-            artifact_passive_profile(target_data)['protection']['physical'],
-        )
+        artifact_protection = 0 if mechanical else artifact_passive_profile(target_data)['protection']['physical']
         if artifact_protection:
-            total = min(100, total + artifact_protection)
+            total = max(0, min(100, total + artifact_protection))
             details.append({
                 'slot': 'artifact',
                 'item': {'name': 'Артефакты'},
@@ -5555,14 +5552,11 @@ class CombatService:
             if not CombatService._uses_gas_mask_durability(slot, item, attributes):
                 value -= CombatService._armor_stage_penalty(item, 'radiation')
             total += max(0.0, value)
-        total += max(
-            0,
-            artifact_passive_profile(character_data)['protection']['radiation'],
-        )
+        total += artifact_passive_profile(character_data)['protection']['radiation']
         if CombatService._combat_background_active(target,'Стойкий'):total+=5
         from app.services.equipment_passives import glove_protection
         total += glove_protection(character_data)
-        return total
+        return max(0, total)
 
     @staticmethod
     def _apply_incoming_radiation(character_data, incoming, *, binary=False,target=None,lobby=None,character=None):
