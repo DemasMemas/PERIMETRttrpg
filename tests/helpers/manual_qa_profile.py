@@ -18,6 +18,7 @@ PYTHON_MODULES = (
     'test_combat_explosions.py',
     'test_combat_gunpoint.py',
     'test_combat_movement.py',
+    'test_movement_shooting_balance.py',
     'test_consumable_catalog_rules.py',
     'test_consumable_rules.py',
     'test_consumable_use.py',

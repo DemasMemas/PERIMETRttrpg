@@ -10,7 +10,8 @@ from app.services.exceptions import ValidationError
 from test_grenade_rules import grenade_game
 
 
-def test_hill_blocks_aimed_fire_until_clear_then_shot_spends_ammo_and_ap(grenade_game, monkeypatch):
+@pytest.mark.parametrize('fire_mode', ['aimed', 'unaimed', 'rapid'])
+def test_hill_blocks_targeted_fire_until_clear_then_shot_spends_ammo_and_ap(grenade_game, monkeypatch, fire_mode):
     from app.extensions import db
 
     case = grenade_game
@@ -35,17 +36,22 @@ def test_hill_blocks_aimed_fire_until_clear_then_shot_spends_ammo_and_ap(grenade
     actor.drawn_weapon_index = actor.aimed_weapon_index = 0
     actor.aimed_target_character_id = target.character_id
     db.session.commit()
-    monkeypatch.setattr('app.services.combat.random.randint', lambda _low, high: high)
     before_hp = target.character.data['health']['current']
     before_ap = actor.action_points_current
-    cost = CombatService._weapon_ergonomics_profile(actor, data['weapons'][0], 0)['aimed_shot_action_points']
+    cost = {'aimed': CombatService._weapon_ergonomics_profile(actor, data['weapons'][0], 0)['aimed_shot_action_points'],
+            'unaimed': 2, 'rapid': 1}[fire_mode]
     assert before_ap >= cost
 
     def shoot(operation_id):
         return CombatService.perform_action(location.id, case['lobby'].gm_id, actor.id, 'attack',
-            weapon_index=0, fire_mode='aimed', target_zone='chest', shot_count=1, action_points=cost,
+            weapon_index=0, fire_mode=fire_mode, target_zone='chest' if fire_mode == 'aimed' else None,
+            shot_count=1, action_points=cost,
             target_character_id=target.character_id, pending_action_id=operation_id)
 
+    def unexpected_roll(*_):
+        pytest.fail('По скрытой цели бросок не выполняется')
+
+    monkeypatch.setattr('app.services.combat.random.randint', unexpected_roll)
     with pytest.raises(ValidationError, match='закрыта укрытием'):
         shoot('shot-behind-hill')
     assert actor.action_points_current == before_ap
@@ -54,6 +60,7 @@ def test_hill_blocks_aimed_fire_until_clear_then_shot_spends_ammo_and_ap(grenade
 
     location.tiles_data = flat
     db.session.commit()
+    monkeypatch.setattr('app.services.combat.random.randint', lambda _low, high: high)
     result = shoot('shot-with-clear-view')
     assert result['attack']['hits'] == 1
     assert result['attack']['action_points'] == cost
@@ -1993,77 +2000,6 @@ def test_cover_attack_summary_reports_secondary_miss_without_unknown_zone():
 
     assert "За укрытием: Цель, d20 16/4, СЛ 12 — промах." in summary
     assert "неизвестная зона" not in summary
-
-
-def test_unaimed_blind_fire_miss_can_damage_cover(monkeypatch):
-    cover = SimpleNamespace(id=7, name="Ящик", type="crate")
-    attacker = SimpleNamespace(
-        character=SimpleNamespace(data={"weapons": [{}]}),
-    )
-    target = SimpleNamespace(
-        character_id=2,
-        character=SimpleNamespace(id=2, name="Цель", data={}),
-        grapple_live_shield=False,
-        grapple_target_id=None,
-    )
-    rolls = iter([3])
-    cover_damage_calls = []
-
-    monkeypatch.setattr(combat_module.random, "randint", lambda start, end: next(rolls))
-    monkeypatch.setattr(
-        "app.services.combat.db.session.get",
-        lambda model, object_id: cover if object_id == cover.id else None,
-    )
-    monkeypatch.setattr(
-        CombatService,
-        "_cover_profile",
-        lambda obj: {"physical_protection": 20},
-    )
-
-    def apply_cover_damage(obj, damage, damage_type):
-        cover_damage_calls.append((obj, damage, damage_type))
-        return {
-            "hp": 50,
-            "max_hp": 100,
-            "physical_protection": 10,
-        }
-
-    monkeypatch.setattr(CombatService, "apply_cover_damage", apply_cover_damage)
-
-    result = CombatService._resolve_attack(
-        target,
-        attacker,
-        {
-            "weapon_index": 0,
-            "fire_mode": "unaimed",
-            "hit_difficulty": 12,
-            "shooting_disadvantage": False,
-            "cover": {
-                "blind_fire": True,
-                "zones": {"chest": {"object_id": cover.id}},
-            },
-        },
-        profile_override={
-            "damage": 50,
-            "armor_piercing": 30,
-            "damage_type": "bullet",
-        },
-        profile_adjusted=True,
-    )
-
-    assert result["hit"] is False
-    assert result["automatic_cover_hit"] is True
-    assert result["cover_hit"]["object_id"] == cover.id
-    assert result["cover_hit"]["penetrated"] is True
-    assert cover_damage_calls == [(cover, 50, "bullet")]
-
-    summary = CombatService.format_attack_summary({
-        "character": {"name": "Стрелок"},
-        "attack": {"results": [result]},
-    })
-    assert "Цель: d20 3, СЛ 12 — промах." in summary
-    assert "Пуля попала в Ящик: без проверки" in summary
-    assert "защита 20% → 10%, ОЗ 50/100" in summary
 
 
 def test_penetrated_cover_hits_nearest_target_without_another_accuracy_check(monkeypatch):

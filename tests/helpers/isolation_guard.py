@@ -28,6 +28,7 @@ ALLOWED_MODULES = (
     'test_noise.py',
     'test_combat_explosions.py', 'test_grenade_rules.py',
     'test_combat_movement.py', 'test_combat_attacks.py',
+    'test_movement_shooting_balance.py',
     'test_character_jumps.py',
     'test_ice_movement.py',
     'test_effect_lifecycle.py', 'test_regression_combat.py',

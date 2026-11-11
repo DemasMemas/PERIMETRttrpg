@@ -76,6 +76,31 @@ module.exports=async({page,request,token,lobby,base,connect,debugPort,safeSessio
                 action_points:6,pending_action_id:'pripyat-terrain-check'})});return {status:response.status,body:await response.json()};
         })()`);
         const blocked=await attack();assert.equal(blocked.status,400);assert.match(JSON.stringify(blocked.body),/закрыта укрытием/);
+        await page.call('Page.bringToFront');
+        const unaimedButton = `document.querySelector('#sheet-tab-equipment button[onclick^="useWeaponFromEquipment"][onclick*="unaimed"]:not(:disabled)')`;
+        await page.evaluate(`L.openCharacterAttackSelection(${shooter.id}).then(()=>true)`);
+        await page.until(unaimedButton,'ГМ видит кнопку неприцельного выстрела');
+        await page.evaluate(`${unaimedButton}.click();true`);
+        await page.until("[...document.querySelectorAll('.notification')].some(n=>n.textContent.includes('выберите цель на сцене'))",
+            'Неприцельная стрельба ожидает цель на сцене');
+        const targetPoint=await page.evaluate(`(()=>{
+            const {camera,controls,renderer,characters}=L.sceneGraphicsForTest();
+            const model=characters.get(${target.id}).model;
+            const position=model.position.clone().add(new threeModule.Vector3(0,.85,0));
+            controls.target.copy(position);
+            camera.position.copy(position).add(new threeModule.Vector3(4,8,7));
+            controls.update();camera.updateMatrixWorld();
+            const point=position.project(camera),rect=renderer.domElement.getBoundingClientRect();
+            return{x:rect.left+(point.x+1)*rect.width/2,y:rect.top+(1-point.y)*rect.height/2};
+        })()`);
+        for(const type of ['mouseMoved','mousePressed','mouseReleased']){
+            await page.call('Input.dispatchMouseEvent',{type,...targetPoint,button:type==='mouseMoved'?'none':'left',
+                buttons:type==='mousePressed'?1:0,clickCount:1});
+        }
+        await page.until("[...document.querySelectorAll('.notification')].some(n=>n.textContent.includes('не видна стрелку'))",
+            'Неприцельный выстрел ГМа отклонён до броска');
+        assert.equal(await page.evaluate("[...document.querySelectorAll('.notification')].some(n=>n.textContent.includes('Итоговый урон'))"),false);
+        await page.evaluate('L.clearPendingCombatAction();true');
         const after=await request(loc+'/combat',null,token,'GET');
         assert.equal(after.current_character.action_points_current,before.current_character.action_points_current);
         assert.deepEqual((await request('/lobbies/characters/'+shooter.id,null,token,'GET')).data.weapons,weaponBefore);
@@ -148,7 +173,7 @@ module.exports=async({page,request,token,lobby,base,connect,debugPort,safeSessio
         await checkVisibility(false, 'Закрытая дверь перекрывает луч на обоих клиентах');
         await request(api+'/locations/objects/'+wall.id, null, token, 'DELETE');
         const report={scene:'Копия Припяти',route,objects:fixture.objects.length,twoClients:true,liveTerrainUpdates:true,aboveHill:true,
-            blockedStatus:blocked.status,noApAmmoHpSpent:true,clearStatus:allowed.status,
+            blockedStatus:blocked.status,gmUnaimedBlockedFromSheet:true,noApAmmoHpSpent:true,clearStatus:allowed.status,
             liveOpenings: {window: true, door: true, openCloseReopen: true},
             completedShot:true,spentActionPoints:6,ammoRemaining:2,
             scope:'Завершённый прицельный выстрел после удаления холма и видимость проёмов на двух клиентах'};

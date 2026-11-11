@@ -112,8 +112,8 @@ def test_aimed_shot_at_covered_zone_is_rejected_before_spending_resources(arena)
     assert actor.character.data['weapons'][0]['ammo'] == 20
 
 
-@pytest.mark.parametrize('height', [1.1, 1.6, 2.0])
-def test_unaimed_shot_through_cover_has_no_disadvantage(arena, monkeypatch, height):
+@pytest.mark.parametrize('height', [1.1, 1.6])
+def test_unaimed_shot_at_partially_covered_target_has_no_disadvantage(arena, monkeypatch, height):
     _, _, _, target = arena
     cover(arena, height)
     monkeypatch.setattr('app.services.combat.random.randint', lambda *_: 10)
@@ -121,6 +121,28 @@ def test_unaimed_shot_through_cover_has_no_disadvantage(arena, monkeypatch, heig
     assert result['attack']['cover']['accuracy_penalty'] == 0
     assert result['attack']['shooting_disadvantage'] is False
     assert len(result['attack']['results'][0]['rolls']) == 1
+
+
+@pytest.mark.parametrize('mode', ['unaimed', 'area'])
+def test_fully_hidden_character_cannot_be_selected_for_fire(arena, mode):
+    user, location, actor, target = arena
+    wall = cover(arena, 2)
+    weapon = actor.character.data['weapons'][0]
+    weapon['fireModes'] = {'supports_burst': True, 'burst_size': 3}
+    flag_modified(actor.character, 'data')
+    db.session.commit()
+    if mode == 'area':
+        selection = dict(target_character_ids=[target.character_id], area_center_x=9, area_center_y=1,
+                         shot_count=6, volley_count=2, action_points=5)
+    else:
+        selection = dict(target_character_id=target.character_id, shot_count=1, action_points=2)
+
+    with pytest.raises(ValidationError, match='не видна стрелку'):
+        CombatService.perform_action(location.id, user.id, actor.id, 'attack', weapon_index=0,
+                                     fire_mode=mode, **selection)
+    assert actor.action_points_current == 20
+    assert actor.character.data['weapons'][0]['ammo'] == 20
+    assert CombatService._cover_profile(wall)['hp'] == 100
 
 
 def test_remembered_tile_cannot_be_used_as_firearm_target(arena):

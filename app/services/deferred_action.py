@@ -261,6 +261,7 @@ def validate_deferred_conditions(actor, row):
     target_ids = list(payload.get('target_character_ids') or [])
     if payload.get('target_character_id') is not None:
         target_ids.append(payload['target_character_id'])
+    fire_mode = payload.get('fire_mode')
     for target_id in dict.fromkeys(target_ids):
         target = LocationCharacter.query.filter_by(location_id=actor.location_id, character_id=target_id).first()
         if not target:
@@ -269,10 +270,12 @@ def validate_deferred_conditions(actor, row):
             from app.services.burning import water_target_available
             if not water_target_available(actor,target):
                 raise ValidationError('Цель обливания больше недоступна')
-        contact = kind in {'melee_disarm','melee_shove','grapple','console_ally'} or (kind == 'attack' and not payload.get('fire_mode'))
+        contact = kind in {'melee_disarm','melee_shove','grapple','console_ally'} or (kind == 'attack' and not fire_mode)
         if contact and not CombatService._is_adjacent(actor, target):
             raise ValidationError('Цель продолжительного действия больше не находится рядом')
-        if kind == 'aim' or (kind == 'attack' and payload.get('fire_mode') not in {'area','suppression'}):
+        if kind == 'attack' and fire_mode == 'area' and not CombatService._cover_analysis(actor.location_id, actor, target)['targetable']:
+            raise ValidationError('Цель продолжительного действия больше не видна')
+        if kind == 'aim' or (kind == 'attack' and fire_mode not in {'area','suppression'}):
             if not CombatService._can_see_location_character(actor, target, max_distance=float('inf')):
                 raise ValidationError('Цель продолжительного действия больше не видна')
             index = payload.get('weapon_index')

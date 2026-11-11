@@ -8628,40 +8628,6 @@ class CombatService:
                         'live_shield_reason': 'aimed_head_miss',
                         'live_shield_result': shield_result,
                     })
-                cover_analysis = attack_details.get('cover') or {}
-                if (
-                    attack_details.get('fire_mode') == 'unaimed'
-                    and cover_analysis.get('blind_fire')
-                    and not ignore_cover
-                ):
-                    cover_zones = cover_analysis.get('zones') or {}
-                    cover_details = next(iter(cover_zones.values()), None)
-                    cover = (
-                        db.session.get(LocationObject, cover_details.get('object_id'))
-                        if isinstance(cover_details, dict)
-                        else None
-                    )
-                    if cover:
-                        cover_profile = CombatService._cover_profile(cover)
-                        incoming_penetration = CombatService._coerce_float(
-                            profile.get('armor_piercing'), 0
-                        )
-                        cover_damage = CombatService.apply_cover_damage(
-                            cover,
-                            profile.get('damage'),
-                            profile.get('damage_type') or 'bullet',
-                        )
-                        result['automatic_cover_hit'] = True
-                        result['cover_hit'] = {
-                            'object_id': cover.id,
-                            'object_name': cover.name or cover.type,
-                            'protection': cover_profile['physical_protection'],
-                            'penetrated': (
-                                incoming_penetration
-                                >= cover_profile['physical_protection']
-                            ),
-                            'damage': cover_damage,
-                        }
                 return result
             zone = CombatService._random_hit_zone(random.randint(1, 20), aimed_zone)
             cover_zone = (
@@ -16221,6 +16187,9 @@ class CombatService:
                     for target in targets
                 ):
                     raise ValidationError("Area fire targets must fit inside a 5 by 5 area")
+                if any(not CombatService._cover_analysis(location_id, character, target)['targetable']
+                       for target in targets):
+                    raise ValidationError('Одна из целей полностью закрыта укрытием и не видна стрелку')
             elif not target_character_id:
                 target_object = LocationObject.query.filter_by(
                     id=target_object_id,
@@ -16525,8 +16494,7 @@ class CombatService:
                     range_target,
                 )
                 if not cover_analysis['targetable']:
-                    cover_analysis['blind_fire'] = True
-                    cover_analysis['targetable'] = True
+                    raise ValidationError('Цель полностью закрыта укрытием и не видна стрелку')
                 attack_details['cover'] = cover_analysis
                 hit_difficulty += cover_analysis.get('accuracy_penalty', 0)
                 if range_target.grapple_live_shield and range_target.grapple_target_id:
