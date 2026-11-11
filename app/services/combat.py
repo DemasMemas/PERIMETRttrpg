@@ -5046,6 +5046,8 @@ class CombatService:
 
     @staticmethod
     def _armor_stage_capacity(item, attributes):
+        from app.services.equipment_modifications import effective_item
+        item = effective_item(item)
         base_durability = CombatService._coerce_float(
             item.get(
                 'durability',
@@ -5068,6 +5070,10 @@ class CombatService:
     @staticmethod
     def _damage_armor_item(item, attributes, incoming_damage, damage_type='physical', *, character_data=None, raw_damage=None):
         from app.services.artifact_special import stat_value
+        from app.services.equipment_modifications import effective_item
+        corrected = effective_item(item)
+        if corrected is not item:
+            item.update(corrected)
         damage = max(0, CombatService._coerce_float(incoming_damage, 0))
         if damage <= 0 and raw_damage is None:
             return None

@@ -511,7 +511,7 @@ def test_liquid_crystal_layer_first_hit_and_timed_recharge(client,workshop,auth_
     assert success.json['operation']['success'] is True
     assert liquid_crystal_ready(character.data['equipment']['armor'])
     assert CombatService._target_armor(character.data,'chest')[0]==35
-    assert make_record('armor-a39',gunsmith=True)['rules']['liquid_crystal_layer']==30
+    assert make_record('armor-a39',gunsmith=True)['rules']['liquid_crystal_layer']==20
 
 
 def test_nearby_engineer_can_recharge_another_characters_armor(client,workshop,auth_headers,monkeypatch):
@@ -592,7 +592,7 @@ def test_every_weapon_definition_has_typed_effects():
     assert rule({'modifications':[make_record('weapon-b38',gunsmith=True)]},'burst_ap_delta')==-1
     helmet=make_record('armor-g52',gunsmith=True)
     assert helmet['modifiers']['movement_penalty']==1 and helmet['modifiers']['ergonomics']==-5
-    assert helmet['modifiers']['physical']==7.5
+    assert helmet['modifiers']['physical']==5
 
 
 def test_gunsmith_install_waits_spends_tools_and_rounds_final_ergonomics(client,gunsmith,auth_headers,monkeypatch):
@@ -679,9 +679,9 @@ def test_weapon_slot_counts_follow_item_class(app):
 
 
 @pytest.mark.parametrize('rule_id,effect,expected',[
-    ('armor-g58','belt_weight_reduction',.75),('armor-g66','medical_pouch_capacity_multiplier',3),
+    ('armor-g58','belt_weight_reduction',.5),('armor-g66','medical_pouch_capacity_multiplier',2),
     ('armor-g77','belt_reload_ap_reduction',1),
-    ('armor-g78','large_weapon_ergonomics',15),
+    ('armor-g78','large_weapon_ergonomics',10),
 ])
 def test_belt_uses_class_one_armor_rules_and_own_service_price(client,gunsmith,auth_headers,monkeypatch,rule_id,effect,expected):
     data=deepcopy(gunsmith['actor_character'].data)
@@ -703,6 +703,7 @@ def test_belt_uses_class_one_armor_rules_and_own_service_price(client,gunsmith,a
     completed=finish(client,gunsmith,auth_headers,started.json['result'])
     assert completed.status_code==200,completed.json
     assert rule(completed.json['data']['inventory']['pockets'][5],effect)==expected
+    assert not completed.json['data']['inventory']['pockets'][5]['modifications'][0]['gunsmith']
 
 
 def test_missing_book_or_insufficient_tool_grade_does_not_spend_charges(client,gunsmith,auth_headers):
@@ -745,11 +746,45 @@ def test_sheet_cannot_forge_rule_records(client,gunsmith,auth_headers):
     assert not character.data['weapons'][0]['modifications']
 
 
+def test_old_gunsmith_gear_uses_normal_effects_and_preserves_contents(gunsmith):
+    from app.services.equipment_modifications import preserve
+
+    character = gunsmith['actor_character']
+    belt_record = make_record('armor-g66', installer_id=character.id)
+    belt_record.update(gunsmith=True, rules={'medical_pouch_capacity_multiplier': 3})
+    armor_record = make_record('armor-a24', installer_id=character.id)
+    armor_record.update(gunsmith=True, modifiers={'physical': 7.5, 'durability': 7.5})
+    belt = {'id': 'old-belt', 'category': 'belt', 'modifications': [belt_record],
+            'pouches': [{'id': 'old-pouch', 'contents': [{'id': 'old-bandage', 'quantity': 1}]}]}
+    armor = {'id': 'old-armor', 'category': 'armor', 'protection': {'physical': 20},
+             'durability': 107.5, 'stageDurability': 107.5, 'currentStageDurability': 70,
+             'modifications': [armor_record]}
+    data = deepcopy(character.data)
+    data['equipment'] = {'belt': belt, 'armor': armor}
+    character.data = data
+    assert rule(belt, 'medical_pouch_capacity_multiplier') == 2
+    assert CombatService._target_armor(data, 'chest')[0] == 25
+
+    view = character.data_snapshot()
+    assert belt_record['gunsmith'] and armor['durability'] == 107.5
+    assert view['equipment']['belt']['pouches'] == belt['pouches']
+    assert view['equipment']['belt']['modifications'][0]['installerId'] == character.id
+    assert not view['equipment']['belt']['modifications'][0]['gunsmith']
+    assert view['equipment']['armor']['durability'] == 105
+    assert view['equipment']['armor']['currentStageDurability'] == 67.5
+    preserve(data, view)
+    assert view['equipment']['armor']['currentStageDurability'] == 67.5
+    old_client = deepcopy(data)
+    preserve(data, old_client)
+    assert old_client['equipment']['armor']['durability'] == 105
+    assert not old_client['equipment']['armor']['modifications'][0]['gunsmith']
+
+
 def test_numeric_armor_protection_and_pistol_burst_use_installed_profile(app):
     armor={'name':'Костюм','category':'armor','protection':{'physical':20},'durability':100,'stage':1,
         'modifications':[make_record('armor-a5',gunsmith=True)]}
     total,_=CombatService._target_armor({'equipment':{'armor':armor}},'chest')
-    assert total==35
+    assert total==30
     weapon={'modifications':[make_record('weapon-c24',gunsmith=True)]}
     assert fire_profile(weapon,{},6)['burst_size']==6
 
@@ -787,7 +822,7 @@ def test_extra_pockets_and_full_limb_armor_are_conditional_on_wearing(app):
     armor={'category':'armor','protection':{'physical':20},'durability':100,'stage':1,
         'modifications':[make_record('armor-a30',gunsmith=True),make_record('armor-a41')]}
     data={'equipment':{'armor':armor}}
-    sync_pocket_capacity({},data);assert data['inventory']['pocketMaxVolume']==25
+    sync_pocket_capacity({},data);assert data['inventory']['pocketMaxVolume']==20
     assert CombatService._target_armor(data,'left_arm')[0]==25
     armor['protectionDisabled']=True
     sync_pocket_capacity({},data);assert data['inventory']['pocketMaxVolume']==10
@@ -827,7 +862,7 @@ def test_hearing_advantage_does_not_apply_to_visual_checks(checks):
     assert not visual['advantage'] and len(visual['rolls'])==1
 
 
-@pytest.mark.parametrize('gunsmith,penalty',[(False,-1),(True,0)])
+@pytest.mark.parametrize('gunsmith,penalty',[(False,-1),(True,-1)])
 def test_helmet_reduces_concussion_without_removing_effect(checks,gunsmith,penalty):
     data=deepcopy(checks['actor_character'].data);data['health']['effects']=[{'type':'concussion','remaining':3,'active':True}]
     data['equipment']['helmet']['modifications']=[make_record('armor-g35',gunsmith=gunsmith)]
@@ -849,7 +884,7 @@ def test_extra_container_slots_are_real_and_cannot_delete_a_filled_slot(app):
     assert len(armor['containers'])==1 and armor['containers'][0]['item']['id']=='original-artifact'
 
 
-@pytest.mark.parametrize('gunsmith,expected',[(False,5),(True,2.5)])
+@pytest.mark.parametrize('gunsmith,expected',[(False,5),(True,5)])
 def test_belt_discount_applies_only_to_items_on_that_belt(app,gunsmith,expected):
     data={'inventory':{'pockets':[{'weight':3,'quantity':1}]},'equipment':{'belt':{
         'modifications':[make_record('armor-g58',gunsmith=gunsmith)],'pouches':[{'contents':[{'weight':10,'quantity':1}]}]}}}
@@ -896,7 +931,7 @@ def test_armor_material_discount_uses_catalog_price_and_spends_materials_at_star
     assert next(i for i in cancelled.json['data']['inventory']['pockets'] if i.get('id')=='upgrade-tools')['uses']==40
 
 
-@pytest.mark.parametrize('gunsmith,protection,wear',[(False,45,50),(True,57.5,25)])
+@pytest.mark.parametrize('gunsmith,protection,wear',[(False,45,50),(True,45,50)])
 def test_explosion_upgrade_protects_fragments_and_reduces_real_armor_wear(grenade_game,gunsmith,protection,wear):
     target=grenade_game['actor_location'];data=deepcopy(target.character.data)
     armor={'category':'armor','protection':{'physical':20},'durability':100,'stage':1,
@@ -909,7 +944,7 @@ def test_explosion_upgrade_protects_fragments_and_reduces_real_armor_wear(grenad
     assert armor['currentStageDurability']==1000-wear
 
 
-@pytest.mark.parametrize('gunsmith,wear',[(False,100),(True,50)])
+@pytest.mark.parametrize('gunsmith,wear',[(False,100),(True,100)])
 def test_anomaly_upgrade_halves_actual_equipment_wear(app,gunsmith,wear):
     armor={'category':'armor','durability':100,'stage':1,'stageDurability':1000,'currentStageDurability':1000,
         'modifications':[make_record('armor-d10',gunsmith=gunsmith)]}
@@ -974,11 +1009,11 @@ def test_helmet_explosion_upgrade_and_combined_anomaly_tradeoff(app):
     assert CombatService._target_armor(data,'head',explosive=True)[0]==50
     armor={'category':'armor','protection':{'radiation':10,'thermal':30},'modifications':[make_record('armor-d24',gunsmith=True)]}
     data={'equipment':{'armor':armor}}
-    assert CombatService._equipped_radiation_protection(data)==45
+    assert CombatService._equipped_radiation_protection(data)==30
     assert CombatService._target_elemental_protection(data,'thermal')==20
 
 
-@pytest.mark.parametrize('gunsmith,bonus',[(False,4),(True,6)])
+@pytest.mark.parametrize('gunsmith,bonus',[(False,4),(True,4)])
 def test_stealth_upgrade_affects_only_worn_armor(app,monkeypatch,gunsmith,bonus):
     monkeypatch.setattr('app.services.combat.random.randint',lambda *a:10)
     armor={'modifications':[make_record('armor-a14',gunsmith=gunsmith)]}
@@ -992,7 +1027,7 @@ def test_stealth_upgrade_affects_only_worn_armor(app,monkeypatch,gunsmith,bonus)
         {'equipment':{}},'skills.physical.awareness.visual')['total']
 
 
-@pytest.mark.parametrize('amplified,bonus',[(False,10),(True,15)])
+@pytest.mark.parametrize('amplified,bonus',[(False,10),(True,10)])
 def test_belt_padding_requires_weapon_size_six(gunsmith,amplified,bonus):
     actor=gunsmith['actor_location']
     data=deepcopy(actor.character.data)
@@ -1024,7 +1059,7 @@ def test_work_gloves_lower_modification_difficulty(client,gunsmith,auth_headers)
     assert equipped.json['result']['difficulty']==baseline.json['result']['difficulty']-5
 
 
-@pytest.mark.parametrize('gunsmith,expected_blast,expected_wear',[(False,55,27.5),(True,42,10.5)])
+@pytest.mark.parametrize('gunsmith,expected_blast,expected_wear',[(False,55,27.5),(True,55,27.5)])
 def test_explosion_upgrade_changes_wave_damage_and_real_wear(grenade_game,monkeypatch,gunsmith,expected_blast,expected_wear):
     from test_grenade_rules import profile
     target=grenade_game['actor_location'];data=deepcopy(target.character.data)
@@ -1039,7 +1074,7 @@ def test_explosion_upgrade_changes_wave_damage_and_real_wear(grenade_game,monkey
     assert entry['blast_armor_damage'][0]['damage']==expected_wear
 
 
-@pytest.mark.parametrize('gunsmith,reduction',[(False,3),(True,4.5)])
+@pytest.mark.parametrize('gunsmith,reduction',[(False,3),(True,3)])
 def test_anomaly_exit_upgrade_changes_real_check_difficulty(app,monkeypatch,gunsmith,reduction):
     from test_combat_anomalies import _combat_with_anomaly
     from app.services.anomaly_profiles import anomaly_profile

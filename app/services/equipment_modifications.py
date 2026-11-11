@@ -87,6 +87,9 @@ def supported(rule):
 
 
 def install(item,record,replacing=None):
+    corrected=effective_item(item)
+    if corrected is not item:item.update(corrected)
+    record=effective_record(record)
     previous=next((r for r in installed(item) if r['ruleId']==replacing),None)
     proposed=[m for m in item.get('modifications') or [] if not isinstance(m,dict) or m.get('ruleId')!=replacing]+[record]
     if previous and previous['ruleId']=='armor-g70' and not any(
@@ -257,7 +260,9 @@ def definition(rule_id):
 
 
 def make_record(rule_id,*,gunsmith=False,installer_id=None):
-    rule=definition(rule_id);factor=1.5 if gunsmith else 1
+    rule=definition(rule_id)
+    gunsmith=bool(gunsmith and rule['kind']=='weapon')
+    factor=1.5 if gunsmith else 1
     if rule['kind']=='weapon':
         stats,flags=deepcopy(WEAPON_EFFECTS[rule_id.removeprefix('weapon-')])
     elif rule_id.removeprefix('armor-') in SPECIAL_ARMOR:
@@ -296,10 +301,43 @@ def make_record(rule_id,*,gunsmith=False,installer_id=None):
 def installed(item):return [m for m in item.get('modifications') or [] if isinstance(m,dict) and m.get('ruleId')] if isinstance(item,dict) else []
 
 
+def effective_record(record):
+    """Старые усиленные модификации снаряжения работают по обычному правилу."""
+    if not isinstance(record,dict) or not record.get('gunsmith') or not str(record.get('ruleId','')).startswith('armor-'):
+        return record
+    try:
+        base=make_record(record['ruleId'])
+    except ValidationError:
+        return record
+    return {**record,'gunsmith':False,'modifiers':base['modifiers'],'rules':base['rules']}
+
+
+def effective_item(item):
+    records=item.get('modifications') or []
+    if not isinstance(records,list):return item
+    corrected=[effective_record(record) for record in records]
+    if all(old is new for old,new in zip(records,corrected)):
+        return item
+    delta=sum((new.get('modifiers') or {}).get('durability',0)-(old.get('modifiers') or {}).get('durability',0)
+              for old,new in zip(records,corrected) if old is not new)
+    result={**item,'modifications':corrected}
+    if delta:
+        for key in ('durability','maxDurability','stageDurability','currentStageDurability'):
+            if type(result.get(key)) in (int,float):result[key]=max(0,result[key]+delta)
+    return result
+
+
+def normalize_legacy_gear(data):
+    from app.services.portable_lights import walk
+    for _,item in walk(data,True):
+        corrected=effective_item(item)
+        if corrected is not item:item.update(corrected)
+
+
 def stat(item,key,base):
     value=float(base or 0)
     for record in installed(item):
-        change=(record.get('modifiers') or {}).get(key)
+        change=(effective_record(record).get('modifiers') or {}).get(key)
         if change is None:continue
         if isinstance(change,str) and change.startswith('='):value=float(change[1:])
         else:value+=float(change)
@@ -307,7 +345,8 @@ def stat(item,key,base):
 
 
 def rule(item,key,default=0):
-    values=[(record.get('rules') or {})[key] for record in installed(item) if key in (record.get('rules') or {})]
+    flags=[effective_record(record).get('rules') or {} for record in installed(item)]
+    values=[entry[key] for entry in flags if key in entry]
     if not values:return default
     if key in {'ergonomics_tiers','burst_ap_delta','reload_ap_delta','aimed_accuracy','burst_accuracy_reduction'}:return sum(values)
     return max(values)
@@ -385,7 +424,12 @@ def preserve(current,incoming,*,is_gm=True):
             if isinstance(extra,dict):yield extra
     previous={item.get('id'):item for item in items(current) if item.get('id')}
     for item in items(incoming):
-        old=previous.get(item.get('id'));canonical=deepcopy(installed(old)) if old else []
+        old=previous.get(item.get('id'))
+        corrected=effective_item(old) if old else old
+        if corrected is not old:
+            for key in ('durability','maxDurability','stageDurability','currentStageDurability'):
+                if key in item and item[key]==old.get(key):item[key]=corrected.get(key)
+        canonical=deepcopy(installed(corrected)) if corrected else []
         if old and old.get('stopLayerBroken'):
             item.update(stopLayerBroken=True,protectionDisabled=True,durability=0,currentStageDurability=0,stage=5)
         else:item.pop('stopLayerBroken',None)

@@ -20,11 +20,19 @@ module.exports = async ({page, request, token, lobby, offered, loc, npc, safeSes
     const url='/lobbies/characters/'+owner.id;
     const read=()=>request(url,null,token,'GET');
     const placed=await request(loc+'/spawn_character',{character_id:owner.id,tile_x:47,tile_y:49},token);
-    const specialist=await request('/lobbies/characters/'+npc.id,null,token,'GET');
+    const specialistUrl='/lobbies/characters/'+npc.id;
+    const previousSpecialist=await request(specialistUrl,null,token,'GET');
+    const specialistData=previousSpecialist.data;
+    specialistData.basic={...specialistData.basic,background:{ruleId:'background-d',name:'Оружейник'}};
+    await request(specialistUrl,{data:specialistData},token,'PUT');
+    const specialist=await request(specialistUrl,null,token,'GET');
     await request(loc+'/professional-modification',{actor_location_character_id:placed.location_character_id,
         specialist_character_id:npc.id,target_path:['equipment','belt'],item_id:belt.id,
         execute:true,rule_id:'armor-g66',operation_id:'qa-install-medical-pouches',
         actor_revision:(await read()).data._revision,specialist_revision:specialist.data._revision},token);
+    const modification=(await read()).data.equipment.belt.modifications.find(record=>record.ruleId==='armor-g66');
+    assert.equal(modification.gunsmith,false);
+    assert.equal(modification.rules.medical_pouch_capacity_multiplier,2);
     const open=()=>page.evaluate(`window.openCharacterSheet(${owner.id},'inventory').then(()=>true)`);
     const waitSave=()=>page.evaluate(`import('/static/js/api.js').then(({Server})=>Server.waitForCharacterSave(${owner.id})).then(()=>true)`);
     await open();
