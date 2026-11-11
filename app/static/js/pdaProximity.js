@@ -32,8 +32,14 @@ export function initPdaProximity(lobbyId,socket){
     let spamQueue=[],spamBusy=false,spamTimer=null;
     const spamKey=`pda-spam:${localStorage.getItem('user_id')}:${lobbyId}`,heardSpam=new Set();
     try{for(const id of JSON.parse(sessionStorage.getItem(spamKey)||'[]'))if(typeof id==='string')heardSpam.add(id);}catch{}
-    const subject=()=>({characterId:window.isLocationActive?(window.currentLocationCharacterId||window.currentCharacterId):window.currentCharacterId,
-        locationId:window.isLocationActive?window.currentLocationId:null});
+    const subject = () => {
+        if (!window.isLocationActive) {
+            return {characterId: window.currentCharacterId, locationId: null};
+        }
+        const characterId = [window.currentLocationCharacterId, window.currentCharacterId].find(id =>
+            id && window.getLocationCharacterPosition?.(id));
+        return {characterId, locationId: window.currentLocationId};
+    };
     const keyFor=s=>`pda-proximity:${localStorage.getItem('user_id')}:${lobbyId}:${s.characterId}`;
     async function refresh(){
         if(closed||busy||document.hidden)return;

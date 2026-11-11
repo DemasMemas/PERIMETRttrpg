@@ -39,6 +39,27 @@ test('поздний ответ для ранее выбранного перс�
     f.window.currentCharacterId=13;finish(signal());await flush();assert.equal(f.alerts.length,0);assert.equal(f.notifications.length,0);watcher.close();
 });
 
+test('на подлокации детектор выбирает действующего персонажа, а не посторонний открытый лист',async()=>{
+    const requests=[];
+    const f=await fixture(async(...args)=>{requests.push(args);return {devices:[]};});
+    const placed = new Set([23]);
+    Object.assign(f.window,{isLocationActive:true,currentLocationId:8,currentLocationCharacterId:null,
+        getLocationCharacterPosition: id => placed.has(id) ? {x: 1, y: 2} : null});
+    const watcher=f.api.initPdaProximity(5,f.socket);await flush();
+    assert.equal(requests.length,0,'Открытый лист персонажа вне сцены не запускает запросы к этой подлокации');
+    f.window.currentLocationCharacterId=23;await watcher.refresh();
+    assert.deepEqual(requests.at(-1),[23,5,8]);
+    f.window.currentCharacterId=99;await watcher.refresh();
+    assert.deepEqual(requests.at(-1),[23,5,8],'Просмотр другого листа не переключает детектор');
+    placed.delete(23);await watcher.refresh();
+    assert.equal(requests.length,2,'После удаления персонажа со сцены запросы прекращаются');
+    placed.add(99);await watcher.refresh();
+    assert.deepEqual(requests.at(-1),[99,5,8],'Лист присутствующего на сцене персонажа подходит');
+    f.window.isLocationActive=false;await watcher.refresh();
+    assert.deepEqual(requests.at(-1),[99,5,null],'На глобальной карте используется выбранный лист');
+    watcher.close();
+});
+
 test('частые события движения объединяются, ошибка сети не создаёт сигналов',async()=>{
     let requests=0;const f=await fixture(async()=>{requests++;throw new Error('Нет связи');}),watcher=f.api.initPdaProximity(5,f.socket);await flush();
     for(let i=0;i<30;i++)f.socketHandlers.get('character_moved')();
