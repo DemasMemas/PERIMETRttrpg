@@ -3774,11 +3774,14 @@ class CombatService:
         return [str(value) for value in traits]
 
     @staticmethod
-    def _mutant_shooting_target_modifier(character_data):
+    def _mutant_shooting_target_modifier(character_data, shooter_data=None):
         for trait in CombatService._mutant_traits(character_data):
             match = re.search(r'Точность при стрельбе\s*([+-]\d+)', trait, re.IGNORECASE)
             if match:
-                return int(match.group(1))
+                modifier = int(match.group(1))
+                if modifier < 0 and re.search(r'\bМаленький размер\b', trait, re.IGNORECASE) and background_is(shooter_data, 'Утиный стрелок'):
+                    return 0
+                return modifier
         return 0
 
     @staticmethod
@@ -16499,7 +16502,7 @@ class CombatService:
                     hit_difficulty += 8
                     attack_details['mutant_camouflage_penalty'] = 8
                 mutant_target_modifier = CombatService._mutant_shooting_target_modifier(
-                    range_target_data,
+                    range_target_data, data,
                 )
                 hit_difficulty -= mutant_target_modifier
                 attack_details['mutant_target_accuracy_modifier'] = mutant_target_modifier

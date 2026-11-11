@@ -418,6 +418,45 @@ def test_pacifist_failure_spends_ap_without_ammo_then_allows_retry(grenade_game,
     assert target.character_id in actor.character.data['health']['combatMeta']['harmAllowedTargets']
 
 
+@pytest.mark.parametrize('background,traits,target_trait,expected', [
+    ({}, [], 'Маленький размер. Точность при стрельбе -2', -2),
+    ({'ruleId': 'background-av'}, [], 'Маленький размер. Точность при стрельбе -2', 0),
+    ({'name': 'Утиный стрелок'}, [], 'Маленький размер. Точность при стрельбе -2', 0),
+    ({}, [{'name': 'Утиный стрелок'}], 'Маленький размер. Точность при стрельбе -2', -2),
+    ({'ruleId': 'background-av'}, [], 'Крошечный размер. Точность при стрельбе -5', -5),
+    ({'ruleId': 'background-av'}, [], 'Большой размер. Точность при стрельбе +4', 4),
+    ({'ruleId': 'background-av'}, [], 'Особая защита. Точность при стрельбе -3', -3),
+])
+def test_duck_shooter_only_removes_small_target_penalty_in_paid_shot(grenade_game, monkeypatch, background, traits, target_trait, expected):
+    case = grenade_game
+    actor, target = case['actor_location'], case['target_location']
+    target.pos_x, target.pos_y = actor.pos_x + 3, actor.pos_y
+    data = deepcopy(actor.character.data)
+    data['basic'] = {'background': background}
+    data['features'] = {'specialTraits': traits}
+    data['weapons'] = [{'id': 'duck-rifle', 'category': 'weapon', 'subcategory': 'Винтовки',
+                        'accuracy': 100, 'ergonomics': 100, 'damage': 1, 'range': 20, 'ammo': 10,
+                        'attributes': {'damage': 1, 'range': 20, 'min_strength': 0}}]
+    actor.character.data = data
+    target.character.data = {**deepcopy(target.character.data), 'mutant': {'traits': [target_trait]}}
+    actor.drawn_weapon_index = 0
+    db.session.commit()
+    monkeypatch.setattr('app.services.combat.random.randint', lambda *_: 20)
+    before = actor.action_points_current
+    result = CombatService.perform_action(actor.location_id, case['lobby'].gm_id, actor.id, 'attack',
+        weapon_index=0, fire_mode='unaimed', shot_count=1, action_points=2,
+        target_character_id=target.character_id, pending_action_id='duck-shot')
+    assert result['attack']['mutant_target_accuracy_modifier'] == expected
+    assert actor.action_points_current == before - 2
+    assert actor.character.data['weapons'][0]['ammo'] == 9
+    with pytest.raises(ConflictError, match='уже принято'):
+        CombatService.perform_action(actor.location_id, case['lobby'].gm_id, actor.id, 'attack',
+            weapon_index=0, fire_mode='unaimed', shot_count=1, action_points=2,
+            target_character_id=target.character_id, pending_action_id='duck-shot')
+    assert actor.action_points_current == before - 2
+    assert actor.character.data['weapons'][0]['ammo'] == 9
+
+
 def test_tolik_ignores_delayed_and_periodic_pain_too():
     from app.services.effects import apply_periodic_effects_to_health,advance_timed_effects
     data={'basic':{'background':{'name':'Дядя Толик'}},'health':{'painLevel':0,'intoxication':100}}

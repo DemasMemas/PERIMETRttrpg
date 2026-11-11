@@ -53,6 +53,18 @@ module.exports=async({page,peer,request,token,lobby,character,rules,safeSession,
     const shot=await action({action_key:'attack',weapon_index:0,fire_mode:'unaimed',shot_count:1,action_points:1,target_character_id:victim.id});
     assert.equal(shot.attack.shot_count,1);
     for(const client of [page,peer])await client.until(`L.getCombatState()?.characters?.find(c=>c.character_id===${character.id})?.effects?.some(e=>e.type==='deafness'&&e.value===40)`,'шум настоящего выстрела у обоих клиентов');
+    const smallTarget=await request(`/lobbies/characters/${victim.id}`,null,token,'GET');
+    await request(`/lobbies/characters/${victim.id}`,{data:{...smallTarget.data,mutant:{traits:['Маленький размер. Точность при стрельбе -2']}}},token,'PUT');
+    const ordinary=await action({action_key:'attack',weapon_index:0,fire_mode:'unaimed',shot_count:1,action_points:1,target_character_id:victim.id});
+    assert.equal(ordinary.attack.mutant_target_accuracy_modifier,-2);
+    const hunter=await request(`/lobbies/characters/${character.id}`,null,token,'GET');
+    await request(`/lobbies/characters/${character.id}`,{data:{...hunter.data,basic:{...hunter.data.basic,background:{ruleId:'background-av',name:'Утиный стрелок'}}}},token,'PUT');
+    const hunting=await action({action_key:'attack',weapon_index:0,fire_mode:'unaimed',shot_count:1,action_points:1,target_character_id:victim.id});
+    assert.equal(hunting.attack.mutant_target_accuracy_modifier,0);
+    const afterHunting=await request(`/lobbies/characters/${character.id}`,null,token,'GET');
+    assert.equal(afterHunting.data.weapons[0].ammo,hunter.data.weapons[0].ammo-1);
+    for(const client of [page,peer])await client.until(`L.getCombatState()?.characters?.find(c=>c.character_id===${character.id})?.action_points_current===${hunting.character.action_points_current}`,'Оплаченный выстрел охотника доставлен обоим клиентам');
+    fs.writeFileSync(path.join(safeSession.artifacts,'duck-shooter.json'),JSON.stringify({ordinary:ordinary.attack,hunting:hunting.attack},null,2));
     for(let round=1;round<=3;round++){
         await request(url+'/combat/end_turn',{location_character_id:actorId},token);
         await request(url+'/combat/end_turn',{location_character_id:targetId},token);
