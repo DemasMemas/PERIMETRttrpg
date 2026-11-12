@@ -13516,41 +13516,66 @@ function informationSignLightBackground(color) {
     return red * 0.2126 + green * 0.7152 + blue * 0.0722 >= 0.18;
 }
 
-function createInformationSignTexture(color, text, textColor) {
+function wrapInformationSignText(ctx, paragraph, width) {
+    const lines = [];
+    let line = '';
+    for (const word of paragraph.trim().split(/\s+/)) {
+        const next = line ? `${line} ${word}` : word;
+        if (ctx.measureText(next).width <= width) {
+            line = next;
+            continue;
+        }
+        if (line) lines.push(line);
+        line = '';
+        if (ctx.measureText(word).width <= width) {
+            line = word;
+            continue;
+        }
+        for (const letter of word) {
+            if (line && ctx.measureText(line + letter).width > width) {
+                lines.push(line);
+                line = '';
+            }
+            line += letter;
+        }
+    }
+    lines.push(line);
+    return lines;
+}
+
+function createInformationSignTexture(color, text, textColor, width, height) {
     const canvas = document.createElement('canvas');
-    canvas.width = 1024;
-    canvas.height = 512;
+    const density = 1024 / Math.max(width, height);
+    canvas.width = Math.max(1, Math.round(width * density));
+    canvas.height = Math.max(1, Math.round(height * density));
     const ctx = canvas.getContext('2d');
     ctx.fillStyle = color;
     ctx.fillRect(0, 0, canvas.width, canvas.height);
     const lightBackground = informationSignLightBackground(color);
     ctx.strokeStyle = lightBackground ? '#63513c' : '#d6c6a3';
-    ctx.lineWidth = 6;
-    ctx.strokeRect(12, 12, 1000, 488);
+    const borderInset = Math.min(canvas.width, canvas.height) * (12 / 512);
+    ctx.lineWidth = borderInset / 2;
+    ctx.strokeRect(borderInset, borderInset, canvas.width - 2 * borderInset, canvas.height - 2 * borderInset);
     ctx.fillStyle = textColor || (lightBackground ? '#242017' : '#fff8e8');
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    let lines;
-    let fontSize;
-    for (fontSize = 58; fontSize >= 26; fontSize -= 4) {
+    const textWidth = canvas.width * 0.9;
+    const textHeight = canvas.height * 0.86;
+    const fontScale = Math.min(canvas.height / 512, textWidth / 280);
+    const paragraphs = String(text).slice(0, 280).split('\n');
+    let lines = [];
+    let lineHeight = 0;
+    for (let size = 58; size >= 26; size -= 4) {
+        const fontSize = size * fontScale;
+        lineHeight = fontSize * 1.22;
         ctx.font = `bold ${fontSize}px sans-serif`;
-        lines = String(text).slice(0, 280).split('\n').flatMap(paragraph => {
-            const wrapped = [''];
-            for (const word of paragraph.trim().split(/\s+/)) {
-                const index = wrapped.length - 1;
-                const line = [wrapped[index], word].filter(Boolean).join(' ');
-                if (ctx.measureText(line).width <= 920) wrapped[index] = line;
-                else wrapped.push(word);
-            }
-            return wrapped;
-        });
-        if (lines.length * fontSize * 1.22 <= 440) break;
+        lines = paragraphs.flatMap(paragraph => wrapInformationSignText(ctx, paragraph, textWidth));
+        if (lines.length * lineHeight <= textHeight) break;
     }
-    fontSize = Math.max(26, fontSize);
-    const lineHeight = fontSize * 1.22;
-    const maxLines = Math.floor(440 / lineHeight);
+    const maxLines = Math.floor(textHeight / lineHeight);
     if (lines.length > maxLines) lines.splice(maxLines - 1, lines.length, '…');
-    lines.forEach((line, i) => ctx.fillText(line, 512, 256 + (i - (lines.length - 1) / 2) * lineHeight, 920));
+    lines.forEach((line, i) => ctx.fillText(line, canvas.width / 2,
+        canvas.height / 2 + (i - (lines.length - 1) / 2) * lineHeight));
 
     const texture = new THREE.CanvasTexture(canvas);
     texture.colorSpace = THREE.SRGBColorSpace;
@@ -13572,12 +13597,14 @@ function createInformationSign(width, depth, height, color, frontText = '', back
         sign.add(post);
     }
 
-    const frontTexture = createInformationSignTexture(color, frontText, textColor);
+    const panelWidth = width * 0.98;
+    const panelHeight = boardHeight * 0.96;
+    const frontTexture = createInformationSignTexture(color, frontText, textColor, panelWidth, panelHeight);
     const backTexture = backText == null || backText === frontText
-        ? frontTexture : createInformationSignTexture(color, backText, textColor);
+        ? frontTexture : createInformationSignTexture(color, backText, textColor, panelWidth, panelHeight);
     for (const side of [1, -1]) {
         const texture = side > 0 ? frontTexture : backTexture;
-        const panel = new THREE.Mesh(new THREE.PlaneGeometry(width * 0.98, boardHeight * 0.96),
+        const panel = new THREE.Mesh(new THREE.PlaneGeometry(panelWidth, panelHeight),
             new THREE.MeshStandardMaterial({ map: texture, roughness: 0.96 }));
         panel.position.set(0, board.position.y, side * (depth / 2 + 0.001));
         if (side < 0) panel.rotation.y = Math.PI;
