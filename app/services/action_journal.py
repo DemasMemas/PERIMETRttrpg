@@ -141,7 +141,10 @@ def record(actor, values, before, result=None, error=None):
         entry['movement_points']=entry['free_actions']=0
     if row:
         entry['deferred_id'] = row.id
-        entry['total_action_points'] = previous_total if previous_total is not None else paid + row.remaining_action_points
+        pending_total = result.get('pending_action_total_points') if pending else None
+        entry['total_action_points'] = pending_total if pending_total is not None else (
+            previous_total if previous_total is not None else paid + row.remaining_action_points
+        )
         entry['action_points'] = max(0,entry['total_action_points']-row.remaining_action_points)
     if error:
         entry['reason'] = REASONS.get(str(error),str(error))[:300]

@@ -16634,6 +16634,7 @@ class CombatService:
                     'action': action_key,
                     'pending_action': True,
                     'pending_action_id': str(pending_action_id),
+                    'pending_action_total_points': action_point_cost,
                     'attack': None,
                     'aim': None,
                     'posture_change': None,

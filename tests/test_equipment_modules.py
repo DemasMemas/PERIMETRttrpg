@@ -363,7 +363,7 @@ def test_artifact_extraction_finishes_next_turn_without_double_charge(client, cr
     db.session.add(location)
     db.session.flush()
     actor = LocationCharacter(location_id=location.id, character_id=character['id'],
-                              controlled_by=user['id'], action_points_current=6, action_points_max=6)
+                              controlled_by=user['id'], action_points_current=5, action_points_max=5)
     db.session.add(actor)
     db.session.flush()
     db.session.add(LocationCombatState(location_id=location.id, status='active', round_number=1,
@@ -381,7 +381,11 @@ def test_artifact_extraction_finishes_next_turn_without_double_charge(client, cr
     stored = db.session.get(LobbyCharacter, character['id'])
     assert stored.data['inventory']['backpack'] == []
     after_payment = actor.action_points_current
-    assert after_payment == actor.action_points_max - 2
+    assert after_payment == 2
+    journal_url = f"/lobbies/{lobby['id']}/action-journal"
+    entry = next(entry for entry in client.get(journal_url, headers=headers).json['entries']
+                 if entry['id'] == 'extract-artifact')
+    assert (entry['total_action_points'], entry['action_points']) == (8, 8)
 
     resume = {**payload, 'resume_pending_action_id': 'extract-artifact'}
     result = client.post(base, headers=headers, json=resume)
