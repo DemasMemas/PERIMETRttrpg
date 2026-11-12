@@ -215,7 +215,7 @@ def test_catalog_skill_modifiers_reach_actual_skill_calculation(name, positive, 
     for path, specific in paths.items():
         group, skill = path.split('.')
         data['skills'][group][skill] = {'base': 10, 'bonus': 0}
-        field = 'skill_physical' if group == 'physical' else 'skill_other'
+        field = {'physical': 'skill_physical', 'other': 'skill_other'}.get(group)
         expected = 10+positive.get(field, 0)+negative.get(field, 0)
         expected += positive.get(specific, 0)+negative.get(specific, 0)
         assert CombatService._skill_value(data, 'skills.'+path) == max(0, expected)

@@ -3854,13 +3854,27 @@ function renderHealthTab(data, container = null) {
         )) {
             let name = getEffectDisplayName(effect);
             let description = effect.note;
+            let duration = effectDurationLabel(effect);
             if (effect.artifact_stat === 'positive_multiplier') {
                 name = `${name.replace(/: особое свойство$/, '')} · Положительные эффекты ×${effect.value}`;
                 description = '';
+            } else if (clockSource.endsWith(':delayed-cost')) {
+                name = `${name.replace(/^Цена:\s*/, '')} · Последствия применения`;
+                const healthLoss = effect.adjustments?.find?.(entry => entry.field === 'current' && entry.delta < 0);
+                const movementPenalty = effect.activate_effects?.find?.(entry => entry.artifact_stat === 'movement_penalty');
+                const timeUntil = duration ? `через ${duration.replace(/^осталось /, '')}` : '';
+                if (healthLoss) {
+                    name = [name, [`−${Math.abs(healthLoss.delta)} общих ОЗ`, timeUntil].filter(Boolean).join(' ')].join(' · ');
+                    description = duration = '';
+                } else if (movementPenalty) {
+                    const penaltyDuration = effectDurationLabel(movementPenalty).replace(/^осталось /, '');
+                    const penalty = `штраф перемещения +${movementPenalty.value}${penaltyDuration ? ` на ${penaltyDuration}` : ''}`;
+                    name = [name, [timeUntil, penalty].filter(Boolean).join(' ')].join(' · ');
+                    description = duration = '';
+                }
             } else if (effect.artifact_stat === 'movement_penalty' && !description) {
                 description = `Штраф перемещения +${effect.value}.`;
             }
-            const duration = effectDurationLabel(effect);
             effectsHtml += `
                 <div data-widget-effect-index="${index}" class="health-effect-card" data-artifact-effect>
                     <div class="health-effect-caption">${escapeHtml([name, duration].filter(Boolean).join(' · '))}</div>

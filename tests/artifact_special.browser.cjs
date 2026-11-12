@@ -865,7 +865,8 @@ module.exports=async({page,request,token,lobby,loc,locationId,rules,safeSession}
         await assertPhase(2,700,0);
         const artifactEffects="[...document.querySelectorAll('[data-artifact-effect]')].map(card=>card.textContent).join(' ')";
         await page.until(`(${artifactEffects}).includes('${name} · Положительные эффекты ×2 · осталось 1 мин')`,`${name}: усиление сразу видно в эффектах`);
-        await page.until(`(${artifactEffects}).includes('${hpCost?'Потеря 150 ОЗ':'штраф перемещения +3 на 10 минут'}')`,`${name}: видна цена усиления`);
+        const consequence = hpCost ? '−150 общих ОЗ через 1 мин' : 'через 1 мин штраф перемещения +3 на 10 мин';
+        await page.until(`(${artifactEffects}).includes('${name} · Последствия применения · ${consequence}')`,`${name}: последствие и срок видны в заголовке`);
         await page.evaluate("document.querySelector('#sheet-tabs [data-tab=skills]').click();true");
         await expectSkillFields(2);
         savedMedicineBonus++;
