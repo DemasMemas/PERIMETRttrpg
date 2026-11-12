@@ -78,7 +78,9 @@ def selected(character,recipe,option=0,*,preferred_id=None):
         if key=='recipe-m34':name='Установка для Аэрации воды'
         if normalized(name) not in wanted or (key in PROFILES and not ready(obj)):continue
         candidates.append(obj)
-    return min(candidates,key=lambda obj:(bool((obj.properties or {}).get('portable_station')),obj.id),default=None)
+    from app.services.generators import difficulty_bonus
+    return min(candidates, key=lambda obj: (bool((obj.properties or {}).get('portable_station')),
+        -difficulty_bonus(obj), obj.id), default=None)
 
 
 def consume_for_job(obj, *, can_save_tool_charge=False):
@@ -116,14 +118,14 @@ def templates():
          'source_recipe_id':key}) for key,(name,asset,bench,size) in PROFILES.items()]
 
 
-def _actor(lobby_id,location_id,user_id,character_id):
+def _actor(lobby_id,location_id,user_id,character_id,*,action_name='Размещать и переставлять станки'):
     from app.services.combat import CombatService
     actor=LocationCharacter.query.filter_by(location_id=location_id,character_id=character_id).first()
     if not actor or actor.character.lobby_id!=lobby_id:raise NotFoundError('Персонаж отсутствует на подлокации')
     CharacterService.check_access(actor.character,user_id,edit=True)
     CombatService.ensure_character_can_act(actor)
     state=LocationCombatState.query.filter_by(location_id=location_id).first()
-    if state and state.status=='active':raise ValidationError('Размещать и переставлять станки можно вне боя')
+    if state and state.status=='active':raise ValidationError(f'{action_name} можно вне боя')
     return actor
 
 

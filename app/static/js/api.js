@@ -180,6 +180,14 @@ export const Server = {
             method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload),
         });
     },
+    getGenerator(lobbyId, locationId, generatorId, characterId) {
+        return apiFetch(`/lobbies/${lobbyId}/locations/${locationId}/generators/${generatorId}?character_id=${characterId}`);
+    },
+    operateGenerator(lobbyId, locationId, generatorId, payload) {
+        return apiFetch(`/lobbies/${lobbyId}/locations/${locationId}/generators/${generatorId}`, {
+            method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload),
+        });
+    },
     async operateCraftedCover(lobbyId,locationId,payload) {
         return apiFetch(`/lobbies/${lobbyId}/locations/${locationId}/crafted-covers`,{
             method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});

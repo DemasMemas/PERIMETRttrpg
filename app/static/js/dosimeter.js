@@ -34,10 +34,11 @@ export async function openDosimeter({characterId,itemId,itemPath,operate}){
         };
         const toggle=node('button',state.on?'Выключить':'Включить');toggle.type='button';toggle.disabled=remaining<=0;
         toggle.onclick=()=>act('dosimeter_toggle');panel.append(toggle);
-        if(snapshot.batteries.length){
+        const batteries = snapshot.batteries.filter(battery => battery.standard_fit ?? battery.name === 'Батарейки');
+        if(batteries.length){
             const select=document.createElement('select');select.className='form-control';select.setAttribute('aria-label','Батарейка для дозиметра');
-            snapshot.batteries.forEach((battery,index)=>{const option=node('option',battery.name);option.value=index;select.append(option);});
-            const battery=node('button','Заменить батарейку');battery.type='button';battery.onclick=()=>act('dosimeter_battery',{battery_path:snapshot.batteries[Number(select.value)].path});
+            batteries.forEach((battery,index)=>{const option=node('option',battery.charge == null ? battery.name : `${battery.name} · ${battery.charge.toFixed(1)}%`);option.value=index;select.append(option);});
+            const battery=node('button','Заменить батарейку');battery.type='button';battery.onclick=()=>act('dosimeter_battery',{battery_path:batteries[Number(select.value)].path});
             panel.append(select,battery);
         }
         panel.append(close);

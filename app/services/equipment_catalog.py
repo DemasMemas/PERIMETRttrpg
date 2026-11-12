@@ -225,8 +225,9 @@ def parse_catalog(workbook_path):
         entries.extend(craft_mold_templates(creation))
     entries.extend(additional_water_templates(entries))
     from app.services.cooked_meat import templates as cooked_meat_templates
+    from app.services.power_cells import templates as power_cell_templates
     entries.extend(cooked_meat_templates())
-    return prepare_catalog([*entries, *approved_component_templates(), *portable_station_templates(), *crafted_cover_templates(), *trap_templates(), *electronic_templates(), *improvised_explosive_templates()])
+    return prepare_catalog([*entries, *approved_component_templates(), *portable_station_templates(), *crafted_cover_templates(), *trap_templates(), *electronic_templates(), *improvised_explosive_templates(), *power_cell_templates()])
 
 
 def prepare_catalog(entries):
@@ -280,8 +281,9 @@ def load_catalog(path=None):
     if creation_path.is_file():
         entries = [*entries, *craft_mold_templates(json.loads(creation_path.read_text(encoding='utf-8')))]
     from app.services.cooked_meat import templates as cooked_meat_templates
+    from app.services.power_cells import templates as power_cell_templates
     return prepare_catalog([*entries, *additional_water_templates(entries), *cooked_meat_templates(),
-                            *approved_component_templates(), *portable_station_templates(), *crafted_cover_templates(), *trap_templates(), *electronic_templates(), *improvised_explosive_templates()])
+                            *approved_component_templates(), *portable_station_templates(), *crafted_cover_templates(), *trap_templates(), *electronic_templates(), *improvised_explosive_templates(), *power_cell_templates()])
 
 
 def shifted_helmet_updates(previous,canonical):

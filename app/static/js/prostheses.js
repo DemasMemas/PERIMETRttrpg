@@ -55,13 +55,45 @@ export function renderProstheses(container,data,operate,canEdit,characterId) {
             b.textContent='Снять операцией · 1 ч';b.disabled=disabled||active||Boolean(meta.prosthesisSurgeryId||meta.prosthesisSurgeryPatientId);
             b.onclick=()=>window.openProsthesisSurgery(characterId);row.append(b);
         }
-        const supplies=inventory.filter(({item:source})=>/батаре|набор смазочных приспособлений/i.test(source.name)||source.category==='artifact');
+        const supplies=inventory.filter(({item:source})=>!source.attributes?.rechargeable_battery
+            && (/батаре|набор смазочных приспособлений/i.test(source.name)||source.category==='artifact'));
         if(supplies.length){
             const select=document.createElement('select');select.className='form-control';select.disabled=disabled||active;
             supplies.forEach(({item:source,path},index)=>{const o=document.createElement('option');o.value=source.id || JSON.stringify(path);o.textContent=source.name;select.append(o)});
             rememberEquipmentChoice(select,`${characterId}:prosthesis:${zone}:${slot}`);row.append(select);
             const b=document.createElement('button');b.type='button';b.className='btn btn-sm btn-secondary';b.textContent='Использовать для протеза';b.disabled=disabled||active||item.broken;
             b.onclick=()=>{const source=supplies.find(({item,path})=>(item.id||JSON.stringify(path))===select.value);if(source)operate({operation:/набор смазочных/i.test(source.item.name)?'lubricate':'power',zone,slot,path:source.path})};row.append(b);
+        }
+        const cells = p.batteries ? inventory.filter(({item:source,path}) =>
+            source.attributes?.rechargeable_battery && Number(source.attributes.charge_percent ?? 100) > 0
+            && Number(source.quantity ?? 1) === 1 && !path.includes('installedModules')) : [];
+        if (cells.length) {
+            const label = document.createElement('label');
+            label.textContent = `Выберите аккумуляторы · ${p.batteries} шт.`;
+            const select = document.createElement('select');
+            select.className = 'form-control';
+            select.multiple = true;
+            select.size = Math.min(4, Math.max(2, cells.length));
+            select.disabled = disabled || active || item.broken;
+            cells.forEach(({item:cell}, index) => {
+                const option = document.createElement('option');
+                option.value = String(index);
+                option.textContent = `${cell.name} · ${Number(cell.attributes.charge_percent ?? 100).toFixed(1)}%`;
+                option.selected = cells.length === p.batteries;
+                select.append(option);
+            });
+            label.append(select);
+            row.append(label);
+            const install = document.createElement('button');
+            install.type = 'button';
+            install.className = 'btn btn-sm btn-secondary';
+            install.textContent = 'Установить аккумуляторы';
+            const update = () => { install.disabled = select.disabled || select.selectedOptions.length !== p.batteries; };
+            select.onchange = update;
+            update();
+            install.onclick = () => operate({operation:'power',zone,slot,
+                battery_paths:[...select.selectedOptions].map(option => cells[Number(option.value)].path)});
+            row.append(install);
         }
         section.append(row);
     }

@@ -3787,6 +3787,26 @@ def drop_location_item(lobby_id, location_id, lobby, participant):
     return jsonify({'data': character.data_snapshot(), 'object': payload, 'created': created}), 200
 
 
+@lobbies_bp.route('/<int:lobby_id>/locations/<int:location_id>/generators/<int:generator_id>', methods=['GET', 'POST'])
+@jwt_required()
+@requires_participant
+def operate_generator(lobby_id, location_id, generator_id, lobby, participant):
+    from app.services.generators import operate, snapshot
+
+    user_id = participant.user_id
+    if request.method == 'GET':
+        return jsonify(snapshot(lobby_id, location_id, user_id, generator_id, request.args.get('character_id', type=int)))
+    character, obj, station, inventory_changed, result = operate(
+        lobby_id, location_id, user_id, generator_id, request.get_json(silent=True))
+    for changed in (obj, station):
+        if changed is not None:
+            socketio.emit('location_object_updated',
+                {'location_id': location_id, 'object': LocationObjectSchema().dump(changed)}, room=f'location_{location_id}')
+    if inventory_changed:
+        emit_character_update({'character_id': character.id, 'updates': {'data': character.data_snapshot()}, 'source': 'generator'})
+    return jsonify(result)
+
+
 @lobbies_bp.route('/<int:lobby_id>/locations/<int:location_id>/stations', methods=['POST'])
 @jwt_required()
 @requires_participant
@@ -5362,8 +5382,8 @@ def portable_lights(character_id):
                 'blocked_reason':device_block_reason(character.data or {},item,jammed_by=jammed_by),'burned':burned(item),
                 'binding':{'mount':'nvg','on':bool(nvg_on(item))},'uses_left':(item.get('lightPower') or {}).get('uses_left',10),
                 'mount_available':helmet_module_available(character.data,path)})
-        batteries=[{'path':path,'name':item.get('name')} for path,item in walk(character.data or {},True)
-            if 'батаре' in str(item.get('name') or '').casefold() and 'installedModules' not in path]
+        from app.services.power_cells import choices
+        batteries = choices(character.data or {}, flashlight=True)
         return jsonify({'lights':items,'batteries':batteries}),200
     character,actor,result=operate(character_id,user_id,request.get_json() or {})
     if result.get('operation')=='pda_wipe':

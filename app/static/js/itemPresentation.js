@@ -39,6 +39,19 @@ const concepts = {
     psy_delta:'пси', nutrition:'питани', hydration:'вод',
 };
 const subcategories={scope:'Прицел',barrel:'Ствол',handguard:'Цевьё',filter:'Фильтр',nvg:'ПНВ',battery:'Батарея'};
+
+export function itemPowerWarning(item) {
+    if (!item) return '';
+    if (item.electronicsState?.burned) return 'Сгорел';
+    const empty = value => value != null && value !== '' && Number(value) <= 0;
+    if (item.glowState?.activated && empty(item.glowState.remaining_seconds)) return 'Свечение погасло';
+    if (item.attributes?.rechargeable_battery && empty(item.attributes.charge_percent)) return 'Разряжена';
+    if ((item.slotType === 'exoskeleton_battery' || item.attributes?.slot_type === 'exoskeleton_battery')
+        && empty(item.attributes?.remaining_days)) return 'Разряжен';
+    if ([item.lightPower?.uses_left, item.pdaState?.charge_percent, item.deviceState?.remaining_seconds].some(empty)
+        || (['device', 'detector'].includes(item.category) && empty(item.attributes?.power))) return 'Разряжен';
+    return '';
+}
 function normalizedRuleText(description) {
     return description.toLowerCase().replace(/[−–—]/g, '-').replace(/(\d),(\d)/g, '$1.$2')
         .replace(/([+-]?\d+)\s*\/\s*(\d+)/g, (text,a,b) => Number(b) ? String(Number(a)/Number(b)) : text);

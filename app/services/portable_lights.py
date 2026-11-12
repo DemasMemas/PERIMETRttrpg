@@ -11,6 +11,7 @@ from app.services.exceptions import ValidationError, PermissionDenied, ConflictE
 from app.services.held_items import items as held_items
 from app.services.transaction import atomic_operation
 from app.services.action_journal import journaled
+from app.services import power_cells
 
 BEAM_RANGE=20
 BEAM_END_WIDTH=5
@@ -90,6 +91,7 @@ def power(item):
 def preserve(current,incoming):
     from app.services.electronics import preserve as preserve_electronics
     preserve_electronics(current,incoming)
+    power_cells.preserve(current,incoming)
     old=(((current or {}).get('health') or {}).get('combatMeta') or {})
     meta=incoming.setdefault('health',{}).setdefault('combatMeta',{})
     if 'pdaDynamo' in old:meta['pdaDynamo']=deepcopy(old['pdaDynamo'])
@@ -241,8 +243,10 @@ def advance_ground(location_id,seconds):
     for obj in LocationObject.query.filter_by(location_id=location_id).all():
         if not (obj.properties or {}).get('contents'):continue
         props=deepcopy(obj.properties or {})
-        changed=advance({'inventory':{'backpack':props['contents']}},seconds)
+        ground_inventory = {'backpack': props['contents'], 'pockets': []}
+        changed=advance({'inventory': ground_inventory},seconds)
         if changed:
+            props['contents'].extend(ground_inventory['pockets'])
             obj.properties=props;updated.append(obj)
             db.session.flush()
             socketio.emit('location_object_updated',{'location_id':location_id,
@@ -299,6 +303,16 @@ def advance(data,seconds=0,*,battle_end=False):
             if key in binding:state[key]=binding[key]
         if not state['uses_left']:item['active']=False
         changed=changed or before!=item
+    from app.services.electronics import items as electronic_items
+    for _, item in electronic_items(data):
+        if not item.get('rechargeableBattery'):
+            continue
+        state_key, charge_key = {
+            'pda': ('pdaState', 'charge_percent'),
+            'dosimeter': ('deviceState', 'remaining_seconds'),
+        }.get(definition(item), ('lightPower', 'uses_left'))
+        if (item.get(state_key) or {}).get(charge_key) == 0:
+            changed = power_cells.eject(data, item, 0) or changed
     return changed
 
 
@@ -338,6 +352,8 @@ def advance_lobby(lobby,seconds):
     from app.services.item_controllers import advance as advance_controllers,next_due
     from app.services.pda_access import advance as advance_access,next_due as next_access
     from app.services.pda_spam import advance as advance_spam,next_due as next_spam
+    from app.services.generators import advance_lobby as advance_generators
+    advance_generators(lobby, seconds)
     remaining=max(0,seconds);updated={}
     while remaining>0:
         step=min(next_due(lobby.id,remaining),next_access(lobby.id,remaining),next_spam(lobby.id,remaining))
@@ -581,11 +597,13 @@ def operate(character_id,user_id,payload):
             dose_power['on']=not dose_power['on'];cost=1 if actor else 0
         elif operation=='dosimeter_battery':
             battery=CombatService._inventory_item_at_path(data,payload.get('battery_path'))
-            if str(battery.get('name') or '').strip().casefold()!='батарейки':raise ValidationError('Выберите батарейки')
+            if not power_cells.usable(battery):raise ValidationError('Выберите заряженную батарейку')
             if actor:
                 if not CombatService._has_usable_free_hand(actor):raise ValidationError('Для замены батарейки нужна свободная рука')
                 cost=3+int(calculate_inventory_access(data,payload['battery_path'],battery)['retrieval_action_points'])
-            CombatService._take_inventory_item(data,payload['battery_path'],1);dose_power['remaining_seconds']=DOSIMETER_SECONDS
+            charge = power_cells.swap(data, selected, payload['battery_path'],
+                dose_power['remaining_seconds'] * 100 / DOSIMETER_SECONDS)
+            dose_power['remaining_seconds'] = DOSIMETER_SECONDS * charge / 100
         else:raise ValidationError('Выберите действие дозиметра')
         if actor and actor.action_points_current<cost:raise ValidationError('Недостаточно ОД для дозиметра')
         selected['deviceState']=dose_power
@@ -690,14 +708,13 @@ def operate(character_id,user_id,payload):
             if has_profiles(selected):assign_file(selected,moved['id'],active(selected))
         else:
             battery=CombatService._inventory_item_at_path(data,payload.get('battery_path'))
-            if str(battery.get('name') or '').strip().casefold()!='батарейки':
-                raise ValidationError('Выберите батарейки для КПК')
+            if not power_cells.usable(battery):
+                raise ValidationError('Выберите заряженную батарейку для КПК')
             if actor:
                 if not CombatService._has_usable_free_hand(actor):
                     raise ValidationError('Для замены батарейки нужна свободная действующая рука')
                 cost=3+int(calculate_inventory_access(data,payload['battery_path'],battery)['retrieval_action_points'])
-            CombatService._take_inventory_item(data,payload['battery_path'],1)
-            status['charge_percent']=100.0
+            status['charge_percent'] = power_cells.swap(data, selected, payload['battery_path'], status['charge_percent'])
         if actor and actor.action_points_current<cost:
             raise ValidationError('Недостаточно ОД для КПК')
         selected['pdaState']=status
@@ -815,12 +832,15 @@ def operate(character_id,user_id,payload):
             states[:]=[item for item in states if item['id']!=selected['id']]
         else:
             battery=CombatService._inventory_item_at_path(data,payload.get('battery_path'))
-            if 'батаре' not in str(battery.get('name') or '').casefold():raise ValidationError('Выберите батарейку')
+            if not power_cells.usable(battery, flashlight=True):raise ValidationError('Выберите заряженную батарейку')
             if actor:
                 if not CombatService._has_usable_free_hand(actor):raise ValidationError('Для замены батарейки нужна свободная действующая рука')
                 cost+=int(calculate_inventory_access(data,payload['battery_path'],battery)['retrieval_action_points'])
-            CombatService._take_inventory_item(data,payload['battery_path'],1)
-            selected['lightPower']={'uses_left':10,'elapsed_seconds':0}
+            previous = power(selected)
+            charge = power_cells.swap(data, selected, payload['battery_path'],
+                max(0, (previous['uses_left'] * 600 - previous['elapsed_seconds']) / 60), flashlight=True)
+            uses = math.ceil(charge / 10)
+            selected['lightPower'] = {'uses_left': uses, 'elapsed_seconds': min(599.999, max(0, uses * 600 - charge * 60))}
     elif operation!='ignite':raise ValidationError('Неизвестное действие фонаря')
     if actor and actor.action_points_current<cost:raise ValidationError('Недостаточно ОД для фонаря')
     if nvg:

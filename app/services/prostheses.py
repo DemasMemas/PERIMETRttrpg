@@ -8,6 +8,7 @@ from sqlalchemy.orm.attributes import flag_modified
 
 from app.extensions import db
 from app.models import LobbyCharacter, LocationCharacter, LocationCombatState, DeferredCombatAction
+from app.services import power_cells
 from app.services.exceptions import ValidationError, ConflictError, NotFoundError
 from app.services.transaction import atomic_operation
 from app.services.prosthesis_catalog import PROFILES
@@ -182,6 +183,53 @@ def apply(data,details):
     return details
 
 
+def _return_cells(data, prosthesis):
+    cells = prosthesis.pop('rechargeableCells', [])
+    if cells:
+        data.setdefault('inventory', {}).setdefault('pockets', []).extend(cells)
+
+
+def _set_energy(data, prosthesis, remaining):
+    previous = prosthesis.get('energy_seconds', 0)
+    prosthesis['energy_seconds'] = remaining
+    for cell in prosthesis.get('rechargeableCells', []):
+        charge = power_cells.percentage(cell) * remaining / previous if previous else 0
+        power_cells.set_percentage(cell, charge)
+    if remaining == 0:
+        _return_cells(data, prosthesis)
+
+
+def _install_cells(data, prosthesis, paths, required):
+    from app.services.magazine import inventory_slot
+    from app.services.portable_lights import walk
+
+    if not isinstance(paths, list) or len(paths) != required:
+        raise ValidationError(f'Для протеза нужно выбрать аккумуляторы в количестве {required} шт.')
+    available = {tuple(path): item for path, item in walk(data, True)
+        if path[0] in {'inventory', 'equipment'} and 'installedModules' not in path and type(path[-1]) is int
+        and power_cells.kind(item) == 'rechargeable' and power_cells.usable(item)}
+    slots = []
+    chosen = set()
+    for path in paths:
+        if not isinstance(path, list) or any(type(part) not in (str, int) for part in path):
+            raise ValidationError('Выберите аккумуляторы из инвентаря')
+        address = tuple(path)
+        if address not in available or address in chosen:
+            raise ValidationError('Выберите разные заряженные аккумуляторы из инвентаря')
+        chosen.add(address)
+        parent, index = inventory_slot(data, path)
+        slots.append((parent, index, parent[index]))
+    _return_cells(data, prosthesis)
+    for parent, index, _ in sorted(slots, key=lambda slot: slot[1], reverse=True):
+        parent.pop(index)
+    cells = [cell for _, _, cell in slots]
+    for cell in cells:
+        if not cell.get('id'):
+            cell['id'] = uuid4().hex
+    prosthesis['rechargeableCells'] = cells
+    prosthesis['energy_seconds'] = 86400 * sum(power_cells.percentage(cell) for cell in cells) / (required * 100)
+
+
 def advance(data,seconds):
     seconds=float(seconds or 0)
     if not math.isfinite(seconds) or seconds<=0:return False
@@ -191,7 +239,8 @@ def advance(data,seconds):
             rule=profile(item)
             if not rule:continue
             if item.get('energy_seconds',0)>0:
-                item['energy_seconds']=max(0,item['energy_seconds']-seconds);changed=True
+                _set_energy(data, item, max(0, item['energy_seconds'] - seconds))
+                changed=True
             if rule['lubrication_days'] and not item.get('broken'):
                 period=rule['lubrication_days']*86400
                 remaining=item.get('lubrication_remaining',0)
@@ -217,7 +266,8 @@ def discharge(data):
         for item in parts.values():
             rule=profile(item)
             if rule and not rule['shielded'] and (rule['batteries'] or rule['artifact_class']):
-                item['energy_seconds']=0;changed=True
+                _set_energy(data, item, 0)
+                changed=True
     if changed:sync_weapons(data)
     return changed
 
@@ -247,7 +297,7 @@ def advance_lobby(lobby,seconds):
 def operate(character_id,user_id,payload):
     from app.services.character import CharacterService
     from app.services.combat import CombatService
-    if not isinstance(payload,dict) or set(payload)-{'operation','zone','slot','path','character_revision',
+    if not isinstance(payload,dict) or set(payload)-{'operation','zone','slot','path','battery_paths','character_revision',
             'target_character_id','target_revision','interaction_request_id','operation_id'}:
         raise ValidationError('Некорректные параметры протеза')
     if 'target_character_id' in payload and type(payload['target_character_id']) is not int:
@@ -274,8 +324,10 @@ def operate(character_id,user_id,payload):
         parts=installed(data).get(zone) or {};item=parts.get(payload.get('slot'));rule=profile(item)
         if not rule:raise ValidationError('Протез не установлен')
         if item.get('broken') or item.get('durability',rule['durability'])<=0:raise ValidationError('Сломанный протез не подлежит восстановлению')
-        source=CombatService._inventory_item_at_path(data,payload.get('path'))
-        if operation=='lubricate':
+        if operation == 'power' and rule['batteries'] and 'battery_paths' in payload:
+            _install_cells(data, item, payload['battery_paths'], rule['batteries'])
+        elif operation=='lubricate':
+            source=CombatService._inventory_item_at_path(data,payload.get('path'))
             from app.services.weapon_grip import functional_arms
             if functional_arms(data)<1:raise ValidationError('Для смазки нужна действующая рука')
             if not rule['lubrication_days']:raise ValidationError('Этому протезу смазка не требуется')
@@ -283,16 +335,21 @@ def operate(character_id,user_id,payload):
             if str(source.get('name') or '').casefold()!='набор смазочных приспособлений':raise ValidationError('Нужен набор смазочных приспособлений')
             CombatService._take_inventory_item(data,payload['path'],1);item['lubrication_remaining']=300
         else:
+            source=CombatService._inventory_item_at_path(data,payload.get('path'))
             if rule['batteries']:
-                if 'батаре' not in str(source.get('name') or '').casefold():raise ValidationError('Нужны батарейки')
                 quantity=rule['batteries'];duration=86400
+                if (power_cells.kind(source) or not power_cells.usable(source, flashlight=True)
+                        or CombatService._coerce_int(source.get('quantity'), 1) < quantity):
+                    raise ValidationError(f'Нужны одноразовые батарейки в количестве {quantity} шт. или комплект аккумуляторов')
             elif rule['artifact_class']:
                 attrs=source.get('attributes') or {}
                 if source.get('category')!='artifact' or CombatService._coerce_int(attrs.get('class',attrs.get('artifact_class')),0)!=rule['artifact_class']:
                     raise ValidationError('Нужен артефакт соответствующего класса')
                 quantity=1;duration=604800
             else:raise ValidationError('Этот протез не требует питания')
-            CombatService._take_inventory_item(data,payload['path'],quantity);item['energy_seconds']=duration
+            CombatService._take_inventory_item(data,payload['path'],quantity)
+            _return_cells(data, item)
+            item['energy_seconds']=duration
     else:raise ValidationError('Неизвестное действие протеза')
     sync_weapons(data)
     character.data=data;flag_modified(character,'data');return character

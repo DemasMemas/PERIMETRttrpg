@@ -48,9 +48,10 @@ export async function renderPortableLights(container,characterId,data,operate,is
             if(!light.burned&&result.batteries.length){
                 const choices=document.createElement('select');choices.className='form-control';
                 choices.setAttribute('aria-label','Батарейки для КПК');
-                result.batteries.filter(battery=>battery.name==='Батарейки').forEach(battery=>{
+                result.batteries.filter(battery=>battery.standard_fit ?? battery.name==='Батарейки').forEach(battery=>{
                     const option=document.createElement('option');option.value=JSON.stringify(battery.path);
-                    option.textContent=battery.name;choices.append(option);
+                    option.textContent=battery.charge == null ? battery.name : `${battery.name} · ${battery.charge.toFixed(1)}%`;
+                    choices.append(option);
                 });
                 if(choices.options.length){
                     const replace=button(`Заменить батарейку${active?' · 3 ОД + достать':''}`,'pda_battery');
@@ -88,7 +89,8 @@ export async function renderPortableLights(container,characterId,data,operate,is
         }
         if (!light.burned && result.batteries.length && light.kind!=='glow') {
             const choices=document.createElement('select');choices.className='form-control';choices.setAttribute('aria-label','Батарейка для фонаря');
-            result.batteries.forEach((battery,index)=>{const option=document.createElement('option');option.value=JSON.stringify(battery.path);option.textContent=battery.name;choices.append(option)});
+            result.batteries.forEach(battery=>{const option=document.createElement('option');option.value=JSON.stringify(battery.path);
+                option.textContent=battery.charge == null ? battery.name : `${battery.name} · ${battery.charge.toFixed(1)}%`;choices.append(option)});
             rememberEquipmentChoice(choices,`${characterId}:light-battery:${row.dataset.lightId}`);
             const replace=document.createElement('button');replace.type='button';replace.className='btn btn-sm btn-secondary';replace.textContent=`Заменить батарейку${active?' · 1 ОД + достать':''}`;replace.disabled=!ownTurn;
             replace.onclick=()=>operate({operation:'battery',path:light.path,source_id:light.id??null,battery_path:JSON.parse(choices.value)});optionRow(choices,replace);

@@ -778,7 +778,11 @@ class GeneralConsumableService:
         # Spend the selected item first: a prerequisite can live earlier in the
         # same list and removing it would otherwise invalidate the saved index.
         if not direct.get("not_consumed"):
+            before_quantity = item.get('quantity', 1)
             _consume_uses(parent, index, 1, template,actor_data=data)
+            if index >= len(parent) or parent[index] is not item or item.get('quantity', 1) < before_quantity:
+                from app.services.liquid_containers import return_empty_bottle
+                return_empty_bottle(data, (template.attributes or {}).get('catalog_name') or template.name)
         requirements = _consume_requirements(data, direct, health, character.lobby_id)
         intoxication_before=_number(health.get('intoxication'))
         if not _apply_profile(health, profile, direct, item, in_combat=state is not None,character_data=data):

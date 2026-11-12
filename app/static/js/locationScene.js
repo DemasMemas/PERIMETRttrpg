@@ -11249,6 +11249,18 @@ function showObjectContextMenu(clientX, clientY, object) {
             'system'
         )
     }];
+    if ((object.type === 'household_generator' || object.properties?.visual_asset === 'household_generator')
+        && combatState?.status !== 'active') {
+        const position = getObjectGridPosition(object);
+        const characters = getControlledLocationCharacters().filter(entry =>
+            (entry.floorLevel || 0) === structureLevel(object)
+            && Math.hypot(entry.posX - position.x - (Number(object.properties?.offset_x) || 0),
+                entry.posY - position.y - (Number(object.properties?.offset_z) || 0)) <= 1.5);
+        if (characters.length) actions.push({label: 'Генератор', action: async () => {
+            const {showGenerator} = await import('./generatorPanel.js');
+            await showGenerator({lobbyId: window.currentLobbyId, locationId: currentLocationId, object, characters});
+        }});
+    }
     if(object.properties?.portable_station && combatState?.status!=='active') {
         const actor=getCurrentInteractionActor();const characterId=actor?.model?.userData?.characterId;
         if(characterId&&canControlCharacter(characterId)) {

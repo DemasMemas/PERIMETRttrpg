@@ -630,6 +630,11 @@ export function openPdaShell({ item, findItem, getData, operate, canEdit, charac
                 status.textContent = pdaQuote.missing?.length ? pdaQuote.missing.join('; ')
                     : `СЛ ${pdaQuote.difficulty}; время 1 час. При неудаче материалы могут быть потеряны.`;
                 content.append(status);
+                if (pdaQuote.generator_difficulty_bonus) {
+                    const power = document.createElement('p');
+                    power.textContent = `Питание от генератора · −${pdaQuote.generator_difficulty_bonus} к СЛ`;
+                    content.append(power);
+                }
                 if (!pdaQuote.missing?.length) {
                     const install = document.createElement('button');
                     install.type = 'button'; install.className = 'btn btn-primary'; install.textContent = 'Начать установку';
