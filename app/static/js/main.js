@@ -1009,7 +1009,7 @@ window.enterLocation = async function(locationId, { scoutView = null } = {}) {
                     if(levels.length&&!levels.includes(activeLevel))activeLevel=levels.includes(0)?0:levels[0];
                     for (const select of buildingSelectors) {
                         select.replaceChildren(...ids.map((id, index) => new Option(`Здание ${index + 1}`, id)));
-                        if (!activeBuildingId) select.add(new Option('Старая постройка (без ID)', ''));
+                        if (!activeBuildingId) select.add(new Option('Без привязки', ''));
                         else if (!ids.includes(activeBuildingId)) select.add(new Option('Выберите построенный дом', activeBuildingId));
                         select.value = activeBuildingId;
                     }
@@ -1089,6 +1089,7 @@ window.enterLocation = async function(locationId, { scoutView = null } = {}) {
                         setActiveBuilding(selection.buildingId, selection.level);
                     }
                     const keepPreciseOpen = assetInspector.querySelector('.location-asset-precise')?.open || false;
+                    const keepBuildingAttachmentOpen = assetInspector.querySelector('[data-building-attachment]')?.open || false;
                     const keepRoofOpen=assetInspector.querySelector('[data-roof-section-fields]')?.open||false;
                     const keepCoverOpen=assetInspector.querySelector('[data-selected-cover-fields]')?.open||false;
                     const keepLockOpen=assetInspector.querySelector('[data-selected-lock-fields]')?.open||false;
@@ -1127,10 +1128,6 @@ window.enterLocation = async function(locationId, { scoutView = null } = {}) {
                             <button type="button" data-fit-floor hidden>Растянуть по форме здания</button>
                             <button type="button" data-generate-roof hidden>Создать / заменить крышу здания</button>
                             <span data-fit-floor-reason hidden></span>
-                            <details><summary>Принадлежность вручную</summary>
-                                <label>ID здания <input class="form-control" type="text" maxlength="64" data-selected-building-id></label>
-                                <label>Этаж <input class="form-control" type="number" step="1" data-selected-level></label>
-                            </details>
                         </div>
                         <label data-selected-roof-type-field style="display:none;">Крыша <select class="form-control" data-selected-roof-type><option value="gable">Двускатная</option><option value="flat">Плоская</option><option value="none">Без автоматической крыши</option></select></label>
                         <details data-roof-section-fields hidden><summary>Параметры секции крыши</summary>
@@ -1163,7 +1160,9 @@ window.enterLocation = async function(locationId, { scoutView = null } = {}) {
                                 <label>Лицевая сторона <textarea class="form-control" data-sign-field="front" rows="3" maxlength="280"></textarea></label>
                                 <label>Обратная сторона <textarea class="form-control" data-sign-field="back" rows="3" maxlength="280"></textarea></label>
                                 <label>Цвет фона <input class="form-control" type="color" data-sign-field="color"></label>
+                                <label>Цвет текста <input class="form-control" type="color" data-sign-field="textColor"></label>
                             </div>
+                            <div><label><input type="checkbox" data-sign-field="autoTextColor"> Автоматический цвет текста</label></div>
                             <button type="button" class="btn btn-secondary" data-sign-save>Сохранить табличку</button>
                         </div>
                         <details class="location-cover-settings" data-selected-lock-fields hidden>
@@ -1199,6 +1198,13 @@ window.enterLocation = async function(locationId, { scoutView = null } = {}) {
                                 <label>Цвет <input class="form-control" type="color" data-asset-field="color"></label>
                             </div>
                             <button type="button" class="btn btn-secondary" data-asset-save>Сохранить параметры</button>
+                        </details>
+                        <details class="location-cover-settings" data-building-attachment hidden>
+                            <summary>Привязка к зданию</summary>
+                            <div class="location-cover-fields">
+                                <label>ID здания <input class="form-control" type="text" maxlength="64" data-selected-building-id></label>
+                                <label>Этаж <input class="form-control" type="number" step="1" data-selected-level></label>
+                            </div>
                         </details>
                     `;
                     assetInspector.querySelector('[data-asset-name]').textContent = selection.label;
@@ -1258,13 +1264,19 @@ window.enterLocation = async function(locationId, { scoutView = null } = {}) {
                     if (!signFields.hidden) {
                         const inputs = [...signFields.querySelectorAll('[data-sign-field]')];
                         for (const input of inputs) {
-                            input.value = selection.signText[input.dataset.signField];
+                            const value = selection.signText[input.dataset.signField];
+                            if (input.type === 'checkbox') input.checked = value;
+                            else input.value = value;
                             input.dataset.signSelection = selection.selectionKey;
                         }
+                        const autoTextColor = signFields.querySelector('[data-sign-field="autoTextColor"]');
+                        signFields.querySelector('[data-sign-field="textColor"]').oninput = () => { autoTextColor.checked = false; };
                         signFields.querySelector('[data-sign-save]').onclick = async event => {
                             const button = event.currentTarget;
                             button.disabled = true;
-                            const values = Object.fromEntries(inputs.map(input => [input.dataset.signField, input.value]));
+                            const values = Object.fromEntries(inputs.map(input => [
+                                input.dataset.signField, input.type === 'checkbox' ? input.checked : input.value,
+                            ]));
                             try { await setSelectedLocationSignText(values); }
                             finally { if (button.isConnected) button.disabled = false; }
                         };
@@ -1305,13 +1317,17 @@ window.enterLocation = async function(locationId, { scoutView = null } = {}) {
                     if(selection.roofWall)assetInspector.querySelector('[data-selected-dimension="height"]').parentElement.firstChild.textContent='Основная высота стены, м ';
                     const buildingIdInput = assetInspector.querySelector('[data-selected-building-id]');
                     const levelInput = assetInspector.querySelector('[data-selected-level]');
-                    assetInspector.querySelector('[data-selected-building-fields]').style.display = selection.kind === 'structure' && selection.selectedCount === 1 ? '' : 'none';
+                    const buildingAttachment = assetInspector.querySelector('[data-building-attachment]');
+                    buildingAttachment.hidden = selection.kind !== 'structure' || selection.selectedCount !== 1;
+                    buildingAttachment.open = keepBuildingAttachmentOpen;
+                    assetInspector.querySelector('[data-selected-building-fields]').style.display = buildingAttachment.hidden ? 'none' : '';
                     if (selection.kind === 'structure') {
                         buildingIdInput.value = selection.buildingId || '';
                         levelInput.value = String(selection.level);
                         const buildingNumber = getLocationBuildingIds().indexOf(selection.buildingId) + 1;
-                        assetInspector.querySelector('[data-selected-building-label]').textContent = buildingNumber
-                            ? `Здание ${buildingNumber} · этаж ${selection.level}` : 'Старая постройка · без ID';
+                        const buildingLabel = assetInspector.querySelector('[data-selected-building-label]');
+                        buildingLabel.hidden = !buildingNumber;
+                        buildingLabel.textContent = buildingNumber ? `Здание ${buildingNumber} · этаж ${selection.level}` : '';
                     }
                     const addFloorButton = assetInspector.querySelector('[data-add-floor]');
                     const roofGenerateButton=assetInspector.querySelector('[data-generate-roof]');

@@ -11760,7 +11760,7 @@ function createLocationObjectMesh(obj, forPreview = false, relatedObjects = curr
         group.add(effect);
     } else if (asset?.id === 'information_sign') {
         group.add(createInformationSign(width, depth, height, properties.color || asset.color,
-            properties.sign_text, properties.sign_back_text));
+            properties.sign_text, properties.sign_back_text, properties.sign_text_color));
     } else if (obj.type==='poster') {
         const poster=createPosterMesh(properties.color);
         applyDecorSize(poster,{dimensions:{width,depth,height}},'poster');
@@ -13507,22 +13507,27 @@ async function restoreGeneratedLocationFloorImpl(buildingId, level = 0) {
     }
 }
 
-function createInformationSignTexture(color, text) {
+function informationSignLightBackground(color) {
+    const rgb = new THREE.Color(color).getHex();
+    const [red, green, blue] = [rgb >> 16, rgb >> 8 & 255, rgb & 255].map(channel => {
+        const srgb = channel / 255;
+        return srgb <= 0.04045 ? srgb / 12.92 : ((srgb + 0.055) / 1.055) ** 2.4;
+    });
+    return red * 0.2126 + green * 0.7152 + blue * 0.0722 >= 0.18;
+}
+
+function createInformationSignTexture(color, text, textColor) {
     const canvas = document.createElement('canvas');
     canvas.width = 1024;
     canvas.height = 512;
     const ctx = canvas.getContext('2d');
     ctx.fillStyle = color;
     ctx.fillRect(0, 0, canvas.width, canvas.height);
-    const [red, green, blue] = [...ctx.getImageData(0, 0, 1, 1).data].slice(0, 3).map(channel => {
-        const srgb = channel / 255;
-        return srgb <= 0.04045 ? srgb / 12.92 : ((srgb + 0.055) / 1.055) ** 2.4;
-    });
-    const lightBackground = red * 0.2126 + green * 0.7152 + blue * 0.0722 >= 0.18;
+    const lightBackground = informationSignLightBackground(color);
     ctx.strokeStyle = lightBackground ? '#63513c' : '#d6c6a3';
     ctx.lineWidth = 6;
     ctx.strokeRect(12, 12, 1000, 488);
-    ctx.fillStyle = lightBackground ? '#242017' : '#fff8e8';
+    ctx.fillStyle = textColor || (lightBackground ? '#242017' : '#fff8e8');
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     let lines;
@@ -13552,7 +13557,7 @@ function createInformationSignTexture(color, text) {
     return texture;
 }
 
-function createInformationSign(width, depth, height, color, frontText = '', backText = frontText) {
+function createInformationSign(width, depth, height, color, frontText = '', backText = frontText, textColor = null) {
     const sign = new THREE.Group();
     const boardHeight = height * 0.61;
     const wood = new THREE.MeshStandardMaterial({ color: '#514338', roughness: 0.95 });
@@ -13567,9 +13572,9 @@ function createInformationSign(width, depth, height, color, frontText = '', back
         sign.add(post);
     }
 
-    const frontTexture = createInformationSignTexture(color, frontText);
+    const frontTexture = createInformationSignTexture(color, frontText, textColor);
     const backTexture = backText == null || backText === frontText
-        ? frontTexture : createInformationSignTexture(color, backText);
+        ? frontTexture : createInformationSignTexture(color, backText, textColor);
     for (const side of [1, -1]) {
         const texture = side > 0 ? frontTexture : backTexture;
         const panel = new THREE.Mesh(new THREE.PlaneGeometry(width * 0.98, boardHeight * 0.96),
@@ -14892,6 +14897,8 @@ function getPrimaryLocationEditorAsset() {
     const source = getSelectedEditorSource();
     if (!source) return null;
     const kind = editorSelection.kind;
+    const signColor = source.properties?.visual_asset === 'information_sign'
+        ? source.properties.color || findLocationAsset('information_sign').color : null;
     if (kind === 'structure') return {
         kind, label: source.properties?.roof_section ? `Корпус ${source.properties.roof_section.owner+1} · ${{flat:'Плоская кровля',shed:'Односкатная кровля',gable:'Двускатная кровля'}[source.properties.roof_section.bodies[source.properties.roof_section.owner]?.type]||'Кровля'}`
             : locationObjectLabel(source),
@@ -14903,10 +14910,12 @@ function getPrimaryLocationEditorAsset() {
         buildingId: structureBuildingId(source) || '',
         level: structureLevel(source),
         structureType: source.type,
-        signText: source.properties?.visual_asset === 'information_sign' ? {
+        signText: signColor ? {
             front: source.properties.sign_text || '',
             back: source.properties.sign_back_text ?? source.properties.sign_text ?? '',
-            color: `#${new THREE.Color(source.properties.color || findLocationAsset('information_sign').color).getHexString()}`,
+            color: `#${new THREE.Color(signColor).getHexString()}`,
+            textColor: source.properties.sign_text_color || (informationSignLightBackground(signColor) ? '#242017' : '#fff8e8'),
+            autoTextColor: !source.properties.sign_text_color,
         } : null,
         roofSection: source.properties?.roof_section ? {
             ...source.properties.roof_section.bodies[source.properties.roof_section.owner],
@@ -16004,16 +16013,18 @@ export async function toggleSelectedLocationFire(...args) {
     return runLocationObjectCommand(() => toggleSelectedLocationFireImpl(...args));
 }
 
-export async function setSelectedLocationSignText({ front, back, color }) {
+export async function setSelectedLocationSignText({ front, back, color, textColor, autoTextColor }) {
     return runLocationObjectCommand(async () => {
         if (!window.isGM || editorSelections.length !== 1 || editorSelection?.kind !== 'structure') return false;
         const source = getSelectedEditorSource();
         if (source?.properties?.visual_asset !== 'information_sign' || !/^#[0-9a-f]{6}$/i.test(color)) return false;
+        if (!autoTextColor && !/^#[0-9a-f]{6}$/i.test(textColor)) return false;
         try {
             const object = await editorUpdateObject(window.currentLobbyId, source.id, {
                 properties: {
                     sign_text: front.trim().slice(0, 280),
                     sign_back_text: back.trim().slice(0, 280),
+                    sign_text_color: autoTextColor ? null : textColor,
                     color,
                     material_color_exact: true,
                 },
