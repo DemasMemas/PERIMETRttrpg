@@ -34,3 +34,49 @@ test('изменение протеза и фонаря перерисовыва
         assert.equal(equipment,1,changed);
     }
 });
+
+test('изменение профиля артефакта обновляет навыки и переносимый вес без переоткрытия',async()=>{
+    let skills=0,inventory=0;
+    const context=vm.createContext({currentCharacterId:1,currentCharacterData:{_revision:1},
+        normalizeCharacterEffects(){},diffCharacterData:()=>({scalarPaths:[],structuralPaths:[]}),
+        captureSheetViewState:()=>null,patchRemoteScalarFields:()=>new Set(),
+        pathTouches:(p,r)=>p===r||p.startsWith(r+'.'),backgroundIs:()=>false,
+        refreshHealthPanel(){},renderBasicTab(){},renderEquipmentTab(){},renderSettingsTab(){},renderNotesTab(){},
+        renderSkillsTab(){skills++;},recalculateInventoryTotals(){inventory++;},
+        renderInventoryTab(){assert.fail('Содержимое инвентаря не изменилось');},
+        applySheetEditPermissions(){},restoreSheetViewState(){}});
+    vm.runInContext(artifactBonusSource+source.slice(start,end),context);
+    await context.applyRemoteSheetData({_revision:2,_artifact_profile:{skill_physical:3}},1);
+    assert.equal(skills,1);
+    assert.equal(inventory,1);
+});
+
+test('перемещение между карманами и рюкзаком обновляет только эти списки',async()=>{
+    const paths=[];
+    const context=vm.createContext({currentCharacterId:1,currentCharacterData:{_revision:1},
+        normalizeCharacterEffects(){},diffCharacterData:()=>({scalarPaths:[],
+            structuralPaths:['inventory.pockets','inventory.backpack']}),
+        captureSheetViewState:()=>null,patchRemoteScalarFields:()=>new Set(),
+        pathTouches:(p,r)=>p===r||p.startsWith(r+'.'),backgroundIs:()=>false,
+        refreshHealthPanel(){},renderEquipmentTab(){},renderSettingsTab(){},renderNotesTab(){},
+        renderInventoryTab(){assert.fail('Весь инвентарь не должен обновляться');},
+        rerenderContainer(path){paths.push(path.join('.'));},recalculateInventoryTotals(){},
+        applySheetEditPermissions(){},restoreSheetViewState(){}});
+    vm.runInContext(artifactBonusSource+source.slice(start,end),context);
+    await context.applyRemoteSheetData({_revision:2},1);
+    assert.deepEqual(paths,['inventory.pockets','inventory.backpack']);
+});
+
+test('удалённая смена внешности обновляет действующий предпросмотр',async()=>{
+    let preview=0;
+    const context=vm.createContext({currentCharacterId:1,currentCharacterData:{_revision:1},
+        normalizeCharacterEffects(){},diffCharacterData:()=>({scalarPaths:['appearance.top'],structuralPaths:[]}),
+        captureSheetViewState:()=>null,patchRemoteScalarFields:()=>new Set(),
+        pathTouches:(p,r)=>p===r||p.startsWith(r+'.'),backgroundIs:()=>false,
+        refreshHealthPanel(){},renderBasicTab(){},renderSkillsTab(){},renderInventoryTab(){},renderSettingsTab(){},renderNotesTab(){},
+        renderEquipmentTab(){assert.fail('Пересборка экипировки не нужна');},
+        syncEquipmentAppearancePanel(){preview++;},applySheetEditPermissions(){},restoreSheetViewState(){}});
+    vm.runInContext(artifactBonusSource+source.slice(start,end),context);
+    await context.applyRemoteSheetData({_revision:2,appearance:{top:'gorka'}},1);
+    assert.equal(preview,1);
+});

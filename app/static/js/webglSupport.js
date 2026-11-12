@@ -28,7 +28,7 @@ export function createCompatibleWebGLRenderer(THREE, options = {}) {
                 preserveDrawingBuffer: false,
             });
             if (!context) continue;
-            return new THREE.WebGLRenderer({
+            const renderer = new THREE.WebGLRenderer({
                 ...options,
                 canvas,
                 context,
@@ -39,6 +39,9 @@ export function createCompatibleWebGLRenderer(THREE, options = {}) {
                 failIfMajorPerformanceCaveat: false,
                 powerPreference: 'default',
             });
+            renderer.outputColorSpace = THREE.LinearSRGBColorSpace;
+            renderer.useLegacyLights = true;
+            return renderer;
         } catch (error) {
             releaseContext(context);
         }

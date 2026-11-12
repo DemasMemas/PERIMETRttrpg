@@ -45,7 +45,7 @@ def handle_connect():
     timer.start()
 
 @socketio.on('disconnect')
-def handle_disconnect():
+def handle_disconnect(reason=None):
     from .map_tools import clear_measurement
     clear_measurement(request.sid)
     from app.services.character_events import forget_subscription
@@ -69,7 +69,7 @@ def handle_disconnect():
                 'username': username,
             }, room=f"lobby_{lobby_id}")
             logger.info(f"User {user_id} left lobby {lobby_id}")
-    logger.info('Client disconnected')
+    logger.info('Client disconnected (reason=%s)', reason or 'unknown')
 
 @socketio.on('authenticate')
 def handle_authenticate(data):

@@ -19,16 +19,36 @@ def digging_tool(item):
             and type(item.get('quantity', 1)) is int and item.get('quantity', 1) > 0)
 
 
-def masking_record(user_id, difficulty, owner_id, controlled_by=None):
+def ground_digging_tool(item):
+    return digging_tool(item) and str(item.get('name', '')).strip().casefold().replace('ё', 'е') in {
+        'лопата', 'лопатка саперная',
+    }
+
+
+def masking_record(user_id, difficulty, owner_id, character_id, controlled_by=None):
     users = {user_id, owner_id, controlled_by} - {None}
-    return {'dc':difficulty, 'known_users':sorted(users)}
+    return {'dc': difficulty, 'known_users': sorted(users), 'known_characters': [character_id]}
 
 
-def compartment_visible(obj, user_id):
+def knows(mask, user_id, character_id=None):
+    if character_id is not None and 'known_characters' in mask:
+        return character_id in mask['known_characters']
+    return user_id in mask['known_users']
+
+
+def learn(mask, user_id, character_id, owner_id, controlled_by=None):
+    users = {*mask['known_users'], user_id, owner_id, controlled_by} - {None}
+    updated = {**mask, 'known_users': sorted(users)}
+    if 'known_characters' in mask:
+        updated['known_characters'] = sorted({*mask['known_characters'], character_id})
+    return updated
+
+
+def compartment_visible(obj, user_id, character_id=None):
     props = obj.properties or {}
     compartment = props.get('stash_compartment')
-    return bool(compartment and (user_id == obj.location.lobby.gm_id
-                or not props.get('gm_hidden') and user_id in compartment['known_users']))
+    return bool(compartment and (character_id is None and user_id == obj.location.lobby.gm_id
+                or not props.get('gm_hidden') and knows(compartment, user_id, character_id)))
 
 
 def buried(obj):
@@ -50,11 +70,11 @@ def require_ground(actor, x, y):
         raise ValidationError('Здесь настелен пол. Для тайника нужен открытый грунт')
 
 
-def visible(obj, user_id):
+def visible(obj, user_id, character_id=None):
     props = obj.properties or {}
     mask = props.get('stash_mask')
-    return (not mask or user_id == obj.location.lobby.gm_id
-            or not props.get('gm_hidden') and user_id in mask['known_users'])
+    return (not mask or character_id is None and user_id == obj.location.lobby.gm_id
+            or not props.get('gm_hidden') and knows(mask, user_id, character_id))
 
 
 def prepare(actor, payload, user_id):
@@ -62,7 +82,7 @@ def prepare(actor, payload, user_id):
     if type(identity) is not int:
         raise ValidationError('Выберите контейнер для маскировки')
     obj = LocationObject.query.filter_by(id=identity, location_id=actor.location_id).with_for_update().first()
-    if not obj or not visible(obj, user_id):
+    if not obj or not visible(obj, user_id, actor.character_id):
         raise NotFoundError('Контейнер недоступен')
     if (obj.properties or {}).get('gm_hidden') and user_id != actor.location.lobby.gm_id:
         raise NotFoundError('Контейнер недоступен')
@@ -75,7 +95,7 @@ def prepare(actor, payload, user_id):
             raise ValidationError('Этот ящик не закопан')
         return obj, 'dig_up'
     if obj.type in HOST_TYPES:
-        if (obj.properties or {}).get('stash_compartment') and not compartment_visible(obj,user_id):
+        if (obj.properties or {}).get('stash_compartment') and not compartment_visible(obj, user_id, actor.character_id):
             raise ValidationError('Не удалось устроить тайник в этом месте')
         return obj, 'compartment'
     if obj.type not in CONTAINER_TYPES or buried(obj):
@@ -86,7 +106,7 @@ def prepare(actor, payload, user_id):
 
 def conceal(obj, actor, user_id, difficulty, mode):
     props = {**(obj.properties or {})}
-    mask = masking_record(user_id, difficulty, actor.character.owner_id, actor.controlled_by)
+    mask = masking_record(user_id, difficulty, actor.character.owner_id, actor.character_id, actor.controlled_by)
     if mode == 'compartment':
         contents = (props.get('stash_compartment') or {}).get('contents', [])
         props['stash_compartment'] = {**mask, 'contents':contents}
@@ -116,32 +136,45 @@ def excavate(obj):
     obj.properties = {**props, **previous}
 
 
-def discover(actor, user_id, x, y, check):
+def discover(actor, user_id, x, y, check, *, level=None, object_id=None):
     if check['roll'] == 1:
         return []
     found = []
-    objects = LocationObject.query.filter_by(location_id=actor.location_id, tile_x=x, tile_y=y).all()
+    level = (actor.floor_level or 0) if level is None else level
+    query = LocationObject.query.filter_by(location_id=actor.location_id)
+    objects = (query.filter_by(id=object_id) if object_id is not None
+               else query.filter_by(tile_x=x, tile_y=y)).order_by(LocationObject.id).populate_existing().with_for_update().all()
     for obj in objects:
         props = obj.properties or {}
-        if props.get('gm_hidden') or level_of(obj) != (actor.floor_level or 0):
+        if props.get('gm_hidden') or level_of(obj) != level:
             continue
         updates = {}
+        matched = False
         for key in ('stash_mask', 'stash_compartment'):
             mask = props.get(key)
-            if mask and user_id not in mask['known_users'] and (check['roll'] == 20 or check['total'] >= mask['dc']):
-                updates[key] = {**mask, 'known_users':[*mask['known_users'], user_id]}
+            if mask and (check['roll'] == 20 or check['total'] >= mask['dc']):
+                matched = True
+                if not knows(mask, user_id, actor.character_id):
+                    updates[key] = learn(mask, user_id, actor.character_id, actor.character.owner_id, actor.controlled_by)
         if updates:
             obj.properties = {**props, **updates}
+        if matched:
             found.append(obj.id)
     return found
 
 
-def project(obj, user_id, *, reveal_locked=False):
+def project(obj, user_id, *, reveal_locked=False, character_id=None):
     from app.schemas.location import LocationObjectSchema
 
     snapshot = LocationObjectSchema(reveal_locked=reveal_locked, reveal_stashes=True).dump(obj)
-    if not reveal_locked and compartment_visible(obj, user_id):
-        snapshot['properties']['stash_contents'] = obj.properties['stash_compartment']['contents']
+    props = obj.properties or {}
+    mask = props.get('stash_mask')
+    if compartment_visible(obj, user_id, character_id):
+        mask = props['stash_compartment']
+        if not reveal_locked:
+            snapshot['properties']['stash_contents'] = mask['contents']
+    if mask and 'known_characters' in mask:
+        snapshot['properties']['stash_character_ids'] = mask['known_characters']
     return snapshot
 
 

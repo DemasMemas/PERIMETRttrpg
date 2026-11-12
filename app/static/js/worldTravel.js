@@ -9,6 +9,17 @@ import {
     setWorldTravelTileClickCallback,
 } from './lobby3d.js';
 import { showNotification } from './utils.js';
+import {
+    applyCharacterAppearanceModel,
+    HUMAN_APPEARANCE_ASSET,
+    HUMAN_APPEARANCE_DIMENSIONS,
+    normalizeCharacterAppearance,
+} from './characterAppearance.js';
+import {
+    isSharedLocationModelGeometry,
+    mountLocationModel,
+    releaseLocationModel,
+} from './locationModelAssets.js';
 
 const CHUNK_SIZE = 32;
 const models = new Map();
@@ -74,18 +85,25 @@ function createGroupModel(group) {
     ring.position.y = 0.04;
     root.add(ring);
 
+    const fallback = new THREE.Group();
     const coat = new THREE.MeshStandardMaterial({ color: 0x596144, roughness: 0.9 });
     const heads = new THREE.MeshStandardMaterial({ color: 0xb99b75, roughness: 1 });
     [[-0.25, 0], [0.22, 0.13], [0.04, -0.25]].forEach(([x, z], index) => {
         const body = new THREE.Mesh(new THREE.ConeGeometry(0.13, 0.55, 8), coat);
         body.position.set(x, 0.38 + index * 0.02, z);
-        root.add(body);
+        fallback.add(body);
         const head = new THREE.Mesh(new THREE.SphereGeometry(0.1, 10, 8), heads);
         head.position.set(x, 0.72 + index * 0.02, z);
-        root.add(head);
+        fallback.add(head);
     });
+    root.add(fallback);
     root.add(makeLabel(group.name));
-    root.userData = { type: 'world-group', groupId: group.id };
+    root.userData = {
+        type: 'world-group',
+        groupId: group.id,
+        worldGroupFallback: fallback,
+        worldMemberModels: new Map(),
+    };
     return root;
 }
 
@@ -119,11 +137,99 @@ function createMapEventModel(event) {
 
 function disposeModel(model) {
     scene.remove(model);
+    model.userData?.worldMemberModels?.forEach(entry => releaseLocationModel(entry.holder));
     model.traverse(object => {
-        object.geometry?.dispose?.();
-        if (object.material?.map) object.material.map.dispose();
-        object.material?.dispose?.();
+        if (object.geometry && !isSharedLocationModelGeometry(object.geometry)) object.geometry.dispose?.();
+        const materials = Array.isArray(object.material) ? object.material : [object.material];
+        materials.forEach(material => {
+            // GLTF instances clone materials, but keep their textures shared with the cached source.
+            if (!object.userData?.worldTravelAppearance && material?.map) material.map.dispose?.();
+            material?.dispose?.();
+        });
     });
+}
+
+function removeWorldMemberModel(model, key, entry) {
+    releaseLocationModel(entry.holder);
+    model.remove(entry.holder);
+    entry.holder.traverse(object => {
+        if (object.geometry && !isSharedLocationModelGeometry(object.geometry)) object.geometry.dispose?.();
+        const materials = Array.isArray(object.material) ? object.material : [object.material];
+        materials.forEach(material => {
+            if (!object.userData?.worldTravelAppearance && material?.map) material.map.dispose?.();
+            material?.dispose?.();
+        });
+    });
+    model.userData.worldMemberModels.delete(key);
+}
+
+function syncWorldMemberModels(model, group) {
+    const memberModels = model.userData.worldMemberModels;
+    const members = (group.members || []).filter(member => member && member.is_mutant !== true);
+    const retained = new Set(members.map(member => String(member.id)));
+    memberModels.forEach((entry, key) => {
+        if (!retained.has(key)) removeWorldMemberModel(model, key, entry);
+    });
+
+    const columns = Math.min(3, members.length);
+    const rows = Math.ceil(members.length / Math.max(1, columns));
+    const scale = Math.min(1, 2.8 / Math.max(1, rows));
+    members.forEach((member, index) => {
+        const key = String(member.id);
+        const appearance = normalizeCharacterAppearance(member.appearance);
+        let entry = memberModels.get(key);
+        if (entry) {
+            entry.appearance = appearance;
+            if (entry.appearanceModel) applyCharacterAppearanceModel(entry.appearanceModel, appearance);
+        }
+        if (!entry) {
+            const holder = new THREE.Group();
+            holder.userData.worldTravelAppearance = true;
+            entry = { holder, appearance, ready: false, failed: false };
+            memberModels.set(key, entry);
+            model.add(holder);
+            const mounted = mountLocationModel(
+                holder,
+                HUMAN_APPEARANCE_ASSET,
+                {
+                    width: HUMAN_APPEARANCE_DIMENSIONS.width * 0.52,
+                    depth: HUMAN_APPEARANCE_DIMENSIONS.depth * 0.52,
+                    height: HUMAN_APPEARANCE_DIMENSIONS.height * 0.52,
+                },
+                appearanceModel => {
+                    if (memberModels.get(key) !== entry || !holder.parent) {
+                        appearanceModel.traverse(object => {
+                            if (object.geometry && !isSharedLocationModelGeometry(object.geometry)) object.geometry.dispose?.();
+                            const materials = Array.isArray(object.material) ? object.material : [object.material];
+                            materials.forEach(material => material?.dispose?.());
+                        });
+                        return;
+                    }
+                    appearanceModel.userData.worldTravelAppearance = true;
+                    appearanceModel.traverse(object => {
+                        if (!object.isMesh) return;
+                        object.userData.worldTravelAppearance = true;
+                        object.castShadow = true;
+                        object.receiveShadow = true;
+                    });
+                    applyCharacterAppearanceModel(appearanceModel, entry.appearance, 'standing');
+                    holder.add(appearanceModel);
+                    entry.appearanceModel = appearanceModel;
+                    entry.ready = true;
+                    model.userData.worldGroupFallback.visible = ![...memberModels.values()].some(item => item.ready);
+                },
+                () => { entry.failed = true; }
+            );
+            if (!mounted) entry.failed = true;
+        }
+        const row = Math.floor(index / columns);
+        const inRow = Math.min(columns, members.length - row * columns);
+        const x = (index % columns - (inRow - 1) / 2) * 0.38 * scale;
+        const z = (row - (rows - 1) / 2) * 0.40 * scale;
+        entry.holder.position.set(x, 0, z);
+        entry.holder.scale.setScalar(scale);
+    });
+    model.userData.worldGroupFallback.visible = ![...memberModels.values()].some(entry => entry.ready);
 }
 
 function renderModels() {
@@ -142,6 +248,7 @@ function renderModels() {
             scene.add(model);
         }
         model.position.set(group.tile_x + 0.5, tileHeight(group.tile_x, group.tile_y), group.tile_y + 0.5);
+        syncWorldMemberModels(model, group);
         const ring = model.children.find(child => child.geometry?.type === 'RingGeometry');
         if (ring?.material?.color) {
             ring.material.color.set(

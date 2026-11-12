@@ -37,7 +37,7 @@ module.exports = async ({ page, request, token, lobby }) => {
                 compile(shader);let s=shader.fragmentShader;
                 if(!s.includes('void terrainReadMaterial'))throw new Error('Terrain hook missing');
                 if(['no-legacy','base','matte','color-only'].includes(mode)){
-                    const cpu='diffuseColor.rgb *= mapTexelToLinear(worldGroundTexel).rgb;';
+                    const cpu='diffuseColor.rgb *= worldGroundTexel.rgb;';
                     if(s.includes(cpu))s=s.replace(cpu,
                         'vec2 diagnosticCell=floor(vTerrainMaterialPosition.xz-0.5);'+
                         'bool diagnosticPureSwamp=terrainId(diagnosticCell).r==3.0 && terrainId(diagnosticCell+vec2(1.0,0.0)).r==3.0 && terrainId(diagnosticCell+vec2(0.0,1.0)).r==3.0 && terrainId(diagnosticCell+1.0).r==3.0;'+

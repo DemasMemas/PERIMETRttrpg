@@ -3,6 +3,7 @@ from app.utils.defaults import default_location_lighting
 
 class LocationCreateSchema(Schema):
     name = fields.Str(required=True, validate=validate.Length(min=1, max=100))
+    preset = fields.Str(validate=validate.OneOf(['swamp_bank']))
     description = fields.Str(load_default='')
     type = fields.Str(load_default='exploration', validate=validate.OneOf(['battle', 'social', 'exploration']))
     grid_width = fields.Int(load_default=20, validate=validate.Range(min=5, max=200))

@@ -1,9 +1,9 @@
 import * as THREE from 'three';
 import { mountLocationModel } from './locationModelAssets.js';
 
-const BOAR_ASSET={dimensions:[1.05,2.12,1.1],visual:{renderMode:'glb',modelPath:'/static/models/mutants/boar/sekach-game.glb'}};
+const BOAR_ASSET={dimensions:[1.05,2.12,1.1],visual:{renderMode:'glb',modelPath:'/static/models/mutants/boar/wild-boar-light.glb'}};
 
-function importedBoar(outputEncoding){
+function importedBoar(outputColorSpace){
     const group=new THREE.Group(),placeholder=quadruped('Кабан');
     group.userData={isCharacter:true,mutantModel:true,labelHeight:1.4};
     group.add(placeholder);
@@ -16,8 +16,8 @@ function importedBoar(outputEncoding){
             for(const material of Array.isArray(child.material)?child.material:[child.material]){
                 // Как у растительности: цветовая карта должна соответствовать выводу сцены.
                 // Иначе sRGB декодируется, но обратно не кодируется, и шкура чернеет.
-                if(material?.map && material.map.encoding!==outputEncoding){
-                    material.map.encoding=outputEncoding;material.map.needsUpdate=true;material.needsUpdate=true;
+                if(material?.map && material.map.colorSpace!==outputColorSpace){
+                    material.map.colorSpace=outputColorSpace;material.map.needsUpdate=true;material.needsUpdate=true;
                 }
             }
         });
@@ -167,9 +167,9 @@ function humanoid(type) {
     return mergeParts(group);
 }
 
-export function createMutantModel(type, outputEncoding = THREE.LinearEncoding) {
+export function createMutantModel(type, outputColorSpace = THREE.LinearSRGBColorSpace) {
     if (!MODELED_MUTANT_TYPES.includes(type)) return null;
-    if(type==='Кабан')return importedBoar(outputEncoding);
+    if(type==='Кабан')return importedBoar(outputColorSpace);
     if (type === 'Электроворона') return crow();
     if (['Кровопийца', 'Зомбированный', 'Одичалый'].includes(type)) return humanoid(type);
     return quadruped(type);

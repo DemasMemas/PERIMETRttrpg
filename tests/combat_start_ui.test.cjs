@@ -11,6 +11,7 @@ test('attack shortcut expands equipped weapon and scrolls to its actions', async
     const end = source.indexOf('\nexport function closeCharacterSheet(', start);
     assert.ok(start >= 0 && end > start);
     const weaponsPanel = { open: false };
+    let weaponsTabSelected = false;
     const equippedPanel = {
         open: false,
         scrollIntoView(options) { this.scrolled = options; },
@@ -18,6 +19,9 @@ test('attack shortcut expands equipped weapon and scrolls to its actions', async
     const tab = {
         classList: { contains: value => value === 'active' },
         querySelector(selector) {
+            if (selector === '.equipment-panel-tab[data-panel="weapons"]') {
+                return { click() { weaponsTabSelected = true; } };
+            }
             if (selector.includes('weapon-1')) return equippedPanel;
             if (selector.includes('"weapons"')) return weaponsPanel;
             return null;
@@ -36,6 +40,7 @@ test('attack shortcut expands equipped weapon and scrolls to its actions', async
     });
     vm.runInContext(source.slice(start, end).replace('export async function', 'async function'), context);
     await context.openCharacterAttackSheet(7);
+    assert.equal(weaponsTabSelected, true);
     assert.equal(weaponsPanel.open, true);
     assert.equal(equippedPanel.open, true);
     assert.equal(equippedPanel.scrolled.block, 'start');

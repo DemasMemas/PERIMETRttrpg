@@ -194,7 +194,7 @@ test('location brush uses only the active tool, regardless of Alt and Shift', ()
     assert.ok(start >= 0 && end > start);
     const context = vm.createContext({
         window: { locationEditorTool: 'select' }, eraserMode: false,
-        brushRadiation: 4, currentBrushTerrain: 'sand', currentBrushHeight: 2, sculpting: () => false,
+        terrainBrushMode: () => 'terrain', brushRadiation: 4, currentBrushTerrain: 'sand', currentBrushHeight: 2, sculpting: () => false,
     });
     vm.runInContext(source.slice(start, end), context);
     const updates = event => JSON.parse(JSON.stringify(context.getEditBrushUpdates(event)));
@@ -780,7 +780,9 @@ test('held Q selects the highlighted full-ring sector on release', async () => {
     location = true;
     press('KeyQ');
     const locationMenu = appended.at(-1);
-    assert.equal(locationMenu.children[0].children.length, 10);
+    const locationSegments = locationMenu.children[0].children;
+    assert.equal(locationSegments.length, 11);
+    assert.equal(locationSegments[8].children[1].textContent, 'Настройки');
     let outsideClickBlocked = false;
     listeners.pointerdown({
         target: {},

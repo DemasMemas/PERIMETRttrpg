@@ -132,7 +132,8 @@ test('пересчёт инвентаря использует общую мас
         document:{getElementById:id=>{if(!elements.has(id))elements.set(id,{style:{}});return elements.get(id);}}});
     const begin=source.indexOf('function calculateCarriedWeight('),end=source.indexOf('function getMovementPenaltyBreakdown(',begin);
     const recalc=source.indexOf('function recalculateInventoryTotals() {');
-    vm.runInContext(source.slice(begin,end)+source.slice(recalc,source.indexOf('window.selectPocketItem =',recalc)),context);
+    const backpackText = source.slice(source.indexOf('function backpackSectionText('), source.indexOf('async function renderInventoryTab('));
+    vm.runInContext(backpackText + source.slice(begin,end)+source.slice(recalc,source.indexOf('window.selectPocketItem =',recalc)),context);
     context.recalculateInventoryTotals();assert.equal(elements.get('total-weight-display').textContent,'9.0');
     data.equipment.belt.protectionDisabled=true;context.recalculateInventoryTotals();
     assert.equal(elements.get('total-weight-display').textContent,'19.0');

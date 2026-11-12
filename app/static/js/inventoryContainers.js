@@ -29,6 +29,28 @@ export function returnPouchContents(data, pouches) {
     for (const pouch of pouches) if (Array.isArray(pouch?.contents)) pouch.contents = [];
 }
 
+export function moveUnpackedItemsToPockets(data, capacity, volumeOf) {
+    const inventory = data?.inventory;
+    if (data?.equipment?.backpack || !Array.isArray(inventory?.backpack) || !inventory.backpack.length) return false;
+    const pockets = Array.isArray(inventory.pockets) ? inventory.pockets : [];
+    let available = capacity - pockets.reduce((sum, item) => sum + volumeOf(item), 0);
+    if (!Number.isFinite(available)) return false;
+    const remaining = [];
+    for (const item of inventory.backpack) {
+        const volume = volumeOf(item);
+        if (!Number.isFinite(volume) || volume < 0 || volume > available + 1e-7) {
+            remaining.push(item);
+            continue;
+        }
+        pockets.push(item);
+        available -= volume;
+    }
+    if (remaining.length === inventory.backpack.length) return false;
+    inventory.pockets = pockets;
+    inventory.backpack = remaining;
+    return true;
+}
+
 export function applyVestTemplate(data, template) {
     data.equipment ||= {};
     const previous = data.equipment.vest || {};

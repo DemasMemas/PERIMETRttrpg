@@ -286,25 +286,29 @@ def test_simultaneous_fire_pays_once_and_fires_both_with_disadvantage(client,gre
     assert [weapon['ammo'] for weapon in actor.character.data['weapons']]==[4,4]
 
 
-@pytest.mark.parametrize('feature,category,penalty,rolls',[
-    ('Амбидекстр','Пистолеты',0,1),('Гангстер','Пистолеты-пулеметы',0,1),
-    ('Гангстер','Пистолеты',2,2),
+@pytest.mark.parametrize('feature,categories,penalties,rolls',[
+    ('Амбидекстр',('Пистолеты','Пистолеты'),(0,0),(1,1)),
+    ('Гангстер',('Пистолеты-пулеметы','Пистолеты-пулеметы'),(0,0),(1,1)),
+    ('Гангстер',('Пистолеты','Пистолеты'),(2,2),(2,2)),
+    ('Гангстер',('Пистолеты-пулеметы','Пистолеты'),(0,2),(1,2)),
+    ('Гангстер',('Пистолеты','Пистолеты-пулеметы'),(2,0),(2,1)),
 ])
-def test_trait_pair_removes_only_its_accuracy_and_disadvantage(client,grenade_game,auth_headers,monkeypatch,feature,category,penalty,rolls):
+def test_trait_pair_removes_only_its_accuracy_and_disadvantage(client,grenade_game,auth_headers,monkeypatch,feature,categories,penalties,rolls):
     actor=make_pair(client,grenade_game,auth_headers);target=grenade_game['target_location']
     data=deepcopy(actor.character.data)
     if feature=='Амбидекстр':data['features']={'specialTraits':[{'name':feature}]}
     else:data.setdefault('basic',{})['background']={'name':feature}
-    for weapon in data['weapons']:weapon['subcategory']=category
+    for weapon, category in zip(data['weapons'], categories):weapon['subcategory']=category
     actor.character.data=data;flag_modified(actor.character,'data')
     target.pos_x,target.pos_y=actor.pos_x+1,actor.pos_y;db.session.commit()
     assert CombatService._weapon_strength_profile(actor,actor.character.data['weapons'][0])['effective_required']==18
     monkeypatch.setattr('app.services.combat.random.randint',lambda a,b:min(b,max(a,10)))
     result=CombatService.perform_action(actor.location_id,grenade_game['lobby'].gm_id,actor.id,'attack',
-        weapon_index=0,fire_mode='unaimed',shot_count=1,action_points=2 if category=='Пистолеты-пулеметы' else 1,target_character_id=target.character_id,
+        weapon_index=0,fire_mode='unaimed',shot_count=1,action_points=2 if 'Пистолеты-пулеметы' in categories else 1,target_character_id=target.character_id,
         attribute_choice='paired_fire')
-    assert all(item['paired_weapon_accuracy_penalty']==penalty for item in result['attack']['paired_attacks'])
-    assert all(len(hit['rolls'])==rolls for hit in result['attack']['results'])
+    assert tuple(item['paired_weapon_accuracy_penalty'] for item in result['attack']['paired_attacks']) == penalties
+    assert tuple(len(hit['rolls']) for hit in result['attack']['results']) == rolls
+    assert [weapon['ammo'] for weapon in actor.character.data['weapons']] == [4, 4]
 
 
 def test_ambidextrous_pair_does_not_cancel_downpour_disadvantage(client,grenade_game,auth_headers,monkeypatch):

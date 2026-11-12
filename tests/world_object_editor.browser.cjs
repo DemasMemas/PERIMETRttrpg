@@ -66,7 +66,7 @@ async function connect(url) {
     };
     const call = (method, params = {}) => new Promise((resolve, reject) => {
         const id = ++nextId;
-        const timer = setTimeout(() => { waiting.delete(id); reject(new Error(`Timed out: ${method}`)); }, ['artifacts','fog-water','water-final'].includes(process.env.VTT_SAFE_SCENARIO)||process.env.VTT_WATER_FINAL==='1'||process.env.VTT_WATER_GEOMETRY==='1'||process.env.VTT_SECONDARY_TOOLS==='1'||process.env.VTT_ROAD_TERRAIN==='1'||process.env.VTT_BRIDGE_BANK==='1'?90000:30000);
+        const timer = setTimeout(() => { waiting.delete(id); reject(new Error(`Timed out: ${method}`)); }, ['artifacts','fog-water','water-final','terrain','sideview'].includes(process.env.VTT_SAFE_SCENARIO)||process.env.VTT_WATER_FINAL==='1'||process.env.VTT_WATER_GEOMETRY==='1'||process.env.VTT_SECONDARY_TOOLS==='1'||process.env.VTT_ROAD_TERRAIN==='1'||process.env.VTT_BRIDGE_BANK==='1'?90000:30000);
         waiting.set(id, message => {
             clearTimeout(timer);
             if (message.closed && method !== 'Browser.close') reject(new Error(`Browser connection closed: ${method}`));
@@ -203,11 +203,6 @@ else:
             fs.writeFileSync(path.join(modules,'locationScene.js'), source + `
 export {openCharacterAttackSelection, showObjectContextMenu, showCombatActionMenu, showFacingMenu, updateFacingPreview, closeFacingMenu, findMovementPath, hasStoreyNavigation, hasLineOfSight, beginCharacterMoveMode, updateMovementPreview, commitMovementPreview, resolveFacingCell, showMovementTypeMenu, selectEditorAsset};
 export function sceneGraphicsForTest(){return {scene,renderer,camera,controls,sun:locationDirectionalLight,roots:locationObjectMeshes,roofs:roofMeshes,characters:characterModels,cache:locationShadowCache,shadowPass:locationShadowPass,batches:locationRenderBatches,pickAtScreen:getLocationObjectAtScreen};}
-let anomalyLabelSamplesForTest=null,anomalyLabelEnabledForTest=true;
-const updateAnomalyLabelsForTest=updateAnomalyLabelVisibility;
-updateAnomalyLabelVisibility=(...args)=>{if(!anomalyLabelEnabledForTest)return;const at=performance.now();try{return updateAnomalyLabelsForTest(...args)}finally{anomalyLabelSamplesForTest?.push(performance.now()-at)}};
-export function beginAnomalyLabelProfileForTest(enabled){anomalyLabelEnabledForTest=enabled;anomalyLabelSamplesForTest=[];anomalyLabelVisibilityKey=null;}
-export function endAnomalyLabelProfileForTest(){const samples=anomalyLabelSamplesForTest;anomalyLabelSamplesForTest=null;anomalyLabelEnabledForTest=true;return samples;}
 export function facingPreviewCount(){return facingPreviewMesh?.count || 0;}
 export function navigationPreviewSettled(sx,sy,x,y,c,l){return [...navigationPreviews.entries()].some(([key,value])=>key.endsWith(\`:\${c}:\${sx}:\${sy}:\${x}:\${y}:\${l}\`)&&value!==null);}
 export function navigationPreviewDiagnostics(){return {keys:[...navigationPreviews.entries()].map(([key,value])=>({key,available:value!==null})),errors:[...navigationPreviewErrors],queued:navigationPreviewQueued?.key,pointer:navigationPointer,target:movementPreviewLastTargetKey,hint:movementPreviewHint?.textContent};}
@@ -218,7 +213,7 @@ export function captureCurrentSceneForTest(){renderer.render(scene,camera);retur
 export function objectRenderBoundsForTest(id){const root=locationObjectMeshes.find(m=>m.userData.locationObject?.id===id||m.userData.locationObjectId===id);if(!root)return null;const box=new THREE.Box3().setFromObject(root);return{center:box.getCenter(new THREE.Vector3()).toArray(),size:box.getSize(new THREE.Vector3()).toArray()};}
 export function movementHintText(){return movementPreviewHint?.textContent;}
 export async function placeLibraryAssetForTest(x,z){hoveredTileCoords={x,z};updateBuildPreview();const preview=buildPreviewMesh?.userData?.locationObject?.properties;const staged=await placeStructureAtTile(x,z);const object=staged&&currentLocationData.objects.find(o=>o.id>0&&o.tile_x===staged.tile_x&&o.tile_y===staged.tile_y&&o.properties.visual_asset===staged.properties.visual_asset);return {preview,object};}
-export function gmRelocationStateForTest(){return {pending:Boolean(pendingCharacterPlacement?.gmRelocation),ghost:Boolean(movementPreviewGhost||previewSprite),level:locationViewLevel};}
+export function gmRelocationStateForTest(){return {pending:Boolean(pendingCharacterPlacement?.gmRelocation),ghost:Boolean(pendingCharacterPlacement?.preview?.model.visible||movementPreviewGhost||previewSprite),level:locationViewLevel};}
 export function characterIsMutantForTest(id){return Boolean(getCharacterModelEntry(id)?.isMutant);}
 export function characterModelCenterForTest(id){return new THREE.Box3().setFromObject(getCharacterModelEntry(id).model).getCenter(new THREE.Vector3()).toArray();}
 export function navigationPreviewStateForTest(){return {level:movementTargetLevel,route:movementPreviewLine?.userData?.route,points:movementPreviewLine?.userData?.points?.map(p=>p.toArray()),frustumCulled:movementPreviewLine?.frustumCulled};}
@@ -367,7 +362,7 @@ if(typeof renderFacingPreview==='function'){const original=renderFacingPreview;r
             return;
         }
         if (safeSession && ['equipment','lights','effects'].includes(process.env.VTT_SAFE_SCENARIO)) {
-            await require('./equipment_modifications.browser.cjs')({page,request,token,lobby,base,safeSession});
+            await require('./equipment_modifications.browser.cjs')({page,request,token,lobby,base,connect,debugPort,safeSession});
             return;
         }
         if (safeSession && process.env.VTT_SAFE_SCENARIO === 'fire-rate') {

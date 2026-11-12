@@ -18,7 +18,7 @@ test('world grass detail reuses two photo textures and keeps the opaque base map
         constructor() { textures.push(this); }
     }
     const THREE = { Texture, RepeatWrapping: 1, LinearFilter: 2,
-        LinearMipmapLinearFilter: 3, sRGBEncoding: 4 };
+        LinearMipmapLinearFilter: 3, SRGBColorSpace: 'srgb' };
     const detail = createWorldGrassDetail(THREE);
     const images = { plain: {}, forest: {} };
     detail.setImages(images);
@@ -27,7 +27,7 @@ test('world grass detail reuses two photo textures and keeps the opaque base map
     assert.equal(textures[1].image, images.forest);
     assert.equal(textures[0].wrapS, THREE.RepeatWrapping);
     assert.equal(textures[0].minFilter, THREE.LinearMipmapLinearFilter);
-    assert.equal(textures[0].encoding, THREE.sRGBEncoding);
+    assert.equal(textures[0].colorSpace, THREE.SRGBColorSpace);
     const first = {};
     const second = {};
     detail.apply(first);
@@ -44,7 +44,7 @@ test('world grass detail reuses two photo textures and keeps the opaque base map
     assert.equal(shader.uniforms.worldGrassReady.value, 1);
     assert.match(shader.vertexShader, /modelMatrix \* vec4\(transformed, 1\.0\)/);
     assert.match(shader.fragmentShader, /worldGroundTexel\.a/);
-    assert.match(shader.fragmentShader, /diffuseColor\.rgb \*= mapTexelToLinear\(worldGroundTexel\)\.rgb/);
+    assert.match(shader.fragmentShader, /diffuseColor\.rgb \*= worldGroundTexel\.rgb/);
     assert.doesNotMatch(shader.fragmentShader, /diffuseColor \*=.*worldGroundTexel/);
     assert.match(shader.fragmentShader, /vWorldGrassPosition\.xz \* 0\.125/);
     assert.match(shader.fragmentShader, /worldGrassCoverage \* grassFade/);

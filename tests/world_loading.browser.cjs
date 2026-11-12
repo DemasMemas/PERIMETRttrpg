@@ -117,4 +117,5 @@ module.exports=async({page,request,token,base,safeSession})=>{
     await page.until(`window.worldLoadMetrics?.complete && document.getElementById('scene-loading-screen').classList.contains('is-hidden')`,'повтор после отмены фоновых задач');
     fs.writeFileSync(path.join(safeSession.artifacts,'world-loading.json'),JSON.stringify({samples,state,cancelAndReopen:true,cancelPixelsAndReopen:true,stoppedPixelWorkers:created},null,2));
     console.log('Отмена фоновых расчётов, закрытие потоков и повторное открытие: пройдены.');
+    await require('./world_object_culling.browser.cjs')({ page, request, token, lobby, safeSession });
 };

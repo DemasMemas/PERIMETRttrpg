@@ -1,9 +1,11 @@
-import { itemTooltipModel, tooltipPosition } from './itemPresentation.js';
-import { applyPouchTemplate, returnPouchContents, vestMountVolume, pouchCapacity } from './inventoryContainers.js';
+import { itemPowerWarning, itemTooltipModel, tooltipPosition } from './itemPresentation.js';
+import { applyPouchTemplate, moveUnpackedItemsToPockets, returnPouchContents, vestMountVolume, pouchCapacity } from './inventoryContainers.js';
 import { rollQuickSkill } from './quickSkillCheck.js';
 import {modificationStat,wornModificationStat,modificationRule,wornModificationRule,modifiedFireProfile} from './itemModifications.js';
 import { renderPortableLights,usesNightVision } from './portableLights.js';
+import { isGroundStashTool } from './traps.js';
 import { openPdaShell } from './pdaShell.js';
+import { animatePanelEntry } from './panelMotion.js';
 import { renderProstheses,prostheticLimb } from './prostheses.js';
 import { pairedFireOptions } from './pairedFire.js';
 import { hearingModifier } from './hearingRules.js';
@@ -42,6 +44,9 @@ import { copyProfileComponent, profileComponentOptions, renderConsumableProfileT
 import { applyEffectToHealth, createEffectDraft, effectSummary, effectDurationLabel, effectConsequences, getEffectTypeOptions, isAlcoholConsumable, normalizeCharacterEffects, normalizeEffectList, getEffectImpact, syncHealthDerivedStatuses } from './effects.js';
 import { initCharacterWidgets, getWidgetSource, resolveWidgetReference, parseWidgetAction, itemBinding } from './characterWidgets.js';
 import { characterWidgetBlocks, findWidgetBlock, projectWidgetBlock, widgetBlockControl } from './characterWidgetBlocks.js';
+import { characterCategory } from './characterFolders.js';
+import { characterEquipmentVisuals, normalizeCharacterAppearance, DEFAULT_CHARACTER_APPEARANCE } from './characterAppearance.js';
+import { mountCharacterAppearancePreview } from './characterAppearancePreview.js';
 
 // ========== 1. СОСТОЯНИЕ И УТИЛИТЫ ==========
 let currentCharacterId = null;
@@ -61,6 +66,8 @@ let equipmentRenderVersion = 0;
 let equipmentDevicesVersion = 0;
 let equipmentOpenPanels = new Set();
 let equipmentActivePanel = 'weapons';
+let equipmentAppearancePreview = null;
+let equipmentRenderedCharacterId = null;
 let sheetSocketHandler = null;
 let widgetOperation = false;
 let widgetContext = false;
@@ -1082,6 +1089,11 @@ function handleManualFormEdit(event) {
         return;
     }
     trackManualCharacterField(event);
+    if (path.startsWith('appearance.')) {
+        updateDataFromFields();
+        scheduleAutoSave(200);
+        return;
+    }
     scheduleAutoSave();
 }
 
@@ -1138,6 +1150,16 @@ function captureSheetViewState() {
         activeName: active?.name || null,
         activeIndex: Array.from(controls).indexOf(active),
         selection,
+        scroll: [...root.querySelectorAll('[id], .modal-content, [data-container-path]')]
+            .filter(node => node.scrollTop || node.scrollLeft)
+            .map(node => ({
+                node,
+                id: node.id,
+                containerPath: node.getAttribute('data-container-path'),
+                modalContent: node.classList.contains('modal-content'),
+                top: node.scrollTop,
+                left: node.scrollLeft,
+            })),
         details: [...root.querySelectorAll('details')].map(detail => {
             const tab = detail.closest('[id^="sheet-tab-"]');
             return {
@@ -1185,6 +1207,17 @@ function restoreSheetViewState(state, { restoreWeaponCards = true } = {}) {
             || container.parentElement?.querySelector('.container-toggle');
         if (toggle) toggle.textContent = '▼';
     }
+    for (const entry of state.scroll || []) {
+        const node = entry.node.isConnected ? entry.node
+            : entry.id ? document.getElementById(entry.id)
+            : entry.containerPath ? [...root.querySelectorAll('[data-container-path]')]
+                .find(item => item.getAttribute('data-container-path') === entry.containerPath)
+            : entry.modalContent ? root.querySelector('.modal-content') : null;
+        if (node) {
+            node.scrollTop = entry.top;
+            node.scrollLeft = entry.left;
+        }
+    }
     if (!state.active || (!state.activeId && !state.activeName)) return;
     if (document.activeElement !== state.active
         && document.activeElement !== document.body
@@ -1207,7 +1240,7 @@ function restoreSheetViewState(state, { restoreWeaponCards = true } = {}) {
     }
 }
 
-async function refreshSavedSheet(characterId, refreshArtifactSkills = false) {
+async function refreshSavedSheet(characterId) {
     if (Number(currentCharacterId) !== Number(characterId)) return;
     const viewState = captureSheetViewState();
     await Promise.all([
@@ -1216,9 +1249,9 @@ async function refreshSavedSheet(characterId, refreshArtifactSkills = false) {
     ]);
     if (Number(currentCharacterId) !== Number(characterId)) return;
     const activeTab = document.querySelector('#sheet-tabs .tab-btn.active')?.dataset.tab;
-    if (activeTab === 'skills' || refreshArtifactSkills) await renderSkillsTab(currentCharacterData);
     if (activeTab === 'health') refreshHealthPanel();
     else if (activeTab === 'basic') await renderBasicTab(currentCharacterData);
+    else if (activeTab === 'skills') renderSkillsTab(currentCharacterData);
     else if (activeTab === 'settings') renderSettingsTab(currentCharacterData);
     else if (activeTab === 'notes') renderNotesTab(currentCharacterData);
     applySheetEditPermissions();
@@ -1299,11 +1332,11 @@ function patchRemoteScalarFields(data, paths) {
     return missing;
 }
 
-async function applyRemoteSheetData(remoteData, characterId = currentCharacterId) {
+async function applyRemoteSheetData(remoteData, characterId = currentCharacterId, baselineData = null) {
     if (!remoteData || Number(currentCharacterId) !== Number(characterId)) return false;
     if (Number(remoteData._revision) < Number(currentCharacterData?._revision)) return false;
 
-    const previousData = currentCharacterData || {};
+    const previousData = baselineData || currentCharacterData || {};
     for (const key of ['ownerId', 'ownerUsername', 'visible_to', 'editable_to']) {
         if (remoteData[key] === undefined && previousData[key] !== undefined) {
             remoteData[key] = previousData[key];
@@ -1311,13 +1344,14 @@ async function applyRemoteSheetData(remoteData, characterId = currentCharacterId
     }
     normalizeCharacterEffects(remoteData);
     const changes = diffCharacterData(previousData, remoteData);
+    const artifactProfileChanged = JSON.stringify(previousData._artifact_profile) !== JSON.stringify(remoteData._artifact_profile);
     const artifactSkillsChanged = artifactSkillBonusesChanged(previousData._artifact_profile, remoteData._artifact_profile);
     const artifactStrengthChanged = artifactSkillBonus(previousData._artifact_profile, 'physical.strength')
         !== artifactSkillBonus(remoteData._artifact_profile, 'physical.strength');
     currentCharacterData = remoteData;
 
     const allPaths = [...changes.scalarPaths, ...changes.structuralPaths];
-    if (!allPaths.length && !artifactSkillsChanged) return true;
+    if (!allPaths.length && !artifactProfileChanged) return true;
     const viewState = captureSheetViewState();
     const missingFields = patchRemoteScalarFields(remoteData, changes.scalarPaths);
     const touches = root => allPaths.some(path => pathTouches(path, root));
@@ -1337,21 +1371,29 @@ async function applyRemoteSheetData(remoteData, characterId = currentCharacterId
         || missingTouches('skills')
         || changes.scalarPaths.some(path => /^skills\..+\.(base|xp)$/.test(path))
         || touches('features')
+        || touches('equipment.armor') && getExoskeletonPowerProfile(previousData).powered !== getExoskeletonPowerProfile(remoteData).powered
         || artifactSkillsChanged
+        || ['health.effects', 'health.psyState', 'health.psy_state'].some(touches)
+            && willLevelModifier(previousData) !== willLevelModifier(remoteData)
     ) tasks.push(renderSkillsTab(remoteData));
     if (touches('equipment') || touches('weapons') || touches('activeWeaponIndex') || touches('inventory')
         || touches('health.prostheses') || touches('health.combatMeta.portableLights')
         || ['heldWaterItem','heldPda','pdaDynamo','weaponGripHands','weaponPrimaryHand','secondaryWeaponId']
             .some(key => touches(`health.combatMeta.${key}`))) {
         tasks.push(renderEquipmentTab(remoteData));
+    } else if (touches('appearance')) {
+        syncEquipmentAppearancePanel();
     }
-    if (
-        structuralTouches('inventory')
-        || changes.scalarPaths.some(path => pathTouches(path, 'inventory') && path !== 'inventory.money')
-        || touches('equipment')
-        || changes.scalarPaths.some(path => pathTouches(path, 'skills.physical.strength'))
-    ) tasks.push(renderInventoryTab(remoteData));
-    else if (artifactStrengthChanged) recalculateInventoryTotals();
+    const inventoryPaths = allPaths.filter(path => pathTouches(path, 'inventory') && path !== 'inventory.money');
+    const itemLists = ['inventory.pockets', 'inventory.backpack'];
+    if (inventoryPaths.some(path => !itemLists.includes(path))
+        || ['equipment', 'equipment.belt', 'equipment.vest', 'equipment.backpack', 'weapons']
+            .some(path => path === 'equipment' ? allPaths.includes(path) : touches(path))) {
+        tasks.push(renderInventoryTab(remoteData));
+    } else if (inventoryPaths.length || touches('equipment') || touches('skills.physical.strength') || artifactStrengthChanged) {
+        tasks.push(Promise.all(inventoryPaths.map(path => rerenderContainer(path.split('.'))))
+            .then(() => recalculateInventoryTotals()));
+    }
     if (touches('ownerId') || touches('ownerUsername') || touches('visible_to') || touches('editable_to')) {
         renderSettingsTab(remoteData);
     }
@@ -1397,13 +1439,13 @@ function persistCurrentSheet() {
     updateDataFromFields();
     const characterId = currentCharacterId;
     const draft = currentCharacterData;
-    const artifactProfile = draft._artifact_profile;
+    const submitted = structuredClone(draft);
     return Server.updateCharacter(characterId, {
         data: draft, _manual_fields: consumeManualFieldPaths(),
     }).then(async () => {
         const appliedRemote = await applyPendingSheetRemoteUpdate(characterId);
         if (!appliedRemote && currentCharacterData === draft && !autoSaveTimer && !Server.isCharacterSaving(characterId)) {
-            return refreshSavedSheet(characterId, artifactSkillBonusesChanged(artifactProfile, draft._artifact_profile));
+            return applyRemoteSheetData(draft, characterId, submitted);
         }
     }).catch(error => {
         if (Number(currentCharacterId) !== Number(characterId)) return;
@@ -1675,7 +1717,7 @@ function createItemFromTemplate(template, quantity = 1, options = {}) {
         item.penetration = template.attributes?.penetration ?? 0;
     }
 
-    if (template.category === 'armor_plate') {
+    if (['armor', 'helmet', 'armor_plate'].includes(template.category)) {
         initArmorStagedDurability(item, template);
     }
     if (Array.isArray(template.attributes?.pouches)) {
@@ -1724,7 +1766,13 @@ function getIntegratedHelmetProfile(armor, template = null) {
             accuracyPenalty: 2,
         };
     }
-    return profiles[name] || null;
+    const configured = armor?.attributes?.integrated_helmet_profile || template?.attributes?.integrated_helmet_profile;
+    if (!configured) return profiles[name] || null;
+    return {
+        physical: protectionPercentValue(configured.physical) / 100,
+        charismaPenalty: Number(configured.charisma_penalty ?? configured.charismaPenalty) || 0,
+        accuracyPenalty: Number(configured.accuracy_penalty ?? configured.accuracyPenalty) || 0,
+    };
 }
 
 function getIntegratedHelmetName(armor, template = null) {
@@ -1756,6 +1804,7 @@ function syncIntegratedArmorHelmet(armor, template = null) {
         accuracyPenalty: 0,
     };
     currentCharacterData.equipment.helmet = {
+        category: 'helmet',
         templateId: `integrated:${armor.templateId || 'armor'}`,
         integratedWithArmor: true,
         sourceArmorTemplateId: armor.templateId,
@@ -1931,6 +1980,17 @@ function getTotalWeight(item) {
     return total;
 }
 
+function willLevelModifier(data) {
+    const health = data?.health;
+    const psiPenalty = Number(health?.psyState ?? health?.psy_state) >= 10 ? -1 : 0;
+    return normalizeEffectList(health?.effects).reduce((total, effect) => {
+        if (effect.type !== 'anomaly_will_penalty' || !effect.active
+            || (effect.remaining != null && effect.remaining <= 0)) return total;
+        const modifier = Number(effect.will_modifier);
+        return total + (Number.isFinite(modifier) ? Math.min(0, Math.trunc(modifier)) : 0);
+    }, psiPenalty);
+}
+
 function getSkillEffectiveValue(data, skillPath) {
     const parts = skillPath.split('.');
     let skill = data?.skills;
@@ -1952,10 +2012,11 @@ function getSkillEffectiveValue(data, skillPath) {
     const equipmentValue = skillPath === 'physical.strength'
         ? getExoskeletonPowerProfile(data).strengthLevelBonus
         : 0;
-    return (Number.isFinite(base) ? base : 0) + bonus + temporaryValue + equipmentValue
+    const value = (Number.isFinite(base) ? base : 0) + bonus + temporaryValue + equipmentValue
         + artifactSkillBonus(data?._artifact_profile, skillPath)
         +(skillPath==='social.charisma'?facialProfile(data).charismaLevel:0)
         +(backgroundIs(data,'Пожарный')&&data.health?.combatMeta?.firefighterNearby&&['physical.strength','physical.agility'].includes(skillPath)?2:0);
+    return skillPath === 'physical.will' ? Math.max(0, value + willLevelModifier(data)) : value;
 }
 
 function getSkillRollModifier(data, skillPath) {
@@ -2043,10 +2104,6 @@ function getHealthRollModifier(data, skillPath, options = {}) {
         }
     });
 
-    if (skillPath === 'physical.will') {
-        const psyState = Number(health.psyState ?? health.psy_state) || 0;
-        modifier -= psyState >= 10 ? 1 : 0;
-    }
     return modifier;
 }
 
@@ -2306,7 +2363,7 @@ function getEffectiveWeaponStats(weapon) {
 
 //Рекурсивно вычисляет общий объём предмета с учётом содержимого
 function getTotalVolume(item) {
-    let total = item.volume * item.quantity;
+    let total = Number(item.volume ?? 0) * Number(item.quantity ?? 1);
     if (item.contents && item.contents.length) {
         total += item.contents.reduce((sum, subItem) => sum + getTotalVolume(subItem), 0);
     }
@@ -2321,20 +2378,26 @@ function liquidCanisterKind(item) {
 }
 
 function isLiquidCanister(item) {
-    return String(item?.name || '').toLowerCase().startsWith('канистра')
-        && Number(item?.attributes?.liquid_capacity_liters) === 15;
+    return liquidContainerCapacity(item) > 0;
+}
+
+function liquidContainerCapacity(item) {
+    const name = String(item?.name || '').toLowerCase();
+    if (name.startsWith('канистра') && Number(item?.attributes?.liquid_capacity_liters) === 15) return 15;
+    if (name.startsWith('стеклянная бутылка') || name.startsWith('пластиковая бутылка')) return 1;
+    return name.startsWith('фляга') ? 1.5 : 0;
 }
 
 function canStoreInLiquidCanister(canister, liquid, items = canister?.contents || []) {
     const kind = liquidCanisterKind(liquid);
-    if (!kind || (liquid?.contents || []).length) return false;
+    if (!kind || (liquid?.contents || []).length || Number(canister?.quantity ?? 1) !== 1) return false;
     const quantity = Number(liquid.quantity ?? 1);
     if (!Number.isFinite(quantity) || quantity <= 0 || Math.round(quantity * 10) !== quantity * 10) return false;
     const fuelUsed = canister.fuelUsed || items.some(entry => liquidCanisterKind(entry) === 'fuel');
     if (kind === 'water' && fuelUsed) return false;
     if (kind === 'fuel' && items.some(entry => liquidCanisterKind(entry) === 'water')) return false;
     const used = items.reduce((total, entry) => total + Number(entry.quantity ?? 1), 0);
-    return used + quantity <= 15.000001;
+    return used + quantity <= liquidContainerCapacity(canister) + 1e-7;
 }
 
 function calculateBackpackTotals(items) {
@@ -2440,6 +2503,8 @@ function switchSheetTab(tabId) {
     document.querySelectorAll('.sheet-tab-content').forEach(div => {
         div.classList.toggle('active', div.id === `sheet-tab-${tabId}`);
     });
+    if (tabId === 'equipment') syncEquipmentAppearancePanel();
+    else disposeEquipmentAppearancePreview();
 }
 
 // ========== УНИВЕРСАЛЬНАЯ ФУНКЦИЯ ЗАПОЛНЕНИЯ ОБЪЕКТА ИЗ ШАБЛОНА ==========
@@ -3840,6 +3905,63 @@ function renderHealthTab(data, container = null) {
     let effectsHtml = '';
     effects.forEach((effect, index) => {
         if (isStressManifestationEffect(effect)) return;
+        const clockSource = String(effect.source || '');
+        const clearsRadiation = clockSource.startsWith('artifact-radiation-clear:');
+        if (clockSource.startsWith('artifact-special:') && (
+            effect.artifact_stat === 'positive_multiplier'
+            || clockSource.endsWith(':delayed-cost')
+            || clockSource.endsWith(':echo-movement-cost')
+        )) {
+            let name = getEffectDisplayName(effect);
+            let description = effect.note;
+            let duration = effectDurationLabel(effect);
+            if (effect.artifact_stat === 'positive_multiplier') {
+                name = `${name.replace(/: особое свойство$/, '')} · Положительные эффекты ×${effect.value}`;
+                description = '';
+            } else if (clockSource.endsWith(':delayed-cost')) {
+                name = `${name.replace(/^Цена:\s*/, '')} · Последствия применения`;
+                const healthLoss = effect.adjustments?.find?.(entry => entry.field === 'current' && entry.delta < 0);
+                const movementPenalty = effect.activate_effects?.find?.(entry => entry.artifact_stat === 'movement_penalty');
+                const timeUntil = duration ? `через ${duration.replace(/^осталось /, '')}` : '';
+                if (healthLoss) {
+                    name = [name, [`−${Math.abs(healthLoss.delta)} общих ОЗ`, timeUntil].filter(Boolean).join(' ')].join(' · ');
+                    description = duration = '';
+                } else if (movementPenalty) {
+                    const penaltyDuration = effectDurationLabel(movementPenalty).replace(/^осталось /, '');
+                    const penalty = `штраф перемещения +${movementPenalty.value}${penaltyDuration ? ` на ${penaltyDuration}` : ''}`;
+                    name = [name, [timeUntil, penalty].filter(Boolean).join(' ')].join(' · ');
+                    description = duration = '';
+                }
+            } else if (effect.artifact_stat === 'movement_penalty' && !description) {
+                description = `Штраф перемещения +${effect.value}.`;
+            }
+            effectsHtml += `
+                <div data-widget-effect-index="${index}" class="health-effect-card" data-artifact-effect>
+                    <div class="health-effect-caption">${escapeHtml([name, duration].filter(Boolean).join(' · '))}</div>
+                    ${description ? `<div class="text-muted health-effect-description">${escapeHtml(description)}</div>` : ''}
+                </div>`;
+            return;
+        }
+        if (clearsRadiation || clockSource.startsWith('artifact-ten-minute:') && effect.artifact_periodic) {
+            const name = effect.artifact_name || getEffectDisplayName(effect);
+            const labels = { radiation: 'Радиация', health: 'Общие ОЗ', pain: 'Боль' };
+            const changes = clearsRadiation ? 'Вывод всей радиации' : Object.entries(labels)
+                .filter(([key]) => Number(effect.artifact_periodic[key]))
+                .map(([key, label]) => {
+                    const value = Number(effect.artifact_periodic[key]);
+                    return `${label} ${value < 0 ? '−' : '+'}${Math.abs(value).toLocaleString('ru')}`;
+                }).join(' · ');
+            const seconds = Math.max(0, Math.ceil(Number(effect.remaining_seconds ?? effect.remaining * 60) || 0));
+            const minutes = Math.floor(seconds / 60);
+            const time = [minutes && `${minutes} мин`, (!minutes || seconds % 60) && `${seconds % 60} с`]
+                .filter(Boolean).join(' ');
+            effectsHtml += `
+                <div data-widget-effect-index="${index}" class="health-effect-card">
+                    <div class="health-effect-caption">${escapeHtml(name)} · ${escapeHtml(changes)}</div>
+                    <div class="text-muted health-effect-description">Через ${escapeHtml(time)} игрового времени. Повтор ${clearsRadiation ? 'каждую минуту' : 'каждые 10 минут'}.</div>
+                </div>`;
+            return;
+        }
         const value = String(effect.type || '').startsWith('bleeding') ? getEffectImpact(effect).severity : effect.value || 0;
         const selectedType = effect.type || 'generic';
         const isBleedingEffect = String(effect.type || '').startsWith('bleeding');
@@ -4190,6 +4312,7 @@ async function renderSkillsTab(data) {
         const required = getRequiredXp(base);
         const transientBonus = (path==='physical.strength'&&getExoskeletonPowerProfile(data).powered?8:0)
             + artifactSkillBonus(data._artifact_profile, path)
+            + (path === 'physical.will' ? willLevelModifier(data) : 0)
             +(backgroundIs(data,'Пожарный')&&data.health?.combatMeta?.firefighterNearby&&['physical.strength','physical.agility'].includes(path)?2:0);
         return `
             <div style="display: flex; align-items: center; gap: 3px; margin-bottom: 5px; flex-wrap: wrap;">
@@ -4199,7 +4322,6 @@ async function renderSkillsTab(data) {
                 <input type="number" class="form-control number-input" name="skills.${path}.bonus" value="${Number(bonus || 0) + transientBonus}" data-transient-bonus="${transientBonus}" style="width: 55px;">
                 <span data-skill-progress="${path}" style="font-size: 0.7rem;">Опыт: ${xp}/${required}</span>
                 <button type="button" class="btn btn-sm btn-secondary" onclick="addSkillXpFromPoints('${path}')" style="padding: 2px 4px; font-size: 0.7rem;" title="Взять 1 свободное очко навыка">➕</button>
-                <button type="button" class="btn btn-sm btn-secondary" onclick="addSkillXpFromUse('${path}')" style="padding: 2px 4px; font-size: 0.7rem;" title="Добавить опыт за использование">💡</button>
                 <span style="cursor: pointer; font-size: 1.1em;" onclick="window.rollSkill('${path}', '${label}')">🎲</span>
             </div>
         `;
@@ -4280,7 +4402,7 @@ async function renderSkillsTab(data) {
             <div><label>Очки навыков</label><input type="number" class="form-control number-input" name="skills.skillPoints" value="${skills.skillPoints ?? 30}"></div>
             <div><label>Специализации</label><input type="number" class="form-control number-input" name="skills.specializations" value="${skills.specializations ?? 10}"></div>
         </div>
-        ${window.isGM?'<button type="button" class="btn btn-secondary" onclick="openSessionReward()">Награда за сессию или цель</button>':''}
+        ${window.isGM?'<button type="button" class="btn btn-secondary" onclick="openSessionReward()">Награждение опытом</button>':''}
         <h4>Особые черты</h4>
         <div id="special-traits-container"></div>
         <button type="button" class="btn btn-sm" onclick="addSpecialTrait()" ${data.creation?.completed&&!window.isGM?'disabled':''}>+ Добавить</button>
@@ -4299,7 +4421,6 @@ async function renderSkillsTab(data) {
     }
     if (document.getElementById('special-traits-container') !== traitsRoot) return;
     renderSpecialTraits(data.features?.specialTraits || [], specialTraitTemplates);
-    if(data.creation?.completed&&!window.isGM)traitsRoot.querySelectorAll('input,select,textarea,button').forEach(el=>el.disabled=true);
     applySheetEditPermissions(container);
 }
 
@@ -4308,79 +4429,52 @@ function renderSpecialTraits(traits, templates) {
     if (!container) return;
     container.innerHTML = '';
 
+    const canChange = currentCharacterCanEdit && (window.isGM || !currentCharacterData.creation?.completed);
     traits.forEach((trait, index) => {
-        const selectedTemplateId = trait.templateId ? parseInt(trait.templateId, 10) : null;
-        const optionsHtml = templates.map(t =>
-            `<option value="${t.id}" ${selectedTemplateId === t.id || trait.ruleId && trait.ruleId===t.attributes?.ruleId ? 'selected' : ''}>${escapeHtml(t.name)}</option>`
-        ).join('');
-
-        const div = document.createElement('div');
-        div.className = 'trait-item';
-        div.innerHTML = `
-            <div style="display: flex; gap: 5px; flex-wrap: wrap; align-items: center; margin-bottom: 5px;">
-                <select name="features.specialTraits.${index}.templateId" class="form-control" style="min-width:150px; flex: 1;" onchange="fillTraitFromTemplate(this, ${index})">
-                    <option value="">-- Выберите особую черту --</option>
-                    ${optionsHtml}
-                </select>
-                <textarea class="form-control" name="features.specialTraits.${index}.effect" placeholder="Эффект" rows="3" style="flex: 2;">${escapeHtml(ruleText(trait.effect))}</textarea>
-                <input type="number" class="form-control number-input" name="features.specialTraits.${index}.cost" value="${trait.cost || 0}" placeholder="Стоимость" style="width: 70px;">
-                <button type="button" class="btn btn-sm btn-danger" onclick="removeSpecialTrait(${index})">✕</button>
-            </div>
-        `;
-        if(trait.choices&&Object.keys(trait.choices).length){const note=document.createElement('p');note.textContent=Object.values(trait.choices).join(' · ');div.appendChild(note);}
-        container.appendChild(div);
-    });
-
-    window.fillTraitFromTemplate = async function(select, index) {
-        const selectedId = parseInt(select.value, 10);
-        if (isNaN(selectedId)) {
-            // Пустой выбор — очищаем поля
-            const effectInput = document.querySelector(`[name="features.specialTraits.${index}.effect"]`);
-            const costInput = document.querySelector(`[name="features.specialTraits.${index}.cost"]`);
-            if (effectInput) effectInput.value = '';
-            if (costInput) costInput.value = 0;
-            if (currentCharacterData.features?.specialTraits?.[index]) {
-                delete currentCharacterData.features.specialTraits[index].templateId;
-                delete currentCharacterData.features.specialTraits[index].ruleId;
-                delete currentCharacterData.features.specialTraits[index].choices;
-                delete currentCharacterData.features.specialTraits[index].name;
-                currentCharacterData.features.specialTraits[index].effect = '';
-                currentCharacterData.features.specialTraits[index].cost = 0;
-            }
+        const template = templates.find(t => t.id === Number(trait.templateId)
+            || (trait.ruleId && trait.ruleId === t.attributes?.ruleId))
+            ?? templates.find(t => t.name === trait.name);
+        const name = trait.name || template?.name;
+        if (!name && !canChange) return;
+        const cost = trait.cost ?? template?.attributes?.cost;
+        const limit = template?.attributes?.maxCount;
+        const metadata = [cost != null && `Стоимость: ${cost}`, limit && `Не более ${limit}`].filter(Boolean).join(' · ');
+        const choices = Object.values(trait.choices || {}).join(' · ');
+        const row = document.createElement('div');
+        row.className = 'trait-item';
+        row.innerHTML = `
+            ${name ? `<div><strong>${escapeHtml(name)}</strong>${metadata ? `<small>${escapeHtml(metadata)}</small>` : ''}</div>
+                <div class="trait-item-effect">${escapeHtml(ruleText(trait.effect ?? template?.attributes?.effect))}
+                    ${choices ? `<small>${escapeHtml(choices)}</small>` : ''}</div>`
+                : `<select class="form-control" aria-label="Особая черта">
+                    <option value="">Выберите особую черту</option>
+                    ${templates.map(t => `<option value="${t.id}">${escapeHtml(t.name)}</option>`).join('')}
+                </select>`}
+            ${canChange ? `<button type="button" class="btn btn-sm btn-danger" aria-label="Удалить особую черту" onclick="removeSpecialTrait(${index})">✕</button>` : ''}`;
+        row.querySelector('select')?.addEventListener('change', event => {
+            const selected = templates.find(t => t.id === Number(event.target.value));
+            if (!selected) return;
+            updateDataFromFields();
+            traits[index] = {
+                name: selected.name,
+                effect: ruleText(selected.attributes?.effect),
+                cost: selected.attributes?.cost ?? 0,
+                templateId: selected.id,
+                ruleId: selected.attributes?.ruleId,
+            };
+            renderSpecialTraits(traits, templates);
             scheduleAutoSave();
-            return;
-        }
-
-        const templates = await loadTemplatesForLobby('special_trait');
-        const template = templates.find(t => t.id === selectedId);
-        if (!template) return;
-
-        const effectInput = document.querySelector(`[name="features.specialTraits.${index}.effect"]`);
-        const costInput = document.querySelector(`[name="features.specialTraits.${index}.cost"]`);
-        if (effectInput) effectInput.value = ruleText(template.attributes?.effect);
-        if (costInput) costInput.value = template.attributes?.cost || 0;
-
-        if (!currentCharacterData.features) currentCharacterData.features = {};
-        if (!currentCharacterData.features.specialTraits) currentCharacterData.features.specialTraits = [];
-        const trait = currentCharacterData.features.specialTraits[index];
-        trait.name = template.name;
-        trait.effect = ruleText(template.attributes?.effect);
-        trait.cost = template.attributes?.cost || 0;
-        trait.templateId = template.id;
-        trait.ruleId = template.attributes?.ruleId;
-        delete trait.choices;
-
-        scheduleAutoSave();
-    };
+        });
+        container.appendChild(row);
+    });
 }
 
-// Функция добавления новой особой черты (без шаблона)
 window.openSessionReward = async function() {
     if(!window.isGM||!currentCharacterCanEdit)return;
     await forceSyncCharacter();
     const characterId=currentCharacterId;
     const {showSessionReward}=await import('./characterDevelopment.js');
-    await showSessionReward(currentLobbyId,characterId,result=>{
+    await showSessionReward(currentLobbyId,characterId,currentCharacterData,result=>{
         if(currentCharacterId!==characterId)return;
         currentCharacterData=result.data;renderSkillsTab(currentCharacterData);
         showNotification(`Начислено свободных очков: ${result.result.freePoints}; за обучение: ${result.result.trainingPoints}`,'success');
@@ -4787,22 +4881,23 @@ async function renderEquipmentTab(data, { focusWeaponIndex = null } = {}) {
                 ${(armor.containers || []).length ? `
                 <div class="armor-containers-row" data-widget-block="armor-containers">
                     ${(armor.containers || []).map((slot, idx) => `
-                        <div style="border: 1px solid #666; border-radius: 4px; padding: 5px; width: 180px; background: rgba(0,0,0,0.2);">
-                            <div style="display: flex; align-items: center; gap: 5px;">
+                        <div class="armor-container-card">
+                            <div class="armor-container-header">
                                 <strong>${idx+1}:</strong>
                                 ${slot.item ? `
-                                    <span style="flex:1; font-size:0.9rem;">${escapeHtml(slot.item.name)}</span>
-                                    <button type="button" class="btn btn-sm btn-danger" onclick="removeArmorContainerItem(${idx})" title="Извлечь">✕</button>
+                                    <span>${escapeHtml(slot.item.name)}</span>
+                                    <button type="button" class="btn btn-sm btn-danger" onclick="removeArmorContainerItem(${idx})" aria-label="Снять контейнер" title="Снять контейнер">✕</button>
                                 ` : `
-                                    <button type="button" class="btn btn-sm btn-primary" onclick="addItemToArmorContainer(${idx})" style="width:100%;">Вставить</button>
+                                    <button type="button" class="btn btn-sm btn-primary" onclick="addItemToArmorContainer(${idx})">Вставить</button>
                                 `}
                             </div>
-                            ${slot.item ? [slot.item,...(slot.item.installedModules||[])].map(renderArtifactSpecial).join('') : ''}
+                            ${renderArtifactSpecial(slot.item)}
                             ${artifactContainerKind(slot.item) ? renderSlotsUniversal(slot.item, ['equipment','armor','containers',idx,'item']) : ''}
                             ${slot.item && !artifactContainerKind(slot.item) && slot.item.category === 'container' && slot.item.installedModules?.length ? `
                                 <div style="margin-top: 5px; font-size: 0.75rem; color: #aaa; word-break: break-all;">
                                     📦 ${slot.item.installedModules.map(m => m.name).join(', ')}
                                 </div>
+                                ${slot.item.installedModules.map(renderArtifactSpecial).join('')}
                             ` : ''}
                         </div>
                     `).join('')}
@@ -4950,25 +5045,98 @@ async function renderEquipmentTab(data, { focusWeaponIndex = null } = {}) {
 
     `;
 
-    const viewState = captureSheetViewState();
-    const inventory = document.getElementById('sheet-tab-inventory');
-    container.innerHTML = html;
-    if (inventory) container.append(inventory);
-    await renderWeapons(weapons, weaponTemplates, weaponModuleTemplates, weaponModTemplates);
+    const sameCharacterRender = Number(equipmentRenderedCharacterId) === Number(currentCharacterId);
+    const viewState = sameCharacterRender ? captureSheetViewState() : null;
+    if (!sameCharacterRender) disposeEquipmentAppearancePreview();
+    equipmentRenderedCharacterId = Number(currentCharacterId);
+    const markup = document.createElement('div');
+    markup.innerHTML = html;
+    await renderWeapons(weapons, weaponTemplates, weaponModuleTemplates, weaponModTemplates,
+        markup.querySelector('#weapons-container'));
     if (renderVersion !== equipmentRenderVersion) return;
     renderEquipmentLoadout(container, data, weaponTemplates, helmetTemplates, gasMaskTemplates, armorTemplates,
-        { focusWeaponIndex, restoreWeaponPanels });
+        { markup, focusWeaponIndex, restoreWeaponPanels });
     const loadout = container.querySelector('.equipment-loadout') || container;
     const devices = container.querySelector('[data-equipment-group="detector"]');
-    await refreshEquipmentDevices(devices);
-    if(renderVersion===equipmentRenderVersion)renderProstheses(loadout,data,window.operateProsthesis,currentCharacterCanEdit&&!medicalOperationInProgress,currentCharacterId);
-    if(renderVersion===equipmentRenderVersion){
-        const craftingButton=document.createElement('button');craftingButton.type='button';craftingButton.className='btn btn-secondary';
-        craftingButton.id='character-crafting-open';craftingButton.textContent='Создание, модификации и разбор';craftingButton.disabled=!currentCharacterCanEdit;
+    const canOperate = currentCharacterCanEdit && !medicalOperationInProgress;
+    const prostheses = document.createElement('div');
+    renderProstheses(prostheses, data, window.operateProsthesis, canOperate, currentCharacterId);
+    const previousProstheses = loadout.querySelector(':scope > .prostheses');
+    if (previousProstheses) previousProstheses.remove();
+    if (prostheses.firstElementChild) loadout.append(prostheses.firstElementChild);
+    let craftingButton = container.querySelector('#character-crafting-open');
+    if (!craftingButton) {
+        craftingButton=document.createElement('button');craftingButton.type='button';craftingButton.className='btn btn-secondary';
+        craftingButton.id='character-crafting-open';craftingButton.textContent='Создание, модификации и разбор';
         craftingButton.onclick=window.openCharacterCrafting;container.prepend(craftingButton);
     }
-    if (renderVersion === equipmentRenderVersion) {
-        restoreSheetViewState(viewState, { restoreWeaponCards: focusWeaponIndex === null });
+    craftingButton.disabled = !currentCharacterCanEdit;
+    restoreSheetViewState(viewState, { restoreWeaponCards: focusWeaponIndex === null });
+    await refreshEquipmentDevices(devices);
+}
+
+async function refreshEquipmentDevices(devices, { opening = false } = {}) {
+    if (!devices) return;
+    const characterId = currentCharacterId;
+    const renderVersion = equipmentRenderVersion;
+    const devicesVersion = ++equipmentDevicesVersion;
+    const isCurrent = () => characterId === currentCharacterId
+        && renderVersion === equipmentRenderVersion && devicesVersion === equipmentDevicesVersion
+        && devices.isConnected;
+    // После перемещения предмета список должен получить его новый адрес в инвентаре.
+    if (opening) devices.querySelector(':scope > .portable-lights')?.remove();
+    try {
+        if (opening && autoSaveTimer) await forceSyncCharacter();
+        await Server.waitForCharacterSave(characterId);
+        if (!isCurrent()) return;
+        const lights = document.createElement('div');
+        await renderPortableLights(lights, characterId, currentCharacterData, window.operatePortableLight,
+            isCurrent, currentCharacterCanEdit && !medicalOperationInProgress);
+        if (!isCurrent()) return;
+        devices.querySelector(':scope > .portable-lights')?.remove();
+        if (lights.firstElementChild) devices.append(lights.firstElementChild);
+    } catch (error) {
+        console.warn('Не удалось загрузить приборы:', error);
+    }
+}
+
+function disposeEquipmentAppearancePreview() {
+    equipmentAppearancePreview?.dispose();
+    equipmentAppearancePreview = null;
+}
+
+function syncEquipmentAppearancePanel() {
+    const panel = document.querySelector('#sheet-tab-equipment.active [data-character-appearance]');
+    if (!panel || equipmentActivePanel !== 'appearance') {
+        disposeEquipmentAppearancePreview();
+        return;
+    }
+    const appearance = { ...DEFAULT_CHARACTER_APPEARANCE };
+    panel.querySelectorAll('select[name^="appearance."]').forEach(control => {
+        appearance[control.name.slice('appearance.'.length)] = control.value;
+    });
+    syncCharacterAppearanceControls(panel);
+    const host = panel.querySelector('[data-character-appearance-preview]');
+    if (!host) return;
+    const normalized = normalizeCharacterAppearance({ ...appearance, gear: characterEquipmentVisuals(currentCharacterData?.equipment) });
+    if (equipmentAppearancePreview) equipmentAppearancePreview.update(normalized);
+    else equipmentAppearancePreview = mountCharacterAppearancePreview(host, normalized);
+}
+
+function syncCharacterAppearanceControls(panel) {
+    const value = name => panel.querySelector(`[name="appearance.${name}"]`)?.value;
+    const visibility = {
+        hairColor: value('hair') === 'short',
+        sweaterColor: value('top') === 'sweater',
+        leatherCoatColor: value('top') === 'leather_coat',
+        trenchCoatColor: value('top') === 'trench_coat',
+        jeansColor: value('bottom') === 'jeans',
+        tacticalColor: value('bottom') === 'tactical',
+        huntingColor: value('bottom') === 'hunting',
+    };
+    for (const [name, visible] of Object.entries(visibility)) {
+        const field = panel.querySelector(`[data-appearance-dependent="${name}"]`);
+        if (field) field.hidden = !visible;
     }
 }
 
@@ -5211,40 +5379,17 @@ function equipmentHandsContents(data) {
         : '<span>Руки свободны</span>';
 }
 
-async function refreshEquipmentDevices(devices, { opening = false } = {}) {
-    if (!devices) return;
-    const characterId = currentCharacterId;
-    const renderVersion = equipmentRenderVersion;
-    const devicesVersion = ++equipmentDevicesVersion;
-    const isCurrent = () => characterId === currentCharacterId
-        && renderVersion === equipmentRenderVersion && devicesVersion === equipmentDevicesVersion
-        && devices.isConnected;
-    // После перемещения предмета список должен получить его новый адрес в инвентаре.
-    if (opening) devices.querySelector(':scope > .portable-lights')?.remove();
-    try {
-        if (opening && autoSaveTimer) await forceSyncCharacter();
-        await Server.waitForCharacterSave(characterId);
-        if (!isCurrent()) return;
-        const lights = document.createElement('div');
-        await renderPortableLights(lights, characterId, currentCharacterData, window.operatePortableLight,
-            isCurrent, currentCharacterCanEdit && !medicalOperationInProgress);
-        if (!isCurrent()) return;
-        devices.querySelector(':scope > .portable-lights')?.remove();
-        if (lights.firstElementChild) devices.append(lights.firstElementChild);
-    } catch (error) {
-        console.warn('Не удалось загрузить приборы:', error);
-    }
-}
-
 function renderEquipmentLoadout(container, data, weaponTemplates, helmetTemplates, gasMaskTemplates, armorTemplates,
-    { focusWeaponIndex, restoreWeaponPanels }) {
+    { markup, focusWeaponIndex, restoreWeaponPanels }) {
     const panelLabels = {
         weapons: 'Оружие и действия', protection: 'Защита',
-        inventory: 'Инвентарь', detector: 'Приборы', cosmetic: 'Косметика', pda: 'Модификации КПК',
+        inventory: 'Инвентарь', detector: 'Приборы', cosmetic: 'Косметика', appearance: 'Внешность', pda: 'Модификации КПК',
     };
     const protectionLabels = { helmet: 'Шлем', gasMask: 'Противогаз', armor: 'Броня' };
-    const groups = new Map([...container.querySelectorAll(':scope > [data-equipment-group]')]
+    const groups = new Map([...markup.querySelectorAll(':scope > [data-equipment-group]')]
         .map(group => [group.dataset.equipmentGroup, group]));
+    const inventory = container.querySelector('#sheet-tab-inventory');
+    if (inventory) groups.set('inventory', inventory);
     const equipment = data.equipment || {};
     const weapons = data.weapons || [];
     const weaponEntries = weapons.map((item, index) => ({
@@ -5280,7 +5425,15 @@ function renderEquipmentLoadout(container, data, weaponTemplates, helmetTemplate
         return filter ? `Фильтр ${filter.durability ?? filter.attributes?.durability ?? 0}/${filter.maxDurability ?? filter.attributes?.max_durability ?? '?'}` : '';
     };
     const exoskeletonBattery = equipmentModule(equipment.armor, 'exoskeleton_battery');
-    container.insertAdjacentHTML('afterbegin', `<section class="equipment-loadout" aria-label="Экипировка персонажа">
+    const isMutant = characterCategory({ data }) === 'mutants';
+    const appearance = normalizeCharacterAppearance(data.appearance || DEFAULT_CHARACTER_APPEARANCE);
+    const previousAppearance = container.querySelector('[data-equipment-panel="appearance"] > div');
+    if (!isMutant && !previousAppearance) {
+        const group = document.createElement('div');
+        group.innerHTML = renderCharacterAppearancePanel(appearance);
+        groups.set('appearance', group);
+    }
+    const loadoutHtml = `<section class="equipment-loadout" aria-label="Экипировка персонажа">
         <div class="loadout-main">
             <div class="loadout-column">
                 ${slot('Шлем', equipment.helmet?.templateId ? equipment.helmet : null, 'helmet', 'Ш', 'helmet', null,
@@ -5308,54 +5461,91 @@ function renderEquipmentLoadout(container, data, weaponTemplates, helmetTemplate
             <h4>В руках</h4>
             <div id="equipment-hands-items">${equipmentHandsContents(data)}</div>
         </div>
-    </section>`);
-    const loadout = container.querySelector(':scope > .equipment-loadout');
-    const workspace = document.createElement('div');
-    workspace.className = 'equipment-workspace';
-    const panels = document.createElement('div');
-    panels.className = 'equipment-panels';
-    loadout.before(workspace);
-    workspace.append(loadout, panels);
+    </section>`;
+    let workspace = container.querySelector(':scope > .equipment-workspace');
+    if (!workspace) {
+        workspace = document.createElement('div');
+        workspace.className = 'equipment-workspace';
+        workspace.innerHTML = '<div class="equipment-panels"><div class="equipment-panel-nav" role="tablist" aria-label="Разделы экипировки"></div></div>';
+        container.append(workspace);
+    }
+    const panels = workspace.querySelector(':scope > .equipment-panels');
+    const navigation = panels.querySelector(':scope > .equipment-panel-nav');
+    const previousLoadout = workspace.querySelector(':scope > .equipment-loadout');
+    if (previousLoadout?.equipmentMarkup !== loadoutHtml) {
+        previousLoadout?.remove();
+        workspace.insertAdjacentHTML('afterbegin', loadoutHtml);
+        workspace.firstElementChild.equipmentMarkup = loadoutHtml;
+    }
 
-    const navigation = document.createElement('div');
-    navigation.className = 'equipment-panel-nav';
-    navigation.setAttribute('role', 'tablist');
-    navigation.setAttribute('aria-label', 'Разделы экипировки');
-    panels.append(navigation);
+    const replaceGroup = (parent, group) => {
+        const previous = parent.lastElementChild;
+        if (!group || previous === group) return;
+        const groupMarkup = group.innerHTML;
+        if (previous?.tagName !== 'SUMMARY') {
+            if (previous?.equipmentMarkup === groupMarkup) return;
+            const lights = previous?.querySelector(':scope > .portable-lights');
+            if (lights) group.append(lights);
+            previous.replaceWith(group);
+        } else parent.append(group);
+        group.equipmentMarkup = groupMarkup;
+    };
     Object.entries(panelLabels).forEach(([key, label]) => {
-        const group = groups.get(key);
-        if (!group && key !== 'protection') return;
-        const details = document.createElement('details');
-        details.className = 'equipment-detail';
-        details.dataset.equipmentPanel = key;
-        details.open = true;
-        const summary = document.createElement('summary');
-        summary.textContent = label;
-        details.append(summary);
-        if (group) details.append(group);
+        const group = key === 'appearance' && !isMutant ? previousAppearance || groups.get(key) : groups.get(key);
+        let details = panels.querySelector(`:scope > [data-equipment-panel="${key}"]`);
+        let button = navigation.querySelector(`[data-panel="${key}"]`);
+        if (!group && key !== 'protection') {
+            details?.remove();
+            button?.remove();
+            return;
+        }
+        if (!details) {
+            details = document.createElement('details');
+            details.className = 'equipment-detail';
+            details.dataset.equipmentPanel = key;
+            details.open = true;
+            const summary = document.createElement('summary');
+            summary.textContent = label;
+            details.append(summary);
+            panels.append(details);
+        }
+        if (group) replaceGroup(details, group);
         else {
             for (const [slot, slotLabel] of Object.entries(protectionLabels)) {
-                const section = document.createElement('details');
-                section.className = 'equipment-detail loadout-protection-details';
-                section.dataset.equipmentPanel = slot;
-                section.open = restoreWeaponPanels ? equipmentOpenPanels.has(slot) : slot === 'armor';
-                const heading = document.createElement('summary');
+                let section = details.querySelector(`[data-equipment-panel="${slot}"]`);
+                if (!section) {
+                    section = document.createElement('details');
+                    section.className = 'equipment-detail loadout-protection-details';
+                    section.dataset.equipmentPanel = slot;
+                    section.open = restoreWeaponPanels ? equipmentOpenPanels.has(slot) : slot === 'armor';
+                    section.append(document.createElement('summary'));
+                    details.append(section);
+                }
                 const item = equipment[slot];
-                heading.textContent = `${slotLabel} · ${item?.name || 'Пусто'}`;
-                section.append(heading, groups.get(slot));
-                details.append(section);
+                section.firstElementChild.textContent = `${slotLabel} · ${item?.name || 'Пусто'}`;
+                replaceGroup(section, groups.get(slot));
             }
         }
-        panels.append(details);
-        const button = document.createElement('button');
-        button.type = 'button';
-        button.className = 'equipment-panel-tab';
-        button.dataset.panel = key;
-        button.setAttribute('data-sheet-control', '');
-        button.setAttribute('role', 'tab');
-        button.textContent = label;
-        navigation.append(button);
+        if (!button) {
+            button = document.createElement('button');
+            button.type = 'button';
+            button.className = 'equipment-panel-tab';
+            button.dataset.panel = key;
+            button.setAttribute('data-sheet-control', '');
+            button.setAttribute('role', 'tab');
+            button.textContent = label;
+            navigation.append(button);
+        }
     });
+    const appearancePanel = panels.querySelector('[data-character-appearance]');
+    if (appearancePanel) {
+        appearancePanel.querySelectorAll('select[name^="appearance."]').forEach(control => {
+            const value = appearance[control.name.slice('appearance.'.length)];
+            if (control.value !== value) setRemoteControlValue(control, value);
+        });
+        syncCharacterAppearanceControls(appearancePanel);
+        appearancePanel.addEventListener('change', syncEquipmentAppearancePanel);
+    }
     const selectPanel = (key, opening = true) => {
         equipmentActivePanel = key;
         panels.querySelectorAll(':scope > .equipment-detail').forEach(panel => {
@@ -5369,9 +5559,15 @@ function renderEquipmentLoadout(container, data, weaponTemplates, helmetTemplate
         if (opening && key === 'detector') {
             refreshEquipmentDevices(panels.querySelector('[data-equipment-group="detector"]'), { opening: true });
         }
+        syncEquipmentAppearancePanel();
     };
     navigation.querySelectorAll('.equipment-panel-tab').forEach(button => {
-        button.addEventListener('click', () => selectPanel(button.dataset.panel));
+        button.onclick = () => {
+            const key = button.dataset.panel;
+            const changed = equipmentActivePanel !== key;
+            selectPanel(key);
+            if (changed) animatePanelEntry(panels.querySelector(`[data-equipment-panel="${key}"]`));
+        };
     });
     selectPanel(navigation.querySelector(`[data-panel="${equipmentActivePanel}"]`) ? equipmentActivePanel : 'weapons', false);
     const selectedWeaponIndex = Number.isInteger(Number(data.activeWeaponIndex))
@@ -5393,8 +5589,13 @@ function renderEquipmentLoadout(container, data, weaponTemplates, helmetTemplate
         card.before(details);
         details.append(summary, card);
     });
+    if (focusWeaponIndex !== null) {
+        container.querySelectorAll('.loadout-weapon-details').forEach(details => {
+            details.open = details.dataset.equipmentPanel === `weapon-${focusWeaponIndex}`;
+        });
+    }
     container.querySelectorAll('[data-equipment-open]').forEach(button => {
-        button.addEventListener('click', () => {
+        button.onclick = () => {
             const key = button.dataset.equipmentOpen;
             if (key === 'inventory') {
                 selectPanel('inventory');
@@ -5419,8 +5620,50 @@ function renderEquipmentLoadout(container, data, weaponTemplates, helmetTemplate
                     details.open = details === weaponPanel;
                 });
             }
-        });
+        };
     });
+}
+
+function renderCharacterAppearancePanel(appearance) {
+    const options = {
+        top: [['sweater', 'Свитер'], ['gorka', 'Куртка «Горка»'], ['leather_coat', 'Кожаный плащ'], ['trench_coat', 'Мужской тренч']],
+        bottom: [['jeans', 'Джинсы'], ['gorka', 'Штаны «Горка»'], ['tactical', 'Тактические штаны'], ['hunting', 'Охотничьи штаны']],
+        hair: [['short', 'Короткая стрижка'], ['bald', 'Лысый']],
+        hairColor: [['black', 'Чёрный'], ['brown', 'Коричневый'], ['blond', 'Блонд']],
+        sweaterColor: [['black', 'Чёрный'], ['green', 'Зелёный'], ['blue', 'Синий']],
+        leatherCoatColor: [['black', 'Чёрный'], ['brown', 'Коричневый']],
+        trenchCoatColor: [['black', 'Чёрный'], ['brown', 'Коричневый'], ['navy', 'Тёмно-синий']],
+        jeansColor: [['black', 'Чёрный'], ['green', 'Зелёный'], ['blue', 'Синий']],
+        tacticalColor: [['charcoal', 'Графитовый'], ['khaki', 'Хаки']],
+        huntingColor: [['olive', 'Оливковый'], ['brown', 'Коричневый']],
+        expression: [['calm', 'Спокойное'], ['wounded', 'Раненое']],
+    };
+    const labels = {
+        top: 'Верхняя одежда', bottom: 'Нижняя одежда', hair: 'Причёска',
+        hairColor: 'Цвет волос', sweaterColor: 'Цвет свитера',
+        leatherCoatColor: 'Цвет плаща', trenchCoatColor: 'Цвет тренча',
+        jeansColor: 'Цвет джинсов', tacticalColor: 'Цвет тактических штанов',
+        huntingColor: 'Цвет охотничьих штанов', expression: 'Выражение лица',
+    };
+    const dependent = ['hairColor', 'sweaterColor', 'leatherCoatColor', 'trenchCoatColor', 'jeansColor', 'tacticalColor', 'huntingColor'];
+    const field = key => `
+        <label class="character-appearance__field${dependent.includes(key) ? ' character-appearance__field--dependent' : ''}"
+            ${dependent.includes(key) ? `data-appearance-dependent="${key}"` : ''}>
+            <span>${labels[key]}</span>
+            <select class="form-control" name="appearance.${key}"${currentCharacterCanEdit ? '' : ' disabled'}>
+                ${options[key].map(([value, label]) => `<option value="${value}"${appearance[key] === value ? ' selected' : ''}>${label}</option>`).join('')}
+            </select>
+        </label>`;
+    const fields = `<div class="character-appearance__group">${field('top')}${field('sweaterColor')}${field('leatherCoatColor')}${field('trenchCoatColor')}</div>
+        <div class="character-appearance__group">${field('bottom')}${field('jeansColor')}${field('tacticalColor')}${field('huntingColor')}</div>
+        <div class="character-appearance__group">${field('hair')}${field('hairColor')}</div>
+        <div class="character-appearance__group">${field('expression')}</div>`;
+    return `<section class="character-appearance" data-character-appearance aria-label="Внешность">
+        <div class="character-appearance__body">
+            <div class="character-appearance__preview" data-character-appearance-preview aria-label="Предпросмотр внешности"></div>
+            <div class="character-appearance__fields">${fields}</div>
+        </div>
+    </section>`;
 }
 
 /**
@@ -5489,6 +5732,15 @@ function renderSlotsUniversal(item, itemPath, depth = 0) {
             const uninstallBtn = `<button type="button" class="btn btn-sm btn-danger" onclick="window.uninstallModuleFromSlot('${JSON.stringify(itemPath).replace(/"/g, '&quot;')}', '${slot.type}')">${artifactSlot ? 'Извлечь · 8 ОД в бою' : 'Снять'}</button>`;
             const configBtn = (slot.type === 'visor') ? `<button type="button" class="btn btn-sm btn-secondary" onclick="openVisorModificationsModal('${JSON.stringify(itemPath).replace(/"/g, '&quot;')}', '${slot.type}')">⚙️</button>` : '';
 
+            if (artifactSlot) {
+                html += `
+                    <div class="artifact-slot">
+                        <div class="artifact-slot-name">${info}</div>
+                        ${renderArtifactSpecial(installed)}
+                        ${uninstallBtn}
+                    </div>`;
+                continue;
+            }
             html += `
                 <div style="margin-left:${indent}px; display:flex; align-items:center; gap:10px; margin-top:5px;">
                     <span style="width:100px;">${slot.label}:</span>
@@ -5498,14 +5750,16 @@ function renderSlotsUniversal(item, itemPath, depth = 0) {
                 </div>
             `;
 
-            if (!artifactSlot) {
-                const installedIndex = (item.installedModules || []).findIndex(m => m.slotType === slot.type);
-                const subPath = itemPath.concat(['installedModules', installedIndex]);
-                html += renderSlotsUniversal(installed, subPath, depth + 1);
-            }
+            const installedIndex = (item.installedModules || []).findIndex(m => m.slotType === slot.type);
+            const subPath = itemPath.concat(['installedModules', installedIndex]);
+            html += renderSlotsUniversal(installed, subPath, depth + 1);
         } else {
             if (artifactSlot === 'storage' && itemPath[0] === 'equipment' && itemPath[1] === 'armor') continue;
             const installBtn = `<button type="button" class="btn btn-sm btn-primary" onclick="window.installModuleFromSlot('${JSON.stringify(itemPath).replace(/"/g, '&quot;')}', '${slot.type}')">${artifactSlot ? 'Вложить · 4 ОД в бою' : 'Установить'}</button>`;
+            if (artifactSlot) {
+                html += `<div class="artifact-slot">${installBtn}</div>`;
+                continue;
+            }
             html += `
                 <div style="margin-left:${indent}px; display:flex; align-items:center; gap:10px; margin-top:5px;">
                     <span style="width:100px;">${slot.label}:</span>
@@ -5941,7 +6195,7 @@ function renderArtifactSpecial(item) {
     const powerOptions=state.power_cost?`<select data-artifact-power aria-label="Снижение штрафа перемещения" ${!currentCharacterCanEdit||!state.available?'disabled':''}>
         ${[1,2,3,4,5].map(value=>`<option value="${value}">−${value} к штрафу · ${value*state.power_cost} ОЗ</option>`).join('')}
         </select>`:'';
-    return `<div style="flex-basis:100%;font-size:.8rem;margin-top:5px;overflow-wrap:anywhere;">
+    return `<div class="artifact-special-controls">
         <span>${escapeHtml(hint)}</span>${powerOptions}
         ${state.supported?`<button type="button" class="btn btn-sm" data-artifact-special="${escapeHtml(String(state.item_id))}"
             onclick="window.activateArtifactSpecial(this.dataset.artifactSpecial,this.parentElement.querySelector('[data-artifact-power]')?.value)" ${!currentCharacterCanEdit||!state.available&&!state.armed?'disabled':''}>
@@ -5963,7 +6217,7 @@ window.activateArtifactSpecial = async function(itemId,power,singleForecast=fals
         if(state?.fall_reaction){
             const response=await Server.activateArtifactSpecial(characterId,{item_id:state.item_id,
                 arm_fall:!state.armed,character_revision:currentCharacterData._revision});
-            if(currentCharacterId===characterId)currentCharacterData=response.data;
+            await applyRemoteSheetData(response.data, characterId);
             return;
         }
         const {runController}=await import('./itemControllers.js');
@@ -6007,9 +6261,8 @@ window.activateArtifactSpecial = async function(itemId,power,singleForecast=fals
             if(!target||currentCharacterId!==characterId)return;
             payload.target_id=target.id;
         }
-        await runController(characterId,payload,data=>{
-            if(currentCharacterId===characterId)currentCharacterData=data;
-        },{actionKey:'artifact_special',send:Server.activateArtifactSpecial});
+        await runController(characterId,payload,data=>applyRemoteSheetData(data, characterId),
+            {actionKey:'artifact_special',send:Server.activateArtifactSpecial});
     }catch(error){showNotification(error.message||'Не удалось применить артефакт','system');}
     finally{if(locked){medicalOperationInProgress=false;medicalRemoteUpdate=null;await refreshSavedSheet(characterId);}}
 };
@@ -6644,8 +6897,42 @@ function weaponAttachmentSlots(template) {
     return slots.filter(slot => !launcher || slot.type !== 'barrel');
 }
 
-async function renderWeapons(weapons, weaponTemplates, moduleTemplates, weaponModTemplates) {
-    const container = document.getElementById('weapons-container');
+function createGroundStashButton(item, path) {
+    if (!currentCharacterCanEdit || !isGroundStashTool(item)) return null;
+    const characterId = currentCharacterId;
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'btn btn-sm btn-secondary';
+    button.textContent = 'Прикопать тайник';
+    button.dataset.widgetKey = 'bury-ground-stash';
+    button.onclick = async event => {
+        event.stopPropagation();
+        if (!window.isLocationActive) {
+            showNotification('Откройте подлокацию с этим персонажем', 'system');
+            return;
+        }
+        button.disabled = true;
+        try {
+            await forceSyncCharacter();
+            await Server.waitForCharacterSave(characterId);
+            if (currentCharacterId !== characterId) return;
+            const current = getItemByPath(path);
+            if (!isGroundStashTool(current) || (item.id != null ? current.id !== item.id : current !== item)) {
+                throw new Error('Инструмент перемещён. Выберите его заново');
+            }
+            const location = await import('./locationScene.js');
+            if (currentCharacterId !== characterId) return;
+            if (location.beginGroundStashPlacement(characterId, path, current.id)) closeCharacterSheet();
+        } catch (error) {
+            showNotification(error.message, 'system');
+        } finally {
+            button.disabled = false;
+        }
+    };
+    return button;
+}
+
+async function renderWeapons(weapons, weaponTemplates, moduleTemplates, weaponModTemplates, container) {
     if (!container) return;
 
     const groupedModules = {};
@@ -6977,6 +7264,10 @@ async function renderWeapons(weapons, weaponTemplates, moduleTemplates, weaponMo
         `);
     }
     container.innerHTML = weaponsHtml.join('');
+    weapons.forEach((weapon, index) => {
+        const button = createGroundStashButton(weapon, ['weapons', index]);
+        if (button) container.querySelector(`[data-weapon-index="${index}"] .loadout-weapon-actions`)?.append(button);
+    });
 }
 
 window.equipModuleToWeapon = async function(weaponIndex, slotType) {
@@ -7831,10 +8122,10 @@ window.addItemToArmorContainer = async function(containerIndex) {
         }
 
         slot.item = selected.item;
+        scheduleAutoSave();
         await renderEquipmentTab(currentCharacterData);
         await renderInventoryTab(currentCharacterData);
-        scheduleAutoSave();
-        forceSyncCharacter();
+        await forceSyncCharacter();
         showNotification('Предмет помещён в контейнер брони', 'success');
     };
     modal.style.display = 'flex';
@@ -7851,10 +8142,10 @@ window.removeArmorContainerItem = async function(containerIndex) {
     if (!currentCharacterData.inventory.backpack) currentCharacterData.inventory.backpack = [];
     currentCharacterData.inventory.backpack.push(item);
     slot.item = null;
+    scheduleAutoSave();
     await renderEquipmentTab(currentCharacterData);
     await renderInventoryTab(currentCharacterData);
-    scheduleAutoSave();
-    forceSyncCharacter();
+    await forceSyncCharacter();
     showNotification('Предмет извлечён из контейнера брони', 'success');
 };
 
@@ -8422,16 +8713,9 @@ window.updateArmorStageFromSelect = function(select, type) {
     scheduleAutoSave();
 };
 
-async function refreshCharacterAfterEquipmentAction(data = null) {
-    if (data) {
-        currentCharacterData = data;
-    } else {
-        const character = await Server.getCharacter(currentCharacterId);
-        currentCharacterData = character.data || {};
-    }
-    await renderEquipmentTab(currentCharacterData);
-    await renderInventoryTab(currentCharacterData);
-    await renderSkillsTab(currentCharacterData);
+async function refreshCharacterAfterEquipmentAction(characterId, data = null) {
+    const next = data || (await Server.getCharacter(characterId)).data;
+    return queueRemoteSheetData(next, characterId);
 }
 
 async function runEquipmentAction(operation, slot, itemPath = null) {
@@ -8466,14 +8750,14 @@ async function runEquipmentAction(operation, slot, itemPath = null) {
             showNotification('Смена экипировки начата и продолжится в следующем ходу', 'system');
             return result;
         }
-        if (characterId === currentCharacterId) await refreshCharacterAfterEquipmentAction();
+        if (characterId === currentCharacterId) await refreshCharacterAfterEquipmentAction(characterId);
     } else {
         result = await Server.changeCharacterEquipment(characterId, {
             operation,
             slot,
             item_path: itemPath,
         });
-        if (characterId === currentCharacterId) await refreshCharacterAfterEquipmentAction(result.data);
+        if (characterId === currentCharacterId) await refreshCharacterAfterEquipmentAction(characterId, result.data);
     }
     const details = result?.equipment_change || {};
     const duration = Number(details.duration_minutes || 0);
@@ -8534,7 +8818,7 @@ async function runEquipmentModuleAction(operation, targetPath, slotType, itemPat
             showNotification(artifact ? 'Действие с контейнером продолжится в следующем ходу' : 'Установка фильтра начата и продолжится в следующем ходу', 'system');
             return result;
         }
-        if (characterId === currentCharacterId) await refreshCharacterAfterEquipmentAction();
+        if (characterId === currentCharacterId) await refreshCharacterAfterEquipmentAction(characterId);
     } else {
         result = await Server.changeCharacterEquipmentModule(characterId, {
             operation,
@@ -8544,7 +8828,7 @@ async function runEquipmentModuleAction(operation, targetPath, slotType, itemPat
             item_path: itemPath,
             character_revision: currentCharacterData._revision,
         });
-        if (characterId === currentCharacterId) await refreshCharacterAfterEquipmentAction(result.data);
+        if (characterId === currentCharacterId) await refreshCharacterAfterEquipmentAction(characterId, result.data);
     }
     const message = artifact
         ? (operation === 'install' ? 'Артефакт вложен' : 'Артефакт извлечён')
@@ -8554,10 +8838,25 @@ async function runEquipmentModuleAction(operation, targetPath, slotType, itemPat
 }
 
 window.equipArmorFromInventory = async function(itemPath) {
+    const characterId = currentCharacterId;
+    const sheet = document.getElementById('character-sheet-form');
+    sheet?.querySelector('[data-armor-equip-error]')?.remove();
     try {
         return await runEquipmentAction('equip', 'armor', itemPath);
     } catch (error) {
-        showNotification(error.message || 'Не удалось надеть броню');
+        const message = error.message || 'Не удалось надеть броню';
+        if (currentCharacterId !== characterId) return;
+        if (!sheet) {
+            showNotification(message);
+            return;
+        }
+        const warning = document.createElement('div');
+        warning.dataset.armorEquipError = '';
+        warning.className = 'health-effect-card';
+        warning.setAttribute('role', 'alert');
+        warning.textContent = message;
+        sheet.querySelector('[data-armor-equip-error]')?.remove();
+        sheet.prepend(warning);
         return;
     }
 };
@@ -9396,13 +9695,21 @@ window.unequipGlasses = async function() {
     showNotification('Очки сняты', 'success');
 };
 
-window.equipGlovesFromInventory = async function(itemPath) {
-    const item = getItemByPath(itemPath);
+window.equipGlovesFromInventory = async function(itemPath, itemId = null) {
+    let item = itemId == null ? getItemByPath(itemPath) : resolveInventoryEntry(itemId, itemPath)?.item;
     if (!item || item.category !== 'gloves') {
         showNotification('Этот предмет нельзя надеть как перчатки');
         return;
     }
     const templates = await loadTemplatesForLobby('gloves');
+    if (itemId != null) {
+        const entry = resolveInventoryEntry(itemId, itemPath);
+        if (!entry || entry.item.category !== 'gloves') {
+            showNotification('Перчатки перемещены. Откройте инвентарь заново');
+            return;
+        }
+        ({item, path: itemPath} = entry);
+    }
     const template = templates.find(t => t.id === item.templateId);
     if (!template) {
         showNotification('Шаблон перчаток не найден');
@@ -9429,8 +9736,7 @@ window.equipGlovesFromInventory = async function(itemPath) {
     }
     const oldGloves = currentCharacterData.equipment?.gloves;
     if (oldGloves && oldGloves.templateId) {
-        const oldTemplates = await loadTemplatesForLobby('gloves');
-        const oldTemplate = oldTemplates.find(t => t.id === oldGloves.templateId);
+        const oldTemplate = templates.find(t => t.id === oldGloves.templateId);
         if (oldTemplate) {
             const oldItem = {...createItemFromTemplate(oldTemplate),...structuredClone(oldGloves)};
             oldItem.charismaBonus = oldGloves.charismaBonus;
@@ -10299,13 +10605,19 @@ window.useMeleeAttack = function(weaponIndex, attackType, aimed = false) {
 };
 
 let combatSheetRefreshBound = false;
+let sheetCombatWasActive = false;
 
 function refreshCombatSensitiveSheetTabs() {
+    const combatActive = window.locationCombatState?.status === 'active';
+    const combatEnded = sheetCombatWasActive && !combatActive;
+    sheetCombatWasActive = combatActive;
+    if (!combatActive && !combatEnded) return;
     if (!currentCharacterData) return;
     const modal = document.getElementById('character-sheet-modal');
     if (!modal || modal.style.display === 'none') return;
     const activeTab = document.querySelector('#sheet-tabs .tab-btn.active')?.dataset.tab;
     if (activeTab === 'equipment') {
+        if (equipmentActivePanel === 'appearance') return;
         if (equipmentActivePanel === 'inventory') {
             const hands = document.getElementById('equipment-hands-items');
             if (hands) hands.innerHTML = equipmentHandsContents(currentCharacterData);
@@ -14564,6 +14876,14 @@ async function renderVestTemplatePouches() {
 }
 
 // ========== 6. ВКЛАДКА "ИНВЕНТАРЬ" ==========
+function backpackSectionText(equipped, itemCount) {
+    const unpacked = !equipped && itemCount > 0;
+    return {
+        title: unpacked ? 'Неразмещённое снаряжение' : 'Рюкзак',
+        hint: unpacked ? 'Разложите эти вещи по карманам, подсумкам или наденьте рюкзак.' : 'Рюкзак не экипирован.',
+    };
+}
+
 async function renderInventoryTab(data) {
     const container = document.getElementById('sheet-tab-inventory');
     if (!container) return;
@@ -14575,7 +14895,7 @@ async function renderInventoryTab(data) {
     const { pockets, backpack } = inv;
     const held = Array.isArray(inv.held) ? inv.held : [];
     const pocketMaxVolume = pocketCapacity(data);
-    const pocketFill = pockets.reduce((sum, item) => sum + (item.volume || 0) * (item.quantity || 1), 0);
+    const pocketFill = pockets.reduce((sum, item) => sum + (getTotalVolume(item) || 0), 0);
 
     // Загружаем все возможные шаблоны предметов
     const allTemplates = await getAllItemTemplates();
@@ -14775,13 +15095,13 @@ async function renderInventoryTab(data) {
         })()}
         ` : ''}
 
-        <section data-widget-block="backpack"><h4 style="margin-top:20px;">${!equippedBackpack && backpack.length ? 'Неразмещённое снаряжение' : 'Рюкзак'}</h4>
+        <section data-widget-block="backpack"><h4 id="backpack-heading" style="margin-top:20px;">${backpackSectionText(equippedBackpack, backpack.length).title}</h4>
         <div style="display: flex; gap: 10px; align-items: center; margin-bottom: 10px; flex-wrap: wrap;">
             ${equippedBackpack ? `
                 <strong>${escapeHtml(equippedBackpack.name || 'Рюкзак')}</strong>
                 <span id="backpack-fill-display">Заполнено: ${backpackFill} / ${backpackLimit}</span>
                 <button type="button" class="btn btn-sm btn-danger" onclick="unequipBackpack()">Снять</button>
-            ` : `<span style="opacity:0.7;">${backpack.length ? 'Разложите эти вещи по карманам, подсумкам или наденьте рюкзак.' : 'Рюкзак не экипирован.'}</span>`}
+            ` : `<span id="backpack-status" style="opacity:0.7;">${backpackSectionText(equippedBackpack, backpack.length).hint}</span>`}
         </div>
         <div class="inventory-item-grid inventory-item-heading">
             <div>Название</div><div>Вес</div><div>Объём</div><div>Кол-во</div><div></div>
@@ -14805,6 +15125,7 @@ async function renderInventoryTab(data) {
         if (item.templateId) row.dataset.itemTemplateId = String(item.templateId);
         row.draggable = currentCharacterCanEdit;
         row.textContent = item.name || 'Предмет';
+        appendInventoryPowerWarning(row, item);
         row.addEventListener('dragstart', event => {
             event.dataTransfer.setData('application/x-inventory-path', JSON.stringify(path));
             event.dataTransfer.effectAllowed = 'move';
@@ -14847,9 +15168,9 @@ async function renderInventoryTab(data) {
 
     const pocketsContainerEl = document.getElementById('pockets-container');
     const backpackContainerEl = document.getElementById('backpack-container');
-    if (pocketsContainerEl) setupDropTarget(pocketsContainerEl, ['inventory', 'pockets'], { capacity: pocketMaxVolume, contents: pockets });
+    if (pocketsContainerEl) setupDropTarget(pocketsContainerEl, ['inventory', 'pockets']);
     if (backpackContainerEl && equippedBackpack) {
-        setupDropTarget(backpackContainerEl, ['inventory', 'backpack'], { capacity: backpackLimit, contents: backpack });
+        setupDropTarget(backpackContainerEl, ['inventory', 'backpack']);
     }
 
     recalculateInventoryTotals();
@@ -15015,8 +15336,12 @@ function setBackpackItemQuantityAtPath(path, quantity) {
     const index = path[path.length - 1];
     if (!Array.isArray(parentData) || typeof index !== 'number' || !parentData[index]) return false;
     const item = parentData[index];
+    if (item.attributes?.rechargeable_battery && quantity > 1) {
+        showNotification('Аккумуляторные батареи хранятся по отдельности');
+        return false;
+    }
     if (isLiquidCanister(item) && quantity !== 1) {
-        showNotification('Канистры хранятся по отдельности');
+        showNotification('Ёмкости для жидкостей заполняются по одной');
         return false;
     }
     if (liquidCanisterKind(item) && quantity > 0) {
@@ -15028,7 +15353,7 @@ function setBackpackItemQuantityAtPath(path, quantity) {
         if (isLiquidCanister(container)) {
             const others = parentData.filter((_, itemIndex) => itemIndex !== index);
             if (!canStoreInLiquidCanister(container, {...item, quantity}, others)) {
-                showNotification('В канистре может быть не более 15 л');
+                showNotification('Превышена вместимость ёмкости или жидкость несовместима');
                 return false;
             }
         }
@@ -15267,7 +15592,7 @@ function renderPouchItem(pouch, index, path, parentContainer, pouchTemplates, al
         contentsDiv.appendChild(addBtn);
     }
 
-    setupDropTarget(contentsDiv, path.concat('contents'), pouch);
+    setupDropTarget(contentsDiv, path.concat('contents'));
 
     itemDiv.appendChild(contentsDiv);
 
@@ -15288,7 +15613,7 @@ function renderPouchItem(pouch, index, path, parentContainer, pouchTemplates, al
         }
     }
 
-    setupDropTarget(itemDiv, path.concat('contents'), pouch);
+    setupDropTarget(itemDiv, path.concat('contents'));
 
     parentContainer.appendChild(itemDiv);
 }
@@ -15420,7 +15745,7 @@ function renderVestPouchItem(pouch, index, path, parentContainer, pouchTemplates
         contentsDiv.appendChild(addBtn);
     }
 
-    setupDropTarget(contentsDiv, path.concat('contents'), pouch);
+    setupDropTarget(contentsDiv, path.concat('contents'));
 
     itemDiv.appendChild(contentsDiv);
 
@@ -15440,7 +15765,7 @@ function renderVestPouchItem(pouch, index, path, parentContainer, pouchTemplates
         }
     }
 
-    setupDropTarget(itemDiv, path.concat('contents'), pouch);
+    setupDropTarget(itemDiv, path.concat('contents'));
 
     parentContainer.appendChild(itemDiv);
 }
@@ -15968,11 +16293,11 @@ async function addTemplateItemToInventory(templateId, target, quantity = 1, ammo
     if (itemAttributes) newItem.attributes = { ...(newItem.attributes || {}), ...itemAttributes };
     const targetContainer = targetPath.at(-1) === 'contents' ? getItemByPath(targetPath.slice(0, -1)) : null;
     if (liquidCanisterKind(newItem) === 'fuel' && !isLiquidCanister(targetContainer)) {
-        showNotification('Топливо можно добавить только внутрь канистры');
+        showNotification('Добавьте топливо в бутылку, флягу или канистру');
         return false;
     }
     if (isLiquidCanister(targetContainer) && !canStoreInLiquidCanister(targetContainer, newItem, targetItems)) {
-        showNotification('В канистру помещаются только вода или топливо, не более 15 л; после топлива воду добавлять нельзя');
+        showNotification('Проверьте вместимость и содержимое. После топлива воду заливать нельзя');
         return false;
     }
     if (targetContainer && (targetContainer.category === 'pouch' || targetPath[2] === 'pouches')) {
@@ -16515,6 +16840,12 @@ function recalculateInventoryTotals() {
     const totalWeightSpan = document.getElementById('total-weight-display');
     if (totalWeightSpan) totalWeightSpan.textContent = totalWeight.toFixed(1);
 
+    const backpackText = backpackSectionText(equippedBackpack, backpackItems.length);
+    const backpackHeading = document.getElementById('backpack-heading');
+    const backpackStatus = document.getElementById('backpack-status');
+    if (backpackHeading) backpackHeading.textContent = backpackText.title;
+    if (backpackStatus) backpackStatus.textContent = backpackText.hint;
+
     // Обновляем заполненность рюкзака (только из его содержимого)
     const backpackFillSpan = document.getElementById('backpack-fill-display');
     if (backpackFillSpan) {
@@ -16655,6 +16986,15 @@ function renderBackpackNew(items, groupedByCategory, allTemplates) {
     });
 }
 
+function appendInventoryPowerWarning(element, item) {
+    const warning = itemPowerWarning(item);
+    if (!warning) return;
+    const badge = document.createElement('span');
+    badge.className = 'inventory-power-warning';
+    badge.textContent = warning;
+    element.append(badge);
+}
+
 function renderBackpackItem(item, index, parentPath, parentContainer, allTemplates) {
     if (isLiquidCanister(item)) {
         item.isContainer = true;
@@ -16679,7 +17019,7 @@ function renderBackpackItem(item, index, parentPath, parentContainer, allTemplat
     const isArtifactCont = catalogArtifactContainer || isArtifactContainer(item);
     const showContents = !isArtifactCont || Boolean(catalogArtifactContainer && item.contents?.some(entry => entry.category !== 'artifact'));
     if (item.isContainer && !isArtifactCont) {
-        setupDropTarget(itemDiv, itemPath.concat('contents'), item);
+        setupDropTarget(itemDiv, itemPath.concat('contents'));
     }
 
     const row = document.createElement('div');
@@ -16714,11 +17054,12 @@ function renderBackpackItem(item, index, parentPath, parentContainer, allTemplat
         itemDiv._toggleIcon = toggleIcon;
     }
     nameWrapper.appendChild(nameCell);
+    appendInventoryPowerWarning(nameWrapper, item);
     if (isLiquidCanister(item)) {
         const litres = (item.contents || []).reduce((total, entry) => total + Number(entry.quantity || 0), 0);
         const fill = document.createElement('span');
         fill.style.cssText = 'margin-left:8px; font-size:11px; opacity:.8; white-space:nowrap;';
-        fill.textContent = `${Math.round(litres * 10) / 10}/15 л${item.fuelUsed ? ' · только топливо' : ''}`;
+        fill.textContent = `${Math.round(litres * 10) / 10}/${liquidContainerCapacity(item)} л${item.fuelUsed ? ' · только топливо' : ''}`;
         nameWrapper.appendChild(fill);
     }
     const isBloodPacket = isBloodPacketItem(item);
@@ -16832,7 +17173,7 @@ function renderBackpackItem(item, index, parentPath, parentContainer, allTemplat
     qtyDownBtn.className = 'btn btn-sm btn-secondary';
     qtyDownBtn.textContent = '−';
     qtyDownBtn.title = 'Уменьшить количество';
-    if (isLiquidCanister(item)||item.controllerState?.kind) qtyDownBtn.disabled = true;
+    if (isLiquidCanister(item)||item.attributes?.rechargeable_battery||item.controllerState?.kind) qtyDownBtn.disabled = true;
     qtyDownBtn.style.width = '28px';
     qtyDownBtn.style.height = '28px';
     qtyDownBtn.style.padding = '0';
@@ -16845,7 +17186,7 @@ function renderBackpackItem(item, index, parentPath, parentContainer, allTemplat
     const qtyInput = document.createElement('input');
     qtyInput.dataset.widgetKey = 'quantity';
     qtyInput.type = 'number';
-    if (isLiquidCanister(item)||item.controllerState?.kind) qtyInput.disabled = true;
+    if (isLiquidCanister(item)||item.attributes?.rechargeable_battery||item.controllerState?.kind) qtyInput.disabled = true;
     qtyInput.step = liquidCanisterKind(item) ? '0.1' : '1';
     if (liquidCanisterKind(item)) qtyInput.min = '0.1';
     qtyInput.className = 'form-control number-input';
@@ -16860,7 +17201,7 @@ function renderBackpackItem(item, index, parentPath, parentContainer, allTemplat
     qtyUpBtn.className = 'btn btn-sm btn-secondary';
     qtyUpBtn.textContent = '+';
     qtyUpBtn.title = 'Увеличить количество';
-    if (isLiquidCanister(item)||item.controllerState?.kind) qtyUpBtn.disabled = true;
+    if (isLiquidCanister(item)||item.attributes?.rechargeable_battery||item.controllerState?.kind) qtyUpBtn.disabled = true;
     qtyUpBtn.style.width = '28px';
     qtyUpBtn.style.height = '28px';
     qtyUpBtn.style.padding = '0';
@@ -16877,6 +17218,9 @@ function renderBackpackItem(item, index, parentPath, parentContainer, allTemplat
     actionsDiv.style.gap = '5px';
     actionsDiv.style.alignItems = 'center';
     actionsDiv.style.justifyContent = 'flex-end';
+
+    const groundStashButton = createGroundStashButton(item, itemPath);
+    if (groundStashButton) actionsDiv.append(groundStashButton);
 
     if(item.attributes?.portable_station||item.attributes?.crafted_cover||item.attributes?.trap_recipe
         ||getInventoryItemCategory(item)==='tool'&&item.name?.trim().toLowerCase()==='самогонный аппарат') {
@@ -16936,7 +17280,7 @@ function renderBackpackItem(item, index, parentPath, parentContainer, allTemplat
     // Надеть
     const equippableCategories = ['armor', 'helmet', 'gas_mask', 'weapon', 'belt', 'vest', 'backpack', 'detector', 'melee_weapon',
     'device', 'headphones', 'glasses', 'gloves', 'jewelry'];
-    if (item.isEquippable || equippableCategories.includes(item.category)) {
+    if (!item.attributes?.rechargeable_battery && (item.isEquippable || equippableCategories.includes(item.category))) {
         const equipBtn = document.createElement('button');
         equipBtn.dataset.widgetKey = 'equip';
         equipBtn.type = 'button';
@@ -16962,7 +17306,7 @@ function renderBackpackItem(item, index, parentPath, parentContainer, allTemplat
             else if (category === 'melee_weapon') return equipMeleeWeaponFromInventory(itemPath);
             else if (category === 'headphones') return equipHeadphonesFromInventory(itemPath);
             else if (category === 'glasses') return equipGlassesFromInventory(itemPath);
-            else if (category === 'gloves') return equipGlovesFromInventory(itemPath);
+            else if (category === 'gloves') return equipGlovesFromInventory(itemPath, item.id ?? null);
             else if (category === 'jewelry') {
                 const sub = item.subcategory;
                 if (sub === 'ring') return equipRingFromInventory(itemPath);
@@ -17141,7 +17485,7 @@ function renderBackpackItem(item, index, parentPath, parentContainer, allTemplat
                 contentsDiv.appendChild(addBtn);
             }
 
-            if (!catalogArtifactContainer) setupDropTarget(contentsDiv, itemPath.concat('contents'), item);
+            if (!catalogArtifactContainer) setupDropTarget(contentsDiv, itemPath.concat('contents'));
             itemDiv.appendChild(contentsDiv);
             itemDiv._contentsDiv = contentsDiv;
 
@@ -17558,6 +17902,9 @@ export async function openCharacterSheet(characterId, tabId = 'basic', options =
         currentCharacterCanEdit = character.can_edit === true;
         sheetSaveBlocked = false;
         currentCharacterData = character.data || {};
+        const packedItems = currentCharacterCanEdit && !options.background && !options.snapshot
+            && window.locationCombatState?.status !== 'active'
+            && moveUnpackedItemsToPockets(currentCharacterData, pocketCapacity(currentCharacterData), getTotalVolume);
         normalizeCharacterEffects(currentCharacterData);
 
         migratePouchesToNewFormat();
@@ -17634,6 +17981,7 @@ export async function openCharacterSheet(characterId, tabId = 'basic', options =
             };
             socket.on('character_data_updated', sheetSocketHandler);
         }
+        if (packedItems && Number(currentCharacterId) === Number(characterId)) scheduleAutoSave();
     } catch (error) {
         if (options.background) {
             currentCharacterId = null;
@@ -17676,11 +18024,14 @@ export function closeCharacterSheet() {
         return;
     }
     if (autoSaveTimer) void forceSyncCharacter();
+    disposeEquipmentAppearancePreview();
+    equipmentRenderedCharacterId = null;
     const socket = getSocket();
     if (socket && currentCharacterId) {
         socket.emit('leave_character', { token: localStorage.getItem('access_token'), character_id: currentCharacterId });
     }
     document.getElementById('character-sheet-modal').style.display = 'none';
+    document.getElementById('character-sheet-form')?.querySelector('[data-armor-equip-error]')?.remove();
     document.body.classList.remove('character-sheet-open');
     const itemTooltip = document.getElementById('delayed-item-tooltip');
     if (itemTooltip) itemTooltip.style.display = 'none';
@@ -18232,7 +18583,7 @@ async function rerenderContainer(containerPath, parentElement = null, options = 
     if (!isPockets && !isBackpack) {
         updatePouchVolumeFromContentsDiv(containerDiv);
     }
-    setupDropTarget(containerDiv, containerPath, container);
+    setupDropTarget(containerDiv, containerPath);
 }
 
 // ========== 10. UI-ФУНКЦИИ ДОБАВЛЕНИЯ/УДАЛЕНИЯ ==========
@@ -18324,10 +18675,13 @@ window.addBackpackItemManual = function() {
     scheduleAutoSave();
 };
 
-function setupDropTarget(containerDiv, containerPath, containerItem) {
+function setupDropTarget(containerDiv, containerPath) {
     if (!containerDiv) return;
+    const wasBound = Boolean(containerDiv.inventoryDropPath);
+    containerDiv.inventoryDropPath = containerPath;
     containerDiv.classList.add('drop-target');
     containerDiv.setAttribute('data-container-path', containerPath.join(','));
+    if (wasBound) return;
 
     containerDiv.addEventListener('dragover', (e) => {
         e.preventDefault();
@@ -18361,7 +18715,9 @@ function setupDropTarget(containerDiv, containerPath, containerItem) {
         draggedItem = sourceItem;
         draggedItemPath = sourcePath;
 
-        const targetContainer = containerItem || getItemByPath(containerPath);
+        const containerPath = containerDiv.inventoryDropPath;
+        const targetPath = containerPath.at(-1) === 'contents' ? containerPath.slice(0, -1) : containerPath;
+        const targetContainer = getItemByPath(targetPath);
         if (!targetContainer) return;
 
         if (containerPath.length > draggedItemPath.length &&
@@ -18383,13 +18739,20 @@ function setupDropTarget(containerDiv, containerPath, containerItem) {
             : targetContainer.contents;
         if (!Array.isArray(targetItems)) return;
 
+        let poured = null;
         if (isLiquidCanister(targetContainer)) {
             const sameCanister = draggedItemPath.slice(0, -1).join(',') === containerPath.join(',');
-            const otherItems = sameCanister ? targetItems.filter(entry => entry !== draggedItem) : targetItems;
-            if (!canStoreInLiquidCanister(targetContainer, draggedItem, otherItems)) {
-                showNotification('В канистру помещаются только вода или топливо, не более 15 л; после топлива воду добавлять нельзя');
+            if (sameCanister) return;
+            const free = Math.round((liquidContainerCapacity(targetContainer)
+                - targetItems.reduce((sum, entry) => sum + Number(entry.quantity ?? 1), 0)) * 10) / 10;
+            const moved = {...draggedItem, quantity: Math.min(free, Number(draggedItem.quantity ?? 1))};
+            if (!canStoreInLiquidCanister(targetContainer, moved, targetItems)) {
+                showNotification('Проверьте вместимость и содержимое. После топлива воду заливать нельзя');
                 draggedItem = null; draggedItemPath = null;
                 return;
+            }
+            if (moved.quantity < Number(draggedItem.quantity ?? 1)) {
+                poured = {...moved, id: crypto.randomUUID()};
             }
         }
 
@@ -18400,7 +18763,7 @@ function setupDropTarget(containerDiv, containerPath, containerItem) {
             && sourceContainerPath.every((value, index) => value === containerPath[index]);
         const currentUsed = targetItems.reduce((sum, item) => sum + volumeOf(item), 0)
             - (isSameContainer ? newVolume : 0);
-        const limit = isLiquidCanister(targetContainer) ? 15
+        const limit = isLiquidCanister(targetContainer) ? liquidContainerCapacity(targetContainer)
             : containerPath.length===2&&containerPath[0]==='inventory'&&containerPath[1]==='pockets'
             ? pocketCapacity(currentCharacterData)
             : containerPath.length===2&&containerPath[0]==='inventory'&&containerPath[1]==='backpack'
@@ -18409,33 +18772,47 @@ function setupDropTarget(containerDiv, containerPath, containerItem) {
             : containerPath[0]==='equipment'&&containerPath[2]==='pouches'
                 ? pouchCapacity(targetContainer, containerPath[1]==='belt' ? currentCharacterData.equipment?.belt : null)
                 : Number(targetContainer.internalVolume ?? targetContainer.capacity ?? targetContainer.attributes?.capacity ?? targetContainer.volume ?? 0);
-        if (currentUsed + newVolume > limit) {
+        if (!isLiquidCanister(targetContainer) && currentUsed + newVolume > limit) {
             showNotification('Недостаточно места в контейнере');
             draggedItem = null; draggedItemPath = null;
             return;
         }
 
         // Удаляем предмет из источника
-        if (!removeItemByPath(draggedItemPath)) {
+        if (poured) {
+            draggedItem.quantity = Math.round((Number(draggedItem.quantity) - poured.quantity) * 10) / 10;
+        } else if (!removeItemByPath(draggedItemPath)) {
             showNotification('Ошибка при удалении предмета из источника');
             draggedItem = null; draggedItemPath = null;
             return;
         }
 
         // Добавляем в целевой контейнер
-        targetItems.push(draggedItem);
+        targetItems.push(poured || draggedItem);
         if (isLiquidCanister(targetContainer) && liquidCanisterKind(draggedItem) === 'fuel') targetContainer.fuelUsed = true;
+        draggedItem = null;
+        draggedItemPath = null;
 
-        // Полная перерисовка сохраняет корректные пути после сдвига индексов.
-        await renderInventoryTab(currentCharacterData);
+        // Обновляем от начала каждого затронутого списка, где индексы могли сдвинуться.
+        const listRoot = path => {
+            if (path[0] === 'inventory' && ['pockets', 'backpack'].includes(path[1])) return path.slice(0, 2);
+            if (path[0] === 'equipment' && path[2] === 'pouches' && typeof path[3] === 'number' && path.length > 4) {
+                return path.slice(0, 4).concat('contents');
+            }
+            return null;
+        };
+        const sourceList = listRoot(sourceContainerPath);
+        const targetList = listRoot(containerPath);
+        if (sourceList && targetList) {
+            await rerenderContainer(sourceList);
+            if (sourceList.join(',') !== targetList.join(',')) await rerenderContainer(targetList);
+        } else await renderInventoryTab(currentCharacterData);
 
         recalculateInventoryTotals();
         scheduleAutoSave();
         forceSyncCharacter();
         showNotification('Предмет перемещён', 'success');
 
-        draggedItem = null;
-        draggedItemPath = null;
     });
 }
 

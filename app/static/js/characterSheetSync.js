@@ -12,7 +12,16 @@ function sameScalar(left, right) {
 function sameArray(left, right) {
     if (!Array.isArray(left) || !Array.isArray(right)) return false;
     if (left.length !== right.length) return false;
-    return JSON.stringify(left) === JSON.stringify(right);
+    return left.every((value, index) => sameValue(value, right[index]));
+}
+
+function sameValue(left, right) {
+    if (sameScalar(left, right)) return true;
+    if (Array.isArray(left) || Array.isArray(right)) return sameArray(left, right);
+    if (!isRecord(left) || !isRecord(right)) return false;
+    const keys = Object.keys(left);
+    return keys.length === Object.keys(right).length
+        && keys.every(key => Object.hasOwn(right, key) && sameValue(left[key], right[key]));
 }
 
 export function diffCharacterData(previous, next) {

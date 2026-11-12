@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Предпросмотр ассетов | Периметр</title>
-    <script type="importmap">{"imports":{"three":"https://unpkg.com/three@0.128.0/build/three.module.js"}}</script>
+    <script type="importmap">{"imports":{"three":"/static/js/threeRuntime.js", "three/addons/": "/static/vendor/three-0.162.0/examples/jsm/"}}</script>
     <style>
         :root { font-family: Georgia, serif; color: #e9e5d4; background: #1b211f; }
         * { box-sizing: border-box; }
@@ -35,7 +35,7 @@
     </aside>
     <script type="module">
         import * as THREE from 'three';
-        import { OrbitControls } from 'https://unpkg.com/three@0.128.0/examples/jsm/controls/OrbitControls.js';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
         import { IMPORTED_LOCATION_ASSETS } from './js/locationImportedAssets.js';
         import { mountLocationModel } from './js/locationModelAssets.js';
         import { applyLocationPbrMaterial } from './js/locationPbrMaterials.js';
@@ -65,6 +65,8 @@
         }
 
         const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.outputColorSpace = THREE.LinearSRGBColorSpace;
+        renderer.useLegacyLights = true;
         renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
         renderer.shadowMap.enabled = true;
         renderer.setClearColor(0x707777);
@@ -78,7 +80,7 @@
             return face;
         });
         const environment = new THREE.CubeTexture(envFaces);
-        environment.encoding = THREE.sRGBEncoding;
+        environment.colorSpace = THREE.SRGBColorSpace;
         environment.needsUpdate = true;
         scene.environment = environment;
         scene.add(new THREE.HemisphereLight(0xffffff, 0x777777, 1.1));

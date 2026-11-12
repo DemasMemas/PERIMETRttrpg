@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { GLTFLoader } from 'https://unpkg.com/three@0.128.0/examples/jsm/loaders/GLTFLoader.js';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { findLocationAsset } from './locationAssetCatalog.js';
 import { applyLocationPbrMaterial, releaseLocationPbrMaterial } from './locationPbrMaterials.js';
 import { createNaturalCoverPlacements, createReducedWeedPlacements,
@@ -10,7 +10,8 @@ const readout = document.getElementById('readout');
 const statsBody = document.getElementById('variant-stats');
 const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5));
-renderer.outputEncoding = THREE.sRGBEncoding;
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.useLegacyLights = true;
 view.appendChild(renderer.domElement);
 
 const scene = new THREE.Scene();
@@ -80,7 +81,7 @@ for (const [id, x] of Object.entries(centers)) {
 function loadTexture(url, srgb = false) {
     return new Promise((resolve, reject) => new THREE.TextureLoader().load(url, texture => {
         texture.flipY = false;
-        if (srgb) texture.encoding = THREE.sRGBEncoding;
+        if (srgb) texture.colorSpace = THREE.SRGBColorSpace;
         texture.minFilter = THREE.LinearMipmapLinearFilter;
         texture.magFilter = THREE.LinearFilter;
         disposable.push(texture);

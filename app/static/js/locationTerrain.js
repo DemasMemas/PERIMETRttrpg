@@ -1,5 +1,91 @@
 const EPSILON = 0.000001;
 const NEIGHBORS = [[0, -1], [1, 0], [0, 1], [-1, 0]];
+const RELIEF_SIZE = 64;
+// Порядок карт совпадает с local-relief.sources.json. Для каждого покрытия
+// заданы рабочий диапазон, перепад в метрах и, где нужно, плотность сетки.
+const reliefProfiles = new Map([
+    ['muddy_tracks', [24, 140, .075, 8]],
+    ['brown_mud_03', [48, 180, .036, 8]],
+    ['brown_mud_02', [80, 186, .045, 8]],
+    ['dry_mud_field_001', [38, 188, .034, 8]],
+    ['brown_mud', [38, 138, .03, 8]],
+    ['concrete005', [72, 125, .027, 8]],
+    ['grass', [72, 140, .026]],
+    ['rock', [76, 194, .043]],
+    ['sand', [117, 139, .03]],
+    ['swamp', [117, 175, .014]],
+    ['concrete', [108, 126, .018]],
+    ['gravel', [133, 185, .043]],
+    ['snow', [55, 231, .027]],
+    ['metal', [104, 165, .012]],
+    ['bare_dirt', [109, 174, .029]],
+    ['granite_tiles', [150, 173, .012]],
+    ['wood_floor', [163, 199, .010]],
+    ['ice', [19, 236, .009]],
+]);
+const reliefMaps = new Map();
+let reliefLoading;
+
+export function hasLocalTerrainRelief(terrain) {
+    return reliefMaps.has(terrain);
+}
+
+export function loadLocalTerrainRelief(materials) {
+    if (reliefMaps.size) return Promise.resolve(false);
+    if (!reliefLoading) reliefLoading = fetch('/static/materials/terrain/local-relief.bin').then(async response => {
+        if (!response.ok) return false;
+        const data = new Uint8Array(await response.arrayBuffer());
+        const area = RELIEF_SIZE ** 2;
+        if (data.length !== reliefProfiles.size * area) return false;
+        let offset = 0;
+        for (const [terrain, [low, high, depth, subdivisions = 4]] of reliefProfiles) {
+            const repeat = materials.find(entry => entry.terrain === terrain)?.repeat || (terrain === 'grass' ? 8 : 4);
+            reliefMaps.set(terrain, { low, high, depth, repeat, subdivisions, data: data.subarray(offset, offset + area) });
+            offset += area;
+        }
+        return true;
+    }).catch(() => false).finally(() => { reliefLoading = null; });
+    return reliefLoading;
+}
+
+function localTerrainRelief(tiles, x, z, smooth) {
+    const kind = tiles[z][x].terrain;
+    const map = reliefMaps.get(kind);
+    if (!map) return null;
+    const different = (dx, dz) => tiles[z + dz]?.[x + dx]?.terrain !== kind
+        || isSmoothTerrainTile(tiles, x + dx, z + dz) !== smooth;
+    const [north, east, south, west] = NEIGHBORS.map(([dx, dz]) => different(dx, dz));
+    const corners = [
+        [x, z, north || west || different(-1, -1)],
+        [x + 1, z, north || east || different(1, -1)],
+        [x, z + 1, south || west || different(-1, 1)],
+        [x + 1, z + 1, south || east || different(1, 1)],
+    ].filter(([, , seam]) => seam);
+    const { data, low, high, depth, repeat, subdivisions } = map;
+    const wrap = value => (value + RELIEF_SIZE) % RELIEF_SIZE;
+    const sampleHeight = (px, pz) => {
+        let edgeFade = Math.min(1, north ? (pz - z) * 6 : 1, east ? (x + 1 - px) * 6 : 1,
+            south ? (z + 1 - pz) * 6 : 1, west ? (px - x) * 6 : 1);
+        // У общего угла все четыре клетки учитывают одно и то же окружение.
+        for (const [cx, cz] of corners) {
+            edgeFade = Math.min(edgeFade, Math.max(Math.abs(px - cx), Math.abs(pz - cz)) * 6);
+        }
+        edgeFade = Math.max(0, edgeFade);
+        const u = (px / repeat - Math.floor(px / repeat)) * RELIEF_SIZE - .5;
+        const v = (1 - pz / repeat + Math.floor(pz / repeat)) * RELIEF_SIZE - .5;
+        const ix = Math.floor(u), iz = Math.floor(v), fx = u - ix, fz = v - iz;
+        const a = wrap(iz) * RELIEF_SIZE, b = wrap(iz + 1) * RELIEF_SIZE;
+        const c = wrap(ix), d = wrap(ix + 1);
+        const first = data[a + c] * (1 - fx) + data[a + d] * fx;
+        const second = data[b + c] * (1 - fx) + data[b + d] * fx;
+        const sample = first * (1 - fz) + second * fz;
+        const height = Math.max(0, Math.min(1, (sample - low) / (high - low)));
+        const fade = edgeFade * edgeFade * (3 - 2 * edgeFade);
+        // Под покровом остаются боковые грани базовых клеток. Не открываем их в колее.
+        return height * depth * fade;
+    };
+    return { sampleHeight, subdivisions };
+}
 
 function landTile(tiles, x, z) {
     const tile = tiles[z]?.[x];
@@ -219,7 +305,7 @@ function smoothTopNormals(positions, topByVertex) {
     return normals;
 }
 
-export function createTerrainSurfaceHeightSampler(tiles) {
+export function createTerrainSurfaceHeightSampler(tiles, { rendered = false, limitRelief } = {}) {
     const cache = new Map();
     return (worldX, worldZ) => {
         const x = Math.floor(worldX);
@@ -228,7 +314,16 @@ export function createTerrainSurfaceHeightSampler(tiles) {
         const key = `${x},${z}`;
         let surface = cache.get(key);
         if (!surface) {
-            surface = tileSurfaceTriangles(tiles, x, z);
+            if (rendered && tiles[z][x].terrain !== 'water') {
+                const bounds = { minX: x, maxX: x, minZ: z, maxZ: z };
+                const smooth = buildSmoothTerrainData(tiles, undefined, 0, bounds);
+                const { positions, indices } = buildTerrainSurfaceData(tiles, smooth, bounds, limitRelief);
+                surface = [];
+                for (let i = 0; i < indices.length; i += 3) {
+                    const vertices = indices.slice(i, i + 3).map(index => positions.slice(index * 3, index * 3 + 3));
+                    surface.push(vertices);
+                }
+            } else surface = tileSurfaceTriangles(tiles, x, z);
             cache.set(key, surface);
         }
         for (const [center, a, b] of surface) {
@@ -246,7 +341,7 @@ export function createTerrainSurfaceHeightSampler(tiles) {
                 return center[1] + alongA * (a[1] - center[1]) + alongB * (b[1] - center[1]);
             }
         }
-        return center[1];
+        return tileHeight(tiles, x, z);
     };
 }
 
@@ -389,16 +484,33 @@ export function buildSmoothTerrainData(tiles, includeTile = () => true, foundati
 }
 
 // Shared cap builder for the merged surface and temporary local sculpt regions.
-export function buildTerrainSurfaceData(tiles, smoothData, bounds = { minX: 0, minZ: 0, maxX: tiles[0].length - 1, maxZ: tiles.length - 1 }) {
+export function buildTerrainSurfaceData(tiles, smoothData, bounds = { minX: 0, minZ: 0, maxX: tiles[0].length - 1, maxZ: tiles.length - 1 }, limitRelief) {
     const width = tiles[0].length, height = tiles.length;
     const positions = [];
     const normals = [];
     const uvs = [];
     const indices = [];
-    const subdivisions = 4;
+    const putVertex = (x, y, z, nx, ny, nz, relief) => {
+        if (relief) {
+            const step = .045;
+            const { sampleHeight } = relief;
+            const sample = limitRelief ? (px, pz) => limitRelief(px, pz, y, sampleHeight(px, pz)) : sampleHeight;
+            const offset = sample(x, z);
+            nx -= ny * (sample(x + step, z) - sample(x - step, z)) / (2 * step);
+            nz -= ny * (sample(x, z + step) - sample(x, z - step)) / (2 * step);
+            y += offset;
+            const length = Math.hypot(nx, ny, nz) || 1;
+            nx /= length; ny /= length; nz /= length;
+        }
+        positions.push(x, y + .002, z);
+        normals.push(nx, ny, nz);
+        uvs.push(x / width, z / height);
+    };
     for (let z = bounds.minZ; z <= bounds.maxZ; z++) {
         for (let x = bounds.minX; x <= bounds.maxX; x++) {
             if (tiles[z][x].terrain === 'water' || isSmoothTerrainTile(tiles, x, z)) continue;
+            const relief = localTerrainRelief(tiles, x, z, false);
+            const subdivisions = relief?.subdivisions ?? 4;
             const first = positions.length / 3;
             // Non-smooth tiles have a constant surface; slopes are copied below.
             const flatHeight = tileHeight(tiles, x, z);
@@ -406,9 +518,12 @@ export function buildTerrainSurfaceData(tiles, smoothData, bounds = { minX: 0, m
                 for (let column = 0; column <= subdivisions; column++) {
                     const px = x + column / subdivisions;
                     const pz = z + row / subdivisions;
-                    positions.push(px, flatHeight + 0.002, pz);
-                    uvs.push(px / width, pz / height);
-                    normals.push(0, 1, 0);
+                    if (relief) putVertex(px, flatHeight, pz, 0, 1, 0, relief);
+                    else {
+                        positions.push(px, flatHeight + .002, pz);
+                        uvs.push(px / width, pz / height);
+                        normals.push(0, 1, 0);
+                    }
                 }
             }
             for (let row = 0; row < subdivisions; row++) {
@@ -423,19 +538,32 @@ export function buildTerrainSurfaceData(tiles, smoothData, bounds = { minX: 0, m
         }
     }
     if (smoothData) {
+        const tileReliefs = new Map();
         for (let face = 0; face < smoothData.tileByFace.length; face++) {
             if (smoothData.topByVertex[face * 3] < 0.5) continue;
             const { x, z } = smoothData.tileByFace[face];
             if (x < bounds.minX || x > bounds.maxX || z < bounds.minZ || z > bounds.maxZ) continue;
+            const tile = z * width + x;
+            if (!tileReliefs.has(tile)) tileReliefs.set(tile, localTerrainRelief(tiles, x, z, true));
+            const relief = tileReliefs.get(tile);
             const first = positions.length / 3;
             for (let corner = 0; corner < 3; corner++) {
                 const source = (face * 3 + corner) * 3;
-                const px = smoothData.positions[source], pz = smoothData.positions[source + 2];
-                positions.push(px, smoothData.positions[source + 1] + 0.002, pz);
-                normals.push(smoothData.normals[source], smoothData.normals[source + 1], smoothData.normals[source + 2]);
-                uvs.push(px / width, pz / height);
+                const [p, n] = [smoothData.positions, smoothData.normals];
+                putVertex(p[source], p[source + 1], p[source + 2], n[source], n[source + 1], n[source + 2], relief);
             }
-            indices.push(first, first + 1, first + 2);
+            if (!relief || relief.subdivisions <= 4) indices.push(first, first + 1, first + 2);
+            else {
+                const midpoint = (a, b) => {
+                    const p = smoothData.positions, n = smoothData.normals;
+                    a = (face * 3 + a) * 3; b = (face * 3 + b) * 3;
+                    putVertex((p[a] + p[b]) / 2, (p[a + 1] + p[b + 1]) / 2, (p[a + 2] + p[b + 2]) / 2,
+                        (n[a] + n[b]) / 2, (n[a + 1] + n[b + 1]) / 2, (n[a + 2] + n[b + 2]) / 2, relief);
+                };
+                midpoint(0, 1); midpoint(1, 2); midpoint(2, 0);
+                const [a, b, c, ab, bc, ca] = [first, first+1, first+2, first+3, first+4, first+5];
+                indices.push(a,ab,ca, ab,b,bc, ca,bc,c, ab,bc,ca);
+            }
         }
     }
     return { positions, normals, uvs, indices };

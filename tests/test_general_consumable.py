@@ -754,6 +754,42 @@ def test_food_and_drink_are_applied_and_consumed_on_server(client, pair, auth_he
     assert ConsumableUse.query.count() == 1
 
 
+@pytest.mark.parametrize('name,material', [('Вода', 'Пластиковая'), ('Водка', 'Стеклянная'), ('Вино', 'Стеклянная')])
+def test_last_serving_returns_one_empty_bottle(client, pair, auth_headers, name, material):
+    from app.services.character_starting_purchase import item_from_template
+    from app.services.equipment_catalog import load_catalog
+    from app.services.liquid_containers import liquid_capacity
+
+    template = ItemTemplate(**next(row for row in load_catalog() if row['name'] == name))
+    db.session.add(template)
+    db.session.flush()
+    item = item_from_template(template)
+    character = pair['actor_character']
+    data = deepcopy(character.data)
+    data['inventory']['backpack'] = [item]
+    character.data = data
+    LocationCombatState.query.one().status = 'idle'
+    db.session.commit()
+    servings = item['uses']
+    for index in range(servings):
+        operation = f'bottle-{index}'
+        response = apply_general(client, pair, auth_headers, item, operation=operation)
+        assert response.status_code == 200, response.json
+        inventory = response.json['data']['inventory']
+        bottles = [entry for entry in inventory['pockets'] if liquid_capacity(entry)]
+        if index < servings - 1:
+            assert not bottles
+            item = inventory['backpack'][0]
+        else:
+            assert len(bottles) == 1 and bottles[0]['name'].startswith(material)
+            assert bottles[0]['contents'] == [] and bottles[0]['capacity'] == 1
+            assert inventory['backpack'] == []
+            replay = apply_general(client, pair, auth_headers, item, operation=operation)
+            assert replay.status_code == 409, replay.json
+            db.session.refresh(character)
+            assert character.data['inventory']['pockets'] == inventory['pockets']
+
+
 def test_existing_template_gains_generic_darkness_modifier_without_reimport(client, pair, auth_headers):
     LocationCombatState.query.one().status = "idle"
     item, profile = install_consumable(

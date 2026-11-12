@@ -1,3 +1,5 @@
+export const SHALLOW_WATER_OFFSET = .022;
+
 function pushTriangle(positions, a, b, c, height) {
     const cross = (b[1] - a[1]) * (c[0] - a[0]) - (b[0] - a[0]) * (c[1] - a[1]);
     const points = cross >= 0 ? [a, b, c] : [a, c, b];
@@ -16,7 +18,7 @@ function pushBankTriangle(positions, colors, uvs, a, b, c, width, height, baseCo
 
 const LAND_COLORS = {
     grass: [0.23, 0.37, 0.07], sand: [0.76, 0.7, 0.5],
-    swamp: [0.29, 0.25, 0.18], rock: [0.5, 0.5, 0.49],
+    swamp: [0.29, 0.25, 0.18], shallow_water: [0.29, 0.25, 0.18], rock: [0.5, 0.5, 0.49],
 };
 
 const WATER_TINTS = {
@@ -26,7 +28,7 @@ const WATER_TINTS = {
     rock: [0.98, 0.99, 1.02],
 };
 
-export function classifyWaterRegions(tiles) {
+export function classifyWaterRegions(tiles, compactPools = null) {
     const regions = new Map();
     const visited = new Set();
     const directions = [[0, -1], [1, 0], [0, 1], [-1, 0]];
@@ -52,8 +54,9 @@ export function classifyWaterRegions(tiles) {
                             visited.add(neighborKey);
                             queue.push([nx, nz]);
                         }
-                    } else if (shore[neighbor.terrain] !== undefined) {
-                        shore[neighbor.terrain]++;
+                    } else {
+                        const kind = neighbor.terrain === 'shallow_water' ? 'swamp' : neighbor.terrain;
+                        if (shore[kind] !== undefined) shore[kind]++;
                     }
                 }
             }
@@ -61,7 +64,11 @@ export function classifyWaterRegions(tiles) {
             const [dominant, count] = Object.entries(shore)
                 .sort((a, b) => b[1] - a[1])[0];
             const kind = total && count / total >= 0.55 ? dominant : 'grass';
+            const compact = compactPools && cells.length <= 6
+                && !cells.some(([cx, cz]) => directions.some(([dx, dz]) =>
+                    tiles[cz + dz]?.[cx + dx]?.terrain === 'shallow_water'));
             for (const [cx, cz] of cells) regions.set(`${cx},${cz}`, kind);
+            if (compact) for (const [cx, cz] of cells) compactPools.add(`${cx},${cz}`);
         }
     }
     return regions;
@@ -110,7 +117,7 @@ export function connectedWaterHeightAt(tiles, x, z, px, pz, regions,
 export function waterSideCornerDrops(tiles, x, z, regions, renderedHeight) {
     const drop = (px, pz) => {
         const waterTop = connectedWaterHeightAt(tiles, x, z, px, pz, regions) + 0.012;
-        return (renderedHeight - Math.max(0, Math.min(renderedHeight, waterTop))) / renderedHeight;
+        return (renderedHeight - Math.max(0, waterTop)) / renderedHeight;
     };
     return [drop(x, z), drop(x + 1, z), drop(x + 1, z + 1), drop(x, z + 1)];
 }
@@ -300,9 +307,11 @@ export function buildRoundedWaterData(tiles, radius = 0.24,
 // Clip each triangle once: its water and bank polygons partition the footprint,
 // including concave corners and diagonally disconnected bodies of water.
 function buildShoreSurface(tiles, includeTile, levelForWater, sampleLand, origin, captureFog) {
+    const compactPools = new Set();
     const data={water:[],waterColors:[],bank:[],bankColors:[],bankUvs:[],bankBaseColors:[],
-        sandBank:[],sandBankColors:[],sandBankUvs:[],fogByTile:[],
-        regions:origin?new Map():classifyWaterRegions(tiles)};
+        sandBank:[],sandBankColors:[],sandBankUvs:[],bankShoulders:[],sandBankShoulders:[],
+        fogByTile:[],waterMargins:[],compactPools,
+        regions:origin?new Map():classifyWaterRegions(tiles, compactPools)};
     const smooth=t=>t*t*(3-2*t);
     for(let z=0;z<tiles.length;z++)for(let x=0;x<(tiles[z]?.length||0);x++){
         if(tiles[z][x]?.terrain!=='water'||!includeTile(x,z))continue;
@@ -320,8 +329,10 @@ function buildShoreSurface(tiles, includeTile, levelForWater, sampleLand, origin
             const tile=tiles[z+dz]?.[x+dx];
             if(tile&&tile.terrain!=='water')land.push({x:x+dx,z:z+dz,tile});
         }
-        // A global cell spans 100 m; local banks need the finer close-up mesh.
-        const steps=4;
+        const compact = compactPools.has(`${x},${z}`);
+        // Мелким водоёмам нужен более подробный контур на расстоянии игровой камеры.
+        const samples = compact ? [0,.075,.185,.34,.5,.66,.815,.925,1] : [0,.25,.5,.75,1];
+        const steps = samples.length - 1;
         const ring=[[0,0],[.5,0],[1,0],[1,.5],[1,1],[.5,1],[0,1],[0,.5]];
         const heights=ring.map(([u,v])=>connectedWaterHeightAt(tiles,x,z,x+u,z+v,data.regions,levelForWater));
         const waterHeight=(u,v)=>{
@@ -337,7 +348,8 @@ function buildShoreSurface(tiles, includeTile, levelForWater, sampleLand, origin
         const point=(u,v)=>{
             const px=x+u,pz=z+v,waterY=waterHeight(u,v);
             const wx=px+(origin?.x||0),wz=pz+(origin?.z||0);
-            let total=0,target=0,red=0,green=0,blue=0,nearest=Infinity;
+            let total=0,target=0,red=0,green=0,blue=0,nearest=Infinity,shallow=0;
+            let shallowTarget=0, shallowDistance=Infinity;
             const touching=[];
             const distances=[1,1,1,1];
             for(const cell of land){
@@ -345,15 +357,24 @@ function buildShoreSurface(tiles, includeTile, levelForWater, sampleLand, origin
                 const ground=sampleLand?sampleLand(Math.max(cell.x+1e-5,Math.min(cell.x+.99999,lx)),Math.max(cell.z+1e-5,Math.min(cell.z+.99999,lz))):Number(cell.tile.height);
                 nearest=Math.min(nearest,distance);
                 if(distance<1e-8)touching.push(ground);
-                const width=(cell.tile.terrain==='swamp'?.16:.25)+Math.min(.07,Math.abs(ground-(waterY-.012))*.04)
-                    +.025*Math.sin(wx*.73+wz*.41)+.018*Math.sin(wz*1.13-wx*.28);
+                const wetBank=cell.tile.terrain==='swamp'||cell.tile.terrain==='shallow_water';
+                const relief = Math.abs(ground-(waterY-.012));
+                const width = compact
+                    ? .238 + Math.min(.095,relief*.12) + .041*Math.sin(wx*5.3+wz*2.8) + .027*Math.sin(wz*7.1-wx*3.2)
+                    : (wetBank?.16:.25) + Math.min(.07,relief*.04)
+                        + .025*Math.sin(wx*.73+wz*.41) + .018*Math.sin(wz*1.13-wx*.28);
                 const direction=Math.abs(px-lx)>Math.abs(pz-lz)+1e-9?(px<lx?1:3):(pz<lz?2:0);
                 distances[direction]=Math.min(distances[direction],distance-width);
                 if(distance>.75)continue;
                 const weight=1/(.015+distance)**4,tint=LAND_COLORS[cell.tile.terrain]||LAND_COLORS.grass;
                 total+=weight;target+=ground*weight;red+=tint[0]*weight;green+=tint[1]*weight;blue+=tint[2]*weight;
+                if(cell.tile.terrain==='shallow_water'){
+                    shallow+=weight;
+                    shallowTarget+=ground*weight;
+                    shallowDistance=Math.min(shallowDistance,distance);
+                }
             }
-            const soften=land.every(c=>c.tile.terrain==='swamp')?.12:.28;
+            const soften=compact?.18:land.every(c=>['swamp','shallow_water'].includes(c.tile.terrain))?.12:.28;
             let distance=distances[0];
             for(const next of distances.slice(1)){
                 const h=Math.max(0,soften-Math.abs(distance-next))/soften;
@@ -362,18 +383,24 @@ function buildShoreSurface(tiles, includeTile, levelForWater, sampleLand, origin
             const mask=-distance;
             // Normalise against actual distance to land. The former fixed .22
             // denominator left narrow swamp banks short of the ground edge.
-            const blend=mask>0?smooth(mask/(mask+nearest)):0;
+            const bankT = mask > 0 ? mask / (mask + nearest) : 0;
+            const blend = smooth(compact ? Math.min(1, bankT * 1.13) : bankT);
             const ground=touching.length?touching.reduce((a,b)=>a+b,0)/touching.length:total?target/total:waterY;
-            return {x:px,z:pz,y:waterY*(1-blend)+(ground+.002)*blend,
-                waterY,mask,color:[1,1,1],baseColor:total?[red/total,green/total,blue/total]:[1,1,1]};
+            // Поверхность плавно поднимается к мелководью ещё в пределах глубокой клетки.
+            const shoal = shallow ? smooth(Math.max(0, 1 - shallowDistance/.75)) : 0;
+            const level = shoal ? waterY + (shallowTarget/shallow+SHALLOW_WATER_OFFSET-waterY)*shoal : waterY;
+            return {x:px,z:pz,y:level*(1-blend)+(ground+.002)*blend,
+                waterY:level,mask,blend,shoulder:compact ? smooth(Math.max(0,1-nearest/.22)) : 0,
+                shallow:total?shallow/total:0,color:[1,1,1],
+                baseColor:total?[red/total,green/total,blue/total]:[1,1,1]};
         };
         const clip=(polygon,bank)=>{
             const out=[];let a=polygon.at(-1),inside=bank?a.mask>=0:a.mask<=0;
             for(const b of polygon){
                 const next=bank?b.mask>=0:b.mask<=0;
                 if(next!==inside){
-                    const t=a.mask/(a.mask-b.mask),p={mask:0,color:[1,1,1]};
-                    for(const key of ['x','z','waterY'])p[key]=a[key]+(b[key]-a[key])*t;
+                    const t=a.mask/(a.mask-b.mask),p={mask:0,blend:0,shoulder:0,color:[1,1,1]};
+                    for(const key of ['x','z','waterY','shallow'])p[key]=a[key]+(b[key]-a[key])*t;
                     p.y=p.waterY;p.baseColor=a.baseColor.map((v,i)=>v+(b.baseColor[i]-v)*t);out.push(p);
                 }
                 if(next)out.push(b);a=b;inside=next;
@@ -385,11 +412,19 @@ function buildShoreSurface(tiles, includeTile, levelForWater, sampleLand, origin
                 const points=[polygon[0],polygon[i],polygon[i+1]], [a,b,c]=points;
                 const cross=(b.z-a.z)*(c.x-a.x)-(b.x-a.x)*(c.z-a.z);
                 if(Math.abs(cross)<1e-10)continue;
-                if(bank){
+                const submerged = bank && points.some(point => point.shallow > .66);
+                if(bank && !submerged){
                     const sand=kind==='sand';
                     pushBankTriangle(sand?data.sandBank:data.bank,sand?data.sandBankColors:data.bankColors,
                         sand?data.sandBankUvs:data.bankUvs,a,b,c,tiles[z].length,tiles.length,sand?null:data.bankBaseColors);
-                }else for(const p of cross>=0?points:[a,c,b]){data.water.push(p.x,p.waterY,p.z);data.waterColors.push(...WATER_TINTS[kind]);}
+                    if (!origin) (sand ? data.sandBankShoulders : data.bankShoulders)
+                        .push(...(cross >= 0 ? points : [a,c,b]).map(p => p.shoulder));
+                }else for(const p of cross>=0?points:[a,c,b]){
+                    const y = submerged ? p.y + (SHALLOW_WATER_OFFSET - .002) * p.blend : p.waterY;
+                    data.water.push(p.x,y,p.z);data.waterColors.push(...WATER_TINTS[kind]);
+                    if (!origin) data.waterMargins.push(submerged || p.shallow > .45 ? 1
+                        : Math.min(1, Math.max(0, -p.mask) / (compact ? .145 : .19)));
+                }
             }
         };
         if(!land.length){
@@ -403,7 +438,7 @@ function buildShoreSurface(tiles, includeTile, levelForWater, sampleLand, origin
             saveFogSurface();
             continue;
         }
-        const grid=Array.from({length:steps+1},(_,v)=>Array.from({length:steps+1},(_,u)=>point(u/steps,v/steps)));
+        const grid=samples.map(v=>samples.map(u=>point(u,v)));
         for(let row=0;row<steps;row++)for(let col=0;col<steps;col++){
             const a=grid[row][col],b=grid[row][col+1],c=grid[row+1][col+1],d=grid[row+1][col];
             for(const triangle of [[a,b,c],[a,c,d]]){emit(clip(triangle,false),false);emit(clip(triangle,true),true);}

@@ -135,7 +135,8 @@ test('lobby clock blends twilight and cloud clarity changes lighting', () => {
     assert.match(sky, /moonDisc\.position\.copy\(moonDirection\)/);
     assert.match(sky, /worldSkySphere\.material\.uniforms\.starRotation\.value = angle/);
     assert.match(sky, /stars\.rotation\.z = angle/);
-    assert.match(sky, /float cloudCover = mix\(0\.82 \+ cloudPattern \* 0\.18, cloudPattern \* 0\.5, clarity\)/);
+    assert.match(sky, /float cloudCover = mix\([\s\S]*?, clarity\) \* cloudDepth/);
+    assert.match(sky, /horizonColor: \{ value: scene\.fog\.color \}/);
     assert.match(sky, /uniform float starlight/);
     assert.match(read('main.js'), /settings\.sun\?\.intensity \?\? 0\.5/);
     assert.match(read('main.js'), /checkbox\?\.addEventListener\('change', \(\) => \{\s*slider\.disabled = !checkbox\.checked/);
@@ -147,6 +148,7 @@ test('sky conditions fade stars and celestial discs with cloud cover and twiligh
     const end = source.indexOf('// ===== Конец неба =====', start);
     assert.ok(start >= 0 && end > start);
     class FakeColor {
+        setHex() { return this; }
         lerp() { return this; }
     }
     const worldSkySphere = { material: { uniforms: { daylight: {}, clarity: {}, starlight: {} } } };
@@ -155,7 +157,8 @@ test('sky conditions fade stars and celestial discs with cloud cover and twiligh
     const moonDisc = { material: {} };
     const context = createSceneContext({
         THREE: { MathUtils: { clamp: (value, low, high) => Math.max(low, Math.min(high, value)) }, Color: FakeColor },
-        worldSkySphere, stars, sunDisc, moonDisc, scene: { background: { copy() {} } },
+        cloudField: { worldCloudShade: { value: 0 } }, worldSkySphere, stars, sunDisc, moonDisc,
+        scene: { fog: { color: new FakeColor() }, background: { copy() {} } },
     });
     vm.runInContext(source.slice(start, end).replace('export function ', 'function '), context);
     context.setSkyConditions(0, 0, 1);
@@ -174,7 +177,7 @@ test('sky conditions fade stars and celestial discs with cloud cover and twiligh
     assert.equal(stars.visible, false);
 });
 
-test('low sun and moon cap world object shadows at about 1.25 times their height', () => {
+test('На глобальной карте ограничены длина теней у горизонта и высота источника в полдень', () => {
     const source = read('lobby3d.js');
     const start = source.indexOf('let celestialMinutes = 480;');
     const end = source.indexOf('export function setSkyConditions(', start);
@@ -198,13 +201,16 @@ test('low sun and moon cap world object shadows at about 1.25 times their height
         Math, Number, THREE: { Vector3 }, MAX_CHUNK_X: 31, MAX_CHUNK_Y: 31, CHUNK_SIZE: 16,
         sunDisc: { position: new Vector3() }, moonDisc: { position: new Vector3() },
         worldSkySphere: { material: { uniforms: { starRotation: {} } } },
-        stars: { rotation: {} }, directionalLight: { position, target }, markWorldShadowsDirty() {},
+        stars: { rotation: {} }, cloudField: { worldCloudProjection: { value: { set() {} } } },
+        directionalLight: { position, target }, markWorldShadowsDirty() {},
     });
     vm.runInContext(source.slice(start, end).replaceAll('export function ', 'function '), context);
-    for (const minutes of [6 * 60 + 10, 8 * 60, 19 * 60 + 50, 20 * 60 + 10]) {
+    for (const minutes of [0, 6 * 60 + 10, 8 * 60, 12 * 60, 19 * 60 + 50, 20 * 60 + 10]) {
         context.setCelestialTime(minutes);
         const horizontal = Math.hypot(position.x - target.position.x, position.z - target.position.z);
-        assert.ok(horizontal / position.y <= 1.26, `shadow ratio exceeded at ${minutes} minutes`);
+        const ratio = horizontal / position.y;
+        assert.ok(ratio <= 1 / 0.35 + 1e-6, `Слишком длинная тень на ${minutes}-й минуте`);
+        assert.ok(ratio >= 1 - 1e-6, `Слишком короткая тень на ${minutes}-й минуте`);
     }
 });
 

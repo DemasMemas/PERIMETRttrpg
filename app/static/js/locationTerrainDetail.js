@@ -107,7 +107,7 @@ export function createSurfaceTexture(THREE, kind, canvas = document.createElemen
     texture.wrapT = THREE.RepeatWrapping;
     texture.minFilter = THREE.LinearMipmapLinearFilter;
     texture.magFilter = THREE.LinearFilter;
-    if (kind === 'water') texture.encoding = THREE.sRGBEncoding;
+    if (kind === 'water') texture.colorSpace = THREE.SRGBColorSpace;
     return texture;
 }
 

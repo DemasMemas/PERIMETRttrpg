@@ -13,6 +13,23 @@ test('camera cutaways retain physical casters during shadow rendering and restor
     pass.dispose();assert.equal(renderer.shadowMap.render,original);
 });
 function node(extra={}){return{position:{x:0,y:0,z:0},quaternion:{x:0,y:0,z:0,w:1},scale:{x:1,y:1,z:1},visible:true,layers:{mask:1},...extra};}
+test('карта тени химического света исключает только своего носителя', async () => {
+    const {createLocationShadowPass} = await load();
+    const first = {visible: true}, second = {visible: true}, wall = {visible: true};
+    const sun = {shadow: {needsUpdate: true}};
+    const his = {shadow: {portableOwner: first, needsUpdate: true}};
+    const stick = {shadow: {portableOwner: second, needsUpdate: true}};
+    const draws = [];
+    const renderer = {shadowMap: {enabled: true, autoUpdate: true, render(lights) {
+        for (const light of lights) draws.push([light, first.visible, second.visible, wall.visible]);
+    }}};
+    createLocationShadowPass(renderer, () => [first, second, wall]);
+    renderer.shadowMap.render([sun, his, stick]);
+    assert.deepEqual(draws, [[sun, true, true, true], [his, false, true, true], [stick, true, false, true]]);
+    assert.equal(first.visible, true);
+    assert.equal(second.visible, true);
+});
+
 test('Скрытие этажа камерой сохраняет физическую тень досок вместе с перекрытием',async()=>{
     const {createLocationShadowPass}=await load(),board={visible:false,castShadow:true,userData:{physicalShadow:{visible:true,castShadow:true}}};
     const root={visible:false,userData:{physicalShadowVisible:true,floorAttachedMeshes:[board],physicalShadowMeshes:[board]}};
@@ -54,6 +71,27 @@ test('animated skin, morphs and custom depth materials retain per-frame shadow u
         const s=await setup();Object.assign(s.mesh,props);assert.equal(s.update(),true);assert.equal(s.update(),true);
     }
 });
+test('Дыхание персонажа и движения головы вороны сохраняют кэш тени',async()=>{
+    const s=await setup();
+    s.mesh.userData={staticIdleShadow:true};
+    s.mesh.morphTargetInfluences=[0];
+    assert.equal(s.update(),true);
+    s.mesh.morphTargetInfluences[0]=.8;
+    assert.equal(s.update(),false);
+    s.parent.position.x++;
+    assert.equal(s.update(),true);
+});
+test('Тень скелета обновляется при смене позы и сохраняется между обновлениями',async()=>{
+    const s=await setup();
+    s.mesh.isSkinnedMesh=true;
+    s.mesh.userData={staticIdleShadow:true};
+    s.parent.userData={shadowPoseRevision:1};
+    assert.equal(s.update(),true);
+    assert.equal(s.update(),false);
+    s.parent.userData.shadowPoseRevision++;
+    assert.equal(s.update(),true);
+    assert.equal(s.update(),false);
+});
 test('Общий материал проверяется один раз за кадр, а его изменение обновляет тень',async()=>{
     const s=await setup();let reads=0,version=0;
     Object.defineProperty(s.material,'version',{get(){reads++;return version;}});
@@ -63,6 +101,32 @@ test('Общий материал проверяется один раз за к
     version++;assert.equal(s.update(),true);assert.equal(reads,3);
     assert.equal(s.update(),false);
 });
+test('При смене подлокации буферы экземпляров и карты теней освобождаются один раз', () => {
+    const source = read('locationScene.js');
+    const start = source.indexOf('function disposeObject(');
+    const end = source.indexOf('function getPointerWorldPoint(', start);
+    const scene = {children: [], remove(root) { this.children.splice(this.children.indexOf(root), 1); }};
+    const released = [];
+    const release = name => () => released.push(name);
+    const context = vm.createContext({scene, perchedCrowIdles: new Map(), releaseLocationModel() {},
+        releaseLocationPbrMaterial() {}, isSharedLocationModelGeometry: () => false});
+    vm.runInContext(source.slice(start, end), context);
+
+    for (let cycle = 0; cycle < 12; cycle++) {
+        const sun = {isLight: true, shadow: {dispose: release('sun-shadow')}};
+        const instance = {isInstancedMesh: true, dispose: release('instance-buffers'),
+            geometry: {dispose: release('geometry')}, material: {dispose: release('material')}};
+        const nestedLamp = {isLight: true, shadow: {dispose: release('lamp-shadow')}};
+        scene.children.push(sun, {children: [{children: [instance, nestedLamp]}]});
+        context.disposeSceneObjects(root => root === sun);
+        assert.deepEqual(scene.children, [sun]);
+        context.disposeSceneObjects();
+        context.disposeSceneObjects();
+        assert.deepEqual(scene.children, []);
+        assert.deepEqual(released.splice(0), ['instance-buffers', 'geometry', 'material', 'lamp-shadow', 'sun-shadow']);
+    }
+});
+
 test('camera movement does not rebuild terrain clipping and geometry, while storey and object changes do',()=>{
     const source=read('locationScene.js'),start=source.indexOf('function updateRoofVisibility(');
     const fn=source.slice(start,source.indexOf('\n}',start)+2);
@@ -70,7 +134,7 @@ test('camera movement does not rebuild terrain clipping and geometry, while stor
     const mesh={position:{y:3.4},userData:{locationObject:{type:'roof',properties:{}}},traverse:cb=>cb({isMesh:true,material:{}})};
     const ctx=vm.createContext({camera:{position:{x:0,y:25,z:0,distanceTo:()=>25}},controls:{target:{x:0,y:0,z:0}},
         currentLocationData:{objects:[],tiles_data:[]},locationBuildingViewsDirty:false,getLocationBuildingViews:()=>views,
-        updateStoreyTerrainVisibility:()=>clipping++,locationViewLevel:0,editMode:false,locationRoofsVisible:true,
+        updateStoreyTerrainVisibility:()=>clipping++,locationViewLevel:0,editMode:false,locationRoofsVisible:true,firstPersonView:null,
         locationObjectMeshes:[mesh],roofMeshes:[],structurePose:()=>{reads++;return{height:.1};},
         structureLevel:()=>0,roofOpacityForCamera:()=>1,locationObjectPickCache:{},applyFogOfWar(){},updateLocationLampFixtureFloors(){}});
     vm.runInContext(fn,ctx);ctx.updateRoofVisibility();assert.equal(clipping,1);assert.equal(reads,1);

@@ -255,12 +255,16 @@ def test_malformed_update_is_rejected_atomically(access_case, client, transport)
 
 
 @pytest.mark.parametrize('transport', ['http', 'socket'])
-def test_health_updates_sync_posture_and_effects_in_both_transports(access_case, client, transport, monkeypatch):
+@pytest.mark.parametrize('posture, saved_back, back', [
+    ('standing', False, True), ('sitting', False, True), ('prone', False, False), ('prone', True, False),
+])
+def test_health_updates_sync_posture_and_effects_in_both_transports(access_case, client, transport, posture, saved_back, back, monkeypatch):
     case = access_case
     location = Location(lobby_id=case['lobby'].id, name='Room', world_tile_x=0, world_tile_z=0)
     db.session.add(location)
     db.session.flush()
-    model = LocationCharacter(location_id=location.id, character_id=case['character'].id, posture='standing')
+    model = LocationCharacter(location_id=location.id, character_id=case['character'].id,
+                              posture=posture, prone_on_back=saved_back)
     db.session.add(model)
     db.session.commit()
     posture_events = []
@@ -276,10 +280,20 @@ def test_health_updates_sync_posture_and_effects_in_both_transports(access_case,
     assert update(case, client, case['owner'], {'data': data}, transport) == 200
     db.session.refresh(model)
     assert model.posture == 'prone'
+    assert model.prone_on_back is back
     assert any(effect['type'] == 'shock' for effect in model.effects)
     assert len(posture_events) == 1
+    assert posture_events[0]['condition_state'] == 'pain_shock'
+    assert posture_events[0]['prone_on_back'] is back
     assert update(case, client, case['owner'], {'data': data}, transport) == 200
     assert len(posture_events) == 1
+    recovered = {'health': {'current': 700, 'effects': []}}
+    assert update(case, client, case['owner'], {'data': recovered}, transport) == 200
+    db.session.refresh(model)
+    assert model.posture == 'prone' and model.prone_on_back is False
+    assert len(posture_events) == 2
+    assert posture_events[-1]['condition_state'] == 'active'
+    assert posture_events[-1]['prone_on_back'] is False
 
 
 @pytest.mark.parametrize('transport', ['http', 'socket'])

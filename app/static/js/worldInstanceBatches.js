@@ -7,7 +7,7 @@ export function createWorldInstanceBatches(THREE, scene, chunks) {
     const combined = new THREE.Matrix4();
     const color = new THREE.Color();
     const eligible = mesh => mesh?.isInstancedMesh && mesh.visible && mesh.count > 0
-        && !Array.isArray(mesh.material) && !mesh.material.transparent;
+        && !Array.isArray(mesh.material) && mesh.material.visible && !mesh.material.transparent;
     function sources() {
         const groups = new Map();
         for (const chunk of chunks.values()) {

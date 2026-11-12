@@ -52,10 +52,11 @@ test('character sheet diff reports added scalar and object fields without revisi
 
 test('character sheet diff ignores unchanged arrays from a fresh server snapshot', async () => {
     const { diffCharacterData } = await load();
-    const inventory = { backpack: [{ id: 'a', quantity: 2 }], pockets: [] };
+    const inventory = { backpack: [{ id: 'a', quantity: 2, contents: [{ id: 'b', quantity: 1 }] }], pockets: [] };
+    const savedInventory = { backpack: [{ contents: [{ quantity: 1, id: 'b' }], quantity: 2, id: 'a' }], pockets: [] };
     const result = diffCharacterData(
         { _revision: 1, notes: 'old', inventory },
-        { _revision: 2, notes: 'new', inventory: JSON.parse(JSON.stringify(inventory)) },
+        { _revision: 2, notes: 'new', inventory: savedInventory },
     );
 
     assert.deepEqual(result.scalarPaths, ['notes']);

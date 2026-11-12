@@ -19,11 +19,6 @@ function fakeThree() {
         add(child) { child.parent = this; this.children.push(child); }
         traverse(callback) { callback(this); this.children.forEach(child => child.traverse(callback)); }
         updateMatrix() { this.matrix = {}; }
-        getWorldScale(target){
-            Object.assign(target,this.scale);
-            for(let parent=this.parent;parent;parent=parent.parent)for(const key of ['x','y','z'])target[key]*=parent.scale[key];
-            return target;
-        }
     }
     class Mesh extends Object3D {
         constructor(geometry, material) { super(); this.geometry = geometry; this.material = material; }
@@ -83,15 +78,11 @@ test('electric and acid anomaly particles are batched without losing animation',
     assert.ok(acidVisual.children.slice(3).every(mesh => mesh.instanceMatrix.needsUpdate));
 });
 
-test('метка аномалии сохраняет пропорции при независимом масштабе родителя',()=>{
-    const THREE=fakeThree(),canvas={width:0,height:0,getContext(){return{measureText:text=>({width:text.length*20}),fillRect(){},strokeRect(){},fillText(){}};}};
-    const context=vm.createContext({THREE,Math,document:{createElement:()=>canvas}});
+test('аномалия сохраняет модель и фигурный маркер без текстовой метки', () => {
+    const context = vm.createContext({ THREE: fakeThree(), Math });
     vm.runInContext(source.replace(/^import[^\n]*\n/,'').replaceAll('export ',''),context);
-    const parent=new THREE.Group(),effect=context.createAnomalyEffect('fire','#ff5500',1,'banya','Баня');
-    parent.add(effect);parent.scale.set(2,.5,3);effect.scale.set(6,2,4);
-    const label=effect.children.find(child=>child.userData.anomalyLabel);
-    context.animateAnomalyEffects([effect],1000);
-    assert.equal(label.scale.x*12,label.userData.labelBaseScale[0]);
-    assert.equal(label.scale.y,label.userData.labelBaseScale[1]);
-    assert.equal(label.material.depthTest,true);assert.equal(label.material.depthWrite,false);
+    const effect = context.createAnomalyEffect('fire', '#ff5500', 1, 'banya');
+    assert.equal(effect.children.length, 2);
+    assert.equal(effect.children[0], effect.userData.anomalyVisual);
+    assert.ok(effect.children[1].userData.anomalyMarkerSpeed);
 });

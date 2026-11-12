@@ -363,6 +363,17 @@ class CombatService:
         return name
 
     @staticmethod
+    def _collapse_character(loc_char, previous_condition=None):
+        if CombatService._posture_key(loc_char) != 'prone':
+            loc_char.prone_on_back = True
+        elif previous_condition == 'active':
+            loc_char.prone_on_back = False
+        loc_char.posture = 'prone'
+        loc_char.cover_object_id = None
+        loc_char.weapon_braced = False
+        loc_char.braced_weapon_index = None
+
+    @staticmethod
     def _character_condition(character_data):
         data = character_data if isinstance(character_data, dict) else {}
         health = data.get('health') if isinstance(data.get('health'), dict) else {}
@@ -889,13 +900,30 @@ class CombatService:
             else 0
         )
         artifact = artifact_passive_profile(character_data)
-        artifact_bonus = artifact['skill_physical'] if skill_path.startswith('skills.physical.') else artifact['skill_other']
+        artifact_bonus = {
+            'physical': artifact['skill_physical'],
+            'other': artifact['skill_other'],
+        }.get(skill_path.split('.')[1], 0)
         artifact_bonus += {
             'strength': artifact['skill_strength'],
             'will': artifact['skill_will'],
             'awareness': artifact['skill_awareness'],
             'stealth': artifact['skill_stealth'],
         }.get(stat_name, 0)
+        will_modifier = 0
+        if skill_path == 'skills.physical.will':
+            health = character_data.get('health')
+            effects = normalize_effect_list(health.get('effects') if isinstance(health, dict) else None)
+            will_modifier = sum(
+                min(0, CombatService._coerce_int(effect.get('will_modifier'), 0))
+                for effect in effects
+                if effect['type'] == 'anomaly_will_penalty' and effect.get('active', True)
+                and (effect.get('remaining') is None or effect['remaining'] > 0)
+            )
+            if isinstance(health, dict):
+                psy_state = CombatService._coerce_int(health.get('psyState', health.get('psy_state')), 0)
+                if psy_state >= 10:
+                    will_modifier -= 1
         return max(
             0,
             CombatService._coerce_int(current.get('base'), 0)
@@ -904,7 +932,7 @@ class CombatService:
             + equipment_bonus
             + (2 if skill_path in {'skills.physical.strength','skills.physical.agility'} and background_is(character_data,'Пожарный') and ((character_data.get('health') or {}).get('combatMeta') or {}).get('firefighterNearby') else 0)
             + (facial_profile(character_data)['charisma_level'] if skill_path=='skills.social.charisma' else 0)
-            + artifact_bonus,
+            + artifact_bonus + will_modifier,
         )
 
     @staticmethod
@@ -1902,8 +1930,6 @@ class CombatService:
                     modifier -= 1
 
         if include_psy and skill_path == 'skills.physical.will':
-            psy_state = CombatService._coerce_int(health.get('psyState', health.get('psy_state')), 0)
-            modifier -= 1 if psy_state >= 10 else 0
             combat_meta = health.get('combatMeta') if isinstance(health.get('combatMeta'), dict) else {}
             modifier -= max(
                 0,
@@ -2359,7 +2385,7 @@ class CombatService:
             if (table, roll) in {('stress', 1), ('psychosis', 3)}:
                 effect['type'] = 'stress_stupor'
                 effect['remaining_seconds'] = 30 if table == 'stress' else None
-                loc_char.posture = 'prone'
+                CombatService._collapse_character(loc_char)
             elif (table, roll) == ('tension', 7):
                 effect['rollPenalty'] = 2
             elif (table, roll) == ('tension', 10):
@@ -2459,11 +2485,17 @@ class CombatService:
         equipment = character_data.get('equipment') if isinstance(character_data, dict) else {}
         equipment = equipment if isinstance(equipment, dict) else {}
         if skill_path == 'skills.social.charisma':
+            integrated_profile = CombatService._integrated_helmet_profile(equipment.get('armor'))
             for key in (
                 'glasses', 'gloves', 'ring', 'necklace', 'earrings',
                 'bracelet1', 'bracelet2', 'helmet', 'gasMask',
             ):
                 item = equipment.get(key)
+                if key == 'helmet' and integrated_profile and (
+                    not item or isinstance(item, dict) and item.get('integratedWithArmor')
+                ):
+                    equipment_modifier -= integrated_profile['charisma_penalty']
+                    continue
                 if isinstance(item, dict):
                     attrs=item.get('attributes') or {}
                     bonus=CombatService._coerce_float(item.get('charismaBonus',item.get('charisma_bonus',attrs.get('charisma_bonus'))),0)
@@ -4344,7 +4376,7 @@ class CombatService:
         if loc_char is not None and CombatService._character_condition(
             loc_char.character.data if transformed else data,
         )['state'] in {'critical', 'dead'}:
-            loc_char.posture = 'prone'
+            CombatService._collapse_character(loc_char)
         return {
             'triggered': True,
             'psy_state': psy_state,
@@ -4557,7 +4589,7 @@ class CombatService:
                 'type': 'death', 'name': 'Смерть',
                 'source': 'death_order', 'active': True,
             })
-            loc_char.posture = 'prone'
+            CombatService._collapse_character(loc_char)
             result['death_order'] = True
 
         zombification = next((
@@ -4872,7 +4904,7 @@ class CombatService:
         return any('жмурк' in str(value or '').casefold() for value in labels)
 
     @staticmethod
-    def _can_see_location_character(observer, target, max_distance=25, *, objects=None):
+    def _can_see_location_character(observer, target, max_distance=25, *, objects=None, point_height=None):
         if not observer or not target or observer.id == target.id:
             return False
         distance = max(
@@ -4884,7 +4916,7 @@ class CombatService:
         if not CombatService._is_in_facing_arc(observer, target.pos_x, target.pos_y):
             return False
         return CombatService._cover_analysis(
-            observer.location_id, observer, target, objects=objects,
+            observer.location_id, observer, target, objects=objects, point_height=point_height,
         ).get('grade') != 'full'
 
     @staticmethod
@@ -5270,8 +5302,10 @@ class CombatService:
                 return None
             return {
                 'physical': CombatService._protection_percent(configured.get('physical'), 0),
-                'charisma_penalty': max(0, CombatService._coerce_int(configured.get('charisma_penalty'), 0)),
-                'accuracy_penalty': max(0, CombatService._coerce_int(configured.get('accuracy_penalty'), 0)),
+                'charisma_penalty': max(0, CombatService._coerce_int(
+                    configured.get('charisma_penalty', configured.get('charismaPenalty')), 0)),
+                'accuracy_penalty': max(0, CombatService._coerce_int(
+                    configured.get('accuracy_penalty', configured.get('accuracyPenalty')), 0)),
             }
         physical, charisma_penalty, accuracy_penalty = profile
         return {
@@ -5847,10 +5881,7 @@ class CombatService:
             target=location_character,
         )
         if result['critical'] or result['death']:
-            location_character.posture = 'prone'
-            location_character.cover_object_id = None
-            location_character.weapon_braced = False
-            location_character.braced_weapon_index = None
+            CombatService._collapse_character(location_character)
         if result['changed']:
             flag_modified(character, 'data')
         return result
@@ -6649,10 +6680,7 @@ class CombatService:
                 trauma=None;traumas=[];created_bleedings=[];catastrophic_limb_injury=None;fatal_vital_hit=False
                 sync_health_derived_statuses(health);resulting_condition=CombatService._character_condition(data)
         if resulting_condition['state'] in {'pain_shock', 'critical', 'dead'}:
-            target.posture = 'prone'
-            target.cover_object_id = None
-            target.weapon_braced = False
-            target.braced_weapon_index = None
+            CombatService._collapse_character(target, previous_condition)
         character.data = data
         flag_modified(character, 'data')
         if meta.pop('pendingDamageStressTrigger', False):
@@ -7274,10 +7302,7 @@ class CombatService:
             if survival:
                 sync_health_derived_statuses(health);resulting_condition=CombatService._character_condition(data)
         if resulting_condition['state'] in {'pain_shock', 'critical', 'dead'}:
-            target.posture = 'prone'
-            target.cover_object_id = None
-            target.weapon_braced = False
-            target.braced_weapon_index = None
+            CombatService._collapse_character(target, previous_condition)
         target.character.data = data
         flag_modified(target.character, 'data')
         if meta.pop('pendingExplosionStress', False):
@@ -7577,7 +7602,7 @@ class CombatService:
                 apply_effect_to_health(health, {
                     'type': 'shock', 'source': 'close_explosion',
                 })
-                target.posture = 'prone'
+                CombatService._collapse_character(target)
                 target.character.data = data
                 flag_modified(target.character, 'data')
             prone_facing_death = bool(
@@ -7976,10 +8001,7 @@ class CombatService:
             target.character.data = data
             flag_modified(target.character, 'data')
         if shock:
-            target.posture = 'prone'
-            target.cover_object_id = None
-            target.weapon_braced = False
-            target.braced_weapon_index = None
+            CombatService._collapse_character(target)
         return {
             'height': height,
             'classified_height': classified_height,
@@ -9995,10 +10017,7 @@ class CombatService:
                     'source': 'blood_loss',
                     'tick': 'manual',
                 })
-                loc_char.posture = 'prone'
-                loc_char.cover_object_id = None
-                loc_char.weapon_braced = False
-                loc_char.braced_weapon_index = None
+                CombatService._collapse_character(loc_char)
         health['bloodStage'] = str(health.get('blood') or stage or 'normal').lower()
         meta['bleedingCheck']['bloodStage'] = health['bloodStage']
         meta['bleedingCheck']['death'] = health['bloodStage'] == 'fatal'
@@ -10181,10 +10200,7 @@ class CombatService:
         if CombatService._character_condition(character_data)['state'] in {
             'pain_shock', 'critical', 'dead',
         }:
-            loc_char.posture = 'prone'
-            loc_char.cover_object_id = None
-            loc_char.weapon_braced = False
-            loc_char.braced_weapon_index = None
+            CombatService._collapse_character(loc_char)
         CombatService._notify_observed_death(loc_char)
         return loc_char
 
@@ -10311,10 +10327,7 @@ class CombatService:
                 'source': 'pain_end_turn',
                 'tick': 'manual',
             })
-            loc_char.posture = 'prone'
-            loc_char.cover_object_id = None
-            loc_char.weapon_braced = False
-            loc_char.braced_weapon_index = None
+            CombatService._collapse_character(loc_char)
         data['health'] = health
         character.data = data
         flag_modified(character, 'data')
@@ -11279,10 +11292,10 @@ class CombatService:
         return None
 
     @staticmethod
-    def _vertical_movement_plan(location,actor,x,y,level):
+    def _vertical_movement_plan(location,actor,x,y,level,*,terrain_only=False):
         """Явный подъём или спуск между соседними опорами; обычный путь их не заменяет."""
-        from app.services.location_navigation import surface,opening_at
-        if math.hypot(x-actor.pos_x,y-actor.pos_y)>1.5+1e-9:
+        from app.services.location_navigation import contains, level_of, surface, opening_at
+        if CombatService._posture_key(actor) != 'standing' or math.hypot(x-actor.pos_x,y-actor.pos_y)>1.5+1e-9:
             return None
         objects = LocationObject.query.filter_by(location_id=location.id).all()
         start = (actor.pos_x,actor.pos_y,actor.floor_level or 0)
@@ -11304,6 +11317,20 @@ class CombatService:
         delta = b['height']-a['height']
         if not (1<=delta<2 or delta<=-1):
             return None
+        terrain_ascent = 1 <= delta < 2 and start[2] == level == 0
+        if terrain_ascent:
+            tiles = location.tiles_data or []
+            for tx, ty, _ in (start, end):
+                col, row = math.floor(tx+.5), math.floor(ty+.5)
+                tile = tiles[row][col] if 0 <= row < len(tiles) and 0 <= col < len(tiles[row]) else None
+                if not isinstance(tile, dict) or tile.get('terrain') == 'water' or any(
+                    obj.type in {'floor', 'hatch'} and level_of(obj) == 0 and contains(obj, tx+.5, ty+.5)
+                    for obj in objects
+                ):
+                    terrain_ascent = False
+                    break
+        if terrain_only and not terrain_ascent:
+            return None
         geometry = CombatService._movement_wall_geometry(location,objects)
         geometry.add_characters(c for c in CombatService._unique_location_characters(
             LocationCharacter.query.filter_by(location_id=location.id).all()) if c.character_id!=actor.character_id)
@@ -11314,7 +11341,8 @@ class CombatService:
         return {'path':[(actor.pos_x,actor.pos_y),(x,y)],'distance':distance,
                 'cost':12 if delta>0 else 0,'climb_cost':12 if delta>0 else 0,'climbs':climbs,
                 'special_action':'climb_up' if delta>0 else 'descend','floor_level':level,
-                'height_change':delta,'surfaces':[{k:n[k] for k in ('x','y','level','height')} for n in (a,b)]}
+                'height_change':delta,'terrain_ascent':terrain_ascent,
+                'surfaces':[{k:n[k] for k in ('x','y','level','height')} for n in (a,b)]}
 
     @staticmethod
     def _object_climb_plan(location,actor,obj):
@@ -11376,7 +11404,7 @@ class CombatService:
             for x, tile in enumerate(row):
                 if not isinstance(tile, dict):
                     continue
-                if tile.get('terrain') in {'snow', 'sand', 'swamp', 'ice'}:
+                if tile.get('terrain') in {'snow', 'sand', 'swamp', 'ice', 'shallow_water'}:
                     costs[x, y, 0] = 2
                 if type(tile.get('difficult_surface')) is bool:
                     overrides[x, y, 0] = tile['difficult_surface']
@@ -11818,6 +11846,7 @@ class CombatService:
             'correction_distance_this_turn': loc_char.correction_distance_this_turn or 0,
             'strenuous_movement_blocked_until_round': 0 if CombatService._consumable_stat_value_bonus(data,'breathless_immunity')>0 else loc_char.strenuous_movement_blocked_until_round or 0,
             'posture': posture,
+            'prone_on_back': bool(getattr(loc_char, 'prone_on_back', False)),
             'posture_label': posture_profile['label'],
             'posture_change_options': posture_change_options,
             'posture_modifiers': {
@@ -12303,12 +12332,13 @@ class CombatService:
         return base if operation == 'equip' else base // 2
 
     @staticmethod
-    def _iter_inventory_items_with_paths(character_data):
+    def _iter_inventory_items_with_paths(character_data, *, include_held=False):
         data = character_data if isinstance(character_data, dict) else {}
         inventory = data.get('inventory') if isinstance(data.get('inventory'), dict) else {}
         equipment = data.get('equipment') if isinstance(data.get('equipment'), dict) else {}
         pending = []
-        for key in ('backpack', 'pockets'):
+        inventory_sections = ('backpack', 'pockets', 'held') if include_held else ('backpack', 'pockets')
+        for key in inventory_sections:
             items = inventory.get(key)
             if isinstance(items, list):
                 pending.extend((item, ['inventory', key, index]) for index, item in enumerate(items))
@@ -12355,21 +12385,20 @@ class CombatService:
 
     @staticmethod
     def _integrated_helmet_from_armor(armor, template):
-        attributes = dict(template.attributes or {}) if template else {}
-        profile = dict(attributes.get('integrated_helmet_profile') or {})
+        attributes = {**(template.attributes or {}), **CombatService._item_attributes(armor)} if template else CombatService._item_attributes(armor)
+        profile = CombatService._integrated_helmet_profile(armor)
         if not profile and not attributes.get('integrated_helmet'):
             return None
-        physical = CombatService._coerce_float(profile.get('physical'), 0)
-        if physical > 1:
-            physical /= 100
+        profile = profile or {}
         return {
             'templateId': f"integrated:{armor.get('templateId') or 'armor'}",
+            'category': 'helmet',
             'integratedWithArmor': True,
             'sourceArmorTemplateId': armor.get('templateId'),
             'name': attributes.get('integrated_helmet_name') or f"{armor.get('name')} · встроенный шлем",
             'material': armor.get('material'),
             'protection': {
-                'physical': physical,
+                'physical': profile.get('physical', 0) / 100,
                 'chemical': 0,
                 'thermal': 0,
                 'electric': 0,
@@ -12381,12 +12410,84 @@ class CombatService:
             'condition': armor.get('condition'),
             'stageDurability': armor.get('stageDurability'),
             'currentStageDurability': armor.get('currentStageDurability'),
-            'accuracyPenalty': CombatService._coerce_int(profile.get('accuracyPenalty'), 0),
+            'accuracyPenalty': profile.get('accuracy_penalty', 0),
             'ergonomicsPenalty': 0,
-            'charismaBonus': -CombatService._coerce_float(profile.get('charismaPenalty'), 0),
+            'charismaBonus': -profile.get('charisma_penalty', 0),
             'modifications': [],
             'installedModules': [],
         }
+
+    @staticmethod
+    def _initialize_armor_condition(item, attributes):
+        stage = max(1, min(5, CombatService._coerce_int(item.get('stage'), 1)))
+        maximum = CombatService._coerce_float(attributes.get('max_durability'), 0)
+        uninitialized = (
+            stage == 1 and item.get('durability') in (None, 0)
+            and item.get('stageDurability') in (None, 0)
+            and item.get('currentStageDurability') in (None, 0)
+            and not item.get('protectionDisabled') and not item.get('brokenDamage')
+        )
+        if uninitialized and maximum > 0:
+            item['durability'] = maximum
+        if item.get('maxDurability') is None or (uninitialized and item['maxDurability'] == 0):
+            item['maxDurability'] = maximum or item.get('durability') or 0
+        if item.get('durability') is None:
+            item['durability'] = item['maxDurability'] if stage < 5 else 0
+        item['material'] = item.get('material') or attributes.get('material') or 'Текстиль'
+        item['stage'] = stage
+        if not item.get('condition'):
+            item['condition'] = ARMOR_STAGE_LABELS[stage - 1]
+        if item.get('stageDurability') is None or (stage < 5 and item['stageDurability'] == 0):
+            item['stageDurability'] = CombatService._armor_stage_capacity(item, attributes)
+        if item.get('currentStageDurability') is None or (uninitialized and maximum > 0):
+            item['currentStageDurability'] = item['stageDurability'] if stage < 5 else 0
+
+    @staticmethod
+    def _initialize_armor_slots(armor, attributes):
+        from app.services.equipment_modifications import stat
+
+        base = max(0, CombatService._coerce_int(attributes.get('container_slots'), 0))
+        configured = max(base, CombatService._coerce_int(armor.get('containerSlots'), 0))
+        expected = configured + max(0, math.floor(stat(armor, 'container_slots', 0)))
+        containers = armor.get('containers')
+        if not isinstance(containers, list):
+            containers = []
+        if expected or containers:
+            armor['containerSlots'] = configured
+            armor['containers'] = containers + [{'item': None} for _ in range(expected - len(containers))]
+
+    @staticmethod
+    def normalize_worn_armor(character_data):
+        equipment = character_data.get('equipment')
+        if not isinstance(equipment, dict):
+            return
+        helmet = equipment.get('helmet')
+        if isinstance(helmet, dict) and not helmet.get('integratedWithArmor') and (
+            helmet.get('templateId') or helmet.get('category') == 'helmet'
+        ):
+            helmet_attributes = CombatService._template_attributes(helmet)
+            if helmet_attributes:
+                CombatService._initialize_armor_condition(helmet, helmet_attributes)
+                for field, attribute in (
+                    ('accuracyPenalty', 'accuracy_penalty'), ('ergonomicsPenalty', 'ergonomics_penalty'),
+                    ('charismaBonus', 'charisma_bonus'), ('movementPenalty', 'movement_penalty'),
+                ):
+                    if helmet.get(field) is None and attribute in helmet_attributes:
+                        helmet[field] = helmet_attributes[attribute]
+
+        armor = equipment.get('armor')
+        if not isinstance(armor, dict) or not (armor.get('templateId') or armor.get('category') == 'armor'):
+            return
+        template = CombatService._equipment_template(armor)
+        attributes = CombatService._template_attributes(armor)
+        if not attributes:
+            return
+        CombatService._initialize_armor_condition(armor, attributes)
+        CombatService._initialize_armor_slots(armor, attributes)
+        if not helmet or (isinstance(helmet, dict) and helmet.get('integratedWithArmor')):
+            integrated = CombatService._integrated_helmet_from_armor(armor, template)
+            if integrated:
+                equipment['helmet'] = integrated
 
     @staticmethod
     def _prepare_equipped_item(item, slot, template=None):
@@ -12408,7 +12509,10 @@ class CombatService:
         equipped.setdefault('maxDurability', attributes.get('max_durability', equipped.get('durability', 0)))
         equipped.setdefault('installedModules', [])
         equipped.setdefault('modifications', [])
+        if slot in {'armor', 'helmet'}:
+            CombatService._initialize_armor_condition(equipped, attributes)
         if slot == 'armor':
+            CombatService._initialize_armor_slots(equipped, attributes)
             equipped.setdefault('movementPenalty', attributes.get('movement_penalty', 0))
             equipped.setdefault('protectionZones', deepcopy(attributes.get('protection_zones') or []))
             equipped['integratedHelmet'] = bool(attributes.get('integrated_helmet'))
@@ -12483,10 +12587,10 @@ class CombatService:
             if slot == 'armor' and CombatService._integrated_helmet_from_armor(item, template):
                 current_helmet = equipment.get('helmet')
                 if isinstance(current_helmet, dict) and current_helmet.get('templateId'):
-                    raise ValidationError('Remove the helmet before equipping this armor')
+                    raise ValidationError('Сначала снимите надетый шлем. У этой брони есть встроенный шлем.')
                 current_mask = equipment.get('gasMask')
                 if isinstance(current_mask, dict) and current_mask.get('templateId'):
-                    raise ValidationError('Remove the gas mask before equipping this armor')
+                    raise ValidationError('Сначала снимите противогаз. У этой брони есть встроенный шлем.')
             elif slot == 'helmet':
                 current_mask = equipment.get('gasMask')
                 if (
@@ -15617,6 +15721,7 @@ class CombatService:
                 character.action_points_current -= selected['cost']
             source_posture = CombatService._posture_key(character)
             character.posture = target_posture
+            character.prone_on_back = False
             character.weapon_braced = False
             character.braced_weapon_index = None
             if target_posture == 'standing' and character.cover_object_id:
@@ -16631,6 +16736,7 @@ class CombatService:
                     'action': action_key,
                     'pending_action': True,
                     'pending_action_id': str(pending_action_id),
+                    'pending_action_total_points': action_point_cost,
                     'attack': None,
                     'aim': None,
                     'posture_change': None,
@@ -16887,7 +16993,7 @@ class CombatService:
                         'type': 'unconsciousness', 'name': 'Пси-сон',
                         'source': 'psy_cat', **effect,
                     })
-                    target.posture = 'prone'
+                    CombatService._collapse_character(target)
                     mutant_action_details['duration'] = effect['duration_label']
                 target.character.data = target_data
                 flag_modified(target.character, 'data')
@@ -18224,6 +18330,9 @@ class CombatService:
             raise ValidationError("Use the anomaly escape action to move")
 
         character._movement_fall = None
+        character._movement_mode = movement_mode
+        character._movement_free_run = False
+        character._movement_animation = None
         character._trap_end_turn=False
         character._movement_slip_checks = []
         character._movement_slip_stopped = False
@@ -18289,7 +18398,7 @@ class CombatService:
             if grapple_captive:
                 raise ValidationError("A character cannot climb while holding a grapple")
             if CombatService._posture_key(character) != 'standing':
-                raise ValidationError("Stand up before climbing")
+                raise ValidationError('Для подъёма, спуска или перелезания нужно встать')
             if any(isinstance(v,bool) or not isinstance(v,(int,float)) or not math.isfinite(v) for v in (new_x,new_y)):
                 raise ValidationError('Некорректная точка перемещения')
             target_level = (character.floor_level or 0) if floor_level is None else floor_level
@@ -18321,6 +18430,8 @@ class CombatService:
             character.pos_x, character.pos_y = landing
             character.floor_level = plan['floor_level']
             character._movement_surfaces = plan['surfaces']
+            if plan.get('terrain_ascent'):
+                character._movement_animation = 'terrain_climb'
             character.cover_object_id = None
             character.weapon_braced = False
             character.braced_weapon_index = None
@@ -18631,10 +18742,21 @@ class CombatService:
             grapple_captive.weapon_braced = False
             grapple_captive.braced_weapon_index = None
             CombatService._clear_aim(grapple_captive)
-        # Перемещение не заменяет отдельное действие поворота и не раскрывает
-        # сектор за спиной бесплатным изменением взгляда.
         path_tiles = path.get('path') or []
-        character._movement_mode = movement_mode
+        character._movement_free_run = not (state and state.status == 'active')
+        character._movement_mode = 'run' if character._movement_free_run else movement_mode
+        if character._movement_free_run:
+            for index in range(len(path_tiles) - 1, 0, -1):
+                start_x, start_y = path_tiles[index - 1]
+                end_x, end_y = path_tiles[index]
+                dx, dy = end_x - start_x, end_y - start_y
+                length = max(abs(dx), abs(dy))
+                if length > 1e-9:
+                    # Целочисленный вектор сохраняет направление и дробных маршрутов.
+                    x, y = round(1000 * dx / length), round(1000 * dy / length)
+                    divisor = math.gcd(x, y)
+                    character.facing_x, character.facing_y = x // divisor, y // divisor
+                    break
         CombatService._sync_grapple_facing(character)
         character.cover_object_id = None
         character.weapon_braced = False

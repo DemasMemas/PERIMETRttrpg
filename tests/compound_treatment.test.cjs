@@ -157,7 +157,7 @@ test('a consumable without an applicable effect is not recorded as successfully 
 });
 
 test('inventory consumable entry uses the transaction wrapper, not the legacy mutator', async () => {
-    const begin = source.indexOf('async function useItem(');
+    const begin = source.indexOf('function isInventoryPda(');
     const end = source.indexOf('\nfunction getRepairTargetCategory', begin);
     const calls = [];
     const context = vm.createContext({

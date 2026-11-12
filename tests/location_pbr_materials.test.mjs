@@ -17,11 +17,19 @@ class Vector3 {
 }
 
 const context = vm.createContext({ console });
-const three = new vm.SyntheticModule(['TextureLoader', 'Vector3', 'RepeatWrapping', 'sRGBEncoding'], function () {
+const shaderChunks = {
+    map_fragment: '#ifdef USE_MAP\nvec4 texelColor = texture2D(map, vMapUv);\n#endif',
+    normal_fragment_maps: '#ifdef USE_NORMALMAP\nvec3 mapN = texture2D(normalMap, vNormalMapUv).xyz;\n#endif',
+    roughnessmap_fragment: '#ifdef USE_ROUGHNESSMAP\nroughnessFactor *= texture2D(roughnessMap, vRoughnessMapUv).g;\n#endif',
+    metalnessmap_fragment: '#ifdef USE_METALNESSMAP\nmetalnessFactor *= texture2D(metalnessMap, vMetalnessMapUv).b;\n#endif',
+    aomap_fragment: '#ifdef USE_AOMAP\nambientOcclusion *= texture2D(aoMap, vAoMapUv).r;\n#endif',
+};
+const three = new vm.SyntheticModule(['TextureLoader', 'Vector3', 'RepeatWrapping', 'SRGBColorSpace', 'ShaderChunk'], function () {
     this.setExport('TextureLoader', TextureLoader);
     this.setExport('Vector3', Vector3);
     this.setExport('RepeatWrapping', 'repeat');
-    this.setExport('sRGBEncoding', 'srgb');
+    this.setExport('SRGBColorSpace', 'srgb');
+    this.setExport('ShaderChunk', shaderChunks);
 }, { context });
 const source = await readFile(new URL('../app/static/js/locationPbrMaterials.js', import.meta.url), 'utf8');
 const module = new vm.SourceTextModule(source, { context });
@@ -40,13 +48,54 @@ test('PBR texture slots use color sRGB and share the packed ARM map', async () =
     }), true);
     await new Promise(resolve => setImmediate(resolve));
     assert.equal(material.color.value, 0xffffff);
-    assert.equal(material.map.encoding, 'srgb');
+    assert.equal(material.map.colorSpace, 'srgb');
     assert.equal(material.normalMap.url, '/normal.jpg');
     assert.equal(material.aoMap, material.roughnessMap);
     assert.equal(material.roughnessMap, material.metalnessMap);
     assert.equal(material.map.wrapS, 'repeat');
     releaseLocationPbrMaterial(material);
     assert.equal(material.userData.pbrActive, false);
+});
+
+test('height parallax self-shadows directional light and composes the existing shader hooks', async () => {
+    let previousCompileCount = 0;
+    const material = {
+        userData: {},
+        color: { set(value) { this.value = value; } },
+        onBeforeCompile(shader) { previousCompileCount++; shader.fragmentShader += '\n// existing static-light hook'; },
+        customProgramCacheKey() { return 'existing-static-light-key'; },
+    };
+    applyLocationPbrMaterial(material, {
+        color: '/concrete/color.jpg', normal: '/concrete/normal.jpg', arm: '/concrete/arm.jpg',
+        height: '/concrete/height.jpg', heightScale: 0.02, heightFade: [12, 36],
+    });
+    await new Promise(resolve => setImmediate(resolve));
+    const shader = {
+        uniforms: {},
+        fragmentShader: `#include <common>
+            varying vec2 vMapUv; varying vec2 vAoMapUv; varying vec3 vViewPosition;
+            void main() {
+                #include <map_fragment>
+                #include <roughnessmap_fragment>
+                #include <metalnessmap_fragment>
+                #include <normal_fragment_maps>
+                #include <lights_fragment_end>
+                #include <aomap_fragment>
+            }`,
+    };
+    const compile = material.onBeforeCompile;
+    compile(shader, {});
+    assert.equal(previousCompileCount, 1);
+    assert.equal(shader.uniforms.locationHeightMap.value.url, '/concrete/height.jpg');
+    assert.match(shader.fragmentShader, /locationHeightSelfShadow/);
+    assert.match(shader.fragmentShader, /directionalLights\[0\]\.direction/);
+    assert.match(shader.fragmentShader, /locationReliefSun\[0\]\.color \*= locationHeightSelfShadow/);
+    assert.doesNotMatch(shader.fragmentShader, /reflectedLight\.direct(?:Diffuse|Specular) \*=/);
+    assert.match(shader.fragmentShader, /reflectedLight\.indirectDiffuse \*= locationCavityShade/);
+    assert.match(shader.fragmentShader, /#ifdef USE_AOMAP\s+ambientOcclusion \*= texture2D\(aoMap, \(vAoMapUv \+ locationParallaxOffset\)\)/);
+    assert.match(shader.fragmentShader, /existing static-light hook/);
+    assert.match(material.customProgramCacheKey(), /existing-static-light-key/);
+    assert.match(material.customProgramCacheKey(), /height-parallax/);
 });
 
 test('PBR box UVs repeat by physical dimensions without changing base UV2 references', () => {

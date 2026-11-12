@@ -40,9 +40,9 @@ async function harness(keys = ['0,0'], size = 32) {
         updateMatrix() {}
     }
     class Geometry {
-        constructor() { this.attributes = {}; }
+        constructor() { this.attributes = {}; this.userData = {}; }
         setAttribute(name, attribute) { this.attributes[name] = attribute; }
-        setIndex(index) { this.index = index; }
+        setIndex(array) { this.index = { array }; }
         getAttribute(name) { return this.attributes[name]; }
         computeVertexNormals() {}
         dispose() { this.disposed = true; }
@@ -60,13 +60,19 @@ async function harness(keys = ['0,0'], size = 32) {
         window: {},
         CHUNK_SIZE: size, chunksMap, chunkBounds: [], performance,
         scene: { add() {}, remove() {} },
+        renderer: { shadowMap: {} }, applyWorldCloudShade() {},
         terrainColors: { grass: 0x3a5f0b, sand: 0xc2b280, rock: 0x808080, water: 0x1e90ff },
-        smoothGroundMat: {}, waterMat: {}, worldWaterBankMat: {},
+        groundMat: {}, smoothGroundMat: {}, waterMat: {}, worldWaterBankMat: {},
+        // Геометрия боковин проверяется отдельно в world_ground_sides.test.cjs.
+        buildWorldGroundSides: () => new Geometry(),
         raycastSmoothTerrain() {},
         worldGrassGroundPixelsEnabled: false, worldGrassDetail: { apply() {} },
         ...pixels, ...water, ...worldWater, ...topology, isSmoothTerrainTile: terrain.isSmoothTerrainTile,
         // These CPU comparisons inspect expanded water vertices, as before.
-        indexWaterGeometry() {},
+        indexWaterGeometry(geometry) {
+            const count = geometry.attributes.position.array.length / 3;
+            geometry.setIndex(Array.from({ length: count }, (_, index) => index));
+        },
         buildSmoothTerrainData(padded, ...args) {
             const key = padded[1][1].chunkKey;
             let included = 0;
@@ -80,8 +86,11 @@ async function harness(keys = ['0,0'], size = 32) {
             return result;
         },
         THREE: {
-            Object3D, BufferGeometry: Geometry, MeshStandardMaterial: Material,
-            Float32BufferAttribute: class { constructor(array) { this.array = new Float32Array(array); } },
+            Object3D, BufferGeometry: Geometry, MeshStandardMaterial: Material, MeshDepthMaterial: Material,
+            Float32BufferAttribute: class {
+                constructor(array, itemSize) { this.array = new Float32Array(array); this.itemSize = itemSize; }
+                getY(index) { return this.array[index * this.itemSize + 1]; }
+            },
             Color: class {
                 constructor(hex) { this.setHex(hex || 0); }
                 setHex(hex) { this.r = (hex >> 16 & 255) / 255; this.g = (hex >> 8 & 255) / 255; this.b = (hex & 255) / 255; }
@@ -106,7 +115,7 @@ async function harness(keys = ['0,0'], size = 32) {
     const tileLookup = source.slice(source.indexOf('function loadedWorldTile('),
         source.indexOf('\nfunction disposeRoadMeshes('));
     vm.runInContext(tileLookup, context);
-    const start = source.indexOf('function refreshWorldTerrainSurface(');
+    const start = source.indexOf('const worldTerrainMinShadowRise =');
     const end = source.indexOf('\n// --- Функции для чанков ---', start);
     const updateStart = source.indexOf('export function updateTileInChunk(');
     const updateEnd = source.indexOf('\nexport function setBrushRadius(', updateStart);
@@ -706,7 +715,7 @@ test('batched steep sand retains generated positions, normals, foundations and p
         (x, z) => x > 0 && x <= 4 && z > 0 && z <= 4).positions.length);
     assert.deepEqual(Array.from(entry.smoothTerrain.geometry.attributes.position.array), Array.from(new Float32Array(expected.positions)));
     assert.deepEqual(Array.from(entry.smoothTerrain.geometry.attributes.normal.array), Array.from(new Float32Array(expected.normals)));
-    const rendered = entry.smoothTerrain.geometry.index;
+    const rendered = entry.smoothTerrain.geometry.index.array;
     assert.ok(rendered.length < expected.positions.length / 3, 'covered land tops are not submitted twice');
     assert.ok(rendered.every(index => expected.topByVertex[index] < 0.5), 'all exposed side triangles remain in the original attributes');
     assert.ok(result.positions.length > 0);

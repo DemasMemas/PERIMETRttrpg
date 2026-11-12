@@ -18,8 +18,18 @@ function frameHarness(local) {
     const context = createSceneContext({
         performance: { now: () => 100 }, document: { hidden: false }, window: { isLocationActive: false },
         requestAnimationFrame: mark('schedule'), lastTime: 0, previousFrameTime: 0,
-        renderer: { render: mark('render') }, labelRenderer: { render: mark('labels') },
-        controls: { update: mark('controls') }, scene: {}, camera: {},
+        renderer: { render: mark('render'), domElement: { height: 720 } },
+        labelRenderer: { render: mark('labels') }, labelScene: { updateMatrixWorld() {} },
+        controls: { update: mark('controls') }, scene: { updateMatrixWorld() {} }, camera: {},
+        worldCameraChanged: false, worldShadowsDirty: false, fitWorldShadowCamera: mark('fitShadows'),
+        worldTrees: { updateVisible: mark('trees') }, chunkFrustum: {}, chunksMap: new Map(),
+        cloudField: { worldCloudDrift: { value: { set: mark('clouds') } } },
+        finishInitialLocationState: null, positionFirstPersonCamera: () => null,
+        refreshGmRelocationPreview() {}, portableLightRenderer: null, locationWeather: null,
+        movementMapVersion: 0, terrainSurfaceMesh: null, locationWaterReflection: null, locationContactShadows: null,
+        crystalCloudMeshes: new Map(), characterModels: new Map(), perchedCrowIdles: new Map(), locationCrowFlight: null,
+        locationDirectionalLight: null, locationAmbientLight: null,
+        updateCharacterLabelOcclusion() {}, hoveredCharacterId: null,
         waterTexture: { offset: { set: mark('water') } },
         waterTileMesh: { material: { map: { offset: { set: mark('water') } } } },
         waterSurfaceMesh: { material: { map: { offset: { set: mark('water') } } } },
@@ -30,6 +40,7 @@ function frameHarness(local) {
         updateAnomalyRenderLights: mark('anomalyLights'), locationProfiler: null,
         updateLampRenderLights: mark('lampLights'), updateLampPreviewLights: mark('lampPreviewLights'), lampEditTrace: null,
         locationShadowPass: null, locationRenderBatches: null, locationShadowCache: null,
+        anomalyRenderBatches: { prepare: mark('anomalyPrepare'), restore: mark('anomalyRestore') },
         locationLoadTrace: null, staticFieldFirstFrame: null,
         locationFrameWorkMs: 0, locationSampleFrames: 0,
         locationSampleAt: 100, previousProfileCamera: null,
@@ -40,7 +51,7 @@ function frameHarness(local) {
         refreshWorldTerrainBrushPreview: mark('terrainPreview'),
         animateChunkAnomalies: mark('anomalies'), animateAnomalyEffects: mark('anomalies'),
         animateFireObjectModels: mark('fire'), locationObjectMeshes: [], objectMeshes: [],
-        anomalyEffectMeshes: [], lastMouseX: 10, lastMouseY: 10, performRaycast: mark('raycast'),
+        locationAnomalyRoots: () => [], lastMouseX: 10, lastMouseY: 10, performRaycast: mark('raycast'),
         postRenderCallbacks: [mark('postRender')], animationFrameId: null,
         worldFpsCounter: fpsCounter, locationFpsCounter: fpsCounter,
         lastChunkVisibilityAt: -Infinity, lastHoverRaycastAt: -Infinity,
@@ -49,11 +60,11 @@ function frameHarness(local) {
         cameraDragActive: false, hoverRaycastPending: false,
         worldPerfSampleAt: 0, worldFrameWorkMs: 0, worldSampleFrames: 0,
         shadowRefreshesSinceSample: 0,
-        cameraMoved: false,
     });
     context.controls.update = () => {
         calls.push(['controls']);
-        return context.cameraMoved;
+        // OrbitControls передаёт изменение камеры обработчику события change.
+        if (context.moveCamera) context.worldCameraChanged = true;
     };
     context.performRaycast = (...args) => {
         calls.push(['raycast', ...args]);
@@ -91,7 +102,7 @@ test('stationary world throttles hover and culling; moving camera limits picking
     context.animate();
     assert.ok(!calls.some(call => call[0] === 'chunks' || call[0] === 'raycast'));
     calls.length = 0;
-    context.cameraMoved = true;
+    context.moveCamera = true;
     context.performance.now = () => 132;
     context.animate();
     assert.ok(calls.some(call => call[0] === 'chunks'));
@@ -127,6 +138,8 @@ for (const local of [false, true]) {
         assert.ok(calls.some(call => call[0] === 'render'));
         assert.ok(calls.some(call => call[0] === 'fps'));
         if (local) {
+            assert.deepEqual(calls.map(call => call[0]).filter(name => ['anomalyPrepare', 'render', 'anomalyRestore'].includes(name)),
+                ['anomalyPrepare', 'render', 'anomalyRestore']);
             assert.ok(calls.findIndex(call => call[0] === 'labelDistance')
                 < calls.findIndex(call => call[0] === 'labels'));
             assert.ok(calls.some(call => call[0] === 'labels'));

@@ -16,6 +16,7 @@ from app.schemas.location import LocationObjectSchema
 from app.models.location_object import LocationObject
 from app.services.exceptions import ServiceError
 from app.services.effects import normalize_effect_list, sync_health_derived_statuses
+from app.services.character_appearance import public_character_appearance
 from app.sockets.utils import get_user_from_token
 
 logger = logging.getLogger(__name__)
@@ -128,12 +129,15 @@ def handle_join_location(data):
             'status': lc.status,
             'posture': lc.posture,
             'prone_on_back': bool(lc.prone_on_back),
+            'condition_state': CombatService._location_character_condition(lc)['state'],
             'is_mutant': CombatService._is_mutant_character(
                 character.data if isinstance(character.data, dict) else {}
             ),
             'mutant_type': CombatService._mutant_profile_name(character.data),
             'is_npc': is_npc(character),
             'gm_hidden': bool(lc.gm_hidden),
+            **({'appearance': appearance} if not lc.gm_hidden and (appearance :=
+                public_character_appearance(character.data)) else {}),
         })
     emit('location_state', state, room=request.sid)
 
@@ -226,6 +230,10 @@ def handle_move_in_location(data):
             'slip_stopped': getattr(moved_character, '_movement_slip_stopped', False),
             'movement_cost': cost,
             'movement_mode': getattr(moved_character, '_movement_mode', movement_mode),
+            'movement_animation': getattr(moved_character, '_movement_animation', None),
+            'free_run': getattr(moved_character, '_movement_free_run', False),
+            'facing_x': moved_character.facing_x,
+            'facing_y': moved_character.facing_y,
         },
         room=f"location_{location_id}",
     )

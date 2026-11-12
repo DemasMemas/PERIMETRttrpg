@@ -11,12 +11,12 @@ from app.services.container_transfer import ContainerTransferService
 from app.services.exceptions import ConflictError, NotFoundError, ValidationError
 from app.services.map import MapService
 from app.services.magazine import inventory_slot
-from app.services.stashes import DIGGABLE_TERRAIN, digging_tool, masking_record
+from app.services.stashes import DIGGABLE_TERRAIN, digging_tool, knows, learn, masking_record
 from app.services.transaction import atomic_operation
 
 
-def _available(stash, user_id, lobby):
-    return user_id == lobby.gm_id or user_id in stash.properties['known_users']
+def _available(stash, user_id, character):
+    return knows(stash.properties, user_id, character.id)
 
 
 def _view(stash):
@@ -40,7 +40,7 @@ def operate(lobby, group_id, user_id, payload):
     action = payload.get('operation')
     query = WorldStash.query.filter_by(lobby_id=lobby.id, tile_x=group.tile_x, tile_y=group.tile_y)
     if action == 'list':
-        return character, {'stashes':[_view(stash) for stash in query.order_by(WorldStash.id) if _available(stash,user_id,lobby)]}
+        return character, {'stashes':[_view(stash) for stash in query.order_by(WorldStash.id) if _available(stash,user_id,character)]}
     if CombatService._character_condition(data)['state'] != 'active':
         raise ValidationError('Персонаж не может действовать')
     # Координаты проверяются под блокировкой записи и на SQLite.
@@ -58,7 +58,7 @@ def operate(lobby, group_id, user_id, payload):
         existing = next((stash for stash in query
                          if stash.properties.get('creation') == [character.id,operation_id]),None)
         if existing:
-            return character, {'stashes':[_view(stash) for stash in query.order_by(WorldStash.id) if _available(stash,user_id,lobby)]}
+            return character, {'stashes':[_view(stash) for stash in query.order_by(WorldStash.id) if _available(stash,user_id,character)]}
         tile = MapService.get_tile_data(lobby.id, group.tile_x, group.tile_y)
         if not tile or tile.get('terrain','grass') not in DIGGABLE_TERRAIN:
             raise ValidationError('Тайник можно закопать в грязи, песке или траве')
@@ -67,7 +67,7 @@ def operate(lobby, group_id, user_id, payload):
             raise ValidationError('Для тайника нужна лопата или сапёрная лопатка')
         check = CombatService._narrative_skill_check(data,'skills.other.stealth',
             roll_bonus=4*trait_count(data,'Мастер маскировки') + personal_tool_bonus(data,3))
-        mask = masking_record(user_id,check['total'],character.owner_id)
+        mask = masking_record(user_id,check['total'],character.owner_id,character.id)
         db.session.add(WorldStash(lobby_id=lobby.id,tile_x=group.tile_x,tile_y=group.tile_y,
             properties={**mask,'contents':[],'creation':[character.id,operation_id]}))
     elif action == 'search':
@@ -75,14 +75,14 @@ def operate(lobby, group_id, user_id, payload):
         found = 0
         for stash in query.with_for_update():
             props = stash.properties
-            if (_available(stash,user_id,lobby) or check['roll']==1
-                    or check['roll']!=20 and check['total']<props['dc']):
+            if check['roll']==1 or check['roll']!=20 and check['total']<props['dc']:
                 continue
-            stash.properties = {**props,'known_users':[*props['known_users'],user_id]}
+            if not _available(stash,user_id,character):
+                stash.properties = learn(props,user_id,character.id,character.owner_id)
             found += 1
     elif action == 'transfer':
         stash = query.filter_by(id=payload.get('stash_id')).with_for_update().first()
-        if not stash or not _available(stash,user_id,lobby):
+        if not stash or not _available(stash,user_id,character):
             raise NotFoundError('Тайник не найден в клетке группы')
         if payload.get('stash_revision')!=stash.revision or payload.get('character_revision')!=character.revision:
             raise ConflictError('Тайник или инвентарь изменились')
@@ -93,5 +93,5 @@ def operate(lobby, group_id, user_id, payload):
     else:
         raise ValidationError('Неизвестное действие с тайником')
     db.session.flush()
-    return character, {'stashes':[_view(stash) for stash in query.order_by(WorldStash.id) if _available(stash,user_id,lobby)],
+    return character, {'stashes':[_view(stash) for stash in query.order_by(WorldStash.id) if _available(stash,user_id,character)],
                        'check':check, 'found':found}

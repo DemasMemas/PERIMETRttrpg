@@ -15,7 +15,43 @@ export function releaseHouseholdRendererResources(T) {
     const cache = caches.get(T);
     if (!cache) return;
     cache.texture.dispose();
+    cache.treeTexture?.dispose();
     cache.geometries.forEach(geometry => geometry.dispose());
+}
+
+export function createTreeSurfaceTexture(T) {
+    const size = 256;
+    const data = new Uint8Array(size * size * 4);
+    for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) {
+        const tile = (x >> 7) + 2 * (y >> 7);
+        const u = x % 128, v = y % 128;
+        const grain = ((Math.imul(x + 151, 73856093) ^ Math.imul(y + 79, 19349663)) >>> 13) % 23;
+        let tone = 231 + grain;
+        if (tile === 0) {
+            const fibers = Math.sin(u * .63 + Math.sin(v * .075) * .96);
+            const ridges = Math.sin(u * .24 + Math.sin(v * .043 + u * .19) * .61);
+            tone = 221 + grain - 32 * Math.max(0, fibers) ** 5 - 24 * Math.max(0, ridges) ** 7;
+        } else if (tile === 1) {
+            const spine = Math.max(0, 1 - Math.abs(u - 63.5) / 3);
+            const vein = Math.max(0, Math.sin(v * .25 + Math.abs(u - 64) * .19)) ** 12;
+            tone = 223 + grain + 13 * spine - 8 * vein;
+        } else if (tile === 2) {
+            const streak = Math.max(0, Math.sin(v * .43 + Math.sin(u * .052) * .63)) ** 14;
+            const lenticels = Math.max(0, Math.sin(u * .127 + v * .078));
+            tone = 230 + grain - 84 * streak * lenticels ** 3;
+        }
+        const i = (y * size + x) * 4;
+        data[i] = data[i + 1] = data[i + 2] = Math.min(255, tone);
+        data[i + 3] = 255;
+    }
+    const texture = new T.DataTexture(data, size, size);
+    texture.colorSpace = T.SRGBColorSpace;
+    texture.generateMipmaps = true;
+    texture.minFilter = T.LinearMipmapLinearFilter;
+    texture.magFilter = T.LinearFilter;
+    texture.anisotropy = 4;
+    texture.needsUpdate = true;
+    return texture;
 }
 
 function resources(T) {
@@ -33,13 +69,14 @@ function resources(T) {
         const i=(y*256+x)*4;pixels.data.set([value,value,value,255],i);
     }
     ctx.putImageData(pixels,0,0);
-    const texture=new T.CanvasTexture(canvas);texture.encoding=T.sRGBEncoding;texture.anisotropy=2;
+    const texture=new T.CanvasTexture(canvas);texture.colorSpace=T.SRGBColorSpace;texture.anisotropy=2;
     const material=new T.MeshStandardMaterial({map:texture,vertexColors:true,color:0xffffff,roughness:.9,metalness:.03});
     const cache={texture,material,geometries:new Map()};caches.set(T,cache);return cache;
 }
 
-function geometryFor(T,id,cache) {
-    if(cache.geometries.has(id))return cache.geometries.get(id);
+function geometryFor(T,id,cache,detail='full') {
+    const key=detail==='full'?id:`${id}:${detail}`;
+    if(cache.geometries.has(key))return cache.geometries.get(key);
     const ceramic=ceramicModels.has(id);
     const positions=[],normals=[],colors=[],uvs=[],sinkParts=[[],[]];
     const trunkRanges=[];
@@ -94,7 +131,7 @@ function geometryFor(T,id,cache) {
         if(drawers){for(let i=0;i<drawers;i++){const y=.22+i*.72/drawers;B(0,y,.475,.88,.65/drawers,.035,'#8b7050');knob(0,y,.51)}}
         else for(const x of [-.235,.235]){B(x,.54,.475,.45,.79,.035,'#89704e');knob(x<0?-.04:.04,.55,.51)}
     };
-    if(buildAdditionalHouseholdModel(T,id,{B,C,add,legs,markTrunk})) {
+    if(buildAdditionalHouseholdModel(T,id,{B,C,add,legs,markTrunk,detail})) {
         // Additional models use the same merged geometry, atlas and lifecycle.
     }else if(id==='bed_single'||id==='bed_double'){
         for(const x of [-.43,.43])for(const z of [-.43,.43])B(x,.18,z,.07,.36,.06,iron,2);
@@ -217,7 +254,12 @@ function geometryFor(T,id,cache) {
         geo.addGroup(0,sinkParts[0].length,0);geo.addGroup(sinkParts[0].length,sinkParts[1].length,1);
     }
     // Keep exact physical catalogue bounds, including details such as taps/feet.
-    geo.computeBoundingBox();const box=geo.boundingBox,size=box.getSize(new T.Vector3()),center=box.getCenter(new T.Vector3());
+    geo.computeBoundingBox();
+    const tree=/^(oak|birch|pine)_/.test(id);
+    // Одинаковая точка опоры для ствола, листьев и тени на всех уровнях детализации.
+    const box=tree&&detail!=='full'?geometryFor(T,id,cache).userData.treeSourceBounds:geo.boundingBox;
+    if(tree&&detail==='full')geo.userData.treeSourceBounds=box.clone();
+    const size=box.getSize(new T.Vector3()),center=box.getCenter(new T.Vector3());
     geo.translate(-center.x,-box.min.y,-center.z);geo.scale(1/size.x,1/size.y,1/size.z);
     if(trunkRanges.length){
         // Контур движения относится к стволу, а не к общему объёму кроны.
@@ -232,10 +274,39 @@ function geometryFor(T,id,cache) {
         for(let i=crateBottomStart;i<p.count;i++)p.setY(i,p.getY(i)+.01/.42);
         geo.computeBoundingBox();
     }
-    geo.userData.householdShared=true;cache.geometries.set(id,geo);return geo;
+    geo.userData.householdShared=true;cache.geometries.set(key,geo);return geo;
 }
 
-export function createHouseholdModel(T,asset,dimensions,color) {
+const treeGeometryCaches=new WeakMap();
+
+export function getTreeGeometry(T,id,detail='full') {
+    let cache=treeGeometryCaches.get(T);
+    if(!cache){cache={geometries:new Map()};treeGeometryCaches.set(T,cache);}
+    return geometryFor(T,id,cache,detail);
+}
+
+export function applyVegetationTint(T, material, colors, mask) {
+    const wood = colors.wood_color || '#ffffff';
+    const foliage = colors.foliage_color || '#ffffff';
+    if (wood === '#ffffff' && foliage === '#ffffff') return;
+    const previousCompile = material.onBeforeCompile;
+    const previousKey = material.customProgramCacheKey();
+    material.customProgramCacheKey = () => `${previousKey}:vegetation-tint:${mask}`;
+    material.onBeforeCompile = shader => {
+        previousCompile.call(material, shader);
+        shader.uniforms.vegetationWoodTint = { value: new T.Color(wood) };
+        shader.uniforms.vegetationLeafTint = { value: new T.Color(foliage) };
+        // У материала камней маска мха запечена в синем канале карты шероховатости.
+        const coverage = mask === 'treeAtlas' ? 'step(0.5, vMapUv.x) * (1.0 - step(0.5, vMapUv.y))'
+            : 'smoothstep(0.04, 0.96, texture2D(roughnessMap, vRoughnessMapUv).b)';
+        shader.fragmentShader = shader.fragmentShader
+            .replace('#include <common>', '#include <common>\nuniform vec3 vegetationWoodTint, vegetationLeafTint;')
+            .replace('#include <color_fragment>', `#include <color_fragment>
+                diffuseColor.rgb *= mix(vegetationWoodTint, vegetationLeafTint, ${coverage});`);
+    };
+}
+
+export function createHouseholdModel(T,asset,dimensions,color,vegetationColors) {
     const cache=resources(T),id=asset.visual?.modelId||asset.id.replace('household_','');
     const material=cache.material.clone();
     if(ceramicModels.has(id)){
@@ -244,8 +315,17 @@ export function createHouseholdModel(T,asset,dimensions,color) {
         material.map=null;material.roughness=.28;material.metalness=0;
     }
     if(smoothModels.has(id)){material.map=null;material.roughness=.5;material.metalness=.12;}
-    if(/^(oak|birch|pine|bush|tall_grass)_/.test(id)){material.map=null;material.metalness=0;material.roughness=1;material.side=T.DoubleSide;}
-    if(color&&color.toLowerCase()!==asset.color.toLowerCase())material.color.set(color);
+    if (/^(oak|birch|pine|bush|tall_grass)_/.test(id)) {
+        cache.treeTexture ??= createTreeSurfaceTexture(T);
+        material.map = cache.treeTexture;
+        material.metalness = 0;
+        material.roughness = .94;
+        material.side = T.DoubleSide;
+    }
+    if (vegetationColors) {
+        if (id.startsWith('tall_grass_')) material.color.set(vegetationColors.foliage_color || '#ffffff');
+        else applyVegetationTint(T, material, vegetationColors, 'treeAtlas');
+    } else if(color&&color.toLowerCase()!==asset.color.toLowerCase())material.color.set(color);
     let materials=material;
     if(id==='sink'){
         const glaze=material.clone();glaze.map=null;glaze.roughness=.28;glaze.metalness=0;
@@ -255,12 +335,13 @@ export function createHouseholdModel(T,asset,dimensions,color) {
         const glass=material.clone();glass.map=null;glass.transparent=true;glass.opacity=.22;glass.depthWrite=false;glass.roughness=.15;
         materials=[material,glass];
     }
-    const mesh=new T.Mesh(geometryFor(T,id,cache),materials);
+    const geometry=/^(oak|birch|pine)_/.test(id)?getTreeGeometry(T,id):geometryFor(T,id,cache);
+    const mesh=new T.Mesh(geometry,materials);
     mesh.scale.set(dimensions.width,dimensions.height,dimensions.depth);
     mesh.userData.householdAssetId=asset.id;return mesh;
 }
 
-function buildAdditionalHouseholdModel(T,id,{B,C,add,legs,markTrunk}) {
+function buildAdditionalHouseholdModel(T,id,{B,C,add,legs,markTrunk,detail}) {
     const grey='#85877c',rust='#786052',rubber='#30362f',white='#c7c5b1',blue='#627d7c';
     const ring=(x,y,z,r,t,c=iron,rx=Math.PI/2)=>add(new T.TorusGeometry(r,t,5,18),x,y,z,1,1,1,c,2,rx);
     const ball=(x,y,z,w,h,d,c)=>add(new T.SphereGeometry(1,12,8),x,y,z,w,h,d,c,2);
@@ -335,69 +416,151 @@ function buildAdditionalHouseholdModel(T,id,{B,C,add,legs,markTrunk}) {
     if(['curtain_panel','barricade_wood','barricade_metal','barricade_reinforced','barricade_brick'].includes(id))return true;
     if(/^(oak|birch|pine|bush|tall_grass)_(green|dry|dead)$/.test(id)) {
         const [species,...rest]=id.split('_'),state=rest.at(-1),grass=id.startsWith('tall_grass');
-        const dead=state==='dead',dry=state==='dry',bark=species==='birch'?'#b2b1a1':'#685c48';
-        const leaf=dead?'#82765a':dry?'#8a8057':'#556a43';
+        const dead=state==='dead',dry=state==='dry';
+        const noise=i=>{let n=Math.imul(i+139,1597334677);n=Math.imul(n^(n>>>13),2246822519);return(n>>>0)/4294967296;};
         if(grass){
-            for(let i=0;i<34;i++){
-                const a=i*2.4,r=.42*Math.sqrt(i/34),x=Math.cos(a)*r,z=Math.sin(a)*r,h=.38+(i%7)*.095;
-                const tip=[x+Math.sin(i*3)*.15,h,z+Math.cos(i*2)*.12];
-                rod([x,0,z],tip,.008,leaf);
-                for(const s of [-1,1])rod([x,h*.38,z],[tip[0]+s*.1,h*.72,tip[2]+s*.08],.006,leaf);
-                if(i%3===0)for(let j=0;j<3;j++)ball(tip[0],h-j*.025,tip[2],.017,.035,.017,dry||dead?'#978465':'#7e855b');
+            const palette = dead ? ['#807254','#9b8963','#72694f'] :
+                dry ? ['#8a8057','#9a8d61','#777555'] : ['#67734d','#79805a','#526449'];
+            for (let i = 0; i < 59; i++) {
+                const angle = i * 2.39996, r = .34 * Math.sqrt(noise(i+9));
+                const length = .27 + .64 * noise(i+15), bend = .14 + (dead ? .30 : .20) * noise(i+21);
+                const width = .012 + .018 * noise(i+24);
+                const blade = new T.BufferGeometry();
+                blade.setAttribute('position', new T.Float32BufferAttribute([
+                    -width*.35,0,0, width*.35,0,0, -width,length*.55,bend*.22,
+                    width*.84,length*.55,bend*.22, 0,length,bend,
+                ], 3));
+                blade.setAttribute('uv', new T.Float32BufferAttribute([.32,0,.68,0,0,.58,1,.58,.5,1],2));
+                blade.setIndex([0,1,2,1,3,2,2,3,4]);
+                blade.computeVertexNormals();
+                add(blade, Math.sin(angle)*r, 0, Math.cos(angle)*r, 1, 1, 1, palette[i%3], 1, 0, 0, angle);
+                if (i%8 === 0 && !dead) {
+                    const tipX = Math.sin(angle)*(r+bend*.83), tipZ = Math.cos(angle)*(r+bend*.83);
+                    const ear = new T.CylinderGeometry(.003,.010,.074,4,1);
+                    add(ear,tipX,length*.98,tipZ,1,1,1,dry?'#9b8d66':'#92916b',3,.24,0,angle);
+                }
             }
         }else{
             const shrub=species==='bush',birch=species==='birch',pine=species==='pine';
-            const noise=i=>{let n=Math.imul(i+139,1597334677);n=Math.imul(n^(n>>>13),2246822519);return(n>>>0)/4294967296;};
-            const branch=(a,b,r1,r2,sides=7)=>{
+            const bark = birch ? '#c9c6ae' : pine ? '#836951' : shrub ? '#777052' : '#786c55';
+            const leaves = dry ? ['#857d55','#92906a','#737550'] : pine ? ['#5c6b4a','#6e7753','#485f45']
+                : birch ? ['#758357','#7f8960','#586f4d'] : ['#667851','#748259','#556d4c'];
+            const full=detail==='full',middle=detail==='middle',far=detail==='far',nearShadow=detail==='nearShadow';
+            const branch=(a,b,r1,r2,sides=full?7:middle?5:4)=>{
                 const start=new T.Vector3(...a),end=new T.Vector3(...b),delta=end.clone().sub(start);
                 const e=new T.Euler().setFromQuaternion(new T.Quaternion().setFromUnitVectors(new T.Vector3(0,1,0),delta.clone().normalize()));
                 const c=start.add(end).multiplyScalar(.5);
-                add(new T.CylinderGeometry(r2,r1,delta.length(),sides),c.x,c.y,c.z,1,1,1,bark,0,e.x,e.z,e.y);
+                add(new T.CylinderGeometry(r2,r1,delta.length(),sides,1,!full),c.x,c.y,c.z,1,1,1,bark,birch?2:0,e.x,e.z,e.y);
+            };
+            const woodPath = (path, radii, sides, seed) => {
+                const points = path.map(p => new T.Vector3(...p));
+                const p = [], normals = [], uv = [], triangles = [];
+                for (let ring = 0; ring < points.length; ring++) {
+                    const center = points[ring];
+                    const axis = points[Math.min(points.length - 1, ring + 1)].clone()
+                        .sub(points[Math.max(0, ring - 1)]).normalize();
+                    const first = axis.clone().cross(Math.abs(axis.z) < .82
+                        ? new T.Vector3(0,0,1) : new T.Vector3(1,0,0)).normalize();
+                    const second = axis.clone().cross(first);
+                    for (let side = 0; side <= sides; side++) {
+                        const angle = (side % sides) / sides * Math.PI * 2;
+                        const radial = first.clone().multiplyScalar(Math.cos(angle)).addScaledVector(second, Math.sin(angle));
+                        const irregularity = 1 + .11 * Math.sin(angle * 3 + seed) + .07 * Math.cos(angle * 5 - seed);
+                        p.push(center.x + radial.x * radii[ring] * irregularity,
+                            ring === 0 && center.y === 0 ? 0 : center.y + radial.y * radii[ring],
+                            center.z + radial.z * radii[ring] * irregularity);
+                        normals.push(radial.x, radial.y, radial.z);
+                        uv.push(side / sides, ring / (points.length - 1));
+                        if (ring && side < sides) {
+                            const b = ring * (sides + 1) + side, a = b - sides - 1;
+                            triangles.push(a, a+1, b, a+1, b+1, b);
+                        }
+                    }
+                }
+                const geometry = new T.BufferGeometry();
+                geometry.setAttribute('position', new T.Float32BufferAttribute(p, 3));
+                geometry.setAttribute('normal', new T.Float32BufferAttribute(normals, 3));
+                geometry.setAttribute('uv', new T.Float32BufferAttribute(uv, 2));
+                geometry.setIndex(triangles);
+                add(geometry,0,0,0,1,1,1,bark,birch?2:0);
             };
             const crown=(centre,index)=>{
                 if(dead)return;
-                const sprigs=pine?6:10,perSprig=pine?8:8;
+                if(!full&&!middle){
+                    const seed=index*157,angle=noise(seed)*Math.PI*2;
+                    const spread=pine?.073:birch?.085:.113;
+                    const radius=spread*(nearShadow?.73:1.02);
+                    const c=leaves[Math.floor(noise(seed+13)*leaves.length)];
+                    add(new T.IcosahedronGeometry(1,0),centre[0],centre[1],centre[2],
+                        radius,radius*(pine?.32:birch?.64:.68),radius*.84,c,1,
+                        .25*(noise(seed+2)-.5),.35*(noise(seed+9)-.5),angle);
+                    return;
+                }
+                // На среднем расстоянии сохраняем отдельные листья и их распределение по ветке.
+                const sprigs=full?(pine?6:8):3,perSprig=full?8:4;
                 for(let sprig=0;sprig<sprigs;sprig++){
-                    const seed=index*157+sprig,a=noise(seed)*Math.PI*2,u=noise(seed+39)*1.3-.3;
-                    const spread=pine?.075:birch?.085:shrub?.105:.12;
-                    const end=[centre[0]+Math.cos(a)*spread,centre[1]+u*spread*.6,centre[2]+Math.sin(a)*spread];
-                    branch(centre,end,.0011,.0002,3);
+                    const seed=index*157+(full?sprig:sprig*2),a=noise(seed)*Math.PI*2,u=noise(seed+39)*1.3-.3;
+                    const spread=pine?.085:birch?.092:shrub?.14:.126;
+                    const end=[centre[0]+Math.cos(a)*spread,centre[1]+u*spread*(pine?.29:.71),centre[2]+Math.sin(a)*spread];
+                    if(full)branch(centre,end,.0011,.0002,3);
                     for(let j=0;j<perSprig;j++){
                         const n=seed*19+j;if(dry&&noise(n)>.58)continue;
                         const t=(j+.5)/perSprig,side=j%2?1:-1;
                         const x=centre[0]+(end[0]-centre[0])*t+Math.sin(a)*side*.008;
                         const z=centre[2]+(end[2]-centre[2])*t-Math.cos(a)*side*.008;
                         const y=centre[1]+(end[1]-centre[1])*t;
-                        const c=dry?(noise(n+13)>.55?'#81794e':'#6e704b'):(noise(n+13)>.5?'#607447':'#435d37');
+                        const c=leaves[Math.floor(noise(n+13)*leaves.length)];
                         const geo=new T.BufferGeometry();
-                        geo.setAttribute('position',new T.Float32BufferAttribute([0,-.5,0,-.5,0,.12,0,.5,0,.5,0,.12],3));
-                        geo.setAttribute('uv',new T.Float32BufferAttribute([.5,0,0,.5,.5,1,1,.5],2));
-                        geo.setIndex([0,1,2,0,2,3]);geo.computeVertexNormals();
-                        add(geo,x,y,z,pine?.006:.027+(birch?.005:.008)*noise(n+17),pine?.03:.035,pine?.016:.024,c,1,
-                            .65+(noise(n+7)-.5)*.8,(noise(n+9)-.5)*.9,a+side*.7);
+                        if(full){
+                            geo.setAttribute('position',new T.Float32BufferAttribute([0,-.5,0,-.5,0,.12,0,.5,0,.5,0,.12],3));
+                            geo.setAttribute('uv',new T.Float32BufferAttribute([.5,0,0,.5,.5,1,1,.5],2));
+                            geo.setIndex([0,1,2,0,2,3]);
+                        }else{
+                            geo.setAttribute('position',new T.Float32BufferAttribute([-.55,-.32,.08,0,.64,0,.55,-.32,.08],3));
+                            geo.setAttribute('uv',new T.Float32BufferAttribute([0,0,.5,1,1,0],2));
+                        }
+                        geo.computeVertexNormals();
+                        const leafScale=full?1:pine?1.65:1.85;
+                        add(geo,x,y,z,(pine?.015:shrub?.026:.029+(birch?.004:.008)*noise(n+17))*leafScale,
+                            (pine?.03:.035)*leafScale,(pine?.016:.024)*leafScale,c,1,
+                            (pine?1.24:birch?.88:1.1)+(noise(n+7)-.5)*.85,(noise(n+9)-.5)*.9,a+side*.7);
                     }
                 }
             };
-            const bend=[.035,.57,-.012],tip=[birch?.07:.025,.99,.018];
-            if(!shrub)markTrunk(()=>{branch([0,0,0],bend,birch?.022:pine?.031:.041,birch?.014:.022);branch(bend,tip,birch?.014:.022,.004);});
-            const n=shrub?10:pine?18:birch?13:11;
+            const trunkPath = [[0,0,0],[.011,.18,.006],[.020,.43,-.014],[.035,.67,-.012],
+                [birch?.057:.027,.86,.012],[birch?.082:.019,1,.025]];
+            if (!shrub) markTrunk(() => {
+                const radii = birch ? [.032,.021,.018,.012,.008,.003]
+                    : pine ? [.040,.031,.025,.020,.011,.003] : [.060,.042,.034,.024,.012,.004];
+                woodPath(trunkPath, radii, full ? 12 : 7, 1.7);
+            });
+            const n=shrub?12:pine?17:birch?13:12;
             for(let i=0;i<n;i++){
-                const a=i*2.39996+.25,baseY=shrub?.03:pine?.48+(i/n)*.4:birch?.32+(i/n)*.5:.31+(i/n)*.48;
-                const radius=shrub?.25:pine?.31*(1-(baseY-.48)*1.5):birch?.19+.05*noise(i):.3+.08*noise(i);
-                const origin=[shrub?0:.025,baseY,0],fork=[Math.cos(a)*radius*.57,baseY+.08+.1*noise(i+45),Math.sin(a)*radius*.57];
-                const end=[Math.cos(a)*radius,baseY+(pine?.05:birch?.12:.18),Math.sin(a)*radius];
-                branch(origin,fork,shrub?.012:birch?.011:.017,.006);branch(fork,end,.006,.0025);
-                for(const side of [-1,1]){
-                    const twig=[end[0]+Math.cos(a+side*.7)*.07,end[1]+(birch?-.055:.035),end[2]+Math.sin(a+side*.7)*.07];
-                    branch(fork,twig,.004,.0012);crown(twig,i*2+(side===1?1:0));
-                    if(birch)branch(twig,[twig[0]+Math.cos(a)*.04,twig[1]-.07,twig[2]+Math.sin(a)*.04],.0018,.0006);
+                if(!full&&!middle&&!nearShadow&&i%(far?2:3)!==0&&i!==n-1)continue;
+                const a=i*2.39996+.25, h=i/n;
+                const baseY=shrub?.02:pine?.43+h*.49:birch?.34+h*.57:.26+h*.49;
+                const radius=shrub?.20+.12*noise(i):pine?.34*(1-h*.77):
+                    birch?(.14+.105*Math.sin(h*Math.PI))*(1-h*.40):(.245+.12*Math.sin(h*Math.PI))*(1-h*.25);
+                const origin=[shrub?Math.cos(a)*.048:.024,baseY,shrub?Math.sin(a)*.039:0];
+                const fork=[Math.cos(a)*radius*.59,baseY+(pine?.018+.032*noise(i+45):.063+.08*noise(i+45)),Math.sin(a)*radius*.59];
+                const rise = shrub ? .16+.20*noise(i+93) : pine ? .071 : birch ? .105 : .17;
+                const end=[Math.cos(a)*radius,baseY+rise,Math.sin(a)*radius];
+                if(!full&&!middle&&!nearShadow){
+                    if(far&&i%4===0)branch(origin,end,birch?.011:.017,.0025);
+                    crown([end[0]+Math.cos(a)*.047,end[1]+(birch?-.055:.035),end[2]+Math.sin(a)*.047],i*2);
+                    continue;
                 }
+                woodPath([origin,fork,end],[shrub?.012:birch?.011:.017,.006,.0025],full?7:4,a);
+                for(const side of [-1,1]){
+                    const twig=[end[0]+Math.cos(a+side*.7)*.063,end[1]+(birch?-.075:pine?.012:.045),end[2]+Math.sin(a+side*.7)*.063];
+                    branch(fork,twig,.004,.0012);crown(twig,i*2+(side===1?1:0));
+                    if(full&&birch)branch(twig,[twig[0]+Math.cos(a)*.04,twig[1]-.07,twig[2]+Math.sin(a)*.04],.0018,.0006);
+                }
+                if (!pine && i % 2 === 0) crown([fork[0]*.85, end[1]+(birch?.02:.09), fork[2]*.83], n*3+i);
+                if (pine && i % 2 === 1) crown([end[0]*.86,end[1]+.029,end[2]*.86], n*3+i);
             }
-            if(birch)for(let i=0;i<13;i++){
-                const y=.045+i*.063,x=y<.57?.035*y/.57:.035+(.07-.035)*(y-.57)/.42;
-                B(x,y,.021,.025,.004,.008,'#494a40',2,0,(i%3-1)*.15);
-            }
-            if(!shrub)for(let i=0;i<5;i++){const a=i*1.26;branch([0,.05,0],[Math.cos(a)*.07,0,Math.sin(a)*.07],.013,.004);}
+            if (pine) crown([trunkPath.at(-1)[0],.965,trunkPath.at(-1)[2]], n*5);
+            if(!shrub&&(full||middle))for(let i=0;i<5;i++){const a=i*1.26;branch([0,.05,0],[Math.cos(a)*.07,0,Math.sin(a)*.07],.013,.004);}
         }
     } else if(id==='monument'||id==='monument_ruined') {
         const ruined=id==='monument_ruined';
@@ -553,16 +716,41 @@ function buildAdditionalHouseholdModel(T,id,{B,C,add,legs,markTrunk}) {
     } else if(id==='pallet_jack') {
         for(const x of [-.35,.35]){B(x,.1,.12,.18,.16,.85,rust,2);C(x,.05,.43,.07,.1,rubber,2,0,Math.PI/2);}
         B(0,.22,-.35,.8,.3,.2,rust,2);rod([0,.3,-.35],[0,.85,-.5],.04);ring(0,.92,-.5,.13,.035,iron,0);
-    } else if(['tire','sandbag','sandbag_wall'].includes(id)) {
-        if(id==='tire'){ring(0,.14,0,.32,.13,rubber);for(let i=0;i<16;i++){const a=i*Math.PI/8;B(Math.cos(a)*.42,.15,Math.sin(a)*.42,.045,.2,.05,iron,2,0,a);}}
-        else for(let row=0;row<(id==='sandbag'?1:4);row++)for(let i=0;i<(id==='sandbag'?1:4);i++) {
-            const x=id==='sandbag'?0:-.36+i*.24+(row%2?.06:0),y=.12+row*.2;
-            ball(x,y,0,id==='sandbag'?.45:.15,.13,.32,'#9d9473');
+    } else if(id==='tire') {
+        ring(0,.14,0,.32,.13,rubber);for(let i=0;i<16;i++){const a=i*Math.PI/8;B(Math.cos(a)*.42,.15,Math.sin(a)*.42,.045,.2,.05,iron,2,0,a);}
+    } else if(id==='sandbag'||id==='sandbag_wall') {
+        const bag=(x,y,width,height,color)=>{
+            const shell=new T.BoxGeometry(1,1,1,5,4,4);
+            const {position,normal}=shell.attributes;
+            const point=new T.Vector3(),inner=new T.Vector3();
+            for(let i=0;i<position.count;i++) {
+                point.fromBufferAttribute(position,i);
+                inner.copy(point).clampScalar(-.32,.32);
+                point.sub(inner).normalize();
+                inner.addScaledVector(point,.18);
+                position.setXYZ(i,inner.x,inner.y,inner.z);
+                normal.setXYZ(i,point.x,point.y,point.z);
+            }
+            add(shell,x,y,0,width,height,1,color,1);
+        };
+        if(id==='sandbag') bag(0,.5,1,1,'#9d9473');
+        else for(let row=0;row<5;row++){
+            const widths=row%2 ? [.25,.5,.25] : [.5,.5];
+            let edge=-.5;
+            for(const [i,width] of widths.entries()) {
+                bag(edge+width/2,(row+.5)/5,width-.014,.212,['#9d9473','#8b8061','#a69b7a'][(row+i)%3]);
+                edge+=width;
+            }
         }
     } else if(id==='street_lamp'||id==='floor_lamp') {
         C(-.18,.03,0,.25,.06,iron);C(-.18,.48,0,.025,.9,iron);
         if(id==='street_lamp'){rod([-.18,.93,0],[.35,.99,0],.025);B(.35,.96,0,.28,.06,.3,white,2);}
-        else {add(new T.CylinderGeometry(.12,.32,.24,16,1,true),-.18,.88,0,1,1,1,cloth,1);C(-.18,.85,0,.11,.06,white);}
+        else {
+            const rim = [[.32,-.12],[.12,.12],[.112,.12],[.312,-.12],[.32,-.12]];
+            const shade = new T.LatheGeometry(rim.map(([radius,y]) => new T.Vector2(radius,y)),16);
+            add(shade,-.18,.88,0,1,1,1,cloth,1);
+            C(-.18,.85,0,.11,.06,white);
+        }
     } else if(id==='power_tower'||id==='electric_pole') {
         if(id==='electric_pole'){C(0,.49,0,.035,.98,grey);for(const y of [.8,.94])B(0,y,0,1,.025,.04,iron,2);}
         else for(const sx of [-1,1])for(const sz of [-1,1]) {

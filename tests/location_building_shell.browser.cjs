@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs'), os = require('node:os'), path = require('node:path');
 const pause = ms => new Promise(resolve=>setTimeout(resolve,ms));
 async function runGrassFloorRegression({page,request,token,lobby,loc}) {
-    await page.until('L.getLocationGrassDiagnostics().kinds.medium01?.added>0','grass model loaded');
+    await page.until('L.getLocationGrassDiagnostics().kinds.low?.added>0','grass model loaded');
     const url=`/lobbies/${lobby.id}/locations/${loc.id}`;
     const objects=await page.evaluate(`(async()=>{const G=await import('/static/js/locationHouseGenerator.js');
         const objects=G.planBuildingShell({minX:2,minZ:2,width:10,depth:10,shape:'L',storeys:1,basements:0,wealth:'ordinary',condition:'intact',roofType:'gable',buildingId:'grass',seed:'grass',groundHeight:()=>1}).objects;
@@ -33,13 +33,14 @@ async function runGrassFloorRegression({page,request,token,lobby,loc}) {
 async function runFurnishedBuilding({page,request,token,lobby,loc,base,connect,debugPort,draw}) {
     const detail=()=>request(`/lobbies/${lobby.id}/locations/${loc.id}`,null,token,'GET');
     const grass=async()=>{
-        await page.until('L.getLocationGrassDiagnostics().kinds.medium01?.added>0','grass tufts loaded');
-        return page.evaluate(`(()=>{const {r,s,c}=shellRender;r.render(s,c);let count=0,uploaded=0;s.traverse(m=>{
+        await page.until('L.getLocationGrassDiagnostics().kinds.low?.added>0','grass tufts loaded');
+        return page.evaluate(`(()=>{const {r,s,c}=shellRender;r.render(s,c);let count=0,colored=0;s.traverse(m=>{
             if(!m.userData.naturalGrassKind)return;count+=m.count;
-            if(['map','alphaMap','normalMap'].every(key=>m.material[key].version>0&&r.properties.get(m.material[key]).__webglTexture))uploaded++;
-        });return {count,uploaded}})()`);
+            const {position,color}=m.geometry.attributes;
+            if(m.material.vertexColors&&color?.count===position.count)colored++;
+        });return {count,colored}})()`);
     };
-    const initial=await grass();assert.ok(initial.count>100&&initial.uploaded>0,'tufts must upload their actual color, alpha and normal textures');
+    const initial=await grass();assert.ok(initial.count>100&&initial.colored>0,'модели травы используют цвета вершин');
     const frame=async name=>{const file=path.join(os.tmpdir(),`vtt-combined-${name}.png`);fs.writeFileSync(file,Buffer.from((await page.call('Page.captureScreenshot',{format:'png'})).data,'base64'));console.log('COMBINED FRAME',file)};
     await page.evaluate('locationControls.target.set(6,1,6);locationControls.object.position.set(10,6,12);locationControls.update();true');
     await pause(200);await frame('grass');
@@ -145,12 +146,12 @@ async function runFurnishedBuilding({page,request,token,lobby,loc,base,connect,d
         await page.evaluate(`(async()=>{exitLocation();await enterLocation(${loc.id});selectLocationEditorTool('building');document.querySelector('#panel-tools.collapsed .toggle-btn')?.click();true})()`);
         const shown=await page.evaluate(`(()=>{const b=document.getElementById('loc-generate-furniture');b.scrollIntoView();const r=b.getBoundingClientRect();return !b.closest('[hidden]')&&!b.disabled&&r.width>0&&r.height>0})()`);
         assert.equal(shown,true,'furniture action is visible and selects an existing building after reopening');
-        const after=await grass();assert.ok(after.uploaded>0&&after.count>100,'tufts survive location exit and reload');
+        const after=await grass();assert.ok(after.colored>0&&after.count>100,'tufts survive location exit and reload');
         assert.deepEqual((await detail()).objects,original,'reopening preserves combined generation');
         await page.evaluate(`window.retiredCombined=[new WeakRef(shellRender.s),new WeakRef(locationControls.object),new WeakRef(document.querySelector('#location-canvas canvas'))];exitLocation();window.shellRender=null;true`);
         await page.evaluate('document.body.getBoundingClientRect();new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
         await pause(80);await page.call('HeapProfiler.collectGarbage');
-        assert.equal(await page.evaluate('retiredCombined.every(ref=>ref.deref()===undefined)'),true,'uploaded grass and furnished building do not retain the departed renderer');
+        assert.equal(await page.evaluate('retiredCombined.every(ref=>ref.deref()===undefined)'),true,'grass and furnished building do not retain the departed renderer');
         console.log('FURNISHED BUILDING PASS',JSON.stringify({initial,after,objects:original.length}));
     }finally{peer.close();await page.call('Target.closeTarget',{targetId:target.targetId}).catch(()=>{});}
 }

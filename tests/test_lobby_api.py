@@ -25,6 +25,7 @@ from app.models.templates import ItemTemplate
 from app.services.map import MapService
 from app.services.world_travel_events import travel_scenario
 from app.services.world_rules import mutant_catalog, mutant_character_data, mutant_profile
+from app.services.character_appearance import public_character_appearance
 
 
 def create_lobby(client, user, auth_headers, name="Rookie camp"):
@@ -1002,6 +1003,70 @@ def test_world_group_creation_is_gm_only_and_validates_map_bounds(
     assert created.status_code == 201
     assert created.get_json()["name"] == "Rookies"
     assert WorldGroup.query.filter_by(lobby_id=lobby["id"]).count() == 1
+
+
+def test_world_group_exposes_only_allowed_optional_member_appearance(
+    client, create_user, auth_headers
+):
+    gm = create_user('appearance-group-gm')
+    lobby = create_lobby(client, gm, auth_headers)
+    character = create_character(client, lobby, gm, auth_headers, data={
+        'appearance': {
+            'top': 'sweater', 'bottom': 'jeans', 'hair': 'short',
+            'hairColor': 'brown', 'sweaterColor': 'green',
+            'jeansColor': 'blue', 'expression': 'wounded',
+            'name': 'must not leak', 'token': 'secret',
+        },
+    })
+    group = client.post(
+        f"/lobbies/{lobby['id']}/world-groups",
+        headers=auth_headers(gm),
+        json={'name': 'Appearance party', 'tile_x': 2, 'tile_y': 3},
+    ).get_json()
+    client.patch(
+        f"/lobbies/{lobby['id']}/world-groups/{group['id']}/members",
+        headers=auth_headers(gm), json={'character_ids': [character['id']]},
+    )
+
+    listed = client.get(
+        f"/lobbies/{lobby['id']}/world-groups", headers=auth_headers(gm),
+    ).get_json()['groups'][0]['members'][0]
+
+    assert listed['appearance'] == {
+        'top': 'sweater', 'bottom': 'jeans', 'hair': 'short',
+        'hairColor': 'brown', 'sweaterColor': 'green',
+        'jeansColor': 'blue', 'expression': 'wounded',
+    }
+    assert listed['is_mutant'] is False
+    assert 'name' not in listed['appearance'] and 'token' not in listed['appearance']
+    assert public_character_appearance({}) is None
+    assert public_character_appearance({'appearance': {'top': 'unknown'}}) is None
+    assert public_character_appearance({'appearance': {'gear': ['mp50']}}) is None
+
+    stored = db.session.get(LobbyCharacter, character['id'])
+    stored.data = {
+        'appearance': {'bottom': 'tactical', 'tacticalColor': 'khaki',
+                       'top': 'leather_coat', 'leatherCoatColor': 'brown'},
+        'equipment': {'gasMask': {'templateId': 1001, 'name': 'Противогаз МП‑50', 'durability': 12}},
+    }
+    db.session.commit()
+    listed = client.get(f"/lobbies/{lobby['id']}/world-groups", headers=auth_headers(gm)).get_json()
+    assert listed['groups'][0]['members'][0]['appearance'] == {
+        'bottom': 'tactical', 'tacticalColor': 'khaki', 'gear': ['mp50'],
+        'top': 'leather_coat', 'leatherCoatColor': 'brown',
+    }
+
+    stored.data = {
+        'appearance': {'bottom': 'hunting', 'huntingColor': 'brown',
+                       'top': 'trench_coat', 'trenchCoatColor': 'navy', 'leatherCoatColor': 'navy'},
+        'equipment': {'gasMask': {'templateId': 1002, 'name': 'Противогаз ГП-7'}},
+        'inventory': {'pockets': [{'templateId': 1001, 'name': 'Противогаз МП-50'}]},
+    }
+    db.session.commit()
+    listed = client.get(f"/lobbies/{lobby['id']}/world-groups", headers=auth_headers(gm)).get_json()
+    assert listed['groups'][0]['members'][0]['appearance'] == {
+        'bottom': 'hunting', 'huntingColor': 'brown', 'top': 'trench_coat', 'trenchCoatColor': 'navy',
+    }
 
 
 def test_world_anomaly_field_can_be_searched_and_looted(

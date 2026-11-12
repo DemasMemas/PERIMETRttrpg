@@ -45,6 +45,7 @@ def plan(character, data, payload):
     from app.services.character_traits import trait_count
     from app.services.crafting import _allocate, _tools, entries
     from app.services.equipment_passives import craft_difficulty_modifier
+    from app.services.generators import difficulty_bonus
     if not trait_count(data, 'Программист'):
         raise ValidationError('Для самостоятельной установки нужна черта «Программист»')
     rule = rule_by_id(payload.get('rule_id'))
@@ -70,11 +71,13 @@ def plan(character, data, payload):
     allocations, absent, status = _allocate(data, recipe, with_status=True)
     missing.extend(absent)
     level = CombatService._skill_value(data, 'skills.other.engineering')
-    quote = creation_quote(level, difficulty, difficulty_modifier=craft_difficulty_modifier(data))
+    power_bonus = difficulty_bonus(station)
+    quote = creation_quote(level, difficulty, difficulty_modifier=craft_difficulty_modifier(data) - power_bonus)
     return {**quote, 'rule': rule, 'target_id': device['id'], 'target_path': payload['target_path'],
             'tool_path': tool_path if solder else None, 'has_station': has_station,
             'station_id': station.id if station_key else None,
-            'station_name': station.name if station_key else None,
+            'station_name': station.name if station_key or power_bonus else None,
+            'generator_difficulty_bonus': power_bonus,
             'spoil_chance': 15 if station_key else 0,
             'allocations': allocations, 'component_status': status, 'missing': missing,
             'duration_seconds': 3600, 'equivalent': equivalent}

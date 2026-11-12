@@ -30,7 +30,9 @@ import { initMapRotationHold } from './rotationHold.js';
 import { isTypingTarget as isRotationTypingTarget } from './cameraPan.js';
 import { initWeather, applyWeather } from './weather.js';
 import { createLocationLightingEditor } from './locationLightingEditor.js';
-import { LOCATION_ASSETS } from './locationAssetCatalog.js';
+import { createLocationSettingsEditor } from './locationSettingsEditor.js';
+import { LOCATION_ASSETS, locationAssetCategory } from './locationAssetCatalog.js';
+import { locationAssetThumbnail } from './locationAssetThumbnails.js';
 import { assetDimensions, validAssetDimensions, assetDimensionLimits } from './locationAssetDimensions.js';
 import { STOREY_HEIGHT } from './locationArchitecture.js';
 import { initMarkers, setupMarkerInteraction, closeMarkerEditModal, saveMarkerEdit, submitCreateMarker,
@@ -39,7 +41,7 @@ fillEditCenterCoordinates, pickTileForMarker } from './markers.js';
 import { openCharacterSheet, closeCharacterSheet, exportCharacter, importCharacter } from './characterSheet.js';
 import { setCurrentLobbyId as setCharLobbyId } from './characterSheet.js';
 import {
-    initLocationScene, loadLocationInStages, startLocationLoadDiagnostics,
+    initLocationScene, loadLocationInStages, startLocationLoadDiagnostics, prepareInitialLocationFrame,
     updateCharacterPosition, setCurrentLocationId, getCurrentLocationId,
     loadCombatStartRequests, handleCombatStartRequest, handleCombatStartRequestResolved,
     addDeleteLocationButton, setDeleteButtonVisible, addEditLocationButton, setEditButtonVisible,
@@ -69,7 +71,7 @@ import {
     setLocationAssetResizeAxis, getLocationAssetResizeState,
     deleteSelectedLocationAsset, toggleSelectedLocationAssetsHidden, toggleSelectedLocationFire,
     updateSelectedLocationAssetDetails, previewSelectedLocationLamp, updateSelectedLocationRoof, generateSelectedLocationRoof,
-    setSelectedLocationTraversalCategory, setSelectedLocationCover, setSelectedLocationLock,
+    setSelectedLocationTraversalCategory, setSelectedLocationCover, setSelectedLocationLock, setSelectedLocationSignText,
     setLocationDarknessOverlayVisible,
 } from './locationScene.js';
 import { getUserColorHex, updateMyColor } from './colors.js';
@@ -395,6 +397,7 @@ window.enterLocation = async function(locationId, { scoutView = null } = {}) {
         setLocationBrushHeight(window.tileHeight);
         setLocationBrushTerrain(window.currentTileType);
 
+        const locationFirstFrame = prepareInitialLocationFrame(signal, Boolean(socket));
         if (socket) {
             window.currentLocationCharacterId = null;
             socket.emit('join_location', {
@@ -640,6 +643,7 @@ window.enterLocation = async function(locationId, { scoutView = null } = {}) {
                     <button type="button" data-location-tool="assets">Ассеты</button>
                     <button type="button" data-location-tool="building">Строительство</button>
                     <button type="button" data-location-tool="light">Свет</button>
+                    <button type="button" data-location-tool="settings">Настройки</button>
                 `;
                 const hint = document.createElement('p');
                 toolbar.appendChild(historyControls);
@@ -743,13 +747,14 @@ window.enterLocation = async function(locationId, { scoutView = null } = {}) {
                 eraseSettings.hidden = true;
                 toolSettings.appendChild(eraseSettings);
 
-                const waterSettings=waterProfileControls('loc');waterSettings.hidden=true;sections.terrain.appendChild(waterSettings);
+                const waterSettings=waterProfileControls('loc');waterSettings.hidden=true;terrainPaintControls.appendChild(waterSettings);
                 let activeAsset = null;
                 let assetSection = null;
                 let environmentSection = null;
+                let sceneSettingsSection = null;
                 const selectLocationTool = tool => {
                     window.cancelCommonMapTool?.();
-                    if (!['select', 'terrain', 'surface', 'height', 'radiation', 'erase', 'assets', 'building', 'light'].includes(tool)) return;
+                    if (!['select', 'terrain', 'height', 'radiation', 'erase', 'assets', 'building', 'light', 'settings'].includes(tool)) return;
                     cancelLocationPaste();
                     cancelLocationAssetResize(false);
                     const previousTool = window.locationEditorTool;
@@ -767,9 +772,9 @@ window.enterLocation = async function(locationId, { scoutView = null } = {}) {
                     });
                     Object.entries(sections).forEach(([name, section]) => {
                         section.hidden = name !== tool
-                            && !(name === 'brush' && ['terrain', 'surface', 'height', 'radiation', 'erase'].includes(tool));
+                            && !(name === 'brush' && ['terrain', 'height', 'radiation', 'erase'].includes(tool));
                     });
-                    toolSettings.hidden = !['terrain', 'surface', 'height', 'radiation', 'erase'].includes(tool);
+                    toolSettings.hidden = !['terrain', 'height', 'radiation', 'erase'].includes(tool);
                     waterSettings.hidden = document.getElementById('loc-edit-terrain')?.value !== 'water';
                     eraseSettings.hidden = tool !== 'erase';
                     if (assetSection) {
@@ -779,6 +784,7 @@ window.enterLocation = async function(locationId, { scoutView = null } = {}) {
                         renderAssetCards();
                     }
                     if (environmentSection) environmentSection.hidden = tool !== 'light';
+                    if (sceneSettingsSection) sceneSettingsSection.hidden = tool !== 'settings';
                     setLocationDarknessOverlayVisible(tool === 'light');
                     if (!['assets','building'].includes(tool)) setLocationBuildMode('terrain');
                     else if (activeAsset) setLocationAssetPreset(activeAsset);
@@ -790,11 +796,11 @@ window.enterLocation = async function(locationId, { scoutView = null } = {}) {
                         select: 'Выберите объект или персонажа без рисования.',
                         assets: 'Выберите ассет в библиотеке, наведите на карту и кликните для размещения. ПКМ отменяет выбор ассета.',
                         building: 'Выберите строительный элемент или нарисуйте контур здания. Здесь же доступны этажи, планировка, мебель и аномалии.',
-                        terrain: 'Кликните по клетке или проведите кистью, чтобы сменить покрытие.',
-                        surface: 'Проведите кистью по наземному уровню, чтобы задать цену прохода. Покрытие останется прежним.',
+                        terrain: 'Выберите режим и проведите кистью по клеткам. Цена прохода задаётся на наземном уровне.',
                         height: 'Кликните по клетке или проведите кистью, чтобы изменить высоту.',
                         radiation: 'Кликните по клетке или проведите кистью, чтобы задать радиацию.',
                         light: 'Настройте освещение или закрасьте клетки без дневного света.',
+                        settings: '',
                         erase: 'Удаляет декор. Поставьте галочку, чтобы удалять и постройки на выбранной клетке.',
                     }[tool];
                     renderPlacementSettings();
@@ -819,9 +825,13 @@ window.enterLocation = async function(locationId, { scoutView = null } = {}) {
                         <button type="button" data-house-draw aria-pressed="false">Нарисовать здание</button>
                         <span>Потяните ЛКМ по свободному участку. В открывшемся окне выберите назначение здания, затем нажмите «Предпросмотр» и «Создать».</span>
                     </div>
-                    <div class="location-asset-tabs"></div>
-                    <div class="location-asset-grid"></div>
-                    <p class="location-asset-empty" role="status" hidden>Ничего не найдено. Измените запрос или выберите категорию.</p>
+                    <div class="location-asset-browser">
+                        <nav class="location-asset-tabs" aria-label="Категории ассетов"></nav>
+                        <div class="location-asset-results">
+                            <div class="location-asset-grid"></div>
+                            <p class="location-asset-empty" role="status" hidden>Ничего не найдено. Измените запрос или выберите категорию.</p>
+                        </div>
+                    </div>
                     <div class="location-asset-placement" hidden>
                         <span data-placement-name></span>
                         <label><span data-placement-height-label>Высота от земли, м</span>
@@ -888,9 +898,14 @@ window.enterLocation = async function(locationId, { scoutView = null } = {}) {
                     id: `anomaly_${anomaly.key}`, group: 'Аномалии', kind: 'decor',
                     label: anomaly.name, icon: '✧', color: '#79d7dd',
                 }));
-                const allLocationAssets = [...LOCATION_ASSETS, ...anomalyAssets].filter(asset => !asset.hidden);
-                const groups = [...new Set(allLocationAssets.map(asset => asset.group))];
-                let activeGroup = 'Свет';
+                const allLocationAssets = [...LOCATION_ASSETS, ...anomalyAssets].filter(asset => !asset.hidden)
+                    .map(asset => ({ asset, ...locationAssetCategory(asset), search: asset.label.toLocaleLowerCase('ru') }));
+                const groups = [...new Set(['Природа', 'Постройки', 'Мебель', 'Быт', 'Оборудование',
+                    'Улица', 'Свет', ...allLocationAssets.map(entry => entry.group)])];
+                const natureGroups = ['Мелкая растительность', 'Камни', 'Деревья'];
+                let activeGroup = 'Природа';
+                let activeSubgroup = '';
+                let displayedAssets = null;
                 const renderPlacementSettings = () => {
                     assetPlacement.hidden = !activeAsset || window.locationEditorTool !== 'assets';
                     if (!activeAsset) return;
@@ -935,55 +950,79 @@ window.enterLocation = async function(locationId, { scoutView = null } = {}) {
                     setLocationAssetElevation(value);
                 } });
                 const renderAssetCards = () => {
-                    assetTabs.replaceChildren();
-                    assetGrid.replaceChildren();
                     const libraryVisible = window.locationEditorTool === 'assets';
-                    for (const node of [assetTabs, assetGrid, assetSearch, assetSection.querySelector('.location-asset-empty'),
+                    for (const node of [assetTabs.parentElement, assetSearch,
                         assetSection.querySelector('.location-asset-library-heading > span')]) node.hidden = !libraryVisible;
                     if (!libraryVisible) return;
-                    groups.forEach(group => {
-                        const tab = document.createElement('button');
-                        tab.type = 'button';
-                        tab.textContent = group;
-                        tab.setAttribute('aria-pressed', String(group === activeGroup));
-                        tab.onclick = () => {
-                            activeGroup = group;
-                            assetSearch.value = '';
-                            renderAssetCards();
-                            assetGrid.scrollTop = 0;
-                        };
-                        assetTabs.appendChild(tab);
-                    });
                     const search = assetSearch.value.trim().toLocaleLowerCase('ru');
-                    allLocationAssets.filter(asset => search
-                        ? asset.label.toLocaleLowerCase('ru').includes(search)
-                        : asset.group === activeGroup).forEach(asset => {
-                        const card = document.createElement('button');
-                        card.type = 'button';
-                        card.className = 'location-asset-card';
-                        card.setAttribute('aria-pressed', String(activeAsset?.id === asset.id));
-                        const symbol = document.createElement('span');
-                        symbol.className = 'location-asset-symbol';
-                        symbol.style.setProperty('--asset-color', asset.color);
-                        symbol.textContent = asset.icon;
-                        const label = document.createElement('span');
-                        label.textContent = asset.label;
-                        card.append(symbol, label);
-                        card.onclick = () => {
-                            setLocationHouseDrawMode(false);
-                            houseButton.setAttribute('aria-pressed', 'false');
-                            if (activeAsset?.id === asset.id) {
-                                activeAsset = null;
-                                clearLocationAssetPreset();
-                                renderPlacementSettings();
-                            } else {
-                                activeAsset = { ...asset };
-                                selectLocationTool('assets');
+                    if (!assetTabs.childElementCount) {
+                        for (const group of groups) {
+                            for (const subgroup of group === 'Природа' ? ['', ...natureGroups] : ['']) {
+                                const tab = document.createElement('button');
+                                tab.type = 'button';
+                                tab.textContent = subgroup || group;
+                                tab.dataset.assetGroup = group;
+                                tab.dataset.assetSubgroup = subgroup;
+                                tab.onclick = () => {
+                                    activeGroup = group;
+                                    activeSubgroup = subgroup;
+                                    assetSearch.value = '';
+                                    renderAssetCards();
+                                };
+                                assetTabs.appendChild(tab);
                             }
-                            renderAssetCards();
-                        };
-                        assetGrid.appendChild(card);
-                    });
+                        }
+                    }
+                    for (const tab of assetTabs.children) {
+                        tab.setAttribute('aria-pressed', String(!search && tab.dataset.assetGroup === activeGroup
+                            && tab.dataset.assetSubgroup === activeSubgroup));
+                    }
+                    const filterKey = search ? `search:${search}` : `${activeGroup}:${activeSubgroup}`;
+                    if (filterKey !== displayedAssets) {
+                        displayedAssets = filterKey;
+                        const cards = document.createDocumentFragment();
+                        for (const entry of allLocationAssets) {
+                            if (search ? !entry.search.includes(search) : entry.group !== activeGroup
+                                || activeSubgroup && entry.subgroup !== activeSubgroup) continue;
+                            const { asset } = entry;
+                            const card = document.createElement('button');
+                            card.type = 'button';
+                            card.className = 'location-asset-card';
+                            card.dataset.assetId = asset.id;
+                            const preview = document.createElement('span');
+                            preview.setAttribute('aria-hidden', 'true');
+                            const thumbnail = locationAssetThumbnail(asset.id);
+                            if (thumbnail) {
+                                preview.className = 'location-asset-thumbnail';
+                                preview.style.backgroundSize = thumbnail.size;
+                                preview.style.backgroundPosition = thumbnail.position;
+                            } else {
+                                preview.className = 'location-asset-symbol';
+                                preview.style.setProperty('--asset-color', asset.color);
+                                preview.textContent = asset.icon;
+                            }
+                            const label = document.createElement('span');
+                            label.textContent = asset.label;
+                            card.append(preview, label);
+                            card.onclick = () => {
+                                if (activeAsset?.id === asset.id) {
+                                    activeAsset = null;
+                                    clearLocationAssetPreset();
+                                } else {
+                                    activeAsset = { ...asset };
+                                    setLocationAssetPreset(activeAsset, { deferPreview: true });
+                                }
+                                renderPlacementSettings();
+                                renderAssetCards();
+                            };
+                            cards.appendChild(card);
+                        }
+                        assetGrid.replaceChildren(cards);
+                        assetGrid.scrollTop = 0;
+                    }
+                    for (const card of assetGrid.children) {
+                        card.setAttribute('aria-pressed', String(card.dataset.assetId === activeAsset?.id));
+                    }
                     assetSection.querySelector('.location-asset-empty').hidden = assetGrid.childElementCount > 0;
                 };
                 window.cancelLocationAssetPlacement = () => {
@@ -1009,7 +1048,7 @@ window.enterLocation = async function(locationId, { scoutView = null } = {}) {
                     if(levels.length&&!levels.includes(activeLevel))activeLevel=levels.includes(0)?0:levels[0];
                     for (const select of buildingSelectors) {
                         select.replaceChildren(...ids.map((id, index) => new Option(`Здание ${index + 1}`, id)));
-                        if (!activeBuildingId) select.add(new Option('Старая постройка (без ID)', ''));
+                        if (!activeBuildingId) select.add(new Option('Без привязки', ''));
                         else if (!ids.includes(activeBuildingId)) select.add(new Option('Выберите построенный дом', activeBuildingId));
                         select.value = activeBuildingId;
                     }
@@ -1078,16 +1117,20 @@ window.enterLocation = async function(locationId, { scoutView = null } = {}) {
                 renderBuildingControls();
                 let lampInspectorSave = Promise.resolve();
                 const pendingInspectorSaves = new Map();
+                let colorDraft = null;
                 const renderAssetSelection = () => {
                     const selection = getSelectedLocationEditorAsset();
                     if (selection && pendingInspectorSaves.has(selection.selectionKey)) return;
+                    if (colorDraft?.selectionKey !== selection?.selectionKey) colorDraft = null;
                     // A socket echo must not discard a number still being typed.
                     const focused = document.activeElement;
-                    if (assetInspector.contains(focused) && focused?.dataset.numericDraft === 'true') return;
+                    if (assetInspector.contains(focused) && (focused?.dataset.numericDraft === 'true'
+                        || focused?.matches('[data-sign-field]') && focused.dataset.signSelection === selection?.selectionKey)) return;
                     if (selection?.kind === 'structure' && selection.selectedCount === 1) {
                         setActiveBuilding(selection.buildingId, selection.level);
                     }
                     const keepPreciseOpen = assetInspector.querySelector('.location-asset-precise')?.open || false;
+                    const keepBuildingAttachmentOpen = assetInspector.querySelector('[data-building-attachment]')?.open || false;
                     const keepRoofOpen=assetInspector.querySelector('[data-roof-section-fields]')?.open||false;
                     const keepCoverOpen=assetInspector.querySelector('[data-selected-cover-fields]')?.open||false;
                     const keepLockOpen=assetInspector.querySelector('[data-selected-lock-fields]')?.open||false;
@@ -1122,14 +1165,12 @@ window.enterLocation = async function(locationId, { scoutView = null } = {}) {
                         </div>
                         <div data-selected-building-fields style="display:none;">
                             <span data-selected-building-label></span>
-                            <button type="button" data-add-floor hidden>Добавить этаж</button>
-                            <button type="button" data-fit-floor hidden>Растянуть по форме здания</button>
-                            <button type="button" data-generate-roof hidden>Создать / заменить крышу здания</button>
+                            <div class="location-asset-actions">
+                                <button type="button" data-add-floor hidden>Добавить этаж</button>
+                                <button type="button" data-fit-floor hidden>Растянуть по форме здания</button>
+                                <button type="button" data-generate-roof hidden>Создать / заменить крышу здания</button>
+                            </div>
                             <span data-fit-floor-reason hidden></span>
-                            <details><summary>Принадлежность вручную</summary>
-                                <label>ID здания <input class="form-control" type="text" maxlength="64" data-selected-building-id></label>
-                                <label>Этаж <input class="form-control" type="number" step="1" data-selected-level></label>
-                            </details>
                         </div>
                         <label data-selected-roof-type-field style="display:none;">Крыша <select class="form-control" data-selected-roof-type><option value="gable">Двускатная</option><option value="flat">Плоская</option><option value="none">Без автоматической крыши</option></select></label>
                         <details data-roof-section-fields hidden><summary>Параметры секции крыши</summary>
@@ -1139,9 +1180,12 @@ window.enterLocation = async function(locationId, { scoutView = null } = {}) {
                             <label>Уклон, °<input class="form-control" data-roof-setting="pitch" type="number" min="0" max="60" step="1"></label>
                             <label>Высота стен корпуса, м<input class="form-control" data-roof-setting="eave" type="number" min="2.4" max="8" step="0.1"></label>
                             <small>Удалённые секции не восстанавливаются. Размеры и перемещение отдельных секций меняются обычными инструментами.</small>
-                            <button type="button" data-roof-apply>Применить к крыше</button>
+                            <div class="location-asset-actions"><button type="button" data-roof-apply>Применить к крыше</button></div>
                         </details>
-                        <div data-roof-wall-fields hidden><small>Высота этой стороны изменяет кровлю корпуса. Для независимой ручной правки можно отвязать стену.</small><button type="button" data-roof-wall-detach>Отвязать стену от крыши</button></div>
+                        <div data-roof-wall-fields hidden>
+                            <small>Высота этой стороны изменяет кровлю корпуса. Для независимой ручной правки можно отвязать стену.</small>
+                            <div class="location-asset-actions"><button type="button" data-roof-wall-detach>Отвязать стену от крыши</button></div>
+                        </div>
                         <details class="location-cover-settings" data-selected-cover-fields hidden>
                             <summary>Настройка укрытия</summary>
                             <div class="location-cover-fields">
@@ -1157,6 +1201,16 @@ window.enterLocation = async function(locationId, { scoutView = null } = {}) {
                             </div>
                             <button type="button" class="btn btn-secondary" data-cover-save>Сохранить укрытие</button>
                         </details>
+                        <div class="location-cover-settings" data-selected-sign-fields hidden>
+                            <div class="location-cover-fields">
+                                <label>Лицевая сторона <textarea class="form-control" data-sign-field="front" rows="3" maxlength="280"></textarea></label>
+                                <label>Обратная сторона <textarea class="form-control" data-sign-field="back" rows="3" maxlength="280"></textarea></label>
+                                <label>Цвет фона <input class="form-control" type="color" data-sign-field="color"></label>
+                                <label>Цвет текста <input class="form-control" type="color" data-sign-field="textColor"></label>
+                            </div>
+                            <div><label><input type="checkbox" data-sign-field="autoTextColor"> Автоматический цвет текста</label></div>
+                            <button type="button" class="btn btn-secondary" data-sign-save>Сохранить табличку</button>
+                        </div>
                         <details class="location-cover-settings" data-selected-lock-fields hidden>
                             <summary>Настройка замка</summary>
                             <div class="location-cover-fields">
@@ -1187,9 +1241,19 @@ window.enterLocation = async function(locationId, { scoutView = null } = {}) {
                                 <label data-angle-label>Угол, ° <input class="form-control" type="number" data-asset-field="rotation" step="any"></label>
                                 <label data-lamp-field>Яркость <input class="form-control" type="number" data-asset-field="intensity" min="0" max="10" step="any"></label>
                                 <label data-lamp-field>Радиус, м <input class="form-control" type="number" data-asset-field="distance" min="1" max="30" step="any"></label>
-                                <label>Цвет <input class="form-control" type="color" data-asset-field="color"></label>
+                                ${Object.entries(selection.colorChannels || { color: 'Цвет' }).map(([field, label]) => `
+                                    <label>${label} <input class="form-control" type="color" data-asset-field="${field}"
+                                        ${field === 'color' ? '' : 'title="Белый сохраняет исходный оттенок материала"'}></label>
+                                `).join('')}
                             </div>
                             <button type="button" class="btn btn-secondary" data-asset-save>Сохранить параметры</button>
+                        </details>
+                        <details class="location-cover-settings" data-building-attachment hidden>
+                            <summary>Привязка к зданию</summary>
+                            <div class="location-cover-fields">
+                                <label>ID здания <input class="form-control" type="text" maxlength="64" data-selected-building-id></label>
+                                <label>Этаж <input class="form-control" type="number" step="1" data-selected-level></label>
+                            </div>
                         </details>
                     `;
                     assetInspector.querySelector('[data-asset-name]').textContent = selection.label;
@@ -1244,6 +1308,28 @@ window.enterLocation = async function(locationId, { scoutView = null } = {}) {
                             } finally { if (button.isConnected) button.disabled = false; }
                         };
                     }
+                    const signFields = assetInspector.querySelector('[data-selected-sign-fields]');
+                    signFields.hidden = selection.signText == null || selection.selectedCount !== 1;
+                    if (!signFields.hidden) {
+                        const inputs = [...signFields.querySelectorAll('[data-sign-field]')];
+                        for (const input of inputs) {
+                            const value = selection.signText[input.dataset.signField];
+                            if (input.type === 'checkbox') input.checked = value;
+                            else input.value = value;
+                            input.dataset.signSelection = selection.selectionKey;
+                        }
+                        const autoTextColor = signFields.querySelector('[data-sign-field="autoTextColor"]');
+                        signFields.querySelector('[data-sign-field="textColor"]').oninput = () => { autoTextColor.checked = false; };
+                        signFields.querySelector('[data-sign-save]').onclick = async event => {
+                            const button = event.currentTarget;
+                            button.disabled = true;
+                            const values = Object.fromEntries(inputs.map(input => [
+                                input.dataset.signField, input.type === 'checkbox' ? input.checked : input.value,
+                            ]));
+                            try { await setSelectedLocationSignText(values); }
+                            finally { if (button.isConnected) button.disabled = false; }
+                        };
+                    }
                     const lockFields=assetInspector.querySelector('[data-selected-lock-fields]');
                     lockFields.hidden=!selection.lock||selection.selectedCount!==1;
                     if(selection.lock&&selection.selectedCount===1){
@@ -1280,13 +1366,17 @@ window.enterLocation = async function(locationId, { scoutView = null } = {}) {
                     if(selection.roofWall)assetInspector.querySelector('[data-selected-dimension="height"]').parentElement.firstChild.textContent='Основная высота стены, м ';
                     const buildingIdInput = assetInspector.querySelector('[data-selected-building-id]');
                     const levelInput = assetInspector.querySelector('[data-selected-level]');
-                    assetInspector.querySelector('[data-selected-building-fields]').style.display = selection.kind === 'structure' && selection.selectedCount === 1 ? '' : 'none';
+                    const buildingAttachment = assetInspector.querySelector('[data-building-attachment]');
+                    buildingAttachment.hidden = selection.kind !== 'structure' || selection.selectedCount !== 1;
+                    buildingAttachment.open = keepBuildingAttachmentOpen;
+                    assetInspector.querySelector('[data-selected-building-fields]').style.display = buildingAttachment.hidden ? 'none' : '';
                     if (selection.kind === 'structure') {
                         buildingIdInput.value = selection.buildingId || '';
                         levelInput.value = String(selection.level);
                         const buildingNumber = getLocationBuildingIds().indexOf(selection.buildingId) + 1;
-                        assetInspector.querySelector('[data-selected-building-label]').textContent = buildingNumber
-                            ? `Здание ${buildingNumber} · этаж ${selection.level}` : 'Старая постройка · без ID';
+                        const buildingLabel = assetInspector.querySelector('[data-selected-building-label]');
+                        buildingLabel.hidden = !buildingNumber;
+                        buildingLabel.textContent = buildingNumber ? `Здание ${buildingNumber} · этаж ${selection.level}` : '';
                     }
                     const addFloorButton = assetInspector.querySelector('[data-add-floor]');
                     const roofGenerateButton=assetInspector.querySelector('[data-generate-roof]');
@@ -1333,7 +1423,14 @@ window.enterLocation = async function(locationId, { scoutView = null } = {}) {
                     roofTypeInput.parentElement.style.display = selection.selectedCount === 1 && selection.roofType !== undefined ? '' : 'none';
                     if (selection.roofType !== undefined) roofTypeInput.value = selection.roofType;
                     for (const input of assetInspector.querySelectorAll('[data-asset-field]')) {
-                        input.value = selection[input.dataset.assetField] ?? '';
+                        const field = input.dataset.assetField;
+                        input.value = colorDraft?.values[field] ?? selection[field] ?? '';
+                        if (input.type === 'color' && selection.kind !== 'lamp') {
+                            input.addEventListener('input', () => {
+                                colorDraft ??= { selectionKey: selection.selectionKey, values: {} };
+                                colorDraft.values[field] = input.value;
+                            });
+                        }
                         if (['x', 'z'].includes(input.dataset.assetField)) {
                             input.min = '0';
                             input.max = input.dataset.assetField === 'x'
@@ -1404,7 +1501,15 @@ window.enterLocation = async function(locationId, { scoutView = null } = {}) {
                             const key = selection.selectionKey;
                             if (getSelectedLocationEditorAsset()?.selectionKey !== key) return false;
                             pendingInspectorSaves.set(key, (pendingInspectorSaves.get(key) || 0) + 1);
-                            try { return await updateSelectedLocationAssetDetails(fields); }
+                            try {
+                                const saved = await updateSelectedLocationAssetDetails(fields);
+                                if (saved && colorDraft?.selectionKey === key) {
+                                    for (const field of Object.keys(colorDraft.values)) {
+                                        if (colorDraft.values[field] === fields[field]) delete colorDraft.values[field];
+                                    }
+                                }
+                                return saved;
+                            }
                             finally {
                                 const pending = pendingInspectorSaves.get(key) - 1;
                                 if (pending) pendingInspectorSaves.set(key, pending);
@@ -1517,7 +1622,7 @@ window.enterLocation = async function(locationId, { scoutView = null } = {}) {
                 environmentSection = document.createElement('section');
                 environmentSection.className = 'map-editor-section location-environment-section';
                 environmentSection.innerHTML = `
-                    <strong class="map-editor-section-heading">Свет и атмосфера</strong>
+                    <strong class="map-editor-section-heading">Освещение</strong>
                     <div class="location-environment-body">
                         <div class="location-environment-editor"></div>
                         <div class="location-darkness-controls">
@@ -1533,30 +1638,59 @@ window.enterLocation = async function(locationId, { scoutView = null } = {}) {
                             <span data-darkness-count></span>
                         </div>
                         <div class="location-environment-actions">
-                            <button type="button" class="btn btn-primary" data-save-environment>Сохранить свет</button>
+                            <button type="button" class="btn btn-primary" data-save-environment>Сохранить</button>
                             <button type="button" class="btn btn-secondary" data-revert-environment>Отменить предпросмотр</button>
                             <span data-environment-status>Изменения видны на карте до сохранения</span>
                         </div>
                     </div>
                 `;
-                toolsRoot.appendChild(environmentSection);
+                sceneSettingsSection = document.createElement('section');
+                sceneSettingsSection.className = 'map-editor-section location-scene-settings';
+                sceneSettingsSection.innerHTML = `
+                    <div data-location-settings-fields></div>
+                    <div class="location-environment-actions">
+                        <button type="button" class="btn btn-primary" data-save-environment>Сохранить</button>
+                        <button type="button" class="btn btn-secondary" data-revert-environment>Отменить предпросмотр</button>
+                        <span data-environment-status role="status">Изменения видны на карте до сохранения</span>
+                    </div>
+                `;
+                toolsRoot.append(environmentSection, sceneSettingsSection);
                 environmentSection.hidden = window.locationEditorTool !== 'light';
+                sceneSettingsSection.hidden = window.locationEditorTool !== 'settings';
                 const environmentStatus = environmentSection.querySelector('[data-environment-status]');
+                const sceneSettingsStatus = sceneSettingsSection.querySelector('[data-environment-status]');
+                const setEnvironmentStatus = message => {
+                    environmentStatus.textContent = message;
+                    sceneSettingsStatus.textContent = message;
+                };
                 let environmentEditor;
+                let sceneSettingsEditor;
                 let environmentBase = structuredClone(currentLocationData.lighting);
+                const getEnvironmentDraft = report => {
+                    const lighting = environmentEditor.get(report);
+                    const settings = sceneSettingsEditor.get(report);
+                    return lighting && settings ? { ...lighting, ...settings } : null;
+                };
+                const previewEnvironment = () => {
+                    const settings = getEnvironmentDraft(false);
+                    if (!settings) return;
+                    applyLocationLighting(settings, false);
+                    setEnvironmentStatus('Предпросмотр · изменения ещё не сохранены');
+                };
                 const mountEnvironmentEditor = () => {
                     environmentBase = structuredClone(currentLocationData.lighting);
                     environmentEditor = createLocationLightingEditor(
                         environmentSection.querySelector('.location-environment-editor'),
                         currentLocationData.lighting,
-                        settings => {
-                            applyLocationLighting(settings, false);
-                            environmentStatus.textContent = 'Предпросмотр: изменения ещё не сохранены';
-                        },
+                        previewEnvironment,
                         () => currentLocationData.lighting?.local_lights || [],
                         () => darkTilesDraft,
                         getLocationLightingPreset,
                         setLocationLightingPreset,
+                    );
+                    sceneSettingsEditor = createLocationSettingsEditor(
+                        sceneSettingsSection.querySelector('[data-location-settings-fields]'),
+                        currentLocationData.lighting, currentLocationData.tiles_data, previewEnvironment,
                     );
                 };
                 mountEnvironmentEditor();
@@ -1594,33 +1728,37 @@ window.enterLocation = async function(locationId, { scoutView = null } = {}) {
                     updateDarknessCount();
                     if (event.detail?.environment) mountEnvironmentEditor();
                     else {
-                        const draft = environmentEditor.get(false);
+                        const draft = getEnvironmentDraft(false);
                         if (draft) applyLocationLighting(draft, false);
                     }
-                    environmentStatus.textContent = 'Изменения сцены сохранены';
+                    setEnvironmentStatus('Изменения сцены сохранены');
                 };
                 window.addEventListener('location-editor-lighting-applied', window.locationLightingHistoryListener);
-                environmentSection.querySelector('[data-revert-environment]').onclick = () => {
+                const revertEnvironment = () => {
                     darkTilesDraft = (currentLocationData.lighting?.dark_tiles || []).map(tile => ({ ...tile }));
                     updateDarknessCount();
                     applyLocationLighting();
                     mountEnvironmentEditor();
-                    environmentStatus.textContent = 'Изменения видны на карте до сохранения';
+                    setEnvironmentStatus('Изменения видны на карте до сохранения');
                 };
-                environmentSection.querySelector('[data-save-environment]').onclick = async () => {
-                    const settings = environmentEditor.get();
+                const saveEnvironment = async () => {
+                    const settings = getEnvironmentDraft(true);
                     if (!settings) return;
                     try {
                         if (!await saveLocationEnvironment(settings, environmentBase)) return;
                         const lighting = currentLocationData.lighting;
                         darkTilesDraft = lighting.dark_tiles.map(tile => ({ ...tile }));
                         updateDarknessCount();
-                        environmentStatus.textContent = 'Свет сохранён';
-                        showNotification('Освещение сохранено', 'success');
+                        setEnvironmentStatus('Изменения сцены сохранены');
+                        showNotification('Изменения сцены сохранены', 'success');
                     } catch (error) {
-                        showNotification(error.message || 'Не удалось сохранить освещение');
+                        showNotification(error.message || 'Не удалось сохранить настройки сцены');
                     }
                 };
+                for (const section of [environmentSection, sceneSettingsSection]) {
+                    section.querySelector('[data-revert-environment]').onclick = revertEnvironment;
+                    section.querySelector('[data-save-environment]').onclick = saveEnvironment;
+                }
 
                 // Получаем элементы
                 const editCheckbox = document.getElementById('loc-edit-toggle-checkbox');
@@ -1754,7 +1892,8 @@ window.enterLocation = async function(locationId, { scoutView = null } = {}) {
             const toolsPanel = document.getElementById('panel-tools');
             if (toolsPanel) toolsPanel.style.display = 'none';
         }
-        finishSceneLoading(loadingToken);
+        await locationFirstFrame;
+        if (isCurrentSceneLoading(loadingToken)) finishSceneLoading(loadingToken);
     } catch (err) {
         if (!isCurrentSceneLoading(loadingToken)) return;
         failSceneLoading(loadingToken, 'Не удалось загрузить подлокацию.');
@@ -1889,6 +2028,7 @@ window.generateLocationTiles = function(terrainType, width, height, generateObje
 };
 
 let selectedTileForLocation = null;
+
 function openLocationCreateModal(tile) {
     selectedTileForLocation = tile;
     const modal = document.getElementById('location-create-modal');
@@ -1935,8 +2075,9 @@ async function createLocationFromModal() {
     }
     const worldX = selectedTileForLocation.chunk.chunkX * 32 + selectedTileForLocation.tileX;
     const worldZ = selectedTileForLocation.chunk.chunkY * 32 + selectedTileForLocation.tileY;
-    const tilesData = generateLocationTiles(terrainType, width, height, genObjects);
-
+    const submit = document.getElementById('confirm-create-location');
+    if (submit.disabled) return;
+    submit.disabled = true;
     try {
         await Server.createLocation(currentLobbyId, {
             name: name,
@@ -1945,13 +2086,15 @@ async function createLocationFromModal() {
             world_tile_z: worldZ,
             grid_width: width,
             grid_height: height,
-            tiles_data: tilesData
+            tiles_data: generateLocationTiles(terrainType, width, height, genObjects),
         });
         showNotification('Локация создана', 'success');
         document.getElementById('location-create-modal').style.display = 'none';
         if (socket) socket.emit('get_markers', { token, lobby_id: currentLobbyId });
     } catch (err) {
         showNotification(err.message);
+    } finally {
+        submit.disabled = false;
     }
 }
 
@@ -2144,6 +2287,8 @@ if (socket) {
                     s.prone_on_back,
                     s.floor_level,
                     s.height,
+                    s.appearance,
+                    s.condition_state,
                 );
             });
         });
@@ -2234,8 +2379,10 @@ if (socket) {
     });
     socket.on('character_spawned', (data) => {
         const locId = getCurrentLocationId();
-        if (!locId) return;
+        if (!locId || (data.location_id != null && Number(data.location_id) !== Number(locId))) return;
         import('./locationScene.js').then(module => {
+            if (Number(getCurrentLocationId()) !== Number(locId)) return;
+            if (data.action === 'moved' && module.relocateLocationCharacter(data.character)) return;
             module.addCharacterToLocation(
                 data.character.id,
                 data.character.name,
@@ -2258,6 +2405,8 @@ if (socket) {
                 data.character.prone_on_back,
                 data.character.floor_level,
                 data.character.height,
+                data.character.appearance,
+                data.character.condition_state ?? data.character.condition?.state,
             );
         });
     });
@@ -2271,12 +2420,23 @@ if (socket) {
         if (Number(data.location_id) !== Number(getCurrentLocationId())) return;
         import('./locationScene.js').then(module => {
             module.applyCharacterVisibilityUpdate(data.character_id, data.gm_hidden);
+            if (!data.gm_hidden && data.appearance) {
+                module.setLocationCharacterAppearance(data.character_id, data.appearance);
+            }
+        });
+    });
+    socket.on('location_character_appearance_updated', (data) => {
+        if (Number(data.location_id) !== Number(getCurrentLocationId())) return;
+        import('./locationScene.js').then(module => {
+            module.setLocationCharacterAppearance(data.character_id, data.appearance);
         });
     });
     socket.on('location_character_posture_updated', (data) => {
         if (Number(data.location_id) !== Number(getCurrentLocationId())) return;
         import('./locationScene.js').then(module => {
-            module.applyCharacterPostureVisual(data.character_id, data.posture);
+            module.applyCharacterPostureVisual(data.character_id, data.posture, {
+                proneOnBack: data.prone_on_back, conditionState: data.condition_state,
+            });
         });
     });
     socket.on('location_character_visual_pose_updated', (data) => {

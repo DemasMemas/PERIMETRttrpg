@@ -8,7 +8,6 @@ import random
 from collections import Counter
 from copy import deepcopy
 from hashlib import sha256
-from itertools import chain
 
 CLOCK_PREFIX='artifact-radiation-clear:'
 PERIODIC_PREFIX='artifact-ten-minute:'
@@ -78,16 +77,24 @@ def _stored_artifact_entries(data):
 
     if not isinstance(data, dict):
         return
-    inventory = data.get('inventory') or {}
-    held = (inventory.get('held') or []) if isinstance(inventory, dict) else []
-    carried = chain((item for item, _ in CombatService._iter_inventory_items_with_paths(data)), held)
-    containers = chain(((item, False) for item in carried), ((item, True) for item in _armor_container_items(data)))
-    for container, worn in containers:
+    shielding = {}
+    for item, path in CombatService._iter_inventory_items_with_paths(data, include_held=True):
+        parent_limit = shielding.get(tuple(path[:-2]), 0)
+        if item.get('category') == 'artifact':
+            yield item, parent_limit
+        kind = artifact_container_kind(item)
+        limit = _radiation_limit(item) if kind in ('equipped', 'storage') else parent_limit
+        if limit:
+            shielding[tuple(path)] = limit
+        if kind in ('equipped', 'storage'):
+            yield from ((artifact, limit) for artifact in _artifact_modules(item))
+
+    for container in _armor_container_items(data):
         kind = artifact_container_kind(container)
         if kind not in ('equipped', 'storage'):
             continue
         limit = _radiation_limit(container)
-        if not worn or kind == 'storage':
+        if kind == 'storage':
             yield from ((item, limit) for item in _artifact_modules(container))
         for item in container.get('contents') or []:
             if isinstance(item, dict) and item.get('category') == 'artifact':
@@ -181,8 +188,11 @@ def _artifact_radiation(positive, negative, limit):
 
 def _stored_radiation(item, limit):
     attrs = item.get('attributes') or {}
-    return max(0, _artifact_radiation(str(attrs.get('positive_effect') or ''),
-                                      str(attrs.get('negative_effect') or ''), limit))
+    quantity = item.get('quantity', 1)
+    if type(quantity) is not int or quantity < 1:
+        quantity = 1
+    return quantity * max(0, _artifact_radiation(str(attrs.get('positive_effect') or ''),
+                                                str(attrs.get('negative_effect') or ''), limit))
 
 
 def _conditional_value(text, pattern, radiation):
@@ -411,9 +421,13 @@ def _item_profile(data,item):
 def _clock_rules(data):
     for item in equipped_artifacts(data):
         if CLEAR_RADIATION.search(str((item.get('attributes') or {}).get('positive_effect') or '')):
-            yield item,CLOCK_PREFIX,60
-    for item, _ in _periodic_artifacts(data):
-        yield item, PERIODIC_PREFIX, 600
+            yield item, CLOCK_PREFIX, 60, None
+    for item, profile in _periodic_artifacts(data):
+        yield item, PERIODIC_PREFIX, 600, {
+            'radiation': profile['radiation_per_movement'],
+            'health': profile['health_per_movement'],
+            'pain': profile['pain_per_movement'],
+        }
 
 
 def _periodic_artifacts(data):
@@ -441,7 +455,7 @@ def sync_clocks(data,effects=None,*,canonical=None):
     old={e['source']:e for e in previous if is_artifact_clock(e)}
     result=[deepcopy(e) for e in effects if not is_artifact_clock(e)]
     seen=set()
-    for item,prefix,interval in _clock_rules(data):
+    for item, prefix, interval, periodic in _clock_rules(data):
         source=_clock_source(item,prefix)
         if source in seen:continue
         seen.add(source)
@@ -451,6 +465,8 @@ def sync_clocks(data,effects=None,*,canonical=None):
         seconds=max(.001,min(interval,seconds)) if math.isfinite(seconds) else interval
         minute=prefix==CLOCK_PREFIX
         result.append({'id':source,'source':source,'type':'delayed_adjustment',
+            'artifact_name': item.get('name') or 'Артефакт',
+            **({'artifact_periodic': periodic} if periodic is not None else {}),
             'name':(item.get('name') or 'Артефакт')+(': вывод радиации каждую минуту' if minute else ': свойства каждые 10 минут'),
             'note':('Пока артефакт надет, раз в минуту выводит всю радиацию. Потеря общих ОЗ начисляется только за радиацию, выведенную этим артефактом.'
                 if minute else 'Свойства «за перемещение» срабатывают раз в 10 минут игрового времени. Отдельные шаги не вызывают срабатывания.'),

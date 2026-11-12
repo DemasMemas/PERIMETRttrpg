@@ -1,5 +1,7 @@
 from copy import deepcopy
 import pytest
+from app.extensions import db
+from app.models import Location
 
 
 @pytest.fixture
@@ -175,6 +177,28 @@ def test_environment_history_preserves_lamps_and_rejects_stale_preview(editor):
     r = client.post(url + '/object-edits', headers=headers, json={'environment': {'before': changed, 'after': env}})
     assert r.status_code == 200
     assert r.get_json()['lighting'] == initial
+
+
+def test_scene_settings_can_be_reapplied_after_undo_on_old_location(editor):
+    client, headers, url, _ = editor
+    location = db.session.get(Location, int(url.rsplit('/', 1)[-1]))
+    old_settings = {key: value for key, value in location.lighting.items()
+                    if key not in {'natural_detail', 'fog_density', 'water_reflections'}}
+    location.lighting = old_settings
+    db.session.commit()
+    before = {key: value for key, value in old_settings.items()
+              if key not in {'local_lights', 'dark_tiles'}}
+    after = {**before, 'natural_detail': False, 'fog_density': .028, 'water_reflections': True}
+
+    def apply(expected, settings):
+        return client.post(url + '/object-edits', headers=headers,
+                           json={'environment': {'before': expected, 'after': settings}})
+
+    assert apply(before, after).status_code == 200
+    reverted = apply(after, before)
+    assert reverted.status_code == 200
+    assert reverted.get_json()['lighting']['natural_detail'] is None
+    assert apply(before, after).status_code == 200
 
 
 @pytest.mark.parametrize('cell', [None, {'terrain': 'grass', 'height': float('inf')},

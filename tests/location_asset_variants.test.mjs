@@ -13,8 +13,8 @@ for (const file of files) {
 const variants = modules.get('locationAssetVariants.js');
 await variants.link(specifier => modules.get(specifier.replace('./', '')));
 await variants.evaluate();
-const { placementForLocationAsset, visualAssetForLocationObject, locationObjectLabel } = variants.namespace;
-const { findLocationAsset } = modules.get('locationAssetCatalog.js').namespace;
+const { placementForLocationAsset, visualAssetForLocationObject, locationObjectLabel, vegetationColorValues } = variants.namespace;
+const { findLocationAsset, locationAssetCategory, LOCATION_ASSETS } = modules.get('locationAssetCatalog.js').namespace;
 
 test('весь каталог показывает игровые названия, включая сохранённые технические имена', () => {
     const assets = modules.get('locationAssetCatalog.js').namespace.LOCATION_ASSETS;
@@ -84,6 +84,56 @@ test('unknown or mismatched variant falls back to the original asset', () => {
     assert.equal(visualAssetForLocationObject('box', { visual_asset: 'missing' }).id, 'box');
     assert.equal(visualAssetForLocationObject('box', {}).id, 'box');
     assert.equal(placementForLocationAsset(findLocationAsset('box')).visualAsset, null);
+});
+
+test('Природа показывает три состояния одного куста и один обычный камень, сохраняя старые ID', () => {
+    const visible = LOCATION_ASSETS.filter(asset => !asset.hidden);
+    const shrubs = visible.filter(asset => asset.label.startsWith('Куст ·'));
+    assert.equal(shrubs.length, 3);
+    assert.equal(new Set(shrubs.map(asset => asset.visual.modelNode)).size, 3);
+    for (const asset of shrubs) {
+        assert.equal(locationAssetCategory(asset).subgroup, 'Мелкая растительность');
+        assert.equal(asset.passable, true);
+    }
+    for (const id of ['swamp_shrub_02_1', 'swamp_shrub_02_2', 'swamp_shrub_02_3', 'swamp_shrub_02_4']) {
+        assert.equal(visualAssetForLocationObject(id, {}).hidden, true);
+    }
+    assert.equal(visible.filter(asset => asset.label === 'Камень').length, 1);
+    assert.equal(locationAssetCategory(findLocationAsset('rock')).subgroup, 'Камни');
+    assert.equal(findLocationAsset('rock').visual.modelNode, findLocationAsset('swamp_rock_09_1').visual.modelNode);
+    assert.equal(locationAssetCategory(findLocationAsset('nature_birch_green')).subgroup, 'Деревья');
+    assert.equal(locationObjectLabel({ type: 'swamp_wheat_wild_1', name: 'Сухая трава' }), 'Дикий злак');
+});
+
+test('Оттенки листвы и веток сохраняются отдельно и читают старые сохранения', () => {
+    const shrub = findLocationAsset('nature_bush_green');
+    const defaults = { color: shrub.color };
+    assert.deepEqual({ ...vegetationColorValues(shrub, defaults) },
+        { wood_color: '#ffffff', foliage_color: '#ffffff' });
+    assert.deepEqual({ ...vegetationColorValues(shrub, { color: '#112233', wood_color: '#665544' }) },
+        { wood_color: '#665544', foliage_color: '#112233' });
+    assert.deepEqual({ ...vegetationColorValues(shrub, { color: '#112233', foliage_color: '#ffffff' }) },
+        { wood_color: '#ffffff', foliage_color: '#ffffff' });
+    const leafless = findLocationAsset('nature_bush_dead');
+    assert.deepEqual({ ...vegetationColorValues(leafless, { foliage_color: '#335522' }) }, { wood_color: '#ffffff' });
+    const moss = findLocationAsset('swamp_rock_moss_set_02_1');
+    assert.deepEqual({ ...vegetationColorValues(moss, { foliage_color: '#667744' }) }, { foliage_color: '#667744' });
+});
+
+test('Замшелые камни делят один комплект карт, а оголённые корни ставятся над уровнем грунта', async () => {
+    const stones = LOCATION_ASSETS.filter(asset => asset.id.startsWith('swamp_rock_moss_set_02_'));
+    assert.equal(stones.length, 7);
+    assert.equal(new Set(stones.map(asset => asset.visual.modelPath)).size, 1);
+    const model = await readFile(new URL(`../app${stones[0].visual.modelPath}`, import.meta.url));
+    const data = JSON.parse(model.toString('utf8', 20, 20 + model.readUInt32LE(12)));
+    for (const stone of stones) {
+        assert.ok(data.nodes.some(node => node.name === stone.visual.modelNode));
+        assert.equal(stone.colorChannels.foliage_color, 'Оттенок мха');
+    }
+    assert.ok(data.materials[0].normalTexture && data.materials[0].pbrMetallicRoughness.metallicRoughnessTexture);
+    for (const id of ['swamp_pine_roots_1', 'swamp_pine_roots_2']) {
+        assert.ok(findLocationAsset(id).visual.groundClearance > 0);
+    }
 });
 
 test('Разрушения сохраняют обычные игровые типы, собственные размеры и независимые свойства',()=>{

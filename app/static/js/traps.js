@@ -4,6 +4,27 @@ import {showNotification} from './utils.js';
 const names={mask:'Замаскировать',mask_stash:'Устроить тайник',bury_ground_stash:'Прикопать тайник',
     dig_up_stash:'Раскопать ящик',defuse:'Обезвредить',recover:'Подобрать',detect:'Осмотреть клетку',
     escape_net:'Освободиться из сети',cut_net:'Разрезать сеть'};
+
+export function isGroundStashTool(item) {
+    return ['tool', 'misc', 'weapon', 'melee_weapon'].includes(item?.category)
+        && ['лопата', 'лопатка саперная'].includes(String(item.name || '').trim().toLowerCase().replaceAll('ё', 'е'))
+        && (item.quantity ?? 1) > 0;
+}
+
+export async function submitTrapAction({ lobbyId, locationId, inCombat, locationCharacterId, payload }) {
+    const result = inCombat ? await Server.performLocationCombatAction(lobbyId, locationId, {
+        location_character_id: locationCharacterId, action_key: 'trap',
+        attribute_choice: payload, pending_action_id: payload.operation_id,
+    }) : await Server.operateTrap(lobbyId, locationId, payload);
+    const detail = result.result || result.narrative_action;
+    const found = ['detect', 'search_stash'].includes(payload.operation) && detail
+        ? (detail.found ? ` · найдено ${detail.found}` : ' · ничего не найдено') : '';
+    showNotification(result.pending_action ? 'Действие начато' : detail?.check
+        ? `${detail.name}: ${detail.check.total}${detail.difficulty != null ? ' · СЛ ' + detail.difficulty : ''}${detail.check.success === false ? ' · неудача' : ''}${found}`
+        : detail?.name || 'Готово', 'system');
+    return result;
+}
+
 export async function showTrapAction({characterId,lobbyId,locationId,trap,operation,inCombat,locationCharacterId,cell,requireShovel=false}){
     document.getElementById('trap-action-modal')?.remove();
     const modal=document.createElement('div');modal.id='trap-action-modal';modal.className='modal';
@@ -18,6 +39,7 @@ export async function showTrapAction({characterId,lobbyId,locationId,trap,operat
     try{
         const snapshot=await Server.getCrafting(characterId),character=await Server.getCharacter(characterId);
         if(!modal.isConnected)return;
+        panel.firstElementChild.after(node('p', character.name));
         const inventory=[...snapshot.inventory,...(character.data.weapons||[]).map((item,index)=>({path:['weapons',index],item}))];
         const kind=trap?.properties?.trap_kind;
         const tools=inventory.filter(e=>{
@@ -52,12 +74,7 @@ export async function showTrapAction({characterId,lobbyId,locationId,trap,operat
                 target_character_id:trap?.properties?.trap_victim_id,x:cell?.x,y:cell?.y,
                 tool_path:choice.value!==''?tools[Number(choice.value)]?.path:undefined};
             try{
-                const result=inCombat?await Server.performLocationCombatAction(lobbyId,locationId,{
-                    location_character_id:locationCharacterId,action_key:'trap',attribute_choice:pending,pending_action_id:pending.operation_id,
-                }):await Server.operateTrap(lobbyId,locationId,pending);
-                const detail=result.result||result.narrative_action;
-                const found=operation==='detect'&&detail ? (detail.found ? ` · найдено ${detail.found}` : ' · ничего не найдено') : '';
-                showNotification(result.pending_action?'Действие начато':detail?.check?`${detail.name}: ${detail.check.total}${detail.difficulty!=null?' · СЛ '+detail.difficulty:''}${detail.check.success===false?' · неудача':''}${found}`:detail?.name||'Готово','system');
+                await submitTrapAction({ lobbyId, locationId, inCombat, locationCharacterId, payload: pending });
                 modal.remove();
             }catch(error){
                 showNotification(error.message,'system');

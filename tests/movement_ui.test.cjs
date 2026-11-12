@@ -26,14 +26,19 @@ test('перенос ГМа использует существующий зап
     assert.equal(payload.tile_x,3.2);assert.equal(Object.hasOwn(payload,'assign_to_user_id'),false);
 });
 
-test('при завершении размещения удаляются оба вида предпросмотра',()=>{
+test('при завершении размещения освобождаются ресурсы предпросмотра',()=>{
     const disposed=[];
     const sprite={material:{map:{dispose:()=>disposed.push('texture')},dispose:()=>disposed.push('material')}};
-    const context=vm.createContext({scoutedCharacters:new Set(),previewSprite:sprite,scene:{remove:item=>disposed.push(item===sprite?'sprite':'other')},clearMovementPreview:()=>disposed.push('ghost')});
+    const placement={gmRelocation:true,previewPointer:{x:1,y:2},preview:{model:{},
+        material:{dispose:()=>disposed.push('preview material')},skeletons:[{dispose:()=>disposed.push('preview skeleton')}]}};
+    const context=vm.createContext({scoutedCharacters:new Set(),previewSprite:sprite,pendingCharacterPlacement:placement,
+        scene:{remove:item=>disposed.push(item===sprite?'sprite':'preview model')},clearMovementPreview:()=>disposed.push('ghost')});
     vm.runInContext(functionSource('clearCharacterPlacementPreview'),context);
     context.clearCharacterPlacementPreview();
     assert.equal(context.previewSprite,null);
-    assert.deepEqual(disposed,['ghost','sprite','texture','material']);
+    assert.equal(placement.preview,null);
+    assert.equal(placement.previewPointer,null);
+    assert.deepEqual(disposed,['ghost','preview model','preview material','preview skeleton','sprite','texture','material']);
 });
 
 test('повторное размещение ГМом не открывает выбор владельца',async()=>{
@@ -139,7 +144,7 @@ test('facing socket API is exported, idempotent and supports one fog refresh per
     assert.equal(refreshes,1);
     context.applyCharacterFacingVisual(1,0,0);
     assert.equal(refreshes,1);
-    assert.equal(lightRefreshes,2,'луч поворачивается только при изменении направления');
+    assert.equal(lightRefreshes,1,'при отложенном обновлении вызывающий код синхронизирует свет вместе с остальным состоянием');
 });
 
 test('navigation preview deduplicates requests and rejects responses from an old map version', async () => {
@@ -188,6 +193,58 @@ function functionSource(name) {
     assert.ok(start >= 0);
     return source.slice(start, source.indexOf('\n}', start) + 2);
 }
+
+test('Пробег начинается с серверного старта и завершается за пять секунд на длинном маршруте', async () => {
+    const THREE = await import('../app/static/vendor/three-0.162.0/build/three.module.min.js');
+    const entry = {
+        posX: 41, posY: 48, floorLevel: 0, physicalHeight: 1, posture: 'standing', humanAppearanceModel: {},
+        model: { position: new THREE.Vector3(45.8, 1, 48.5), rotation: { y: -Math.PI / 2 } },
+        label: { position: new THREE.Vector3() },
+    };
+    const callbacks = [];
+    const noop = () => {};
+    const camera = new THREE.PerspectiveCamera();
+    const controls = {target: new THREE.Vector3()};
+    const context = vm.createContext({
+        THREE, getCharacterModelEntry: () => entry, queueTrueSightRefresh: noop, applyFogOfWar: noop,
+        tintLocationMesh: noop, darknessFactorAt: () => 1, characterLabelOffset: () => 1.8,
+        invalidateMovementMapCache: noop, syncPortableLights: noop, portableLightRenderer: null,
+        currentLocationData: { objects: [] }, STOREY_HEIGHT: 2.4, document: { hidden: false },
+        humanStrideTileMs: new Map([['run', 340]]), performance: { now: () => 0 },
+        firstPersonView: {characterId: 1}, canControlCharacter: () => true, locationViewLevel: 0,
+        visionEyeHeight: () => 2.6, camera, controls,
+        requestAnimationFrame: callback => callbacks.push(callback),
+    });
+    for (const name of ['characterMovementDirection', 'applyCharacterFacingVisual', 'updateCharacterPosition',
+        'positionFirstPersonCamera']) {
+        vm.runInContext(functionSource(name), context);
+    }
+    const path = Array.from({ length: 41 }, (_, index) => ({
+        x: 41 + Math.min(index, 20), y: 48 + Math.max(0, index - 20), height: 1, level: 0,
+    }));
+    const options = { path, movement_mode: 'run', free_run: true, floor_level: 0, height: 1, facing_x: 0, facing_y: 1 };
+    context.updateCharacterPosition(1, 61, 68, options);
+    assert.equal(entry.model.position.x, 41.5);
+    assert.equal(entry.label.position.x, 41.5);
+    assert.equal(entry.model.rotation.y, Math.PI / 2);
+    callbacks.shift()(1250);
+    assert.equal(entry.positionAnimation.movement.direction, 'forward');
+    context.positionFirstPersonCamera();
+    assert.ok(controls.target.clone().sub(camera.position).distanceTo(new THREE.Vector3(1, 0, 0)) < 1e-8);
+    callbacks.shift()(2500);
+    assert.equal(entry.model.position.x, 61.5);
+    assert.equal(entry.model.rotation.y, 0);
+    assert.equal(entry.positionAnimation.movement.mode, 'run');
+    assert.equal(entry.positionAnimation.movement.direction, 'forward');
+    context.positionFirstPersonCamera();
+    assert.ok(controls.target.clone().sub(camera.position).distanceTo(new THREE.Vector3(0, 0, 1)) < 1e-8);
+    context.updateCharacterPosition(1, 61, 68, { deferRefresh: true, floor_level: 0, height: 1 });
+    assert.equal(entry.model.position.x, 61.5);
+    callbacks.shift()(5000);
+    assert.equal(entry.model.position.z, 68.5);
+    assert.equal(entry.positionAnimation, null);
+    assert.equal(entry.model.rotation.y, 0);
+});
 
 function movementContext(current = {}) {
     const context = vm.createContext({scoutedCharacters:new Set(),
@@ -303,6 +360,17 @@ test('continuing movement uses authoritative evasion and does not repay run AP',
     assert.equal(context.getMovementModeAvailability('run', { cost: 2, distance: 2 }).allowed, false);
 });
 
+test('одышка показывает последний заблокированный раунд', () => {
+    const context = movementContext({strenuous_movement_blocked_until_round: 3});
+    const check = () => context.getMovementModeAvailability('run', {cost: 1, distance: 1});
+    context.combatState.round_number = 2;
+    assert.match(check().reason, /до конца раунда 3$/);
+    context.combatState.round_number = 3;
+    assert.match(check().reason, /до конца текущего раунда$/);
+    context.combatState.round_number = 4;
+    assert.equal(check().allowed, true);
+});
+
 test('remembered models stay at the observed position and cannot be picked', () => {
     const disabledRaycast = () => {};
     const child = { isMesh: true };
@@ -316,6 +384,7 @@ test('remembered models stay at the observed position and cannot be picked', () 
         createMutantModel: () => null,
         setFogGhostAppearance: (model) => { child.raycast = disabledRaycast; return model; },
         applyFogGhostPosture() {},
+        mountHumanLocationAppearance() {},
     });
     vm.runInContext(functionSource('createCharacterFogGhost'), context);
     const ghost = context.createCharacterFogGhost({ posX: 5, posY: 3, height: 1, posture: 'standing' });
@@ -325,9 +394,10 @@ test('remembered models stay at the observed position and cannot be picked', () 
 });
 
 test('a crouching target hidden by a low cover keeps its last visible snapshot', () => {
-    const entry = { posX: 2, posY: 0, posture: 'standing', facingY: 0 };
+    const entry = { posX: 2, posY: 0, posture: 'standing', facingY: 0,
+        model: { userData: { characterAppearance: { top: 'gorka' } } } };
     const memory = new Map([['2:0', { height: 1 }], ['3:0', { height: 1 }]]);
-    const context = vm.createContext({scoutedCharacters:new Set(),
+    const context = vm.createContext({scoutedCharacters:new Set(), firstPersonView:null,
         fogMemory: memory, characterModels: new Map([[42, entry]]),
         getTileHeight: () => 1,
         isPointVisibleToPlayer: (x, y, height) => x === 2 && height > 2.5,
@@ -337,7 +407,9 @@ test('a crouching target hidden by a low cover keeps its last visible snapshot',
     vm.runInContext(functionSource('rememberVisibleCharacters'), context);
     context.rememberVisibleCharacters([]);
     const snapshot = JSON.stringify(memory.get('2:0').characters);
+    assert.equal(memory.get('2:0').characters[0].appearance.top, 'gorka');
     entry.posture = 'sitting';
+    entry.model.userData.characterAppearance = { top: 'sweater' };
     assert.equal(context.isCharacterVisibleToPlayer(entry, []), false);
     assert.equal(context.rememberVisibleCharacters([]), false);
     entry.posX = 3;
@@ -371,11 +443,12 @@ test('actual sight ray sees a standing head but not a crouching head behind low 
     const geometryUrl = 'data:text/javascript;base64,' + Buffer.from(fs.readFileSync(path.join(__dirname, '../app/static/js/locationTerrain.js'), 'utf8')).toString('base64');
     const lineSource = fs.readFileSync(path.join(__dirname, '../app/static/js/terrainLineOfSight.js'), 'utf8').replace("'./locationTerrain.js'", JSON.stringify(geometryUrl));
     const terrain = await import('data:text/javascript;base64,' + Buffer.from(lineSource).toString('base64'));
-    const context = vm.createContext({scoutedCharacters:new Set(),
+    const context = vm.createContext({scoutedCharacters:new Set(), firstPersonView:null,
         FOG_VIEW_RADIUS: 25, FOG_VIEW_HALF_ANGLE: Math.PI / 3,
         getTileHeight: () => 1,
         getVisionBlockerHeight: (x, y) => x === 1 && y === 0 ? 2.5 : -Infinity,
         darknessFactorAt: () => 1,
+        sourceHasArtifactDaylightVision: () => false,
         lightPathOpen: () => true,
         terrainLineHit: terrain.terrainLineHit, terrainOpeningAt: terrain.terrainOpeningAt,
         getVisionObjectIndex: () => ({walls:[],terrainCache:new Map()}),

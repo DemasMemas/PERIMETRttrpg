@@ -13,6 +13,8 @@ const resolutionSelect = document.getElementById('resolution');
 const readout = document.getElementById('readout');
 const results = document.getElementById('results');
 const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
+renderer.outputColorSpace = THREE.LinearSRGBColorSpace;
+renderer.useLegacyLights = true;
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 renderer.setClearColor(0x8c988d);
@@ -133,8 +135,7 @@ function buildScene() {
     for (let index = 0; index < 72; index++) {
         const x = 8 + (index % 9) * 4;
         const z = 8 + Math.floor(index / 9) * 4;
-        const local = createAnomalyEffect(kinds[index % 6], colors[index % 6], 0.8,
-            `bench-${index}`, `Аномалия ${index + 1}`);
+        const local = createAnomalyEffect(kinds[index % 6], colors[index % 6], 0.8, `bench-${index}`);
         local.position.set(x, 0.04, z);
         localAnomalies.add(local);
         anomalyRoots.local.push(local);

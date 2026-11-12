@@ -34,7 +34,7 @@ test('осмотр ГМа тоже включает туман и не изме�
 
 test('Огненная слеза обходит темноту только для своего наблюдателя и сохраняет преграды', () => {
     let open = true;
-    const context = vm.createContext({ window: { isGM: false }, gmVisionCharacterId: null, getCurrentUserId: () => 1,
+    const context = vm.createContext({ firstPersonView: null, window: { isGM: false }, gmVisionCharacterId: null, getCurrentUserId: () => 1,
         FOG_VIEW_RADIUS: 25, FOG_VIEW_HALF_ANGLE: Math.PI / 3, darknessFactorAt: () => .07,
         visionEyeHeight: () => 1.7, hasLineOfSight: () => open });
     vm.runInContext(section('function sourceHasArtifactDaylightVision(', 'function syncArtifactDaylightVision('), context);
@@ -80,7 +80,7 @@ test('GM-hidden and camouflaged models restore their original appearance indepen
 });
 
 test('hidden or camouflaged characters are not visible through fog memory', () => {
-    const context = vm.createContext({scoutedCharacters:new Set(),
+    const context = vm.createContext({firstPersonView:null,scoutedCharacters:new Set(),
         isPointVisibleToPlayer: () => true,
         getTileHeight: () => 1,
     });

@@ -51,10 +51,9 @@ export function createLocationLightingEditor(container, initial, onPreview = () 
 
     const editor = {
         get(report = true) {
-            const value = { mode: mode.value };
-            for (const key of Object.keys(DEFAULT_LOCATION_LIGHTING)) {
-                if (key === 'mode' || key === 'local_lights' || key === 'dark_tiles') continue;
-                const element = container.querySelector(`[data-lighting="${key}"]`);
+            const value = { ...settings, mode: mode.value };
+            for (const element of manual.querySelectorAll('[data-lighting]')) {
+                const key = element.dataset.lighting;
                 value[key] = element.type === 'number'
                     ? readNumericInput(element, { report: report && mode.value === 'manual', precision: 3 })
                     : element.value;

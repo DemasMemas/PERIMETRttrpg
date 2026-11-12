@@ -17,7 +17,7 @@ ACTION_NAMES = {
     'place':'Установка ловушки','mask':'Маскировка ловушки','defuse':'Обезвреживание ловушки',
     'recover':'Подбор ловушки','detect':'Осмотр клетки','escape_net':'Освободиться из сети',
     'cut_net':'Разрезать сеть','mask_stash':'Маскировка тайника','bury_ground_stash':'Тайник в земле',
-    'dig_up_stash':'Раскапывание ящика',
+    'dig_up_stash':'Раскапывание ящика', 'search_stash':'Поиск тайника',
 }
 
 
@@ -114,13 +114,70 @@ def _tool_bonus(item,profile,mask=False):
     return 0
 
 
+def _inspection_target(actor, data, payload, user_id):
+    from types import SimpleNamespace
+    from app.services import stashes
+    from app.services.character_traits import facial_profile
+    from app.services.combat import CombatService
+    from app.services.location_navigation import STOREY_HEIGHT, ground, level_of, number, pose, surface
+
+    effects = (data.get('health') or {}).get('effects') or []
+    if facial_profile(data)['eyes'] == 2 or any(
+        effect.get('type') == 'blindness' and effect.get('active', True)
+        and CombatService._coerce_float(effect.get('value'), 0) >= 100 for effect in effects
+    ):
+        raise ValidationError('Для осмотра нужно видеть')
+
+    operation = payload['operation']
+    actor_level = actor.floor_level or 0
+    object_id = payload.get('search_object_id')
+    objects = LocationObject.query.filter_by(location_id=actor.location_id).all()
+    stash_types = stashes.CONTAINER_TYPES | stashes.HOST_TYPES
+    if object_id is not None or operation == 'search_stash':
+        obj = next((candidate for candidate in objects if type(object_id) is int and candidate.id == object_id), None)
+        if not obj or (obj.properties or {}).get('gm_hidden') or not stashes.visible(obj, user_id):
+            raise NotFoundError('Объект недоступен для осмотра')
+        x, y, level = obj.tile_x, obj.tile_y, level_of(obj)
+        if operation == 'search_stash':
+            if obj.type not in stash_types:
+                raise ValidationError('В этом объекте нельзя устроить тайник')
+            if level != actor_level or math.hypot(x - actor.pos_x, y - actor.pos_y) > 1.5:
+                raise ValidationError('Подойдите к объекту на том же этаже')
+        px, py, *_ = pose(obj)
+        target_x, target_y = px - .5, py - .5
+        height = ground(actor.location, x, y) + level * STOREY_HEIGHT
+        top = height + number((obj.properties or {}).get('elevation'), 0) + CombatService._object_height(obj)
+        target_surface = surface(actor.location, objects, math.floor(target_x), math.floor(target_y), level)
+        point_height = max(.04, top - (target_surface['height'] if target_surface else height) - .02)
+        blockers = [candidate for candidate in objects if candidate.id != object_id]
+    else:
+        x, y = payload.get('x'), payload.get('y')
+        level = payload.get('floor_level', actor_level)
+        if any(type(value) is not int for value in (x, y, level)):
+            raise ValidationError('Выберите клетку для осмотра')
+        if not (0 <= x < actor.location.grid_width and 0 <= y < actor.location.grid_height):
+            raise ValidationError('Клетка вне подлокации')
+        if level != actor_level and not surface(actor.location, objects, x, y, level):
+            raise ValidationError('На этом этаже нет клетки для осмотра')
+        target_x, target_y, point_height = x, y, None
+        # Контейнер на осматриваемой клетке сам не закрывает её от наблюдателя.
+        blockers = [candidate for candidate in objects if not (
+            candidate.type in stash_types and (candidate.tile_x, candidate.tile_y) == (x, y)
+            and level_of(candidate) == level
+        )]
+    target = SimpleNamespace(id=-1, pos_x=target_x, pos_y=target_y, floor_level=level, posture='prone')
+    if not CombatService._can_see_location_character(actor, target, objects=blockers, point_height=point_height):
+        raise ValidationError('Эта цель не видна персонажу')
+    return {'x': x, 'y': y, 'level': level, 'object_id': object_id}
+
+
 def prepare(actor,data,payload,user_id):
     from app.services.combat import CombatService
     from app.services.item_template_lookup import resolve_item_template
     from app.services.location_navigation import surface
     if not enabled():raise ValidationError('Ловушки пока недоступны. Обновите сервер.')
     if not isinstance(payload,dict):raise ValidationError('Выберите действие ловушки')
-    operation=payload.get('operation');trap=None;item=None;tool=None;stash=None;stash_mode=None
+    operation=payload.get('operation');trap=None;item=None;tool=None;stash=None;stash_mode=None;inspection=None
     if operation in {'escape_net','cut_net'}:
         victim=actor if operation=='escape_net' else LocationCharacter.query.filter_by(location_id=actor.location_id,character_id=payload.get('target_character_id')).first()
         held=(((victim.character.data or {}).get('health') or {}).get('combatMeta') or {}).get('trappedNet') if victim else None
@@ -186,30 +243,19 @@ def prepare(actor,data,payload,user_id):
         if payload.get('tool_path') is not None:
             tool=_item(data,payload['tool_path'])
             if not tool or not _tool_bonus(tool,p,True):raise ValidationError('Выберите подходящий инструмент')
-        if stash_mode!='compartment' and not stashes.digging_tool(tool):
+        if operation=='bury_ground_stash':
+            if not stashes.ground_digging_tool(tool):
+                raise ValidationError('Для земляного тайника нужна лопата или лопатка саперная')
+            if payload.get('tool_id') is not None and tool.get('id') != payload['tool_id']:
+                raise ConflictError('Выбранный инструмент перемещён')
+        elif stash_mode!='compartment' and not stashes.digging_tool(tool):
             raise ValidationError('Для земляных работ нужна лопата или сапёрная лопатка')
-    elif operation=='detect':
-        # Поиск задаётся клеткой: клиент не получает ID/координаты скрытых ловушек.
-        x,y=payload.get('x'),payload.get('y')
-        from app.services.character_traits import facial_profile
-        if facial_profile(data)['eyes']==2 or any(e.get('type')=='blindness' and e.get('active',True) and CombatService._coerce_float(e.get('value'),0)>=100 for e in (data.get('health') or {}).get('effects') or []):raise ValidationError('Для осмотра нужно видеть')
-        if any(type(v) is not int for v in (x,y)):raise ValidationError('Выберите клетку для осмотра')
-        if not (0<=x<actor.location.grid_width and 0<=y<actor.location.grid_height):raise ValidationError('Клетка вне подлокации')
-        from types import SimpleNamespace
-        from app.services.location_navigation import ground, level_of
-        from app.services.stashes import CONTAINER_TYPES, HOST_TYPES
-        target=SimpleNamespace(**{k:v for k,v in actor.__dict__.items() if not k.startswith('_')})
-        target.id=-1;target.character_id=-1;target.character=actor.character;target.location=actor.location
-        target.pos_x,target.pos_y=x,y;target.height=ground(actor.location,x,y)+(actor.floor_level or 0)*2.4;target.posture='prone'
-        # Контейнер в осматриваемой клетке сам не закрывает её от наблюдателя.
-        objects=[obj for obj in LocationObject.query.filter_by(location_id=actor.location_id)
-                 if not (obj.type in (CONTAINER_TYPES | HOST_TYPES) and (obj.tile_x,obj.tile_y)==(x,y)
-                         and level_of(obj)==(actor.floor_level or 0))]
-        if not CombatService._can_see_location_character(actor,target,objects=objects):raise ValidationError('Эта клетка не видна персонажу')
+    elif operation in {'detect', 'search_stash'}:
+        inspection = _inspection_target(actor, data, payload, user_id)
         cost=0;key=None;p=None
     else:raise ValidationError('Неизвестное действие ловушки')
     return {'operation':operation,'trap':trap,'key':key,'profile':p,'item':item,'tool':tool,'stash':stash,
-            'stash_mode':stash_mode,'action_points':cost}
+            'stash_mode':stash_mode,'inspection':inspection,'action_points':cost}
 
 
 def execute(actor,data,payload,user_id,state=None):
@@ -281,12 +327,15 @@ def execute(actor,data,payload,user_id,state=None):
     else:
         check=CombatService._narrative_skill_check(data,'skills.physical.awareness.visual',darkness=CombatService._is_dark_at_character(actor.location,actor),weather=at_character(actor.location,actor))
         found=[]
-        for candidate in LocationTrap.query.filter_by(location_id=actor.location_id,x=payload['x'],y=payload['y'],level=actor.floor_level or 0).all():
+        inspection = plan['inspection']
+        x, y, level, object_id = (inspection[key] for key in ('x', 'y', 'level', 'object_id'))
+        candidates = LocationTrap.query.filter_by(location_id=actor.location_id,x=x,y=y,level=level).all() if object_id is None else []
+        for candidate in candidates:
             if candidate.status=='recovered' or candidate.detection_dc is None:continue
             if check['roll']==20 or check['roll']!=1 and check['total']>=candidate.detection_dc:
                 candidate.known_users=list(set([*(candidate.known_users or []),user_id]));found.append(candidate.id)
         from app.services import stashes
-        stash_ids=stashes.discover(actor,user_id,payload['x'],payload['y'],check)
+        stash_ids=stashes.discover(actor,user_id,x,y,check,level=level,object_id=object_id)
         result.update(check=check,roll_required=True,trap_ids=found,stash_ids=stash_ids,found=len(found)+len(stash_ids))
         return result
     result['trap_ids']=[trap.id]

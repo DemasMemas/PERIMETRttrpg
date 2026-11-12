@@ -3,13 +3,21 @@ export function waterFaceNormal(a,i) {
         vx=a[i+6]-a[i],vy=a[i+7]-a[i+1],vz=a[i+8]-a[i+2];
     return [uy*vz-uz*vy,uz*vx-ux*vz,ux*vy-uy*vx];
 }
-export function smoothWaterNormals(positions,halo=[]) {
+export function smoothWaterNormals(positions,halo=[],shoulders=null) {
     const normals=new Map(),key=(a,i)=>[a[i],a[i+1],a[i+2]].map(n=>Math.round(n*1e6)).join(',');
     for(const a of [positions,halo])for(let i=0;i<a.length;i+=9){
         const n=waterFaceNormal(a,i);for(const j of [i,i+3,i+6]){const k=key(a,j),sum=normals.get(k)||[0,0,0];
             for(let axis=0;axis<3;axis++)sum[axis]+=n[axis];normals.set(k,sum);}
     }
-    const result=[];for(let i=0;i<positions.length;i+=3){const n=normals.get(key(positions,i)),length=Math.hypot(...n)||1;result.push(...n.map(v=>v/length));}
+    const result=[];
+    for(let i=0;i<positions.length;i+=3){
+        const [x,y,z]=normals.get(key(positions,i)),length=Math.hypot(x,y,z)||1;
+        const shoulder=shoulders?.[i/3]||0;
+        // Верх плавно продолжает грунт на стыке, затем проявляется наклон берега.
+        const nx=x/length*(1-shoulder),ny=y/length*(1-shoulder)+shoulder,nz=z/length*(1-shoulder);
+        const norm=Math.hypot(nx,ny,nz)||1;
+        result.push(nx/norm,ny/norm,nz/norm);
+    }
     return result;
 }
 

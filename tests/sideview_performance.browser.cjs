@@ -46,10 +46,11 @@ module.exports=async({page,request,token,lobby,base,safeSession})=>{
     const measure=async(label,{warm=30,duration=0}={})=>{
         if(warm)await wait(warm);
         const result=await page.evaluate(`(async()=>{
-            const {renderer,camera}=FG,stats=a=>{if(!a.length)return null;const mean=a.reduce((n,v)=>n+v,0)/a.length;a.sort((a,b)=>a-b);return{mean,median:a[Math.floor(a.length*.5)],p95:a[Math.floor(a.length*.95)],max:a[a.length-1]}};
+            const {renderer,camera,sun}=FG,stats=a=>{if(!a.length)return null;const mean=a.reduce((n,v)=>n+v,0)/a.length;a.sort((a,b)=>a-b);return{mean,median:a[Math.floor(a.length*.5)],p95:a[Math.floor(a.length*.95)],max:a[a.length-1]}};
             const gl=renderer.getContext(),ext=renderer.capabilities.isWebGL2&&gl.getExtension('EXT_disjoint_timer_query_webgl2');
-            const cpu=[],gpu=[],queries=[],frames=[],speed=[],original=renderer.render;let last,lastPosition;const started=performance.now();
+            const cpu=[],gpu=[],queries=[],frames=[],speed=[],original=renderer.render;let last,lastPosition,sunUpdates=0;const started=performance.now();
             renderer.render=function(...args){const at=performance.now(),q=ext&&gl.createQuery();if(q)gl.beginQuery(ext.TIME_ELAPSED_EXT,q);
+                if(sun.shadow.needsUpdate)sunUpdates++;
                 try{return original.apply(this,args)}finally{if(q){gl.endQuery(ext.TIME_ELAPSED_EXT);queries.push(q)}cpu.push(performance.now()-at)}};
             try{for(let i=0;${duration?`performance.now()-started<${duration}`:'i<160'};i++)await new Promise(resolve=>requestAnimationFrame(t=>{
                 if(last){const dt=t-last;frames.push(dt);speed.push(camera.position.distanceTo(lastPosition)/(dt/1000))}last=t;lastPosition=camera.position.clone();resolve()}));}
@@ -57,10 +58,15 @@ module.exports=async({page,request,token,lobby,base,safeSession})=>{
             if(ext){for(let i=0;i<8;i++)await new Promise(requestAnimationFrame);for(const q of queries){if(gl.getQueryParameter(q,gl.QUERY_RESULT_AVAILABLE)&&!gl.getParameter(ext.GPU_DISJOINT_EXT))gpu.push(gl.getQueryParameter(q,gl.QUERY_RESULT)/1e6);gl.deleteQuery(q)}}
             return{frames:stats(frames),renderCpu:stats(cpu),gpu:stats(gpu),speed:stats(speed),gaps:frames.filter(x=>x>25).length,
                 calls:renderer.info.render.calls,triangles:renderer.info.render.triangles,batches:FG.scene.children.filter(n=>n.userData.locationRenderBatch).length,
-                lamps:L.getLocationPortableLightDiagnostics().lights};
+                lamps:L.getLocationPortableLightDiagnostics().lights,sunUpdates};
         })()`);metrics.push({label,...result});return result;
     };
-    for(const view of views){await camera(view);await measure('rain/off/'+view.name);await shot(view.name+'-off');}
+    for(const view of views){
+        await camera(view);
+        const row=await measure('rain/off/'+view.name);
+        assert.ok(row.sunUpdates<=2,'Неподвижные окна не должны обновлять солнечную тень каждый кадр');
+        await shot(view.name+'-off');
+    }
     // Контроль той же сцены и камеры: стоимость утраченного объединения.
     await camera(views[4]);
     await page.evaluate('window.savedBatchPrepare=FG.batches.prepare;FG.batches.prepare=()=>{};true');

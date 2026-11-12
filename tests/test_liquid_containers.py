@@ -1,7 +1,7 @@
 import pytest
 
 from app.services.exceptions import ValidationError
-from app.services.liquid_containers import preserve_and_validate
+from app.services.liquid_containers import GLASS_BOTTLE, PLASTIC_BOTTLE, preserve_and_validate
 
 
 def canister(contents=None):
@@ -41,3 +41,15 @@ def test_canister_accepts_fractional_fuel_and_keeps_its_history():
 def test_canister_rejects_invalid_contents(contents):
     with pytest.raises(ValidationError):
         preserve_and_validate(sheet(canister()), sheet(canister(contents)))
+
+
+@pytest.mark.parametrize('name', [GLASS_BOTTLE, PLASTIC_BOTTLE])
+def test_liter_bottle_stores_fuel_without_mixing(name):
+    bottle = {'id': 'bottle', 'name': name, 'contents': [liquid(quantity=.7), liquid(quantity=.3)]}
+    preserve_and_validate({}, sheet(bottle))
+    assert bottle['capacity'] == 1 and bottle['fuelUsed'] is True
+    with pytest.raises(ValidationError, match='1 л'):
+        preserve_and_validate({}, sheet({**bottle, 'contents': [liquid(quantity=1.1)]}))
+    with pytest.raises(ValidationError, match='После топлива'):
+        preserve_and_validate(sheet(bottle), sheet({'id': 'bottle', 'name': name,
+            'contents': [liquid(name='Вода(1 Литр)')]}))

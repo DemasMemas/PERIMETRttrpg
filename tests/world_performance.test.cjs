@@ -6,6 +6,41 @@ const vm = require('node:vm');
 
 const source = fs.readFileSync(path.join(__dirname, '../app/static/js/lobby3d.js'), 'utf8');
 
+test('облачное поле воспроизводимо и хранит раздельную плотность и освещение', () => {
+    const start = source.indexOf('function createCloudTexture()');
+    const end = source.indexOf('// Создаём текстуру один раз', start);
+    const context = vm.createContext({
+        document: {
+            createElement() {
+                const canvas = {};
+                canvas.getContext = () => ({
+                    createImageData: (width, height) => ({ data: new Uint8ClampedArray(width * height * 4) }),
+                    putImageData(image) { canvas.pixels = image.data; },
+                });
+                return canvas;
+            },
+        },
+        THREE: { CanvasTexture: class { constructor(image) { this.image = image; } }, RepeatWrapping: 1000 },
+    });
+    vm.runInContext(source.slice(start, end), context);
+    const first = context.createCloudTexture();
+    const second = context.createCloudTexture();
+    assert.deepEqual(first.image.pixels, second.image.pixels);
+    const density = new Set(), lighting = new Set();
+    let clear = 0, dense = 0;
+    for (let i = 0; i < first.image.pixels.length; i += 4) {
+        density.add(first.image.pixels[i]);
+        lighting.add(first.image.pixels[i + 1]);
+        if (first.image.pixels[i + 3] < 32) clear++;
+        if (first.image.pixels[i + 3] > 180) dense++;
+    }
+    assert.ok(density.size > 100);
+    assert.ok(lighting.size > 100);
+    assert.ok(clear > 1000 && dense > 1000, 'Есть и разрывы, и плотные облака');
+    assert.equal(first.wrapS, 1000);
+    assert.equal(first.wrapT, 1000);
+});
+
 test('initial neighboring chunks coalesce terrain and road rebuilds', () => {
     const start = source.indexOf('const pendingWorldTerrainChunks = new Set();');
     const end = source.indexOf('// ---', start);
@@ -116,8 +151,10 @@ test('static world shadows are refreshed only when caster visibility changes', (
     const context = vm.createContext({ renderer, updateFarAnomalyInstances() {} });
     vm.runInContext('let worldShadowsDirty = false; let lastWorldShadowAt = -Infinity; let shadowRefreshesSinceSample = 0; const SHADOW_REFRESH_MS = 250;'
         + source.slice(markStart, markEnd) + source.slice(visibleStart, visibleEnd), context);
-    const chunk = { ground: { visible: true }, trees: { visible: true } };
+    const chunk = { ground: { visible: true }, trees: { visible: true }, houses: { visible: true } };
     context.setVisible(chunk, true, true, true, true);
+    context.setVisible(chunk, true, false, true, false);
+    context.refreshWorldShadows(99, true);
     assert.equal(renderer.shadowMap.needsUpdate, false);
     context.setVisible(chunk, false);
     assert.equal(renderer.shadowMap.needsUpdate, false);
@@ -137,6 +174,84 @@ test('static world shadows are refreshed only when caster visibility changes', (
     context.refreshWorldShadows(351, false);
     assert.equal(renderer.shadowMap.needsUpdate, true);
     assert.match(source, /renderer\.shadowMap\.autoUpdate = false/);
+});
+
+test('Незначительный рельеф не отбрасывает полосы, а высокие грани сохраняются в проходе теней', () => {
+    const start=source.indexOf('function partitionWorldTerrainShadowIndices(');
+    const end=source.indexOf('\nfunction refreshWorldTerrainSurface(',start);
+    const heights=[1,1.05,1,1.1,1.7,1.1,1.7,1.7,1.7];
+    const geometry={index:{array:new Uint16Array([0,1,2,3,4,5,6,7,8])},
+        attributes:{position:{getY:index=>heights[index]}},userData:{}};
+    const context=vm.createContext({worldTerrainMinShadowRise:.075});
+    vm.runInContext(source.slice(start,end),context);
+    assert.equal(context.partitionWorldTerrainShadowIndices(geometry),true);
+    assert.equal(geometry.userData.terrainShadowStart,6);
+    assert.deepEqual([...geometry.index.array.slice(6)],[3,4,5]);
+    assert.deepEqual([...geometry.index.array].sort((a,b)=>a-b),[0,1,2,3,4,5,6,7,8]);
+    const low={index:{array:new Uint16Array([0,1,2])},attributes:geometry.attributes,userData:{}};
+    assert.equal(context.partitionWorldTerrainShadowIndices(low),false);
+});
+
+test('Близкие тени и средние модели сохраняют точку опоры подробного дерева', async () => {
+    const THREE = await import('../app/static/vendor/three-0.162.0/build/three.module.min.js');
+    const { getTreeGeometry } = await import('../app/static/js/locationHouseholdModels.js');
+    for (const species of ['oak', 'birch', 'pine']) {
+        const id = `${species}_green`;
+        const full = getTreeGeometry(THREE, id);
+        const shadow = getTreeGeometry(THREE, id, 'nearShadow');
+        const middle = getTreeGeometry(THREE, id, 'middle');
+        for (const geometry of [middle, shadow]) {
+            assert.ok(geometry.attributes.position.count < full.attributes.position.count * .20);
+            const trunk = geometry.userData.movementTrunk;
+            const reference = full.userData.movementTrunk;
+            for (let axis = 0; axis < 3; axis++) {
+                assert.ok(Math.abs((trunk.min[axis] + trunk.max[axis] - reference.min[axis] - reference.max[axis]) / 2) < .016);
+            }
+        }
+    }
+});
+
+test('Камера теней уточняет близкий рельеф и сохраняет направление света при перемещении обзора', async () => {
+    const THREE=await import('../app/static/vendor/three-0.162.0/build/three.module.min.js');
+    const start=source.indexOf('let worldShadowRadius =');
+    const end=source.indexOf('\nconst fillLight',start);
+    const camera=new THREE.PerspectiveCamera(45,16/9,.1,5000);
+    camera.position.set(32,15,32);
+    const controls={target:new THREE.Vector3(15,1,15)},light=new THREE.DirectionalLight();
+    light.position.set(256,300,256);light.shadow.mapSize.set(4096,4096);
+    const renderer={shadowMap:{needsUpdate:false}};
+    let invalidations=0;
+    const context=vm.createContext({THREE,camera,controls,directionalLight:light,renderer,
+        markWorldShadowsDirty(){invalidations++;}});
+    const direction=light.position.clone().sub(light.target.position);
+    vm.runInContext(source.slice(start,end),context);
+    context.fitWorldShadowCamera();
+    assert.ok(light.shadow.camera.right<50);
+    assert.ok(light.position.clone().sub(light.target.position).distanceTo(direction)<1e-9);
+    assert.equal(renderer.shadowMap.needsUpdate,false,'Перенос камеры теней ждёт общего планировщика');
+    context.fitWorldShadowCamera();
+    assert.equal(renderer.shadowMap.needsUpdate,false);assert.equal(invalidations,1);
+    camera.position.x+=20;controls.target.x+=20;context.fitWorldShadowCamera();
+    assert.equal(invalidations,2);
+    assert.ok(light.position.clone().sub(light.target.position).distanceTo(direction)<1e-9);
+});
+
+test('полуденное солнце сохраняет тень перепада высоты на глобальной карте', async () => {
+    const THREE=await import('../app/static/vendor/three-0.162.0/build/three.module.min.js');
+    const begin=source.indexOf('function updateCelestialPositions()');
+    const end=source.indexOf('\nexport function setCelestialTime',begin);
+    const light=new THREE.DirectionalLight();
+    const context=vm.createContext({THREE,celestialMinutes:780,MIN_WORLD_SHADOW_LIGHT_Y:.35,MAX_WORLD_SHADOW_LIGHT_SLOPE:1,
+        sunDisc:{position:new THREE.Vector3()},moonDisc:{position:new THREE.Vector3()},stars:{rotation:{}},
+        worldSkySphere:{material:{uniforms:{starRotation:{value:0}}}},
+        cloudField:{worldCloudProjection:{value:new THREE.Vector2()}},MAX_CHUNK_X:1,MAX_CHUNK_Y:1,CHUNK_SIZE:32,
+        directionalLight:light,markWorldShadowsDirty(){}});
+    vm.runInContext(source.slice(begin,end),context);
+    context.updateCelestialPositions();
+    const direction=light.position.clone().sub(light.target.position);
+    const projectedLength=1.5*Math.hypot(direction.x,direction.z)/direction.y;
+    assert.ok(projectedLength>=1.5-1e-9);
+    assert.ok(direction.y>0);
 });
 
 test('distant anomalies share one per-chunk draw while nearby effects remain individual', () => {
@@ -241,6 +356,7 @@ test('camera visibility pass rebuilds the near-anomaly list instead of accumulat
         TERRAIN_RENDER_DISTANCE: 380, NATURAL_DETAIL_DISTANCE: 190,
         STRUCTURE_DETAIL_DISTANCE: 280, ANOMALY_DETAIL_DISTANCE: 320,
         chunkWithinHorizontalDistance() { return true; },
+        refreshWorldObjectBounds() {},
         setVisible() { near.push('visible'); },
     });
     vm.runInContext(source.slice(start, end), context);
@@ -248,6 +364,32 @@ test('camera visibility pass rebuilds the near-anomaly list instead of accumulat
     assert.deepEqual(near, ['visible']);
     context.updateChunkVisibility();
     assert.deepEqual(near, ['visible']);
+});
+
+test('верх объекта остаётся видимым, когда земля его чанка вышла из кадра', () => {
+    const start = source.indexOf('function updateChunkVisibility()');
+    const end = source.indexOf('\nfunction setVisible(', start);
+    const objectBounds = { isEmpty: () => false };
+    const chunk = { bounds: {}, objectBounds };
+    let visibility;
+    const context = vm.createContext({
+        camera: { projectionMatrix: {}, matrixWorldInverse: {}, updateMatrixWorld() {} },
+        chunkFrustum: { setFromProjectionMatrix() {}, intersectsBox: box => box === objectBounds },
+        chunkProjectionMatrix: { multiplyMatrices() { return this; } },
+        visibleNearAnomalies: [], chunksMap: new Map([['one', chunk]]), controls: { target: {} },
+        TERRAIN_RENDER_DISTANCE: 380, NATURAL_DETAIL_DISTANCE: 190,
+        STRUCTURE_DETAIL_DISTANCE: 280, ANOMALY_DETAIL_DISTANCE: 320,
+        chunkWithinHorizontalDistance: () => true, refreshWorldObjectBounds() {},
+        setVisible(...args) { visibility = args; },
+    });
+    vm.runInContext(source.slice(start, end), context);
+    context.updateChunkVisibility();
+    assert.equal(visibility[1], true);
+    assert.equal(visibility[2], true);
+    assert.equal(visibility[5], false);
+    objectBounds.isEmpty = () => true;
+    context.updateChunkVisibility();
+    assert.equal(visibility[1], false, 'Пустые границы не включают чанк');
 });
 
 test('removing anomaly LODs releases their private geometry, materials and label textures', () => {
@@ -308,7 +450,7 @@ test('camera drag defers expensive world picking without blocking brush movement
 
 test('world distance is horizontal and keeps terrain beyond smaller detail ranges', () => {
     const start = source.indexOf('function chunkWithinHorizontalDistance(');
-    const end = source.indexOf('\nfunction updateChunkVisibility()', start);
+    const end = source.indexOf('\n}', start) + 2;
     assert.ok(start >= 0 && end > start);
     const context = vm.createContext({});
     vm.runInContext(source.slice(start, end), context);

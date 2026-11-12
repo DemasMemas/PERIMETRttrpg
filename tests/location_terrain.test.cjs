@@ -7,6 +7,64 @@ const vm = require('node:vm');
 const read = name => fs.readFileSync(path.join(__dirname, '../app/static/js', name), 'utf8');
 const load = async name => import(`data:text/javascript;base64,${Buffer.from(read(name)).toString('base64')}`);
 
+test('рельеф колей остаётся визуальным и сходится с соседним покрытием', async () => {
+    const terrain = await load('locationTerrain.js');
+    const { TERRAIN_MATERIALS, TERRAIN_OPTIONS } = await load('terrainMaterialCatalog.js');
+    const samples = fs.readFileSync(path.join(__dirname, '../app/static/materials/terrain/local-relief.bin'));
+    const manifest = JSON.parse(fs.readFileSync(path.join(__dirname, '../app/static/materials/terrain/local-relief.sources.json')));
+    const oldFetch = globalThis.fetch;
+    globalThis.fetch = async url => {
+        assert.equal(url, '/static/materials/terrain/local-relief.bin');
+        return { ok: true, arrayBuffer: async () => Uint8Array.from(samples).buffer };
+    };
+    try {
+        assert.equal(await terrain.loadLocalTerrainRelief(TERRAIN_MATERIALS), true);
+    } finally {
+        globalThis.fetch = oldFetch;
+    }
+    const tiles = [[{ terrain: 'muddy_tracks', height: 1 }, { terrain: 'grass', height: 1 }]];
+    const { positions } = terrain.buildTerrainSurfaceData(tiles);
+    const inner = [];
+    for (let i = 0; i < positions.length; i += 3) {
+        const [x, y, z] = positions.slice(i, i + 3);
+        if (x === 1) assert.equal(y, 1.002);
+        if (x > 0 && x < 1 && z > 0 && z < 1) inner.push(y);
+    }
+    assert.ok(Math.max(...inner) - Math.min(...inner) > .04);
+    assert.ok(inner.every(y => y >= 1.002 && y < 1.077001));
+    assert.equal(terrain.terrainSurfaceHeight(tiles, 0, 0, .5, .5), 1);
+    for (const sloped of [false, true]) {
+        const crossing = Array.from({ length: 3 }, (_, z) => Array.from({ length: 3 }, (_, x) => ({
+            terrain: x === 0 && z === 0 ? 'grass' : 'muddy_tracks',
+            height: 1 + (sloped ? x * .3 : 0),
+        })));
+        const smooth = terrain.buildSmoothTerrainData(crossing);
+        function boundary(tileX) {
+            const { positions } = terrain.buildTerrainSurfaceData(crossing, smooth,
+                { minX: tileX, maxX: tileX, minZ: 1, maxZ: 1 });
+            const points = new Map();
+            for (let i = 0; i < positions.length; i += 3) {
+                const [x, y, z] = positions.slice(i, i + 3);
+                if (x === 1) points.set(z, y);
+            }
+            return [...points].sort((a, b) => a[0] - b[0]);
+        }
+        assert.ok(boundary(0).length > 2);
+        assert.deepEqual(boundary(0), boundary(1), 'Соседи делят край, примыкающий к углу с другим материалом');
+    }
+    const terrainKinds = ['grass', 'rock', 'sand', 'swamp', ...TERRAIN_OPTIONS.map(([kind]) => kind)];
+    const profiles = Object.keys(manifest.sources);
+    assert.deepEqual(profiles.sort(), terrainKinds.filter(kind => terrain.hasLocalTerrainRelief(kind)).sort());
+    assert.equal(samples.length, profiles.length * 64 * 64);
+    for (const kind of ['grass', 'rock', 'sand', 'swamp', 'muddy_tracks']) assert.ok(profiles.includes(kind), kind);
+    for (const kind of profiles) {
+        const area = Array.from({ length: 3 }, () => Array.from({ length: 3 }, () => ({ terrain: kind, height: 1 })));
+        const { positions } = terrain.buildTerrainSurfaceData(area);
+        assert.ok(positions.some((height, index) => index % 3 === 1 && height > 1.004), kind);
+    }
+    for (const kind of ['shallow_water', 'brown_mud_leaves_01', 'water']) assert.equal(terrain.hasLocalTerrainRelief(kind), false, kind);
+});
+
 test('neighboring tiles differing by one meter share their edge without a manual surface flag', async () => {
     const { buildSmoothTerrainData, isSmoothTerrainTile } = await load('locationTerrain.js');
     const tiles = [[
@@ -379,10 +437,15 @@ function viewToggleHarness(isGM, exitWidth = 145.2) {
 
 test('players and GMs can toggle the terrain grid without changing location data', () => {
     const main = read('main.js');
-    const entry = main.slice(main.indexOf('window.enterLocation = async function'),
-        main.indexOf('if (window.isGM)', main.indexOf('window.enterLocation = async function')));
-    assert.match(entry, /addLocationRoofButton\(\)/);
-    assert.match(entry, /addLocationGridButton\(\)/);
+    const start = main.indexOf('window.enterLocation = async function');
+    const end = main.indexOf('\n};', start);
+    assert.ok(start >= 0 && end > start);
+    const entry = main.slice(start, end);
+    const gmTools = entry.search(/if\s*\(window\.isGM\b/);
+    assert.ok(gmTools > 0);
+    assert.match(entry.slice(0, gmTools), /addLocationRoofButton\(\)/);
+    assert.match(entry.slice(0, gmTools), /addLocationGridButton\(\)/);
+    assert.equal([...entry.matchAll(/addLocationGridButton\(\)/g)].length, 1);
     for (const isGM of [false, true]) {
         const { context, calls, locationData } = viewToggleHarness(isGM);
         const before = JSON.stringify(locationData);
@@ -488,14 +551,32 @@ test('floor is passable and does not charge climb movement in the client', () =>
 
 test('terrain cap uses only a constant depth bias while floor materials stay independent', () => {
     const scene = read('locationScene.js');
-    const cap = scene.slice(scene.indexOf('function rebuildLocationTerrainSurface('),
-        scene.indexOf('function rebuildWaterSurfaceMesh('));
-    assert.match(cap, /map: terrainSurfaceTexture, side: THREE\.DoubleSide, roughness: 0\.97,[\s\S]*?polygonOffset: true, polygonOffsetFactor: 0, polygonOffsetUnits: -1/);
-    assert.doesNotMatch(cap, /depthTest: false|depthWrite: false/);
+    const capStart = scene.indexOf('function createLocationGroundMaterial(');
+    const capEnd = scene.indexOf('function rebuildLocationTerrainSurface(', capStart);
+    assert.ok(capStart >= 0 && capEnd > capStart);
+    const map = {};
+    const context = vm.createContext({ terrainSurfaceTexture: map, locationDarknessTexture: null,
+        currentLocationData: { grid_width: 8, grid_height: 8 }, locationTerrainMaterials: null,
+        applySurfaceDarkness() {}, ensureTerrainGrassDetail() {},
+        THREE: { DoubleSide: 2, Vector2: class {},
+            MeshStandardMaterial: class {
+                constructor(options) { Object.assign(this, { depthTest: true, depthWrite: true }, options); }
+            } },
+    });
+    vm.runInContext(scene.slice(capStart, capEnd), context);
+    const cap = context.createLocationGroundMaterial(true);
+    assert.equal(cap.map, map);
+    assert.equal(cap.polygonOffset, true);
+    assert.equal(cap.polygonOffsetFactor, 0);
+    assert.equal(cap.polygonOffsetUnits, -1);
+    assert.equal(cap.depthTest, true);
+    assert.equal(cap.depthWrite, true);
+    assert.equal(context.createLocationGroundMaterial().polygonOffset, false);
+    assert.match(scene, /const material = createLocationGroundMaterial\(true\)/);
     const object = scene.slice(scene.indexOf('function createLocationObjectMesh('),
         scene.indexOf('function darknessFactorAt('));
     assert.match(object, /const material = hasSeparateMaterials \? null\s*: new THREE\.MeshStandardMaterial/);
-    assert.match(object, /if \(usePbrMaterial && material\) \{\s*applyLocationPbrMaterial\(material, asset\.visual\.maps\)/);
+    assert.match(object, /if \(usePbrMaterial && material\) \{\s*applyLocationPbrMaterial\(material, asset\.visual\.maps, renderer\)/);
 });
 
 test('covered lower terrain tops do not draw color or depth while keeping pick geometry', () => {

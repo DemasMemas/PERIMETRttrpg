@@ -4,9 +4,9 @@ const modulePromise=import('data:text/javascript;base64,'+Buffer.from(src).toStr
 const footprint=o=>[{x:o.tile_x,y:o.tile_y}],level=o=>o.properties?.level||0;
 test('Однозначные terrain стоят два; wood/granite/mud/water не получают выдуманную классификацию',async()=>{
  const {buildMovementSurfaceCosts}=await modulePromise;
- for(const terrain of ['snow','sand','swamp','ice','grass','wood','granite','mud','water']){
+ for(const terrain of ['snow','sand','swamp','ice','shallow_water','grass','wood','granite','mud','water']){
   const costs=buildMovementSurfaceCosts({tiles_data:[[{terrain}]]},footprint,level);
-  assert.equal(costs.get('0:0:0')||1,['snow','sand','swamp','ice'].includes(terrain)?2:1);
+  assert.equal(costs.get('0:0:0')||1,['snow','sand','swamp','ice','shallow_water'].includes(terrain)?2:1);
  }
 });
 test('Шесть существующих vegetation ID стоят два, пол перекрывает грунт, уровни независимы',async()=>{

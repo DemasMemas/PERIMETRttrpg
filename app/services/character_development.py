@@ -21,12 +21,14 @@ def add_skill_experience(data,path,amount,*,apply_multiplier=True,maximum_level=
 
 def award_session(data,payload,*,rng=None):
     rng=rng or random.SystemRandom()
-    if not isinstance(payload,dict) or set(payload)-{'operationId','roleplay','heroism','contribution','gmBonus','trainingSkill','weaponType'}:
+    if not isinstance(payload,dict) or set(payload)-{'operationId','roleplay','heroism','contribution','gmBonus','trainingSkill','weaponType','usedBackgroundWeapon'}:
         raise ValidationError('Неизвестные параметры награды')
     operation=payload.get('operationId')
     if not isinstance(operation,str) or not 1<=len(operation)<=100:raise ValidationError('Нужен идентификатор награды')
     for key in ('roleplay','heroism','contribution','gmBonus'):
         if type(payload.get(key,False)) is not bool:raise ValidationError('Выберите основания награды')
+    if type(payload.get('usedBackgroundWeapon', False)) is not bool:
+        raise ValidationError('Укажите, использован ли выбранный вид оружия')
     previous=(data.get('characterRewards') or [])
     found=next((r for r in previous if r['operationId']==operation),None)
     if found:return deepcopy(found)
@@ -36,12 +38,19 @@ def award_session(data,payload,*,rng=None):
     free=1+sum(int(payload.get(key,False)) for key in ('roleplay','heroism','contribution','gmBonus'))
     training=0;rolls=[]
     if skill:
-        training=1+int(background_is(data,'Бедный') or background_is(data,'Призывник') and skill.startswith('physical.') or background_is(data,'СБУшник') and skill=='physical.shooting' or background_is(data,'Истинный пацифист') and skill.startswith('social.'))
+        security_training = background_is(data, 'СБшник') and skill == 'physical.shooting'
+        training=1+int(background_is(data,'Бедный') or background_is(data,'Призывник') and skill.startswith('physical.') or security_training or background_is(data,'Истинный пацифист') and skill.startswith('social.'))
         risk=background_is(data,'Атлет') or background_is(data,'Призывник') and skill.startswith('other.') or background_is(data,'Давний ветеран') and skill=='physical.shooting'
-        if background_is(data,'СБУшник') and skill=='physical.shooting':
-            weapon=payload.get('weaponType');chosen=((data.get('basic') or {}).get('background') or {}).get('choices',{}).get('backgroundWeapon')
-            if not isinstance(weapon,str) or weapon not in _catalog()['weaponTypes']:raise ValidationError('Укажите вид оружия, использованный при обучении')
-            risk=risk or weapon!=chosen
+        if security_training:
+            chosen = (((data.get('basic') or {}).get('background') or {}).get('choices') or {}).get('backgroundWeapon')
+            valid_choice = isinstance(chosen, str) and chosen in _catalog()['weaponTypes']
+            used = payload.get('usedBackgroundWeapon', False)
+            if 'usedBackgroundWeapon' not in payload and 'weaponType' in payload:
+                weapon = payload['weaponType']
+                if not isinstance(weapon, str) or weapon not in _catalog()['weaponTypes']:
+                    raise ValidationError('Неизвестный вид оружия')
+                used = weapon == chosen
+            risk = risk or not (valid_choice and used)
         if risk:
             roll=rng.randint(1,100);rolls.append(roll)
             if roll>50:training=0

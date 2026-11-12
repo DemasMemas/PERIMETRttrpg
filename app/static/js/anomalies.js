@@ -4,38 +4,6 @@ function material(color, opacity = 1) {
     return new THREE.MeshBasicMaterial({ color, transparent: opacity < 1, opacity, blending: THREE.AdditiveBlending, depthWrite: false });
 }
 
-function anomalyLabel(text) {
-    if (!text) return null;
-    const canvas = document.createElement('canvas');
-    const context = canvas.getContext('2d');
-    context.font = '700 30px Georgia, serif';
-    const width = Math.min(620, Math.ceil(context.measureText(text).width + 38));
-    canvas.width = Math.max(160, width);
-    canvas.height = 58;
-    context.font = '700 30px Georgia, serif';
-    context.textAlign = 'center';
-    context.textBaseline = 'middle';
-    context.fillStyle = 'rgba(10, 12, 9, 0.78)';
-    context.fillRect(0, 4, canvas.width, 50);
-    context.strokeStyle = 'rgba(191, 167, 111, 0.72)';
-    context.strokeRect(1, 5, canvas.width - 2, 48);
-    context.fillStyle = '#e8dfc6';
-    context.fillText(text, canvas.width / 2, 30, canvas.width - 24);
-    const sprite = new THREE.Sprite(new THREE.SpriteMaterial({
-        map: new THREE.CanvasTexture(canvas),
-        transparent: true,
-        depthTest: true,
-        depthWrite: false,
-    }));
-    sprite.scale.set(Math.max(1.2, canvas.width / 150), 0.38, 1);
-    sprite.userData.anomalyLabel=true;
-    sprite.userData.anomalyLabelText=text;
-    sprite.userData.labelBaseScale=[sprite.scale.x,sprite.scale.y];
-    sprite.position.y = 2.25;
-    sprite.renderOrder = 20;
-    return sprite;
-}
-
 function anomalyKeyMarker(key, color) {
     if (!key) return null;
     const hash = [...key].reduce((value, char) => ((value * 31) + char.charCodeAt(0)) >>> 0, 7);
@@ -90,7 +58,6 @@ function updateLightning(lines, time) {
 }
 
 const particleDummy = new THREE.Object3D();
-const labelWorldScale = new THREE.Vector3();
 
 function updateAcidParticles(mesh, time) {
     const { phases, radii, vapor } = mesh.userData.acidParticles;
@@ -124,7 +91,7 @@ function createAcidParticles(count, radius, color, opacity, vapor = false) {
     return mesh;
 }
 
-export function createAnomalyEffect(type = 'electric', color = '#00ffff', scale = 1, key = '', name = '') {
+export function createAnomalyEffect(type = 'electric', color = '#00ffff', scale = 1, key = '') {
     const group = new THREE.Group();
     group.userData.anomalyEffect = { type, phase: Math.random() * Math.PI * 2, scale };
     const visual = new THREE.Group();
@@ -192,8 +159,6 @@ export function createAnomalyEffect(type = 'electric', color = '#00ffff', scale 
     }
     const marker = anomalyKeyMarker(key, tint);
     if (marker) group.add(marker);
-    const label = anomalyLabel(name);
-    if (label) group.add(label);
     group.scale.setScalar(scale);
     return group;
 }
@@ -205,12 +170,6 @@ export function animateAnomalyEffects(roots, time) {
         if (node.parent?.isLOD && typeof node.parent.getCurrentLevel === 'function' && node.parent.levels?.[node.parent.getCurrentLevel()]?.object !== node) return;
         const t = time * 0.001 + effect.phase;
         const visual = node.userData.anomalyVisual || node;
-        node.children.forEach(child=>{
-            if(!child.userData.anomalyLabel)return;
-            node.getWorldScale(labelWorldScale);
-            const base=child.userData.labelBaseScale;
-            child.scale.set(base[0]/Math.max(.0001,Math.abs(labelWorldScale.x)),base[1]/Math.max(.0001,Math.abs(labelWorldScale.y)),1);
-        });
         node.children.forEach(child => {
             if (child.userData.anomalyMarkerSpeed) child.rotation.z = t * child.userData.anomalyMarkerSpeed;
         });
@@ -260,4 +219,88 @@ export function animateAnomalyEffects(roots, time) {
             });
         }
     }));
+}
+
+const ANOMALY_BATCH_SIZE = 32;
+
+export function createAnomalyRenderBatches(scene) {
+    const batches = new Map();
+    const shapes = new WeakMap();
+    const hidden = [];
+
+    function release(batch) {
+        if (!batch.mesh) return;
+        scene.remove(batch.mesh);
+        batch.mesh.dispose();
+        batch.mesh.geometry.dispose();
+        batch.mesh.material.dispose();
+    }
+
+    function collect(part, region) {
+        const material = part.material;
+        if (!part.visible || !part.isMesh || part.isInstancedMesh || part.userData.voidBubble
+            || !part.geometry.parameters || part.castShadow || part.receiveShadow
+            || !material?.isMeshBasicMaterial || !material.visible || material.blending !== THREE.AdditiveBlending
+            || !material.transparent || material.depthWrite) return;
+        if (!shapes.has(part.geometry)) shapes.set(part.geometry, `${part.geometry.type}:${JSON.stringify(part.geometry.parameters)}`);
+        const { r, g, b } = material.color;
+        const key = `${region}:${shapes.get(part.geometry)}:${r}:${g}:${b}:${material.opacity}:${material.side}:${part.layers.mask}:${part.renderOrder}`;
+        if (!batches.has(key)) batches.set(key, { sources: [], mesh: null, capacity: 0 });
+        batches.get(key).sources.push(part);
+    }
+
+    function prepare(roots) {
+        for (const batch of batches.values()) batch.sources.length = 0;
+        for (const root of roots) {
+            if (!root.visible || root.userData.gmHiddenGhost) continue;
+            const effect = root.userData.anomalyEffect ? root : root.children.find(child => child.userData.anomalyEffect);
+            if (!effect?.visible) continue;
+            const visual = effect.userData.anomalyVisual;
+            const { elements } = root.matrixWorld;
+            const region = `${Math.floor(elements[12] / ANOMALY_BATCH_SIZE)}:${Math.floor(elements[14] / ANOMALY_BATCH_SIZE)}`;
+            if (visual.visible) for (const part of visual.children) collect(part, region);
+            for (const part of effect.children) {
+                if (part.userData.anomalyMarkerSpeed) collect(part, region);
+            }
+        }
+        for (const [key, batch] of batches) {
+            const { sources } = batch;
+            if (sources.length < 2) {
+                release(batch);
+                batches.delete(key);
+                continue;
+            }
+            if (batch.capacity < sources.length) {
+                release(batch);
+                const first = sources[0];
+                batch.capacity = 2 ** Math.ceil(Math.log2(sources.length));
+                batch.mesh = new THREE.InstancedMesh(first.geometry.clone(), first.material.clone(), batch.capacity);
+                batch.mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+                batch.mesh.layers.mask = first.layers.mask;
+                batch.mesh.renderOrder = first.renderOrder;
+                scene.add(batch.mesh);
+            }
+            const { mesh } = batch;
+            mesh.visible = true;
+            mesh.count = sources.length;
+            sources.forEach((part, index) => {
+                mesh.setMatrixAt(index, part.matrixWorld);
+                hidden.push(part);
+                part.visible = false;
+            });
+            mesh.instanceMatrix.needsUpdate = true;
+            mesh.computeBoundingSphere();
+        }
+    }
+
+    function restore() {
+        for (const part of hidden) part.visible = true;
+        hidden.length = 0;
+        for (const batch of batches.values()) if (batch.mesh) batch.mesh.visible = false;
+    }
+
+    return { prepare, restore, dispose() {
+        for (const batch of batches.values()) release(batch);
+        batches.clear();
+    } };
 }

@@ -17,7 +17,7 @@ PROFILES={
     'recipe-m19':dict(name='Деревянная баррикада',weight=10,volume=20,hp=1000,protection=5,size=(1,.25,1),model='barricade_wood',recover=True),
     'recipe-m20':dict(name='Металлический лист',weight=20,volume=20,hp=5000,protection=40,size=(1,.25,1),model='barricade_metal',recover=True),
     'recipe-m21':dict(name='Прочная металлическая баррикада',weight=40,volume=20,hp=8500,protection=60,size=(1.5,.5,1.5),model='barricade_reinforced',recover=True),
-    'recipe-m22':dict(name='Мешок с песком',weight=20,volume=20,hp=2500,protection=40,size=(1,.25,1),model='sandbag',recover=True),
+    'recipe-m22':dict(name='Мешок с песком',weight=20,volume=20,hp=2500,protection=40,size=(1,.25,1),model='sandbag_wall',recover=True),
     'recipe-m23':dict(name='Кирпичная баррикада',weight=60,volume=20,hp=500,protection=40,size=(1,.25,1.5),model='barricade_brick',recover=False),
 }
 

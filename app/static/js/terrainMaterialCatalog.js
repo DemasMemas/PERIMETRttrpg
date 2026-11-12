@@ -8,6 +8,7 @@ export const TERRAIN_MATERIALS = Object.freeze([
         normalStrength: 0.35, variation: 0.06, warp: 0.18,
         albedo: { saturation: 0.5, gain: 1.02, lift: 0.12, tint: [1, 0.99, 0.98] } },
     { terrain: 'swamp', asset: 'mud_forest', ...maps('mud_forest'), normalStrength: 0.55,
+        repeat: 2.8, world: { repeat: 4 },
         albedo: { saturation: 0.3, gain: 1.1, lift: 0.2, tint: [0.88, 1, 0.86] } },
     { terrain: 'concrete', asset: 'concrete_floor_worn_001', ...maps('concrete_floor_worn_001'),
         normalStrength: 0.6, albedo: { gain: 1.12, lift: 0.025 } },
@@ -36,18 +37,51 @@ export const TERRAIN_MATERIALS = Object.freeze([
         arm: '/static/materials/terrain/ice001/arm.png', repeat: 4, normalStrength: 0.14,
         world: { repeat: 1.2, normalStrength: 0.02, warp: 0.28 },
         albedo: { saturation: 0.2, gain: 0.32, lift: 0.58, tint: [0.93, 1, 1.04] } },
+    { terrain: 'muddy_tracks', asset: 'muddy_tracks', ...maps('muddy_tracks'), localOnly: true,
+        repeat: 3, normalStrength: 0.9, variation: 0, warp: 0 },
+    { terrain: 'brown_mud_03', asset: 'brown_mud_03', ...maps('brown_mud_03'), localOnly: true,
+        repeat: 3, normalStrength: 0.75 },
+    { terrain: 'brown_mud_02', asset: 'brown_mud_02', ...maps('brown_mud_02'), localOnly: true,
+        repeat: 3, normalStrength: 0.85 },
+    { terrain: 'dry_mud_field_001', asset: 'dry_mud_field_001', ...maps('dry_mud_field_001'), localOnly: true,
+        repeat: 4, normalStrength: 0.75 },
+    // Лёд использует отдельные текстуры, поэтому его ячейка свободна.
+    { terrain: 'brown_mud', asset: 'brown_mud', ...maps('brown_mud'), localOnly: true, atlasSlot: 11,
+        repeat: 3, normalStrength: 0.75 },
+    // Снег использует отдельные текстуры, поэтому бетон занимает свободную ячейку.
+    { terrain: 'concrete005', asset: 'concrete005', localOnly: true, atlasSlot: 5,
+        color: '/static/materials/art/concrete005_cracked/color.jpg', normal: '/static/materials/art/concrete005_cracked/normal.jpg',
+        arm: '/static/materials/art/concrete005_cracked/arm.jpg', repeat: 2, normalStrength: 0.85, warp: 0 },
+    { terrain: 'brown_mud_leaves_01', asset: 'brown_mud_leaves_01', ...maps('mud_forest'),
+        color: '/static/materials/terrain/brown_mud_leaves_01/color.jpg',
+        localOnly: true, atlasSlot: 2, separateColor: true, repeat: 3, normalStrength: 0.42 },
 ]);
 export const TERRAIN_REPEAT_TILES = 4;
 export const TERRAIN_ATLAS_CELL = 512;
 export const TERRAIN_ATLAS_GUTTER = 8;
 export const TERRAIN_ATLAS_COLUMNS = 4;
 // Keep power-of-two dimensions for the existing WebGL1 mipmap path.
-export const TERRAIN_ATLAS_ROWS = 2 ** Math.ceil(Math.log2(Math.ceil(TERRAIN_MATERIALS.length / TERRAIN_ATLAS_COLUMNS)));
+const atlasSlots = Math.max(...TERRAIN_MATERIALS.map((entry, index) => entry.atlasSlot ?? index)) + 1;
+export const TERRAIN_ATLAS_ROWS = 2 ** Math.ceil(Math.log2(Math.ceil(atlasSlots / TERRAIN_ATLAS_COLUMNS)));
 export const TERRAIN_OPTIONS = Object.freeze([
+    ['shallow_water', 'Мелководье'],
     ['concrete', 'Промышленный бетон'], ['gravel', 'Гравий'],
     ['snow', 'Снег'], ['ice', 'Лёд'], ['metal', 'Ржавый металл'],
     ['bare_dirt', 'Земля без травы'], ['granite_tiles', 'Гранитная плитка'], ['wood_floor', 'Деревянный пол'],
+    ['muddy_tracks', 'Грязь с колеями'], ['brown_mud_03', 'Мокрая грязь'], ['brown_mud_02', 'Грязь с камешками'],
+    ['dry_mud_field_001', 'Сухая грязь'], ['brown_mud', 'Бурая грязь'],
+    ['concrete005', 'Бетон'],
+    ['brown_mud_leaves_01', 'Грязь с опавшими листьями'],
 ]);
+
+const terrainLabels = new Map([
+    ['grass', 'Трава'], ['sand', 'Песок'], ['rock', 'Камень'], ['swamp', 'Болото'], ['water', 'Вода'],
+    ...TERRAIN_OPTIONS,
+]);
+
+export function terrainLabel(terrain) {
+    return terrainLabels.get(terrain) ?? 'Неизвестное покрытие';
+}
 
 // Adjust only the runtime color atlas; original Color/Normal/ARM files stay intact.
 export function adjustTerrainAlbedo(pixels, entry) {
@@ -64,7 +98,8 @@ export function adjustTerrainAlbedo(pixels, entry) {
 }
 
 export function terrainMaterialIndex(tile, side = false) {
-    const terrain = typeof tile === 'string' ? tile : tile?.terrain;
+    const type = typeof tile === 'string' ? tile : tile?.terrain;
+    const terrain = type === 'shallow_water' ? 'brown_mud_03' : type;
     if (side && terrain === 'rock') return 8;
     const index = TERRAIN_MATERIALS.findIndex(entry => entry.terrain !== null && entry.terrain === terrain);
     return index < 0 ? 0 : index + 1;
@@ -76,7 +111,7 @@ export function addTerrainMaterialOptions(select, { world = false } = {}) {
     if (!select) return;
     for (const [value, label] of TERRAIN_OPTIONS) {
         const existing = [...select.options].find(option => option.value === value);
-        if (world && TERRAIN_MATERIALS.find(entry => entry.terrain === value)?.localOnly) {
+        if (world && (value === 'shallow_water' || TERRAIN_MATERIALS.find(entry => entry.terrain === value)?.localOnly)) {
             existing?.remove();
             continue;
         }

@@ -48,6 +48,7 @@ export function createDirectionalLightField({ width, height, levels, samplesPerM
     const atlasCells = textureWidth * textureHeight;
     const pixels = new Uint8Array(atlasCells * 4);
     const radiance = new Float32Array(atlasCells * 3);
+    const hasLight = { value: false };
 
     function planeOffset(level, slice, direction, column, row) {
         const plane = (level * sliceHeights.length + slice) * DIRECTIONS + direction;
@@ -141,7 +142,11 @@ export function createDirectionalLightField({ width, height, levels, samplesPerM
                 }
             }
         });
-        for (let index = 0; index < pixels.length / 4; index++) {
+        // Общий флаг читают и исходные материалы, и их объединённые копии.
+        hasLight.value = contributions > 0;
+        if (!hasLight.value) pixels.fill(0);
+        const encodedCells = hasLight.value ? atlasCells : 0;
+        for (let index = 0; index < encodedCells; index++) {
             const source = index * 3;
             const destination = index * 4;
             const peak = Math.max(radiance[source], radiance[source + 1], radiance[source + 2]);
@@ -195,7 +200,7 @@ export function createDirectionalLightField({ width, height, levels, samplesPerM
 
     return { width, height, levels, columns, rows, sliceHeights, samplesPerMeter,
         pixels, sample, rebuild, planes, atlasColumns, atlasRows,
-        textureWidth, textureHeight };
+        textureWidth, textureHeight, hasLight };
 }
 
 export function createDirectionalLightFieldTexture(THREE, field) {
@@ -220,7 +225,7 @@ export function applyDirectionalLightFieldMaterial(material, texture, field, lev
     const previousKey = material.customProgramCacheKey;
     material.userData.directionalLightFieldPrototype = { previousCompile, previousKey,
         batchKey: `${texture.id}:${field.levels.findIndex(item => Number(item.id) === Number(level))}` };
-    material.customProgramCacheKey = () => `${previousKey ? previousKey.call(material) : ''}:directional-field-v2`;
+    material.customProgramCacheKey = () => `${previousKey ? previousKey.call(material) : ''}:directional-field-v3`;
     material.onBeforeCompile = shader => {
         previousCompile?.(shader);
         const vertexMarker = '#include <project_vertex>';
@@ -229,6 +234,7 @@ export function applyDirectionalLightFieldMaterial(material, texture, field, lev
             throw new Error('Unsupported Three.js shader chunks for directional field');
         }
         shader.uniforms.directionalFieldMap = { value: texture };
+        shader.uniforms.directionalFieldActive = field.hasLight;
         shader.uniforms.directionalFieldGrid = { value: [field.columns, field.rows] };
         shader.uniforms.directionalFieldSize = { value: [field.width, field.height] };
         shader.uniforms.directionalFieldSamplesPerMeter = { value: field.samplesPerMeter };
@@ -249,6 +255,7 @@ export function applyDirectionalLightFieldMaterial(material, texture, field, lev
         shader.fragmentShader = shader.fragmentShader
             .replace('#include <common>', `#include <common>
                 uniform sampler2D directionalFieldMap;
+                uniform bool directionalFieldActive;
                 uniform vec2 directionalFieldGrid;
                 uniform vec2 directionalFieldSize;
                 uniform float directionalFieldSamplesPerMeter;
@@ -269,7 +276,7 @@ export function applyDirectionalLightFieldMaterial(material, texture, field, lev
                     return encoded.rgb * encoded.a * ${DIRECTIONAL_FIELD_RANGE.toFixed(1)};
                 }`)
             .replace(fragmentMarker, `${fragmentMarker}
-                {
+                if (directionalFieldActive) {
                     vec3 fieldNormal = inverseTransformDirection(normal, viewMatrix);
                     vec2 position = clamp(vDirectionalFieldWorldPosition.xz,
                         vec2(0.0), directionalFieldSize - vec2(0.0001));
@@ -286,11 +293,11 @@ export function applyDirectionalLightFieldMaterial(material, texture, field, lev
                         vec3 second = directionalFieldRead(cell, lower + 1.0, direction);
                         fieldIrradiance += abs(component) * mix(first, second, blend);
                     }
-                    #ifndef PHYSICALLY_CORRECT_LIGHTS
+                    #ifdef LEGACY_LIGHTS
                         fieldIrradiance *= PI;
                     #endif
                     reflectedLight.indirectDiffuse += fieldIrradiance
-                        * BRDF_Diffuse_Lambert(material.diffuseColor);
+                        * BRDF_Lambert(material.diffuseColor);
                 }`);
     };
     material.userData.directionalLightFieldPrototype.compile = material.onBeforeCompile;

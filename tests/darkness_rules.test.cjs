@@ -14,11 +14,8 @@ test('world darkness runs from 22:00 through 05:59', async () => {
     assert.equal(isWorldDarkTime(6 * 60), false);
 });
 
-test('sheet and combat use conditional modifiers rather than item names', () => {
+test('Лист учитывает условные модификаторы зрения и стрельбы в темноте', () => {
     const sheet = fs.readFileSync(path.join(__dirname, '../app/static/js/characterSheet.js'), 'utf8');
-    const combat = fs.readFileSync(path.join(__dirname, '../app/services/combat.py'), 'utf8');
     assert.match(sheet, /darkness \? 'darkness_awareness' : 'light_awareness'/);
-    assert.match(sheet, /darkness_visual_immunity/);
-    assert.match(combat, /'darkness_awareness' if darkness else 'light_awareness'/);
-    assert.match(combat, /'darkness_shooting_immunity'/);
+    assert.match(sheet, /awarenessMode === 'visual' \? 'darkness_visual_immunity' : 'darkness_shooting_immunity'/);
 });

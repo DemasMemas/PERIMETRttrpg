@@ -7,6 +7,9 @@ export const DEFAULT_LOCATION_LIGHTING = Object.freeze({
     directional_azimuth: 45,
     directional_elevation: 50,
     background_color: '#283642',
+    fog_density: 0,
+    water_reflections: false,
+    natural_detail: null,
     local_lights: [],
     dark_tiles: [],
 });
@@ -19,12 +22,13 @@ export function sameLocationLightingSettings(left, right) {
     const numberEqual = (first, second) => Number.isFinite(Number(first))
         && Number.isFinite(Number(second)) && Math.abs(Number(first) - Number(second)) < 0.00051;
     const colorEqual = (first, second) => String(first).toLowerCase() === String(second).toLowerCase();
-    if (a.mode !== b.mode) return false;
+    if (a.mode !== b.mode || a.water_reflections !== b.water_reflections
+        || a.natural_detail !== b.natural_detail) return false;
     for (const key of ['ambient_color', 'directional_color', 'background_color']) {
         if (!colorEqual(a[key], b[key])) return false;
     }
     for (const key of ['ambient_intensity', 'directional_intensity',
-        'directional_azimuth', 'directional_elevation']) {
+        'directional_azimuth', 'directional_elevation', 'fog_density']) {
         if (!numberEqual(a[key], b[key])) return false;
     }
     if (a.dark_tiles.length !== b.dark_tiles.length || a.local_lights.length !== b.local_lights.length) return false;

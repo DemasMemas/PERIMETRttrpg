@@ -25,6 +25,9 @@ def default_location_lighting():
         'directional_azimuth': 45,
         'directional_elevation': 50,
         'background_color': '#283642',
+        'fog_density': 0,
+        'water_reflections': False,
+        'natural_detail': None,
         'local_lights': [],
         'dark_tiles': [],
     }

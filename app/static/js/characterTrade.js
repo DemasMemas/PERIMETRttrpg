@@ -35,15 +35,17 @@ export function tradeOffer(entries, selected) {
     }));
 }
 
-export function merchantTotals(entries, selected, prices) {
+export function merchantTotals(entries, selected, prices, purchasePrices = {}) {
     const total = (side, field) => entries[side].reduce((sum, entry) => sum
-        + (selected[side].get(tradeEntryKey(entry)) || 0) * merchantUnitPrice(entry.item, prices, field), 0);
+        + (selected[side].get(tradeEntryKey(entry)) || 0) * merchantUnitPrice(entry.item, prices, field, purchasePrices), 0);
     const sale = total('actor', 'buy'), purchase = total('target', 'sell');
     return {sale, purchase, actorMoney:Math.max(0, purchase-sale), targetMoney:Math.max(0, sale-purchase)};
 }
 
-export function merchantUnitPrice(item, prices, side) {
-    const price = Number(prices[String(item?.templateId)]?.[side] || 0);
+export function merchantUnitPrice(item, prices, side, purchasePrices = {}) {
+    const templateId = String(item?.templateId);
+    if (side === 'sell' && Object.hasOwn(purchasePrices, templateId)) return purchasePrices[templateId];
+    const price = Number(prices[templateId]?.[side] || 0);
     if (item?.category !== 'tool') return price;
     const maximum = Number(item.maxUses ?? item.attributes?.max_uses ?? item.attributes?.uses);
     if (!Number.isSafeInteger(maximum) || maximum <= 0) return price;
@@ -74,7 +76,7 @@ export function validateTrade({actorOffer, targetOffer, actorMoney, targetMoney,
 }
 
 export function renderTradeEditor(modal, {actor, target, actorEntries, targetEntries, quantity, onSubmit, onClose,
-                                        merchant=null, onConfigure=null, onRepair=null, onModification=null}) {
+                                        merchant=null, merchantPurchasePrices={}, onConfigure=null, onRepair=null, onModification=null}) {
     const shop = merchant?.enabled === true;
     const prices = merchant?.prices || {};
     const selected = {actor: new Map(), target: new Map()};
@@ -109,8 +111,8 @@ export function renderTradeEditor(modal, {actor, target, actorEntries, targetEnt
     const offer = side => tradeOffer(entries[side], selected[side]);
     let submitting = false;
     const update = () => {
-        if (shop) {
-            const quote = merchantTotals(entries, selected, prices);
+        const quote = shop ? merchantTotals(entries, selected, prices, merchantPurchasePrices) : null;
+        if (quote) {
             sides.actor.querySelector('.trade-money').value = quote.actorMoney;
             sides.target.querySelector('.trade-money').value = quote.targetMoney;
         }
@@ -123,8 +125,8 @@ export function renderTradeEditor(modal, {actor, target, actorEntries, targetEnt
             const count = offer(side).reduce((sum, entry) => sum + entry.amount, 0);
             return `${count} шт. · ${rubles(money(side))}`;
         };
-        modal.querySelector('.trade-summary').textContent = shop
-            ? `Продаёте: ${rubles(merchantTotals(entries,selected,prices).sale)}     Покупаете: ${rubles(merchantTotals(entries,selected,prices).purchase)}`
+        modal.querySelector('.trade-summary').textContent = quote
+            ? `Продаёте: ${rubles(quote.sale)}     Покупаете: ${rubles(quote.purchase)}`
             : `Отдаёте: ${summary('actor')}     Получаете: ${summary('target')}`;
         const error = validateTrade({actorOffer:offer('actor'),targetOffer:offer('target'),actorMoney,targetMoney,
             actorBalance:balances.actor,targetBalance:balances.target});
@@ -143,7 +145,7 @@ export function renderTradeEditor(modal, {actor, target, actorEntries, targetEnt
             const row = document.createElement('div');
             row.className = 'trade-item-row';
             row.innerHTML = `<label><input type="checkbox" ${selected[side].has(key) ? 'checked' : ''}><span><strong>${escape(entry.item?.name || 'Предмет')}</strong>
-                <small>${escape(entry.rootLabel || '')} · доступно ${available}${shop ? ` · ${rubles(merchantUnitPrice(entry.item, prices, side==='actor'?'buy':'sell'))}/шт.` : ''}</small></span></label>
+                <small>${escape(entry.rootLabel || '')} · доступно ${available}${shop ? ` · ${rubles(merchantUnitPrice(entry.item, prices, side==='actor'?'buy':'sell', merchantPurchasePrices))}/шт.` : ''}</small></span></label>
                 <input type="number" class="form-control trade-quantity" value="${selected[side].get(key) ?? 1}" min="1" max="${available}" step="1" aria-label="Количество: ${escape(entry.item?.name)}" ${selected[side].has(key) ? '' : 'disabled'}>`;
             const checkbox = row.querySelector('[type="checkbox"]'), input = row.querySelector('.trade-quantity');
             checkbox.onchange = () => {
@@ -177,7 +179,7 @@ export function renderTradeEditor(modal, {actor, target, actorEntries, targetEnt
     const mode = modal.querySelector('.trade-mode');
     if (mode) mode.onclick = () => { if (!submitting) renderTradeEditor(modal, {
         actor,target,actorEntries,targetEntries,quantity,onSubmit,onClose,onConfigure,onRepair,onModification,
-        merchant:shop ? null : target.data.merchant,
+        merchant:shop ? null : target.data.merchant,merchantPurchasePrices,
     }); };
     modal.querySelector('.trade-reset').onclick = () => {
         if (submitting) return;

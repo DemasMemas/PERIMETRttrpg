@@ -45,7 +45,7 @@ module.exports=async({page,request,token,lobby,base,connect,debugPort})=>{
                 await p.until(`window.furnitureRender&&furnitureJoined?.location_id===${loc.id}&&L.getLocationBuildingIds().includes('${buildingId}')`,'joined furniture location');
             }
             await page.call('Page.bringToFront');
-            if(stress)await page.until(`L.getLocationGrassDiagnostics().kinds.medium01?.added>0`,'natural grass ready');
+            if(stress)await page.until(`L.getLocationGrassDiagnostics().kinds.low?.added>0`,'natural grass ready');
             await page.evaluate(`L.setLocationEditMode(true);selectLocationEditorTool('building');L.setLocationViewLevel(0);
                 locationControls.target.set(5,1,5);locationControls.object.position.set(10,12,13);locationControls.update();
                 document.querySelector('#panel-tools:not(.collapsed) .toggle-btn')?.click();document.querySelector('#panel-characters:not(.collapsed) .toggle-btn')?.click();true`);
@@ -180,7 +180,7 @@ module.exports=async({page,request,token,lobby,base,connect,debugPort})=>{
                         const read=async()=>await(await fetch('${url}',{headers:{Authorization:'Bearer '+localStorage.getItem('access_token')}})).json();
                         const source=(await read()).objects,s=furnitureRender.s;
                         const roots=new Map(s.children.filter(m=>m.userData.locationObjectId).map(m=>[m.userData.locationObjectId,m]));
-                        const grass=()=>{const result=[];s.traverse(m=>{if(m.userData.naturalGrassKind)result.push([m.userData.naturalGrassChunk,m.uuid])});return result.sort()};
+                        const grass=()=>{const result=[];s.traverse(m=>{if(m.userData.naturalGrassKind==='low')result.push([m.userData.naturalGrassChunk,m.uuid])});return result.sort()};
                         const oldGrass=grass(),oldGeometries=furnitureRender.r.info.memory.geometries;
                         const plan=F.planBuildingFurniture(source,{buildingId:'${buildingId}',scope:'floor',level:1,seed:'repeat'});
                         const started=performance.now();const change=await Server.changeLocationObjects(${lobby.id},${loc.id},{objects:plan.objects,replace_furniture:plan.replacement});L.applyLocationObjectsChange(change);
@@ -245,11 +245,11 @@ module.exports=async({page,request,token,lobby,base,connect,debugPort})=>{
                 })()`);
                 assert.ok(copied.created>0&&copied.newIds&&copied.persisted&&copied.restored);
                 for(const p of [page,peer])await p.until(`furnitureEvents.some(e=>e.deleted_ids.includes(${copied.deletedId}))`,'copy deletion fully applied before terrain snapshots');
-                for(const p of [page,peer])await p.evaluate(`window.grassBefore={};furnitureRender.s.traverse(m=>{if(m.userData.naturalGrassKind)grassBefore[m.userData.naturalGrassChunk]=m.uuid});true`);
+                for(const p of [page,peer])await p.evaluate(`window.grassBefore={};furnitureRender.s.traverse(m=>{if(m.userData.naturalGrassKind==='low')grassBefore[m.userData.naturalGrassChunk]=m.uuid});true`);
                 await page.evaluate(`L.applyLocationTilesUpdate(${loc.id},[{x:30,z:30,height:1.2}]);socket.emit('update_location_tiles',{token:localStorage.getItem('access_token'),location_id:${loc.id},updates:[{x:30,z:30,height:1.2}]});true`);
                 for(const p of [page,peer]){
                     await p.call('Page.bringToFront');
-                    await p.until(`(()=>{const meshes=[];furnitureRender.s.traverse(m=>{if(m.userData.naturalGrassKind)meshes.push(m)});
+                    await p.until(`(()=>{const meshes=[];furnitureRender.s.traverse(m=>{if(m.userData.naturalGrassKind==='low')meshes.push(m)});
                         return meshes.some(m=>m.userData.naturalGrassChunk==='2,2'&&m.uuid!==grassBefore['2,2'])&&meshes.some(m=>m.userData.naturalGrassChunk==='0,0'&&m.uuid===grassBefore['0,0'])})()`,'local terrain refresh retains distant 12m chunks');
                 }
                 await page.call('Page.bringToFront');

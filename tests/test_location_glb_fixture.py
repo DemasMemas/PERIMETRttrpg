@@ -38,18 +38,37 @@ def test_box_catalog_references_test_glb():
     assert "modelPath: '/static/models/test-crate.glb'" in catalog
 
 
-def test_player_grid_control_is_created_before_gm_only_tools():
-    main = (ROOT / 'app/static/js/main.js').read_text(encoding='utf-8')
-    enter_location = main.split('window.enterLocation = async function', 1)[1]
-    enter_location = enter_location.split('async function deleteCurrentLocation', 1)[0]
-    assert enter_location.count('addLocationGridButton();') == 1
-    assert enter_location.index('addLocationGridButton();') < enter_location.index('if (window.isGM)')
-
-
 def test_crate_glb_is_served_by_existing_static_route(client):
     response = client.get('/static/models/test-crate.glb')
     assert response.status_code == 200
     assert response.data == build_glb()
+
+
+def test_swamp_bank_preset_saves_editable_assets_and_atmosphere(client, create_user, auth_headers):
+    headers = auth_headers(create_user('swamp-bank-gm'))
+    lobby = client.post('/lobbies/', headers=headers, json={
+        'name': 'Болотный берег', 'map_type': 'empty', 'chunks_width': 2, 'chunks_height': 2,
+    }).get_json()
+    url = f"/lobbies/{lobby['id']}/locations"
+    payload = {'name': 'Болотный берег', 'preset': 'swamp_bank', 'world_tile_x': 12, 'world_tile_z': 7}
+    created = client.post(url, headers=headers, json=payload)
+    assert created.status_code == 201
+    scene = client.get(f"{url}/{created.get_json()['id']}", headers=headers).get_json()
+
+    assert (scene['grid_width'], scene['grid_height']) == (42, 42)
+    assert scene['lighting']['water_reflections'] is True
+    assert scene['lighting']['fog_density'] > 0
+    assert scene['tiles_data'][20][26]['water_profile'] == 'peat'
+    assert scene['lighting']['natural_detail'] is False
+    assert any(tile['terrain'] == 'shallow_water' for row in scene['tiles_data'] for tile in row)
+    assert all(scene['tiles_data'][point['y']][point['x']]['terrain'] != 'water'
+               for point in scene['spawn_points'])
+    assert any(obj['type'].startswith('swamp_shrub_') and obj['properties']['passable']
+               for obj in scene['objects'])
+    assert any(obj['type'].startswith('swamp_dead_tree_')
+               and obj['properties']['traversal_category'] == 'blocked' for obj in scene['objects'])
+    assert client.post(url, headers=headers, json=payload).status_code == 409
+    assert len(client.get(url, headers=headers).get_json()) == 1
 
 
 def test_existing_box_save_edit_reload_and_delete(client, create_user, auth_headers):

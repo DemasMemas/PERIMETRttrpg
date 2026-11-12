@@ -1,0 +1,28 @@
+{
+  "asset": "brown_mud_02",
+  "sourceUrl": "https://polyhaven.com/a/brown_mud_02",
+  "license": "CC0",
+  "resolution": "1k",
+  "normalFormat": "OpenGL",
+  "maps": {
+    "color": {
+      "file": "color.jpg",
+      "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/brown_mud_02/brown_mud_02_diff_1k.jpg",
+      "sha256": "5a24fe52abc6004716f1b7eb4d843fbbc26b72dc7b967b7c76d8cb4d355704af",
+      "sourceSha256": "058b6f12493305ec6b47cb5ea77f013c9e7e58216b34af3700a3d3d7d821732d"
+    },
+    "normal": {
+      "file": "normal.jpg",
+      "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/brown_mud_02/brown_mud_02_nor_gl_1k.jpg",
+      "sha256": "f0dac4cd63100c51951b8d4d0d300ad42c3a05a13cb08f0bd906b3fd0fbc8b9d",
+      "sourceSha256": "9ca6f68d25599c98ba5e594df221f5653d93faceda1ba26a0babb1143e8c615f"
+    },
+    "arm": {
+      "file": "arm.jpg",
+      "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/brown_mud_02/brown_mud_02_arm_1k.jpg",
+      "sha256": "f37545a7127d79f4f26303feea85799adaa0411a6cf84cc78ece00edc65bd181",
+      "sourceSha256": "e747ee8ea4e3ca38aaa20acea1524b242c0b500abb93772c5a31aca112259f09"
+    }
+  },
+  "runtimeResolution": "512×512"
+}

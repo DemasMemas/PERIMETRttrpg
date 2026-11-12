@@ -19,6 +19,8 @@ def freeze_water_offsets(tiles):
                     if not (0 <= nz < len(tiles) and 0 <= nx < len(tiles[nz])):
                         continue
                     terrain = tiles[nz][nx].get('terrain')
+                    if terrain == 'shallow_water':
+                        terrain = 'swamp'
                     if terrain == 'water' and (nx, nz) not in seen:
                         seen.add((nx, nz))
                         queue.append((nx, nz))

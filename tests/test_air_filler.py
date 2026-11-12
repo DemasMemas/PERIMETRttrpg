@@ -54,7 +54,9 @@ def test_rule_is_installable_and_trauma_disadvantage_uses_existing_engine():
     record=make_record('armor-d7')
     assert record['rules']['incoming_trauma_disadvantage'] is True
     assert record['rules']['anomaly_effect_cancel'] is True
-    assert make_record('armor-d7',gunsmith=True)['rules']['bleeding_per_effect_reduction']==1.5
+    armor_record = make_record('armor-d7', gunsmith=True)
+    assert armor_record['gunsmith'] is False
+    assert armor_record['rules']['bleeding_per_effect_reduction'] == 1
 
 
 @pytest.mark.parametrize('key', ['zarosli','solyariy','mogilshchik'])

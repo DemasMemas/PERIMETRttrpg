@@ -32,9 +32,10 @@ test('повторный щелчок крепления не открывает
         collectInventoryEntries:()=>[{item:{name:'Инструмент'},path:['inventory','pockets',0]}],getInventoryItemCategory:()=> 'tool',
         chooseConsumableApplication:()=>{counts.choices++;return new Promise(resolve=>pending.choice=resolve);},
         renderEquipmentTab:async()=>assert.fail('Другой лист нельзя перерисовывать'),renderInventoryTab:()=>{},
-        showNotification:()=>{},refreshSavedSheet:async()=>{},
+        showNotification:message=>assert.fail(message),refreshSavedSheet:async()=>{},
     });
-    vm.runInContext(source.slice(source.indexOf('async function changeBeltTool('),source.indexOf('async function changeAutoInjector(')),context);
+    const mounts = source.slice(source.indexOf('const beltDeviceMounts ='), source.indexOf('function isBeltRope('));
+    vm.runInContext(mounts + source.slice(source.indexOf('async function changeBeltTool('),source.indexOf('async function changeAutoInjector(')),context);
     const flush=()=>new Promise(resolve=>setImmediate(resolve)),first=context.changeBeltTool('mount');await flush();
     await context.changeBeltTool('mount');assert.equal(counts.choices,1);
     pending.choice({source:{path:['inventory','pockets',0],snapshot:{}}});await flush();assert.equal(counts.calls,1);

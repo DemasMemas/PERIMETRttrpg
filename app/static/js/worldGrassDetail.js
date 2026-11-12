@@ -7,7 +7,7 @@ export function createWorldGrassDetail(THREE) {
         texture.minFilter = THREE.LinearMipmapLinearFilter;
         texture.generateMipmaps = true;
         texture.anisotropy = 4;
-        texture.encoding = THREE.sRGBEncoding;
+        texture.colorSpace = THREE.SRGBColorSpace;
         return texture;
     };
     const earth = createTexture();
@@ -52,9 +52,9 @@ export function createWorldGrassDetail(THREE) {
                     .replace('#include <map_fragment>', `
                         float worldGrassCoverage = 0.0;
                         #ifdef USE_MAP
-                            vec4 worldGroundTexel = texture2D(map, vUv);
+                            vec4 worldGroundTexel = texture2D(map, vMapUv);
                             worldGrassCoverage = worldGroundTexel.a;
-                            diffuseColor.rgb *= mapTexelToLinear(worldGroundTexel).rgb;
+                            diffuseColor.rgb *= worldGroundTexel.rgb;
                         #endif
                     `)
                     .replace('#include <color_fragment>', `#include <color_fragment>
@@ -63,10 +63,8 @@ export function createWorldGrassDetail(THREE) {
                                 distance(vWorldGrassPosition, cameraPosition));
                             if (grassFade > 0.005) {
                                 vec2 worldGrassUv = vWorldGrassPosition.xz * 0.125;
-                                vec3 earthPhoto = mapTexelToLinear(
-                                    texture2D(worldGrassEarth, worldGrassUv)).rgb;
-                                vec3 forestPhoto = mapTexelToLinear(
-                                    texture2D(worldGrassForest, worldGrassUv)).rgb;
+                                vec3 earthPhoto = texture2D(worldGrassEarth, worldGrassUv).rgb;
+                                vec3 forestPhoto = texture2D(worldGrassForest, worldGrassUv).rgb;
                                 vec3 grassPhoto = mix(earthPhoto, forestPhoto, 0.82)
                                     * vec3(0.86, 1.06, 0.84);
                                 diffuseColor.rgb = mix(diffuseColor.rgb, grassPhoto,

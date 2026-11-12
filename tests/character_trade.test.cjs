@@ -44,6 +44,24 @@ test('неполный инструмент оценивается по заря
         {sale:58,purchase:52,actorMoney:0,targetMoney:6});
 });
 
+test('персональная цена применяется к покупке, в том числе при округлении до нуля', async () => {
+    const {merchantTotals, merchantUnitPrice, tradeEntryKey} = await load();
+    const beer = {item: {id: 'beer', templateId: 1}, path: ['inventory', 'pockets', 0]};
+    const tobacco = {item: {id: 'tobacco', templateId: 2}, path: ['inventory', 'pockets', 1]};
+    const water = {item: {id: 'water', templateId: 3}, path: ['inventory', 'pockets', 2]};
+    const sale = {item: {id: 'sale', templateId: 1}, path: ['inventory', 'pockets', 0]};
+    const prices = {1: {buy: 25, sell: 75}, 2: {buy: 0, sell: 1}, 3: {buy: 40, sell: 75}};
+    const overrides = {1: 56, 2: 0};
+    const selected = {actor: new Map([[tradeEntryKey(sale), 1]]),
+        target: new Map([[tradeEntryKey(beer), 2], [tradeEntryKey(tobacco), 1], [tradeEntryKey(water), 1]])};
+    assert.equal(merchantUnitPrice(beer.item, prices, 'sell', overrides), 56);
+    assert.equal(merchantUnitPrice(tobacco.item, prices, 'sell', overrides), 0);
+    assert.equal(merchantUnitPrice(sale.item, prices, 'buy', overrides), 25);
+    assert.deepEqual(merchantTotals({actor: [sale], target: [beer, tobacco, water]}, selected, prices, overrides),
+        {sale: 25, purchase: 187, actorMoney: 162, targetMoney: 0});
+    assert.equal(prices[1].sell, 75);
+});
+
 test('ответ сервера и сетевое событие показывают одно уведомление о сделке',async()=>{
     const {tradeResultNotice}=await load();
     const result={id:'notice-test',status:'completed',payload:{_merchant:true}};

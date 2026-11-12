@@ -220,7 +220,10 @@ def test_glove_first_wear_unequip_and_reequip_preserve_timer(client,checks,auth_
     advance(data,2400);checks['actor_character'].data=deepcopy(data);db.session.commit()
     gloves=data['equipment'].pop('gloves');data['inventory']['pockets'].append(gloves)
     assert save(client,checks,auth_headers,data).status_code==200
-    data=deepcopy(checks['actor_character'].data);gloves=data['inventory']['pockets'].pop()
+    data=deepcopy(checks['actor_character'].data)
+    advance(data,3600)
+    gloves=data['inventory']['pockets'].pop()
+    assert gloves['sterility']['remaining_seconds']==1200
     gloves['sterility']['remaining_seconds']=3600;data['equipment']['gloves']=gloves
     assert save(client,checks,auth_headers,data).status_code==200
     assert checks['actor_character'].data['equipment']['gloves']['sterility']['remaining_seconds']==1200

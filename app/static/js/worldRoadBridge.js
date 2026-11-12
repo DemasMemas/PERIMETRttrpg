@@ -4,7 +4,7 @@ import { buildWorldBridgeLayout } from './worldBridgeLayout.js';
 let resources=null,loading=null;
 export function loadWorldRoadBridge() {
     if(loading)return loading;
-    loading=import('https://unpkg.com/three@0.128.0/examples/jsm/loaders/GLTFLoader.js')
+    loading=import('three/addons/loaders/GLTFLoader.js')
         .then(({GLTFLoader})=>new Promise((resolve,reject)=>new GLTFLoader().load('/static/models/art/modular_road_bridge.glb',resolve,undefined,reject)))
         .then(gltf=>{
             const parts=[];
@@ -16,8 +16,8 @@ export function loadWorldRoadBridge() {
             // rather than changing lighting/colour handling of the whole map.
             for(const material of new Set(parts.map(p=>p.material))){
                 material.onBeforeCompile=(shader,renderer)=>{
-                    if(renderer.outputEncoding===THREE.LinearEncoding)shader.fragmentShader=shader.fragmentShader.replace(
-                        '#include <encodings_fragment>','#include <encodings_fragment>\ngl_FragColor = LinearTosRGB(gl_FragColor);');
+                    if(renderer.outputColorSpace===THREE.LinearSRGBColorSpace)shader.fragmentShader=shader.fragmentShader.replace(
+                        '#include <colorspace_fragment>','#include <colorspace_fragment>\ngl_FragColor = sRGBTransferOETF(gl_FragColor);');
                 };
                 material.customProgramCacheKey=()=> 'world-bridge-srgb-output-v1';
             }

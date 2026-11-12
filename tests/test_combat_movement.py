@@ -388,7 +388,31 @@ def test_terrain_step_up_or_controlled_descent_uses_explicit_action_without_fall
     assert moved.action_points_current==5-ap and moved.free_actions_current==1
     assert CombatService.physical_position(moved)['height']==pytest.approx(3+delta)
     assert moved._movement_fall is None
+    assert moved._movement_animation == ('terrain_climb' if delta > 0 else None)
     assert moved.movement_distance_this_turn==1
+
+
+def test_terrain_climb_preview_requires_standing_and_real_ground(vertical_game, client, auth_headers):
+    from app.extensions import db
+    from app.models import LocationObject
+    pair = vertical_game
+    location, actor = pair['location'], pair['actor_location']
+    location.tiles_data = [[{'terrain': 'grass', 'height': 1} for _ in range(10)] for _ in range(10)]
+    location.tiles_data[3][3]['height'] = 2.4
+    db.session.commit()
+    url = f"/lobbies/{pair['lobby'].id}/locations/{location.id}/movement-preview"
+    payload = {'character_id': actor.character_id, 'x': 3, 'y': 3, 'floor_level': 0, 'special_action': 'climb_up'}
+    headers = auth_headers(pair['actor_user'])
+    assert client.post(url, json=payload, headers=headers).get_json()['route']['terrain_ascent']
+    for posture in ('sitting', 'prone'):
+        actor.posture = posture
+        db.session.commit()
+        assert client.post(url, json=payload, headers=headers).get_json()['route'] is None
+    actor.posture = 'standing'
+    db.session.add(LocationObject(location_id=location.id, type='floor', tile_x=3, tile_y=3,
+        properties={'level': 0, 'dimensions': {'width': .9, 'depth': .9, 'height': .12}}))
+    db.session.commit()
+    assert client.post(url, json=payload, headers=headers).get_json()['route'] is None
 
 
 @pytest.mark.parametrize('delta',[2,2.01,3])
@@ -785,6 +809,61 @@ def test_breathlessness_blocks_new_run_on_later_turn():
 
     assert CombatService._strenuous_movement_is_blocked(character, "run", 3) is True
     assert CombatService._strenuous_movement_is_blocked(character, "run", 5) is False
+
+
+@pytest.mark.parametrize('has_idle_state', [True, False])
+def test_outside_combat_ordinary_movement_runs_and_turns_without_breathlessness(vertical_game, has_idle_state):
+    from app.extensions import db
+    from app.models import LocationCombatState
+
+    game = vertical_game
+    actor = game['actor_location']
+    location_id = game['location'].id
+    state = LocationCombatState.query.filter_by(location_id=location_id).one()
+    if has_idle_state:
+        state.status = 'idle'
+    else:
+        db.session.delete(state)
+    actor.strenuous_movement_blocked_until_round = 3
+    points = actor.movement_points_current, actor.action_points_current, actor.free_actions_current
+    db.session.commit()
+
+    for x, requested_mode, facing_x in [(6, None, 1), (2, 'walk', -1), (2, None, -1)]:
+        moved, _, _ = CombatService.move_character(location_id, game['actor_user']['id'], actor.character_id,
+                                                   x, 3, movement_mode=requested_mode)
+        assert moved.pos_x == x
+        assert (moved.facing_x, moved.facing_y) == (facing_x, 0)
+        assert moved._movement_mode == 'run'
+        assert moved._movement_free_run is True
+        assert moved.strenuous_movement_blocked_until_round == 3
+        assert (moved.movement_points_current, moved.action_points_current, moved.free_actions_current) == points
+
+
+@pytest.mark.parametrize(('movement_mode', 'blocked_rounds'), [('run', 1), ('sprint', 2)])
+def test_breathlessness_duration_after_actual_movement(vertical_game, movement_mode, blocked_rounds):
+    game = vertical_game
+    actor = game['actor_location']
+    location_id = game['location'].id
+    gm_id = game['actor_user']['id']
+
+    CombatService.move_character(location_id, gm_id, actor.character_id, 3, 3, movement_mode=movement_mode)
+    CombatService.move_character(location_id, gm_id, actor.character_id, 4, 3, movement_mode=movement_mode)
+    assert actor.strenuous_movement_blocked_until_round == 1 + blocked_rounds
+
+    for round_number in range(2, 3 + blocked_rounds):
+        CombatService.end_turn(location_id, gm_id)
+        state = CombatService.end_turn(location_id, gm_id)
+        assert state['round_number'] == round_number
+        assert state['current_location_character_id'] == actor.id
+        CombatService.perform_action(location_id, gm_id, actor.id, 'convert_free_action_to_movement')
+        if round_number <= 1 + blocked_rounds:
+            for mode in ('run', 'sprint'):
+                with pytest.raises(ValidationError, match='blocked by exhaustion'):
+                    CombatService.move_character(location_id, gm_id, actor.character_id, 5, 3, movement_mode=mode)
+            assert actor.pos_x == 4
+
+    CombatService.move_character(location_id, gm_id, actor.character_id, 5, 3, movement_mode=movement_mode)
+    assert actor.pos_x == 5
 
 
 def test_pending_action_spends_future_turn_points_until_complete():
@@ -2058,6 +2137,23 @@ def test_raised_shooter_ray_uses_real_ground_height(app, gm_relocation_game):
     shooter = SimpleNamespace(pos_x=0, pos_y=2, floor_level=0, posture="standing")
     target = SimpleNamespace(pos_x=4, pos_y=2, floor_level=0, posture="standing")
     assert CombatService._cover_analysis(location.id, shooter, target)["grade"] == "none"
+
+
+def test_terrain_can_hide_chest_without_hiding_head(app, gm_relocation_game):
+    from app.extensions import db
+    from app.models import Location, LocationObject
+    _, _, _, placed = gm_relocation_game
+    location = db.session.get(Location, placed.location_id)
+    for obj in LocationObject.query.filter_by(location_id=location.id).all():
+        db.session.delete(obj)
+    location.tiles_data = [[{"terrain": "grass", "height": 2.6 if x == 2 else 1, "objects": []}
+                            for x in range(5)] for _ in range(5)]
+    db.session.flush()
+    shooter = SimpleNamespace(pos_x=0, pos_y=2, floor_level=0, posture="standing")
+    target = SimpleNamespace(pos_x=4, pos_y=2, floor_level=0, posture="standing")
+    analysis = CombatService._cover_analysis(location.id, shooter, target)
+    assert analysis["zones"]["chest"]["terrain"] is True
+    assert "head" not in analysis["zones"]
 
 
 def test_terrain_server_matches_actual_renderer_triangles_and_rays():

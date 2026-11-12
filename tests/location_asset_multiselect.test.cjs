@@ -693,7 +693,8 @@ test('anomaly accepts dimensions and keeps them on its tile', async () => {
     assert.match(source, /applyDecorSize\(mesh, source, type\)/);
     assert.match(scene, /applyDecorSize\(buildPreviewMesh, decorPreview, decorType\)/);
     assert.match(scene, /applyDecorSize\(mesh, obj, obj\.type\)/);
-    assert.match(scene, /resizable: true,\s*\};\s*\}\s*export function getSelectedLocationEditorAsset/);
+    assert.match(section('function getPrimaryLocationEditorAsset()', 'const lockableObjectTypes'),
+        /resizable: true,\s*\};\s*\}\s*$/);
 });
 
 test('anomaly visual size supports legacy scale and independent dimensions', () => {

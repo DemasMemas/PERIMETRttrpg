@@ -44,7 +44,7 @@ export function createLocationSculptPreview(T, scene, tiles, sides, surface, fou
         return g;
     };
     return {
-        update(changed, colorAt, nextFoundation) {
+        update(changed, colorAt, nextFoundation, limitRelief) {
             const dirty=new Set();
             if(nextFoundation!==foundation){for(const key of regions.keys())dirty.add(key);foundation=nextFoundation;}
             for(const {x,z} of changed)for(let dz=-1;dz<=1;dz++)for(let dx=-1;dx<=1;dx++){
@@ -65,7 +65,7 @@ export function createLocationSculptPreview(T, scene, tiles, sides, surface, fou
                     data.topByVertex.push(...full.topByVertex.slice(face*3,face*3+3));
                     data.tileByVertex.push(tile,tile,tile);
                 });
-                const cap=buildTerrainSurfaceData(tiles,full,bounds);
+                const cap=buildTerrainSurfaceData(tiles,full,bounds,limitRelief);
                 let pair=regions.get(key);
                 if(!pair){
                     pair=[new T.Mesh(undefined,sides.material),new T.Mesh(undefined,surface.material)];

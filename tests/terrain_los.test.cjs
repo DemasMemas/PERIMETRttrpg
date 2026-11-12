@@ -39,6 +39,12 @@ if(process.argv.includes('--write-fixture')){
   assert.equal(line.terrainLineHit(c.tiles,...c.rays[0],new Map(),accept),null);
   hatch.properties.is_open=false;assert.ok(line.terrainLineHit(c.tiles,...c.rays[0],new Map(),accept));
  });
+ test('Невысокий гребень закрывает грудь, оставляя голову видимой',async()=>{
+  const [,line]=await modules;
+  const tiles=Array.from({length:5},()=>Array.from({length:5},(_,x)=>({terrain:'grass',height:x===2?2.6:1})));
+  assert.equal(line.terrainLineHit(tiles,[.5,2.65,2.5],[4.5,2.7,2.5]),null);
+  assert.ok(line.terrainLineHit(tiles,[.5,2.65,2.5],[4.5,2.35,2.5]));
+ });
  test('Реальная клиентская hasLineOfSight использует треугольники холма',async()=>{
   const [,line]=await modules,c=cases().find(c=>c.name==='hill');
   const scene=fs.readFileSync(path.join(root,'app/static/js/locationScene.js'),'utf8'),start=scene.indexOf('function hasLineOfSight('),end=scene.indexOf('function isPointVisibleToPlayer(',start);

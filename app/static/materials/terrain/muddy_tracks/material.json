@@ -1,0 +1,37 @@
+{
+  "id": "muddy_tracks",
+  "sourceUrl": "https://polyhaven.com/a/muddy_tracks",
+  "license": "CC0",
+  "resolution": "1k",
+  "normalFormat": "OpenGL",
+  "maps": {
+    "color": {
+      "file": "color.jpg",
+      "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/muddy_tracks/muddy_tracks_diff_1k.jpg",
+      "sha256": "a0d5d70da3cc87d6bd34f2625b818228ebd9e4ef797444e388c838285436e06b",
+      "sourceSha256": "7867c9bfc6f6e85d51debddda3974ed68225e96b2cdb385a5518616102710730",
+      "sourceMd5": "a0d904939720504810f60377c6463deb",
+      "preAdjustmentSha256": "b18e3221848faf11a43e6de39f4d8fd1bb32c458629c5ba4910189eae5207bae"
+    },
+    "normal": {
+      "file": "normal.jpg",
+      "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/muddy_tracks/muddy_tracks_nor_gl_1k.jpg",
+      "sha256": "2110d022c0377fcdd62a8e366d01ecd6e0f995d436dfacf9b16e4bb22311d106",
+      "sourceSha256": "ebb1916209e64efac44ac5f74316ee27a960fc483ed242ac0a8b565495ce4997",
+      "sourceMd5": "73598ec70cab540080a0521ac839435d"
+    },
+    "arm": {
+      "file": "arm.jpg",
+      "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/muddy_tracks/muddy_tracks_arm_1k.jpg",
+      "sha256": "77ba1652e566818f823597f5b3ea1046e2e3a7a459fa2658ef164e680aaef0ea",
+      "sourceSha256": "c99bad686d5285a73d3278e227d4dd115193b4394f223bf764850879ef2a939c",
+      "sourceMd5": "013434bc7166a9bc9bb50693da9b3667"
+    }
+  },
+  "runtimeResolution": "512×512",
+  "albedoProcessing": {
+    "description": "Осветление и нейтрализация грунта. Рельеф колей перенесён из карты высот в цвет, чтобы он читался при рассеянном свете.",
+    "sourceUrl": "https://dl.polyhaven.org/file/ph-assets/Textures/png/1k/muddy_tracks/muddy_tracks_disp_1k.png",
+    "sourceSha256": "2e7990db4123c1a9393954828c373ad1ea6a466530baacd17c1467fbc015b951"
+  }
+}

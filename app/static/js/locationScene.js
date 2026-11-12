@@ -2,6 +2,7 @@ import { renderTradeEditor, renderProfessionalRepairEditor, renderProfessionalMo
 import { radiationTooltipLine } from './radiationReadings.js';
 import { renderMerchantEditor } from './merchantEditor.js';
 import { terrainLineHit, terrainOpeningAt } from './terrainLineOfSight.js';
+import { closeMapEditorQuickMenu } from './mapEditorQuickMenu.js';
 import { createPortableLightRenderer } from './portableLights.js';
 import { createLocationWeather } from './locationWeather.js';
 import { hearingModifier } from './hearingRules.js';
@@ -18,11 +19,12 @@ import { createVerticalAccessModel } from './locationVerticalAccess.js';
 import { damagedOpening, damagedWall, openingFracturePlan, createOpeningFractures,
     createBrokenWallGeometry, createWallDebris } from './locationBuildingDamage.js';
 import { createBasementCutaway, cutawayContains } from './locationBasementCutaway.js';
-import { createHouseholdModel, releaseHouseholdRendererResources } from './locationHouseholdModels.js';
+import { applyVegetationTint, createHouseholdModel, releaseHouseholdRendererResources } from './locationHouseholdModels.js';
 import { createLocationShadowCache, createLocationShadowPass } from './locationShadowCache.js';
 import { createLocationRenderBatches } from './locationRenderBatches.js';
-import { OrbitControls } from 'https://unpkg.com/three@0.128.0/examples/jsm/controls/OrbitControls.js';
-import { CSS2DRenderer, CSS2DObject } from 'https://unpkg.com/three@0.128.0/examples/jsm/renderers/CSS2DRenderer.js';
+import { createLocationContactShadows } from './locationContactShadows.js';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
 import {
     createCompatibleWebGLRenderer,
     createUnavailableRenderer,
@@ -32,8 +34,8 @@ import { showNotification } from './utils.js';
 import { getUserColor, getUserColorHex } from './colors.js';
 import { Server } from './api.js';
 import { createDeferredActionResumer } from './deferredCombatActions.js';
-import { createAnomalyEffect, animateAnomalyEffects } from './anomalies.js';
-import { createLabelOcclusionIndex } from './locationLabelOcclusion.js';
+import { createAnomalyEffect, animateAnomalyEffects, createAnomalyRenderBatches } from './anomalies.js';
+import { createCharacterLabelOcclusion, createLabelOcclusionIndex } from './locationLabelOcclusion.js';
 import { createMutantModel } from './mutantModels.js';
 import { anomalyCoversTile } from './locationAnomalyArea.js';
 import { sculptHeightChanges } from './locationSculpt.js';
@@ -42,15 +44,17 @@ import { createFpsCounter } from './fpsCounter.js';
 import { horizontalCameraAxes, isTypingTarget } from './cameraPan.js';
 import { createWaterMaterial, WATER_PROFILE_COLOR_GLSL } from './waterSurface.js';
 import { createTerrainMaterialLayer } from './terrainMaterialLayer.js';
+import { TERRAIN_MATERIALS, terrainLabel } from './terrainMaterialCatalog.js';
 import {
     buildFloorGridData, buildFogSurfaceData, buildSmoothTerrainData, buildTerrainGridData, buildTerrainSurfaceData,
-    createTerrainSurfaceHeightSampler, isSmoothTerrainTile, terrainFoundationHeight,
+    createTerrainSurfaceHeightSampler, hasLocalTerrainRelief, isSmoothTerrainTile, loadLocalTerrainRelief, terrainFoundationHeight,
     waterSurfaceAdjustments,
 } from './locationTerrain.js';
 import { createLocationLightingEchoTracker, DEFAULT_LOCATION_LIGHTING, resolveLocationLighting,
     resolveLocationVisualPreset } from './locationLighting.js';
 import { findLocationAsset } from './locationAssetCatalog.js';
-import { placementForLocationAsset, visualAssetForLocationObject, locationObjectLabel } from './locationAssetVariants.js';
+import { placementForLocationAsset, visualAssetForLocationObject, locationObjectLabel,
+    vegetationColorValues } from './locationAssetVariants.js';
 import {
     alignLocationPbrFloorUvs, applyLocationPbrMaterial, releaseLocationPbrMaterial, releaseLocationPbrTextures,
     tileLocationPbrBoxUvs,
@@ -81,14 +85,25 @@ import { applySurfacePattern, getSurfaceTexture, releaseSurfaceTextures } from '
 import { createGrassDetailGroup } from './locationGrassDetail.js';
 import { addNaturalGrassInstances, disposeNaturalGrassInstances, loadNaturalGrassAssets, updateNaturalGrassInstances,
     naturalGrassPlacements } from './locationNaturalGrass.js';
-import { smoothWaterNormals, shoreOwners } from './waterGeometryUtils.js';
+import { smoothWaterNormals } from './waterGeometryUtils.js';
 import { buildRoundedWaterData, classifyWaterRegions, waterExposedSideMask,
-    waterLevelForTile, waterSideCornerDrops } from './locationWaterEdge.js';
+    SHALLOW_WATER_OFFSET, waterLevelForTile, waterSideCornerDrops } from './locationWaterEdge.js';
 import { createWaterDetailGroup } from './locationWaterDetail.js';
-import { createCrateModel, createFenceModel, createShelfModel, createTentModel } from './locationSimpleModels.js';
+import { createLocationWaterReflection } from './locationWaterReflection.js';
+import { createLocationWaterGeometry } from './locationShallowWater.js';
 import {
-    clearUnusedLocationModels, isSharedLocationModelGeometry, mountLocationModel, releaseLocationModel,
+    createCorrugatedPanelGeometry, createCrateModel, createFenceModel, createShelfModel, createTentModel,
+} from './locationSimpleModels.js';
+import {
+    clearUnusedLocationModels, cloneSkeletons, isSharedLocationModelGeometry, mountLocationModel, releaseLocationModel,
 } from './locationModelAssets.js';
+import {
+    animateCharacterAppearanceIdle, applyCharacterAppearanceModel, HUMAN_APPEARANCE_ASSET,
+    HUMAN_APPEARANCE_DIMENSIONS, normalizeCharacterAppearance, preloadCharacterCollapse,
+} from './characterAppearance.js';
+import { createTerrainClimbMotion, terrainClimbRoot, TERRAIN_CLIMB_MS } from './characterLedgeClimb.js';
+import { createCrowIdle } from './crowIdle.js';
+import { createCrowFlight } from './crowFlight.js';
 import { animateFireObjectModels, createFireObjectModel, fireLightSource, getFireLightSources, isFireObject } from './locationFire.js';
 import { createElectricFixtureModel, electricFixtureLightSource, isElectricFixture } from './locationFixtures.js';
 import { getAnomalyLightSources } from './locationAnomalyLight.js';
@@ -237,7 +252,7 @@ function bindAwarenessMode(form, getCharacterId) {
 }
 
 // ========== Глобальные переменные ==========
-let scene, camera, renderer, labelRenderer, controls;
+let scene, camera, renderer, labelRenderer, labelScene, controls;
 let currentLocationId = null;
 let currentLocationData = null;
 let trueSightObserverCharacterId = null;
@@ -247,9 +262,8 @@ let scoutedCharacters = new Set();
 let scoutObserverId = null;
 let sniperCoverMarks = [];
 let cancelScoutPointSelection = null;
-let anomalyLabelVisibilityKey = null;
-let anomalyLabelVisibilityAt = 0;
-let anomalyLabelOcclusionCache = null;
+let locationLabelOcclusionCache = null;
+let anomalyRenderBatches = null;
 let locationAmbientLight = null;
 let locationDirectionalLight = null;
 let locationShadowCache = null;
@@ -264,6 +278,7 @@ let lampPreviewLights = null;
 let lampRenderSources = [];
 let portableLightRenderer = null;
 let locationWeather = null;
+let locationCrowFlight = null;
 export function applyLocationWeather() { locationWeather?.apply(window.weatherSettings); }
 
 function syncPortableLights() {
@@ -273,19 +288,23 @@ function syncPortableLights() {
         (object.properties?.contents||[]).filter(item=>['Светящаяся палочка','ХИС'].includes(item.name)
             && item.glowState?.remaining_seconds>0).map(item=>({
                 id:`ground-glow-${object.id}-${item.id}`,radial:true,range:item.name==='ХИС'?8:5,
+                color:item.glowState.color,
                 x:object.tile_x+.5,z:object.tile_y+.5,
                 y:getTileHeight(object.tile_x,object.tile_y)+(object.properties?.floor_level||0)*STOREY_HEIGHT+.15,
             })));
-    portableLightRenderer.update(combatState?.characters || [],characterModels,ground);
+    portableLightRenderer.update(combatState?.characters || [],characterModels,ground,camera);
 }
 
-export function getLocationPortableLightDiagnostics() { return {lights:portableLightRenderer?.count || 0}; }
+export function getLocationPortableLightDiagnostics() {
+    return portableLightRenderer?.diagnostics ?? {lights:0,spots:0,radial:0,overflow:0,shadows:0};
+}
 let locationStaticLightField = null;
 let locationStaticLightFieldRefreshTimer = null;
 let anomalyRenderSources = [];
 let anomalyRenderPool = [];
 let lastAnomalyLightUpdateAt = -Infinity;
 let locationProfiler = null;
+let locationContactShadows = null;
 let locationLoadTrace = null;
 let locationPointerProfile = null;
 let locationDarknessFactors = null;
@@ -418,6 +437,7 @@ let tileCubes = [];
 let locationTileMesh = null;
 let waterTileMesh = null;
 let waterSurfaceMesh = null;
+let locationWaterReflection = null;
 let waterBankMesh = null;
 let sandBankMesh = null;
 let waterDetailGroup = null;
@@ -454,12 +474,14 @@ let waterFogSurfaces = null;
 let visionBlockerHeightCache = null;
 let visionObjectIndex = null;
 let gmVisionCharacterId = null;
+let firstPersonView = null;
 const tileInstanceTransform = new THREE.Object3D();
 let objectMeshes = [];
 let anomalyEffectMeshes = [];
 let combatAreaMeshes = [];
 const crystalCloudMeshes = new Map();
 let locationObjectMeshes = [];
+const perchedCrowIdles = new Map();
 let roofMeshes = [];
 let locationRoofsVisible = true;
 let locationViewLevel = 0;
@@ -541,7 +563,10 @@ function updateLocationSculpt(now = performance.now(), final = false) {
         const {x,z}=hoveredTileCoords,tile=tiles[z][x];
         updateHighlight(x,z,getTileHeight(x,z));
         const info=document.getElementById('location-tile-info');
-        if(info){info.innerHTML=`<b>(${x}, ${z})</b><br>Ландшафт: ${tile.terrain}<br>Высота: <span data-sculpt-height>${Number(getTileHeight(x,z).toFixed(3))}</span><br>Радиация: ${tile.radiation ?? 0}<br>`;info.style.display='block';}
+        if(info){
+            info.innerHTML=`<b>(${x}, ${z})</b><br>Ландшафт: ${terrainLabel(tile.terrain)}<br>Высота: <span data-sculpt-height>${Number(getTileHeight(x,z).toFixed(3))}</span><br>Радиация: ${tile.radiation ?? 0}<br>`;
+            info.style.display='block';
+        }
     }
 }
 
@@ -624,6 +649,7 @@ let activeOpportunityAttackId = null;
 let aimedZoneMenu = null;
 let aimedZoneMenuResolve = null;
 let movementPreviewGhost = null;
+let movementPreviewSkeletons = [];
 let movementPreviewLine = null;
 let movementPreviewHint = null;
 let movementPreviewCharacterId = null;
@@ -740,6 +766,7 @@ let pendingObjectMoveId = null;
 let pendingStationPlacement = null;
 
 function clearStationPlacement() {
+    pendingStationPlacement?.keys?.abort();
     const ghost=pendingStationPlacement?.ghost;
     if(ghost){ghost.parent?.remove(ghost);disposeObject(ghost);}
     pendingStationPlacement=null;
@@ -754,13 +781,27 @@ export function beginStationPlacement(selection) {
     const asset=selection.trapKey?{id:'placed_trap',dimensions:[.65,.65,.08],properties:{trap_kind:selection.trapKind}}:findLocationAsset(selection.object?.properties?.visual_asset||selection.assetId);
     if(!asset)throw new Error('Не найден вид устройства');
     clearStationPlacement();clearPendingCombatAction();hideStructureInteraction();
+    closeMapEditorQuickMenu();
+    window.stopMapRotationHold?.();
     const placement=placementForLocationAsset(asset);
     const ghost=createLocationObjectMesh({type:placement.type,tile_x:0,tile_y:0,
         properties:{...placement.properties,visual_asset:placement.visualAsset,dimensions:{width:asset.dimensions[0],depth:asset.dimensions[1],height:asset.dimensions[2]}}},true);
     ghost.traverse(child=>{if(child.isMesh){child.castShadow=false;const clone=mat=>{const copy=mat.clone();copy.transparent=true;copy.opacity=.45;copy.depthWrite=false;return copy;};
         if(child.material)child.material=Array.isArray(child.material)?child.material.map(clone):clone(child.material);}});
     ghost.visible=false;scene.add(ghost);
-    pendingStationPlacement={...selection,coverKey,locationId:currentLocationId,actorLevel:actor.floorLevel||0,rotation:selection.object?.properties?.rotation||0,ghost,busy:false};
+    const keys = new AbortController();
+    const state = pendingStationPlacement = {...selection,coverKey,locationId:currentLocationId,actorLevel:actor.floorLevel||0,rotation:selection.object?.properties?.rotation||0,ghost,busy:false,keys};
+    window.addEventListener('keydown', event => {
+        if (!['KeyQ', 'KeyE'].includes(event.code) || event.altKey || event.ctrlKey || event.metaKey) return;
+        if (event.target?.isContentEditable || isKeyboardInputTarget(event.target)
+            || Array.from(document.querySelectorAll('.modal')).some(modal => modal.getClientRects().length)) return;
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        if (!state.busy && !state.request && state.coverKey !== 'recipe-m18') {
+            state.rotation += (event.code === 'KeyQ' ? 1 : -1) * Math.PI / 12;
+            state.ghost.rotation.y = state.rotation;
+        }
+    }, { capture: true, signal: keys.signal });
     showNotification(coverKey==='recipe-m18'?'Выберите окно или оконный проём рядом. Esc или ПКМ — отмена.':'Выберите место рядом с персонажем. Q/E — поворот, Esc или ПКМ — отмена.','system');
     return true;
 }
@@ -905,10 +946,14 @@ const handlers = {
 const terrainColors = {
     concrete: 0xb3b1a8, gravel: 0x82796b, snow: 0xd4d9d9, ice: 0xc2cfd1, metal: 0x85654d,
     bare_dirt: 0x7a694f, granite_tiles: 0xb3b1a8, wood_floor: 0x775635,
+    muddy_tracks: 0x706352, brown_mud_03: 0x5b4735, brown_mud_02: 0x6c5843,
+    dry_mud_field_001: 0x88745e, brown_mud: 0x735940,
+    concrete005: 0x8a867c,
     grass: 0x4e5736,
     sand: 0xC2B280,
     rock: 0x808080,
     swamp: 0x4B3B2A,
+    shallow_water: 0x4B3B2A,
     water: 0x1E90FF
 };
 const terrainGridColors = {
@@ -916,6 +961,7 @@ const terrainGridColors = {
     sand: new THREE.Color(0x524b33),
     rock: new THREE.Color(0x3c4140),
     swamp: new THREE.Color(0xb49d83),
+    shallow_water: new THREE.Color(0xaeb095),
     water: new THREE.Color(0xb3d2df),
 };
 const floorGridColor = new THREE.Color(0xc5c0b3);
@@ -963,9 +1009,12 @@ function getTileHeight(tileX, tileZ) {
 
 function disposeObject(obj) {
     if (!obj) return;
+    perchedCrowIdles.get(obj)?.dispose();
+    perchedCrowIdles.delete(obj);
     if (obj.userData?.naturalGrassResources) disposeNaturalGrassInstances(obj);
     releaseLocationModel(obj);
-    if (obj.isLight && obj.shadow?.map) obj.shadow.map.dispose();
+    if (obj.isLight) obj.shadow?.dispose?.();
+    if (obj.isInstancedMesh) obj.dispose();
     if (obj.geometry && !obj.geometry.userData?.householdShared && !isSharedLocationModelGeometry(obj.geometry)) obj.geometry.dispose();
     if (obj.material) {
         if (Array.isArray(obj.material)) {
@@ -978,6 +1027,15 @@ function disposeObject(obj) {
     if (obj.texture) obj.texture.dispose();
     if (obj.children) {
         obj.children.forEach(child => disposeObject(child));
+    }
+}
+
+function disposeSceneObjects(keep) {
+    // disposeObject уже освобождает потомков каждой ветки.
+    for (const root of [...scene.children]) {
+        if (keep?.(root)) continue;
+        disposeObject(root);
+        scene.remove(root);
     }
 }
 
@@ -1012,6 +1070,20 @@ function createTransparentClone(source, opacity = 0.35) {
         }
     });
     return clone;
+}
+
+function ensureMovementPreviewGhost(source) {
+    if (movementPreviewGhost) return movementPreviewGhost;
+    const ghost = createTransparentClone(source, 0.32);
+    movementPreviewSkeletons = cloneSkeletons(source, ghost);
+    ghost.traverse(child => {
+        child.castShadow = false;
+        child.receiveShadow = false;
+        child.raycast = () => {};
+    });
+    scene.add(ghost);
+    movementPreviewGhost = ghost;
+    return ghost;
 }
 
 function createPreviewLine(color) {
@@ -1057,8 +1129,8 @@ function ensureMovementPreviewHint() {
 function clearMovementPreview() {
     if (movementPreviewRefreshFrame !== null) cancelAnimationFrame(movementPreviewRefreshFrame);
     movementPreviewRefreshFrame = null;
-    if (movementPreviewGhost && scene) {
-        scene.remove(movementPreviewGhost);
+    if (movementPreviewGhost) {
+        scene?.remove(movementPreviewGhost);
         movementPreviewGhost.traverse((child) => {
             if (child.isMesh && child.material) {
                 if (Array.isArray(child.material)) {
@@ -1068,6 +1140,8 @@ function clearMovementPreview() {
                 }
             }
         });
+        movementPreviewSkeletons.forEach(skeleton => skeleton.dispose());
+        movementPreviewSkeletons = [];
         movementPreviewGhost = null;
     }
     if (movementPreviewLine && scene) {
@@ -1516,6 +1590,7 @@ function getMovementModeAvailability(movementType, route = null, evasion = armed
         return sprinterWalkingMode(type,current)?2*(type==='run'?base:ordinary):ordinary;
     };
     const round = Math.max(1, Number(combatState?.round_number) || 1);
+    const breathlessUntilRound = Number(current.strenuous_movement_blocked_until_round) || 0;
     const usedMode = current.movement_mode_this_turn === 'correction' ? null : current.movement_mode_this_turn || null;
     const forcedFrom = current.slippery_movement?.forced_from;
     const limitMode = movementType === 'walk' && forcedFrom ? forcedFrom : movementType;
@@ -1565,10 +1640,12 @@ function getMovementModeAvailability(movementType, route = null, evasion = armed
         ['run', 'sprint'].includes(movementType)
         && !sprinterWalkingMode(movementType,current)
         && !usedMode
-        && (Number(current.strenuous_movement_blocked_until_round) || 0) > 0
-        && round <= (Number(current.strenuous_movement_blocked_until_round) || 0)
+        && round <= breathlessUntilRound
     ) {
-        reason = 'Бег и спринт недоступны из-за одышки';
+        const expiry = round === breathlessUntilRound
+            ? 'до конца текущего раунда'
+            : `до конца раунда ${breathlessUntilRound}`;
+        reason = `Бег и спринт недоступны из-за одышки ${expiry}`;
     } else if ((Number(current.action_points_current) || 0) < modeActionPoints) {
         reason = `Нужно ${modeActionPoints} ОД`;
     } else if ((Number(current.free_actions_current) || 0) < modeFreeActions) {
@@ -1660,14 +1737,7 @@ function updateMovementPreview(clientX, clientY) {
     const entry = characterModels.get(movementPreviewCharacterId);
     if (!entry) return;
 
-    const source = movementPreviewGhost || createTransparentClone(entry.model, 0.32);
-    if (!movementPreviewGhost) {
-        movementPreviewGhost = source;
-        movementPreviewGhost.position.copy(entry.model.position);
-        movementPreviewGhost.rotation.copy(entry.model.rotation);
-        movementPreviewGhost.scale.copy(entry.model.scale);
-        scene.add(movementPreviewGhost);
-    }
+    ensureMovementPreviewGhost(entry.model);
 
     const point = getMovementPointerPoint(clientX, clientY, entry);
     if (!point) return;
@@ -1774,6 +1844,7 @@ function updateAttackPreview(clientX, clientY) {
         clearAttackPreview();
         return;
     }
+    if (pendingCombatAction.trapTarget) return;
     const actor = findCombatCharacterByCharacterId(pendingCombatAction.actorCharacterId);
     if (!actor) {
         clearAttackPreview();
@@ -1926,11 +1997,7 @@ function initializeMovementPreview(characterId) {
     movementPreviewCharacterId = characterId;
     movementPreviewStartX = entry.posX;
     movementPreviewStartY = entry.posY;
-    movementPreviewGhost = createTransparentClone(entry.model, 0.32);
-    movementPreviewGhost.position.copy(entry.model.position);
-    movementPreviewGhost.rotation.copy(entry.model.rotation);
-    movementPreviewGhost.scale.copy(entry.model.scale);
-    scene.add(movementPreviewGhost);
+    ensureMovementPreviewGhost(entry.model);
 }
 
 function commitMovementPreview(clientX, clientY) {
@@ -3558,9 +3625,21 @@ function showCombatActionMenu(clientX, clientY, characterId) {
         menuItems.splice(2, 0, {
             label: 'Взаим.',
             key: 'interaction',
-            title: 'Действия со структурой или недееспособным персонажем',
+            title: 'Действия с клеткой, объектом или персонажем',
             angle: 14,
             action: () => beginStructureInteractionMode(characterId),
+        });
+    }
+    if (canControlCharacter(characterId) && condition.state === 'active') {
+        menuItems.push({
+            label: 'Осмотреть', key: 'inspect-location', icon: '⌕',
+            title: 'Выбрать клетку или объект в поле зрения персонажа', angle: 58, ringRadius: 165,
+            action: () => beginTrapTargeting(characterId, { operation: 'detect' }),
+        });
+        menuItems.push({
+            label: 'От первого лица', key: 'first-person', icon: '◉',
+            title: 'Посмотреть глазами персонажа', angle: 110, ringRadius: 165, allowAlways: true,
+            action: () => startFirstPersonView(characterId),
         });
     }
     if (groundItemsHere) {
@@ -4429,23 +4508,6 @@ function movementModeSummary(key, mode, posture) {
     return mode.summary;
 }
 
-async function saveProneVisualVariant(characterId, proneOnBack) {
-    const response = await fetch(
-        `/lobbies/${window.currentLobbyId}/locations/${getCurrentLocationId()}/characters/${characterId}/visual-pose`,
-        {
-            method: 'PATCH',
-            headers: {
-                'Content-Type': 'application/json',
-                Authorization: `Bearer ${localStorage.getItem('access_token')}`,
-            },
-            body: JSON.stringify({ prone_on_back: proneOnBack }),
-        },
-    );
-    const payload = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(payload.error || 'Не удалось изменить визуальный вариант позы');
-    applyCharacterVisualPose(characterId, payload.prone_on_back);
-}
-
 function showPostureMenu(characterId) {
     const isCombatActive = combatState?.status === 'active';
     const character = isCombatActive
@@ -4468,8 +4530,6 @@ function showPostureMenu(characterId) {
 
     const menu = ensurePostureMenu();
     const currentPosture = character.posture || 'standing';
-    const modelEntry = getCharacterModelEntry(characterId);
-    const canSelectVisualVariant = Boolean(modelEntry?.model.userData.isStandardHuman && !modelEntry.isMutant);
     menu.innerHTML = `
         <div class="posture-panel" style="
             width:min(620px, calc(100vw - 32px));
@@ -4530,15 +4590,6 @@ function showPostureMenu(characterId) {
             <span class="posture-payment-buttons" style="display:flex; gap:7px; flex-wrap:wrap; justify-content:flex-end;"></span>
         `;
         const paymentButtons = card.querySelector('.posture-payment-buttons');
-        let backToggle = null;
-        if (targetPosture === 'prone' && canSelectVisualVariant) {
-            const label = document.createElement('label');
-            label.style.cssText = 'grid-column:2 / -1; display:flex; gap:8px; align-items:center; font-size:13px;';
-            label.innerHTML = '<input type="checkbox"> Лежать на спине';
-            backToggle = label.querySelector('input');
-            backToggle.checked = Boolean(modelEntry.proneOnBack);
-            card.appendChild(label);
-        }
         paymentOptions.forEach((option) => {
             const available = option.resource === 'free'
                 || (
@@ -4564,11 +4615,9 @@ function showPostureMenu(characterId) {
                 opacity:${available ? '1' : '0.42'};
             `;
             button.onclick = async () => {
-                const requestedBack = backToggle?.checked;
                 menu.querySelectorAll('button').forEach((item) => {
                     item.disabled = true;
                 });
-                if (backToggle) backToggle.disabled = true;
                 try {
                     if (isCombatActive) {
                         await Server.performLocationCombatAction(window.currentLobbyId, getCurrentLocationId(), {
@@ -4595,14 +4644,6 @@ function showPostureMenu(characterId) {
                         }
                     }
                     closePostureMenu();
-                    if (targetPosture === 'prone' && requestedBack !== undefined
-                        && requestedBack !== Boolean(modelEntry.proneOnBack)) {
-                        try {
-                            await saveProneVisualVariant(characterId, requestedBack);
-                        } catch (error) {
-                            showNotification(error.message || 'Не удалось сохранить вариант позы', 'system');
-                        }
-                    }
                     showNotification(`Положение изменено: ${profile.label}`, 'success');
                 } catch (error) {
                     showNotification(error.message || 'Не удалось изменить положение', 'system');
@@ -4613,26 +4654,6 @@ function showPostureMenu(characterId) {
         });
         options.appendChild(card);
     });
-
-    if (currentPosture === 'prone' && canSelectVisualVariant) {
-        const label = document.createElement('label');
-        label.style.cssText = 'display:flex; gap:9px; align-items:center; padding:12px 13px; font-size:13px;';
-        label.innerHTML = '<input type="checkbox"> Лежать на спине';
-        const toggle = label.querySelector('input');
-        toggle.checked = Boolean(modelEntry.proneOnBack);
-        toggle.onchange = async () => {
-            toggle.disabled = true;
-            try {
-                await saveProneVisualVariant(characterId, toggle.checked);
-            } catch (error) {
-                toggle.checked = Boolean(modelEntry.proneOnBack);
-                showNotification(error.message || 'Не удалось сохранить вариант позы', 'system');
-            } finally {
-                toggle.disabled = false;
-            }
-        };
-        options.appendChild(label);
-    }
 
     menu.querySelector('.posture-close').onclick = closePostureMenu;
     menu.style.display = 'flex';
@@ -5361,10 +5382,105 @@ export function beginPendingCombatAction(action) {
 }
 
 export function clearPendingCombatAction() {
+    if (pendingCombatAction?.trapTarget && renderer?.domElement.style.cursor === 'crosshair') {
+        renderer.domElement.style.cursor = 'default';
+    }
     clearTimeout(pendingCombatAction?.jumpPreviewTimer);
     pendingCombatAction = null;
     clearAttackPreview();
     renderCombatHud();
+}
+
+function beginTrapTargeting(characterId, trapTarget) {
+    const actor = getCharacterModelEntry(characterId);
+    if (!locationActive || !actor || !canControlCharacter(characterId)
+        || getLocationCharacterCondition(characterId).state !== 'active') {
+        showNotification('Этот персонаж сейчас не может выполнить действие', 'system');
+        return false;
+    }
+    if (!isCurrentCombatTurnForCharacter(characterId)) {
+        showNotification('Сейчас не ход этого персонажа', 'system');
+        return false;
+    }
+    const digging = trapTarget.operation === 'bury_ground_stash';
+    if (digging && (actor.floorLevel || 0) !== 0) {
+        showNotification('Для тайника нужен открытый грунт на уровне земли', 'system');
+        return false;
+    }
+    window.cancelCommonMapTool?.();
+    cancelCharacterPlacement();
+    clearStationPlacement();
+    clearPendingCombatAction();
+    closeCombatMenus();
+    hideStructureInteraction();
+    clearMovementPreview();
+    armedMoveCharacterId = null;
+    pendingCombatAction = { actorCharacterId: characterId, targetType: 'point', trapTarget };
+    renderer.domElement.style.cursor = 'crosshair';
+    const hint = digging ? 'выберите открытую клетку грунта рядом' : 'выберите клетку или объект в поле зрения';
+    showNotification(`${actor.name} · ${hint}. Esc или ПКМ отменяют выбор.`, 'system');
+    return true;
+}
+
+export function beginGroundStashPlacement(characterId, toolPath, toolId) {
+    return beginTrapTargeting(characterId, { operation: 'bury_ground_stash', tool_path: toolPath, tool_id: toolId });
+}
+
+async function submitLocationTrapTarget(characterId, request, selection = null) {
+    const locationId = currentLocationId;
+    const lobbyId = window.currentLobbyId;
+    await Server.waitForCharacterSave(characterId);
+    const { data } = await Server.getCharacter(characterId);
+    if (currentLocationId !== locationId || window.currentLobbyId !== lobbyId
+        || (selection && pendingCombatAction !== selection)) return;
+    const { submitTrapAction } = await import('./traps.js');
+    if (currentLocationId !== locationId || window.currentLobbyId !== lobbyId
+        || (selection && pendingCombatAction !== selection)) return;
+    return submitTrapAction({
+        locationId, lobbyId, inCombat: combatState?.status === 'active',
+        locationCharacterId: findCombatCharacterByCharacterId(characterId)?.location_character_id,
+        payload: { ...request, character_id: characterId, character_revision: data._revision },
+    });
+}
+
+async function resolveTrapTarget(action, clientX, clientY) {
+    if (action.resolving) return;
+    const characterId = action.actorCharacterId;
+    const actor = getCharacterModelEntry(characterId);
+    if (!actor || !canControlCharacter(characterId) || !isCurrentCombatTurnForCharacter(characterId)
+        || getLocationCharacterCondition(characterId).state !== 'active') {
+        clearPendingCombatAction();
+        showNotification('Этот персонаж сейчас не может выполнить действие', 'system');
+        return;
+    }
+    const digging = action.trapTarget.operation === 'bury_ground_stash';
+    const hitObject = digging ? null : getLocationObjectAtScreen(clientX, clientY)?.userData.locationObject;
+    const object = hitObject?.id > 0 && hitObject.type !== 'floor' ? hitObject : null;
+    const point = object ? null : localMapToolPoint(clientX, clientY);
+    const cell = point ? { x: Math.floor(point.x), y: Math.floor(point.z), floor_level: point.floor_level } : null;
+    if (!cell && !object) return;
+    if (digging) {
+        const terrain = currentLocationData.tiles_data?.[cell.y]?.[cell.x]?.terrain || 'grass';
+        const hasFloor = (currentLocationData.objects || []).some(floor => floor.type === 'floor'
+            && structureLevel(floor) === 0 && localMapFloorContains(floor, cell.x + .5, cell.y + .5));
+        if (cell.floor_level !== 0 || (actor.floorLevel || 0) !== 0 || hasFloor || !diggableStashTerrain.has(terrain)
+            || Math.hypot(cell.x - actor.posX, cell.y - actor.posY) > 1.5) {
+            showNotification('Выберите открытый грунт рядом с персонажем', 'system');
+            return;
+        }
+    }
+    action.request ||= { ...action.trapTarget, ...cell, search_object_id: cell ? undefined : object.id,
+        operation_id: crypto.randomUUID() };
+    action.resolving = true;
+    try {
+        await submitLocationTrapTarget(characterId, action.request, action);
+        if (pendingCombatAction === action) clearPendingCombatAction();
+    } catch (error) {
+        if (error.status) action.request = null;
+        showNotification(error.message, 'system');
+    } finally {
+        action.resolving = false;
+    }
 }
 
 export function queueCombatActionFromSheet(action) {
@@ -5405,7 +5521,7 @@ export function startCharacterMoveMode(characterId) {
         showMovementTypeMenu(characterId);
         return true;
     }
-    return beginCharacterMoveMode(characterId, 'walk');
+    return beginCharacterMoveMode(characterId, 'run');
 }
 
 function isAttackerBehindTarget(attacker, target) {
@@ -5844,6 +5960,36 @@ async function resolveCombatPointSelection(clientX, clientY) {
 }
 
 // ========== Создание модели персонажа ==========
+function showHumanLocationPose(model, posture, immediate = false) {
+    const appearance = model.children.find(child => child.name === 'human_appearance');
+    if (!appearance) return;
+    for (const child of model.children) {
+        if (child.userData.posturePart) {
+            child.visible = false;
+            child.castShadow = false;
+        }
+    }
+    applyCharacterAppearanceModel(appearance, model.userData.characterAppearance,
+        model.userData.humanPose || posture, { immediate });
+}
+
+function mountHumanLocationAppearance(model, posture) {
+    void preloadCharacterCollapse();
+    mountLocationModel(model, HUMAN_APPEARANCE_ASSET, HUMAN_APPEARANCE_DIMENSIONS, appearance => {
+        appearance.name = 'human_appearance';
+        appearance.traverse(child => {
+            if (!child.isMesh) return;
+            child.castShadow = !model.userData.fogMemoryGhost;
+            child.receiveShadow = true;
+        });
+        model.add(appearance);
+        showHumanLocationPose(model, model.userData.posture || posture, true);
+        if (model.userData.fogMemoryGhost) setFogGhostAppearance(appearance);
+        model.userData.importedHumanReady = true;
+        model.dispatchEvent({ type: 'model-ready' });
+    });
+}
+
 function createCharacterModel(userId) {
     const group = new THREE.Group();
     const color = getUserColor(userId);
@@ -5907,27 +6053,23 @@ function createCharacterModel(userId) {
     return group;
 }
 
-function poseStandardHumanModel(model, posture, proneOnBack = false) {
+function poseStandardHumanModel(model, posture, proneOnBack = false, { collapsed = false, immediate = false } = {}) {
+    model.userData.posture = posture;
     const parts = Object.fromEntries(model.children
         .filter(child => child.userData?.posturePart)
         .map(child => [child.userData.posturePart, child]));
     const crouching = posture === 'sitting';
     const prone = posture === 'prone';
-    const proneLegDirection = proneOnBack ? 1 : -1;
-    parts.body.rotation.set(prone ? (proneOnBack ? -Math.PI / 2 : Math.PI / 2)
-        : crouching ? 0.18 : 0, 0, 0);
+    parts.body.rotation.set(prone ? Math.PI / 2 : crouching ? 0.18 : 0, 0, 0);
     parts.body.position.set(0, prone ? 0.3 : crouching ? 0.77 : 1.18,
         crouching ? 0.08 : 0);
-    parts.head.rotation.x = prone ? (proneOnBack ? -0.25 : 0.25) : 0;
-    parts.head.position.set(0, prone ? (proneOnBack ? 0.43 : 0.4) : crouching ? 1.15 : 1.62,
-        prone ? (proneOnBack ? -0.6 : 0.47) : crouching ? 0.16 : 0.03);
-    parts.neck.visible = prone && proneOnBack;
-    if (parts.neck.visible) {
-        parts.neck.rotation.x = Math.PI / 2;
-        parts.neck.position.set(0, 0.36, -0.46);
-    }
+    parts.head.rotation.x = prone ? 0.25 : 0;
+    parts.head.position.set(0, prone ? 0.4 : crouching ? 1.15 : 1.62,
+        prone ? 0.47 : crouching ? 0.16 : 0.03);
+    parts.neck.visible = false;
+    parts.facingMarker.rotation.x = Math.PI / 2;
     parts.facingMarker.position.set(0, prone ? 0.24 : crouching ? 1.02 : 1.3,
-        prone ? (proneOnBack ? 1.45 : 0.7) : crouching ? 0.35 : 0.3);
+        prone ? 0.7 : crouching ? 0.35 : 0.3);
     for (const side of [-1, 1]) {
         const upperLeg = parts[`upperLeg${side}`];
         const lowerLeg = parts[`lowerLeg${side}`];
@@ -5938,18 +6080,29 @@ function poseStandardHumanModel(model, posture, proneOnBack = false) {
             : kneelingLeg ? -0.27 : 0;
         upperLeg.position.set(side * 0.14,
             prone ? 0.19 : kneelingLeg ? 0.33 : crouching ? 0.51 : 0.675,
-            prone ? proneLegDirection * 0.5 : kneelingLeg ? 0.08 : crouching ? 0.22 : 0);
+            prone ? -0.5 : kneelingLeg ? 0.08 : crouching ? 0.22 : 0);
         lowerLeg.rotation.x = prone || kneelingLeg ? Math.PI / 2 : 0;
         lowerLeg.position.set(side * 0.14, prone ? 0.16 : kneelingLeg ? 0.11 : 0.225,
-            prone ? proneLegDirection * 0.93 : kneelingLeg ? -0.18 : crouching ? 0.45 : 0);
+            prone ? -0.93 : kneelingLeg ? -0.18 : crouching ? 0.45 : 0);
         foot.position.set(side * 0.14, prone ? 0.1 : 0.05,
-            prone ? proneLegDirection * 1.18 : kneelingLeg ? -0.42 : crouching ? 0.54 : 0.1);
+            prone ? -1.18 : kneelingLeg ? -0.42 : crouching ? 0.54 : 0.1);
         arm.rotation.x = prone ? Math.PI / 2 : 0;
         if (crouching) arm.rotation.x = -0.36;
-        arm.position.set(side * (proneOnBack && prone ? 0.37 : 0.3),
-            prone ? (proneOnBack ? 0.18 : 0.22) : crouching ? 0.74 : 1.2,
-            prone ? (proneOnBack ? -0.08 : 0.25) : crouching ? 0.21 : 0.02);
+        arm.position.set(side * 0.3, prone ? 0.22 : crouching ? 0.74 : 1.2,
+            prone ? 0.25 : crouching ? 0.21 : 0.02);
     }
+    if (prone && collapsed && proneOnBack) {
+        for (const part of Object.values(parts)) {
+            part.position.z *= -1;
+            part.rotation.x *= -1;
+        }
+        parts.head.rotation.x = -Math.PI / 2;
+    }
+    if (collapsed) {
+        parts.head.position.y = proneOnBack ? .20 : .22;
+        if (!proneOnBack) parts.head.rotation.x = .6;
+    }
+    showHumanLocationPose(model, posture, immediate);
 }
 
 function characterLabelOffset(entry) {
@@ -6022,19 +6175,20 @@ function updateCharacterTeamVisual(characterId, teamName, teamColor) {
     badge.style.borderLeftColor = entry.teamColor || '#879486';
 }
 
-export function addCharacterToLocation(characterId, name, ownerId, ownerName, posX, posY, hpZones, effects, controlledBy, teamName = null, teamColor = null, facingX = 0, facingY = 1, isMutant = false, isNpc = false, gmHidden = false, mutantType = '', posture = 'standing', proneOnBack = false, floorLevel = 0, physicalHeight = null) {
+export function addCharacterToLocation(characterId, name, ownerId, ownerName, posX, posY, hpZones, effects, controlledBy, teamName = null, teamColor = null, facingX = 0, facingY = 1, isMutant = false, isNpc = false, gmHidden = false, mutantType = '', posture = 'standing', proneOnBack = false, floorLevel = 0, physicalHeight = null, appearance = null, conditionState = null) {
     if (!scene || !currentLocationData) return;
     if (characterModels.has(characterId)) {
         const old = characterModels.get(characterId);
         disposeObject(old.model);
         scene.remove(old.model);
-        if (old.label) scene.remove(old.label);
+        old.label?.removeFromParent();
         characterModels.delete(characterId);
     }
     const resolvedControlledBy = Number.isFinite(Number(controlledBy)) ? Number(controlledBy) : null;
     const fallbackOwnerId = Number.isFinite(Number(ownerId)) ? Number(ownerId) : null;
     const colorUserId = resolvedControlledBy ?? fallbackOwnerId ?? 0;
-    const model = (isMutant && createMutantModel(mutantType, renderer.outputEncoding)) || createCharacterModel(colorUserId);
+    const model = (isMutant && createMutantModel(mutantType, renderer.outputColorSpace)) || createCharacterModel(colorUserId);
+    if (!isMutant) model.userData.characterAppearance = normalizeCharacterAppearance(appearance);
     const tileHeight = physicalHeight ?? getTileHeight(posX, posY) + floorLevel * STOREY_HEIGHT;
     model.position.set(posX + 0.5, tileHeight, posY + 0.5);
     tintLocationMesh(model, darknessFactorAt(posX, posY));
@@ -6063,7 +6217,7 @@ export function addCharacterToLocation(characterId, name, ownerId, ownerName, po
     div.append(nameLine, teamBadge, grappleBadge, gunpointBadge, anomalyBadge);
     const label = new CSS2DObject(div);
     label.position.set(posX + 0.5, tileHeight + characterLabelOffset({ model, posture: 'standing' }), posY + 0.5);
-    scene.add(label);
+    labelScene.add(label);
 
     characterModels.set(characterId, {
         characterId,
@@ -6098,6 +6252,7 @@ export function addCharacterToLocation(characterId, name, ownerId, ownerName, po
     model.addEventListener('model-ready',()=>{
         const entry=getCharacterModelEntry(characterId);
         if(entry?.model!==model)return;
+        entry.humanAppearanceModel = model.getObjectByName('human_appearance');
         tintLocationMesh(model,darknessFactorAt(entry.posX,entry.posY));
         attachStaticLightFieldToRoot(model,entry.floorLevel||0);
         applyCharacterVisibilityVisual(characterId,{gmHidden:entry.gmHidden,camouflaged:entry.camouflaged},true);
@@ -6105,9 +6260,10 @@ export function addCharacterToLocation(characterId, name, ownerId, ownerName, po
     });
     applyCharacterFacingVisual(characterId, facingX, facingY);
     const combatCharacter = findCombatCharacterByCharacterId(characterId);
-    if (combatCharacter?.posture || posture !== 'standing') {
-        applyCharacterPostureVisual(characterId, combatCharacter?.posture || posture);
-    }
+    applyCharacterPostureVisual(characterId, combatCharacter?.posture || posture, {
+        proneOnBack, conditionState: conditionState ?? combatCharacter?.condition?.state, immediate: true,
+    });
+    if (!isMutant) mountHumanLocationAppearance(model, posture);
     applyCharacterGrappleVisual(characterId, combatCharacter);
     applyCharacterGunpointVisual(characterId, combatCharacter);
     applyCharacterAnomalyVisual(characterId, combatCharacter);
@@ -6144,7 +6300,7 @@ function fogIsActive() {
     return Boolean(
         currentLocationData
         && Number(localStorage.getItem('user_id'))
-        && (window.locationScoutView || !window.isGM || gmVisionCharacterId !== null),
+        && (window.locationScoutView || firstPersonView || !window.isGM || gmVisionCharacterId !== null),
     );
 }
 
@@ -6164,6 +6320,137 @@ function toggleGmVision(characterId = null) {
             : 'Полный обзор ГМа восстановлен',
         'system',
     );
+}
+
+function renderFirstPersonNightVision(view) {
+    const profile = view.showEffect ? view.nvgProfile : null;
+    if (profile) view.canvas.dataset.nightVision = profile;
+    else delete view.canvas.dataset.nightVision;
+    view.overlay.dataset.nightVision = profile || '';
+    view.nvgButton.hidden = !view.nvgProfile;
+    view.nvgButton.textContent = profile ? 'Убрать эффект ПНВ' : 'Показать эффект ПНВ';
+    view.nvgButton.setAttribute('aria-pressed', String(Boolean(profile)));
+}
+
+function refreshFirstPersonNightVision() {
+    const view = firstPersonView;
+    if (!view) return;
+    view.nvgRefreshPending = true;
+    if (view.nvgTimer) return;
+    view.nvgTimer = setTimeout(async () => {
+        view.nvgRefreshPending = false;
+        try {
+            const { lights } = await Server.getPortableLights(view.characterId);
+            if (firstPersonView !== view) return;
+            const active = lights.find(light => light.kind === 'nvg' && light.binding?.on
+                && light.uses_left > 0 && !light.burned && !light.blocked_reason && light.mount_available !== false);
+            const name = String(active?.name || '').toLowerCase();
+            const profile = active ? (name.includes('supernova') ? 'supernova'
+                : name.includes('сидр') ? 'sidr' : 'pnv1p') : null;
+            if (profile === view.nvgProfile) return;
+            view.nvgProfile = profile;
+            renderFirstPersonNightVision(view);
+            applyFogOfWar();
+        } catch (error) {
+            if (firstPersonView !== view || !view.nvgProfile) return;
+            view.nvgProfile = null;
+            renderFirstPersonNightVision(view);
+            applyFogOfWar();
+        } finally {
+            view.nvgTimer = null;
+            if (firstPersonView === view && view.nvgRefreshPending) refreshFirstPersonNightVision();
+        }
+    }, 160);
+}
+
+function startFirstPersonView(characterId) {
+    characterId = Number(characterId);
+    const entry = getCharacterModelEntry(characterId);
+    const container = document.getElementById('location-canvas');
+    if (!camera || !controls || !container || !entry || !canControlCharacter(characterId)
+        || getLocationCharacterCondition(characterId).state !== 'active') return;
+    stopFirstPersonView();
+    closeCombatMenus();
+    clearPendingCombatAction();
+    const overlay = document.createElement('div');
+    overlay.className = 'location-first-person';
+    const toolbar = document.createElement('div');
+    toolbar.className = 'location-first-person-controls';
+    const exit = document.createElement('button');
+    exit.type = 'button';
+    exit.className = 'btn btn-sm btn-secondary';
+    exit.textContent = 'Вернуться на карту';
+    exit.onclick = () => stopFirstPersonView();
+    const nvgButton = document.createElement('button');
+    nvgButton.type = 'button';
+    nvgButton.className = exit.className;
+    toolbar.append(nvgButton, exit);
+    overlay.append(toolbar);
+    container.append(overlay);
+    const view = firstPersonView = {
+        characterId, overlay, nvgButton, canvas: renderer.domElement, showEffect: true, nvgProfile: null,
+        position: camera.position.clone(), target: controls.target.clone(), fov: camera.fov, near: camera.near,
+        controlsEnabled: controls.enabled, level: locationViewLevel, abort: new AbortController(),
+    };
+    nvgButton.onclick = () => {
+        view.showEffect = !view.showEffect;
+        renderFirstPersonNightVision(view);
+    };
+    window.addEventListener('keydown', event => {
+        if (event.key !== 'Escape') return;
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        stopFirstPersonView();
+    }, { capture: true, signal: view.abort.signal });
+    controls.enabled = false;
+    camera.fov = 58;
+    camera.near = .035;
+    camera.updateProjectionMatrix();
+    if (labelRenderer) labelRenderer.domElement.style.visibility = 'hidden';
+    setLocationViewLevel(entry.floorLevel || 0);
+    renderFirstPersonNightVision(view);
+    refreshFirstPersonNightVision();
+    applyFogOfWar();
+    exit.focus();
+}
+
+function stopFirstPersonView({ restore = true } = {}) {
+    const view = firstPersonView;
+    if (!view) return;
+    firstPersonView = null;
+    view.abort.abort();
+    clearTimeout(view.nvgTimer);
+    delete view.canvas.dataset.nightVision;
+    view.overlay.remove();
+    if (labelRenderer) labelRenderer.domElement.style.visibility = '';
+    if (!restore || !camera || !controls) return;
+    camera.position.copy(view.position);
+    camera.fov = view.fov;
+    camera.near = view.near;
+    camera.updateProjectionMatrix();
+    controls.target.copy(view.target);
+    controls.enabled = view.controlsEnabled;
+    controls.update();
+    setLocationViewLevel(view.level);
+    applyFogOfWar();
+}
+
+function positionFirstPersonCamera() {
+    if (!firstPersonView) return null;
+    const entry = getCharacterModelEntry(firstPersonView.characterId);
+    if (!entry || !canControlCharacter(firstPersonView.characterId) || entry.collapsed) {
+        stopFirstPersonView();
+        return null;
+    }
+    const { x, y, z } = entry.model.position;
+    const height = visionEyeHeight(entry) - (entry.physicalHeight ?? getTileHeight(entry.posX, entry.posY));
+    const dx = Math.sin(entry.model.rotation.y);
+    const dz = Math.cos(entry.model.rotation.y);
+    camera.position.set(x, y + height, z);
+    controls.target.set(x + dx, y + height, z + dz);
+    camera.lookAt(controls.target);
+    if (locationViewLevel !== (entry.floorLevel || 0)) setLocationViewLevel(entry.floorLevel || 0);
+    return entry;
 }
 
 function clearFogMemoryGhosts() {
@@ -6286,10 +6573,11 @@ function cloneFogGhost(root) {
     return ghost;
 }
 
-function applyFogGhostPosture(model, posture, proneOnBack = false) {
+function applyFogGhostPosture(model, posture, proneOnBack = false, collapsed = false) {
     const normalized = COMBAT_POSTURES[posture] ? posture : 'standing';
     if (model.userData.isStandardHuman) {
-        poseStandardHumanModel(model, normalized, proneOnBack);
+        model.userData.humanPose = collapsed ? (proneOnBack ? 'prone_back_drop' : 'prone_drop') : normalized;
+        poseStandardHumanModel(model, normalized, proneOnBack, { collapsed, immediate: true });
         return;
     }
     const body = model.children.find((child) => child.userData?.posturePart === 'body');
@@ -6346,8 +6634,10 @@ function rememberVisibleCharacters(sources) {
             mutantType: entry.mutantType || '',
             posX: x, posY: y, posture: entry.posture || 'standing',
             proneOnBack: Boolean(entry.proneOnBack),
+            collapsed: entry.collapsed === true,
             facingX: Number(entry.facingX) || 0, facingY: Number(entry.facingY ?? 1),
         };
+        if (!entry.isMutant) snapshot.appearance = entry.model.userData.characterAppearance;
         visible.set(id, snapshot);
         if (!byTile.has(key)) byTile.set(key, []);
         byTile.get(key).push(snapshot);
@@ -6386,14 +6676,16 @@ function getFogGhost(key, createGhost) {
 }
 
 function createCharacterFogGhost(snapshot) {
-    const ghost = setFogGhostAppearance(createMutantModel(snapshot.mutantType, renderer.outputEncoding)
+    const ghost = setFogGhostAppearance(createMutantModel(snapshot.mutantType, renderer.outputColorSpace)
         || createCharacterModel(snapshot.ownerId));
+    ghost.userData.characterAppearance = snapshot.appearance;
     ghost.position.set(snapshot.posX + 0.5,
         snapshot.height != null && Number.isFinite(Number(snapshot.height))
             ? Number(snapshot.height) : 1,
         snapshot.posY + 0.5);
     ghost.rotation.y = Math.atan2(Number(snapshot.facingX) || 0, Number(snapshot.facingY) || 1);
-    applyFogGhostPosture(ghost, snapshot.posture, snapshot.proneOnBack);
+    applyFogGhostPosture(ghost, snapshot.posture, snapshot.proneOnBack, snapshot.collapsed);
+    if (!snapshot.mutantType) mountHumanLocationAppearance(ghost, snapshot.posture);
     return ghost;
 }
 
@@ -6446,6 +6738,10 @@ function getFogVisionSources() {
         const point=view.point;
         return [{posX:point.x,posY:point.y,floorLevel:point.floor_level,facingX:point.facing_x,facingY:point.facing_y,
             posture:'standing',physicalHeight:getTileHeight(point.x,point.y)+(point.floor_level||0)*STOREY_HEIGHT}];
+    }
+    if (firstPersonView) {
+        const observer = getCharacterModelEntry(firstPersonView.characterId);
+        return observer ? [observer] : [];
     }
     if (window.isGM && gmVisionCharacterId !== null) {
         const selected = characterModels.get(gmVisionCharacterId);
@@ -6615,7 +6911,8 @@ function isPointVisibleToPlayer(x, y, targetHeight, sources, visibleGlow = false
         const auraLit = source.ignitionAuraRange > 0 &&
             Math.hypot(distance, targetHeight - eyeHeight) <= source.ignitionAuraRange;
         if (auraLit) return hasLineOfSight(sourceX, sourceY, x, y, eyeHeight, targetHeight);
-        if (!visibleGlow && !sourceHasArtifactDaylightVision(source) && darknessFactorAt(x, y, false) < 0.12) return false;
+        const nvg = firstPersonView?.nvgProfile && Number(source.characterId) === firstPersonView.characterId;
+        if (!visibleGlow && !nvg && !sourceHasArtifactDaylightVision(source) && darknessFactorAt(x, y, false) < 0.12) return false;
         if (distance > FOG_VIEW_RADIUS) return false;
         const facingX = Number(source.facingX) || 0;
         const facingY = Number(source.facingY ?? 1);
@@ -6632,7 +6929,7 @@ function isTileVisibleToPlayer(x, y, sources) {
 
 function isCharacterVisibleToPlayer(entry, sources, includeScouted = true) {
     if (entry.gmHidden || entry.camouflaged) return false;
-    if(includeScouted && (scoutedCharacters.has(Number(entry.characterId))||scoutedCharacters.has(Number(entry.id))))return true;
+    if(!firstPersonView && includeScouted && (scoutedCharacters.has(Number(entry.characterId))||scoutedCharacters.has(Number(entry.id))))return true;
     sources = sources.filter(source => (source.floorLevel || 0) === (entry.floorLevel || 0));
     const height = { standing: 1.7, sitting: 1.1, prone: 0.4 }[entry.posture] ?? 1.7;
     return isPointVisibleToPlayer(
@@ -6664,43 +6961,26 @@ function combatCharacterVisibleToPlayer(character) {
     return Boolean(window.isGM || !(character?.gm_hidden || character?.camouflaged));
 }
 
-function updateAnomalyLabelVisibility(time){
-    if(!camera||time-anomalyLabelVisibilityAt<100)return;
-    anomalyLabelVisibilityAt=time;camera.updateMatrixWorld(true);
-    const signature=[...camera.matrixWorld.elements,...camera.projectionMatrix.elements].map(value=>Math.round(value*10000)).join(':')
-        +':'+movementMapVersion+':'+locationViewLevel+':'+String(updateRoofVisibility.lastState);
-    if(signature===anomalyLabelVisibilityKey)return;
-    anomalyLabelVisibilityKey=signature;
-    const candidates=[...new Set([...anomalyEffectMeshes,...locationObjectMeshes.filter(root=>root.userData.locationObject?.type==='anomaly')])];
-    if(!anomalyLabelOcclusionCache || anomalyLabelOcclusionCache.location!==currentLocationData
-        || anomalyLabelOcclusionCache.version!==movementMapVersion){
+function locationLabelBlocked(picker, point) {
+    if(!locationLabelOcclusionCache || locationLabelOcclusionCache.location!==currentLocationData
+        || locationLabelOcclusionCache.version!==movementMapVersion){
         const roots=[...roofMeshes,...locationObjectMeshes.filter(root=>root.userData.locationObject?.type!=='anomaly'),
             ...objectMeshes.filter(root=>!['anomaly','campfire','poster'].includes(root.userData.objType))];
-        anomalyLabelOcclusionCache={location:currentLocationData,version:movementMapVersion,
+        locationLabelOcclusionCache={location:currentLocationData,version:movementMapVersion,
             index:createLabelOcclusionIndex(THREE,roots),terrain:new Map()};
     }
-    const picker=new THREE.Raycaster(),origin=camera.getWorldPosition(new THREE.Vector3()),point=new THREE.Vector3(),projected=new THREE.Vector3();
-    for(const root of candidates){
-        const labels=[];root.traverse(child=>{if(child.userData.anomalyLabel)labels.push(child);});
-        if(!labels.length)continue;
-        root.getWorldPosition(point);point.y+=.25;
-        projected.copy(point).project(camera);
-        let visible=root.visible&&Math.abs(projected.x)<=1&&Math.abs(projected.y)<=1&&projected.z>=-1&&projected.z<=1;
-        if(visible){
-            const distance=origin.distanceTo(point);
-            picker.set(origin,point.clone().sub(origin).normalize());picker.far=Math.max(0,distance-.06);
-            // Грунт проверяется по клеткам луча, без треугольников всего квартала.
-            visible=!terrainLineHit(currentLocationData?.tiles_data||[],origin.toArray(),point.toArray(),
-                anomalyLabelOcclusionCache.terrain,
-                hit=>!terrainOpeningAt(currentLocationData?.objects||[],0,hit.x,hit.z))
-                &&!anomalyLabelOcclusionCache.index.blocked(picker,mesh=>visibleEditorHit({object:mesh}),hit=>{
-                if(hit.object.userData?.pickOnly||!visibleEditorHit(hit))return false;
-                const material=Array.isArray(hit.object.material)?hit.object.material[hit.face?.materialIndex||0]:hit.object.material;
-                return material&&material.visible!==false&&Number(material.opacity??1)>=.65;
-            });
-        }
-        for(const label of labels)label.visible=visible;
-    }
+    const cache = locationLabelOcclusionCache;
+    return Boolean(terrainLineHit(currentLocationData?.tiles_data || [], picker.ray.origin.toArray(), point.toArray(),
+        cache.terrain, hit => !terrainOpeningAt(currentLocationData?.objects || [], 0, hit.x, hit.z)))
+        || cache.index.blocked(picker, mesh => visibleEditorHit({ object: mesh }), hit => {
+            if (hit.object.userData?.pickOnly || !visibleEditorHit(hit)) return false;
+            const material = Array.isArray(hit.object.material) ? hit.object.material[hit.face?.materialIndex || 0] : hit.object.material;
+            return material && material.visible !== false && Number(material.opacity ?? 1) >= .65;
+        });
+}
+
+function locationAnomalyRoots() {
+    return [...anomalyEffectMeshes, ...locationObjectMeshes.filter(root => root.userData.locationObject?.type === 'anomaly')];
 }
 
 function isFogHiddenObject(object) {
@@ -6776,8 +7056,7 @@ function updateFogOverlay(active, sources) {
 
 function applyFogOfWar() {
     if (!scene || !currentLocationData) return;
-    anomalyLabelVisibilityKey=null;
-    anomalyLabelOcclusionCache=null;
+    locationLabelOcclusionCache = null;
     facingPreviewState = null;
     if (pendingFacingSelection && facingPreviewPointer) {
         if (facingPreviewMesh) facingPreviewMesh.count = 0;
@@ -6785,10 +7064,11 @@ function applyFogOfWar() {
     }
     visionBlockerHeightCache = new Map();
     const active = fogIsActive();
+    const gmCanSeeHidden = Boolean(window.isGM && !window.locationScoutView && !firstPersonView);
     loadFogMemory();
     const sources = active ? getFogVisionSources() : [];
     let learnedNewTiles = false;
-    if (active) {
+    if (active && !firstPersonView) {
         const anomalyTiles = new Set();
         objectMeshes.forEach((mesh) => {
             if (mesh.userData?.objType === 'anomaly') {
@@ -6810,7 +7090,7 @@ function applyFogOfWar() {
     updateFogOverlay(active, sources);
     characterModels.forEach((entry) => {
         const hidden = entry.gmHidden || entry.camouflaged;
-        const visible = (globalThis.window?.isGM && !window.locationScoutView && hidden)
+        const visible = (gmCanSeeHidden && hidden)
             || (!hidden && (!active || isCharacterVisibleToPlayer(entry, sources)));
         const onViewedFloor = locationLevelVisible(entry.renderFloorLevel ?? entry.floorLevel ?? 0, null, entry.model.position.x, entry.model.position.z);
         entry.model.visible = visible && onViewedFloor;
@@ -6825,7 +7105,7 @@ function applyFogOfWar() {
             return;
         }
         if (mesh.userData?.sourceObject?.gm_hidden) {
-            mesh.visible = Boolean(window.isGM&&!window.locationScoutView);
+            mesh.visible = gmCanSeeHidden;
             return;
         }
         if (mesh.userData?.objType !== 'anomaly') {
@@ -6844,7 +7124,7 @@ function applyFogOfWar() {
     locationObjectMeshes.forEach((mesh) => {
         const object = mesh.userData?.locationObject || {};
         const position = getObjectGridPosition(object);
-        const physicalVisible = object.properties?.gm_hidden ? Boolean(window.isGM&&!window.locationScoutView)
+        const physicalVisible = object.properties?.gm_hidden ? gmCanSeeHidden
             : !isFogHiddenObject(object) || !active || isPointVisibleToPlayer(
                 position.x ?? 0, position.y ?? 0,
                 getTileHeight(position.x ?? 0, position.y ?? 0) + getFogObjectHeight(object), sources);
@@ -6860,7 +7140,7 @@ function applyFogOfWar() {
                 mesh.position.x,mesh.position.z,object);
         }
     });
-    syncFogMemoryGhosts(active, sources);
+    syncFogMemoryGhosts(active && !firstPersonView, sources);
     visionBlockerHeightCache = null;
 }
 
@@ -7055,16 +7335,38 @@ export function refreshUserColor(userId) {
     });
 }
 
-export function applyCharacterPostureVisual(characterId, posture = 'standing') {
+export function setLocationCharacterAppearance(characterId, appearance) {
+    const entry = getCharacterModelEntry(characterId);
+    if (!entry || entry.isMutant) return;
+    entry.model.userData.characterAppearance = normalizeCharacterAppearance(appearance);
+    showHumanLocationPose(entry.model, entry.posture);
+    tintLocationMesh(entry.model, darknessFactorAt(entry.posX, entry.posY));
+    applyFogOfWar();
+}
+
+export function applyCharacterPostureVisual(characterId, posture = 'standing', {
+    proneOnBack, conditionState, immediate = false,
+} = {}) {
     const entry = getCharacterModelEntry(characterId);
     if (!entry) return;
-    const normalized = COMBAT_POSTURES[posture] ? posture : 'standing';
+    if (conditionState) entry.conditionState = conditionState;
+    const collapsed = ['pain_shock', 'critical', 'dead'].includes(entry.conditionState);
+    const back = collapsed && Boolean(proneOnBack ?? (posture !== 'prone' || entry.proneOnBack));
+    const falling = back && !entry.collapsed && entry.posture !== 'prone' && !immediate;
+    const normalized = collapsed ? 'prone' : COMBAT_POSTURES[posture] ? posture : 'standing';
     const tileHeight = entry.physicalHeight ?? getTileHeight(entry.posX, entry.posY);
     const body = entry.model.children.find((child) => child.userData?.posturePart === 'body');
     const head = entry.model.children.find((child) => child.userData?.posturePart === 'head');
     entry.model.scale.set(1, 1, 1);
     if (entry.model.userData.isStandardHuman) {
-        poseStandardHumanModel(entry.model, normalized, entry.proneOnBack);
+        const pose = entry.model.userData.humanPose;
+        if (falling) entry.model.userData.humanPose = entry.posture === 'sitting' ? 'fall_back_crouch' : 'fall_back';
+        else if (collapsed && !(entry.collapsed && back === entry.proneOnBack && pose?.startsWith('fall_back'))) {
+            entry.model.userData.humanPose = back ? 'prone_back_drop' : 'prone_drop';
+        } else if (!collapsed) {
+            entry.model.userData.humanPose = normalized;
+        }
+        poseStandardHumanModel(entry.model, normalized, back, { collapsed, immediate });
     } else if (body && head) {
         body.rotation.z = normalized === 'prone' ? Math.PI / 2 : 0;
         body.scale.set(1, normalized === 'sitting' ? 0.68 : 1, 1);
@@ -7075,19 +7377,19 @@ export function applyCharacterPostureVisual(characterId, posture = 'standing') {
             0,
         );
     }
+    if (entry.posture !== normalized || entry.collapsed !== collapsed) portableLightRenderer?.dirty(entry.model.position);
     entry.model.userData.posture = normalized;
     entry.posture = normalized;
+    entry.proneOnBack = back;
+    entry.collapsed = collapsed;
     entry.label.position.y = tileHeight + characterLabelOffset(entry);
 }
 
 export function applyCharacterVisualPose(characterId, proneOnBack) {
     const entry = getCharacterModelEntry(characterId);
     if (!entry || !entry.model.userData.isStandardHuman) return;
-    entry.proneOnBack = proneOnBack === true;
-    if (entry.posture === 'prone') {
-        poseStandardHumanModel(entry.model, 'prone', entry.proneOnBack);
-        applyFogOfWar();
-    }
+    applyCharacterPostureVisual(characterId, entry.posture, { proneOnBack: proneOnBack === true });
+    if (entry.posture === 'prone') applyFogOfWar();
 }
 
 export function applyCharacterFacingVisual(characterId, facingX = 0, facingY = 1, { deferRefresh = false } = {}) {
@@ -7098,11 +7400,14 @@ export function applyCharacterFacingVisual(characterId, facingX = 0, facingY = 1
     if (x === 0 && y === 0) return;
     if (entry.facingX === x && entry.facingY === y) return;
     queueTrueSightRefresh();
+    if (entry.positionAnimation) entry.positionAnimation.followPathFacing = false;
     entry.model.rotation.y = Math.atan2(x, y);
     entry.facingX = x;
     entry.facingY = y;
-    syncPortableLights();
-    if (!deferRefresh) applyFogOfWar();
+    if (!deferRefresh) {
+        applyFogOfWar();
+        syncPortableLights();
+    }
 }
 
 function applyCharacterGrappleVisual(characterId, combatCharacter = null) {
@@ -7193,43 +7498,172 @@ export function applyCharacterVisibilityUpdate(characterId, gmHidden) {
     renderCombatHud();
 }
 
+const humanStrideTileMs = new Map([['walk', 680], ['run', 340], ['sprint', 240]]);
+
+function characterMovementDirection(yaw, dx, dz) {
+    const sin = Math.sin(yaw), cos = Math.cos(yaw);
+    const forward = dx * sin + dz * cos;
+    const lateral = dx * cos - dz * sin;
+    if (Math.abs(lateral) > Math.abs(forward) + 1e-7) return lateral > 0 ? 'left' : 'right';
+    return forward < 0 ? 'back' : 'forward';
+}
+
+function stairSurfaceHeight(pose, bottom, x, z) {
+    const along = (x - pose.x) * pose.normal.x + (z - pose.z) * pose.normal.z;
+    const count = Math.max(1, Math.ceil(pose.height / .2));
+    const step = Math.min(count, Math.max(1, Math.floor((along / pose.depth + .5) * count) + 1));
+    return bottom + pose.height * step / count;
+}
+
+let characterFootSurfaces;
+function characterFootSurface(level) {
+    if (!currentLocationData) return null;
+    const groundGeometry = terrainSurfaceMesh?.geometry;
+    if (characterFootSurfaces?.location !== currentLocationData || characterFootSurfaces.version !== movementMapVersion
+        || characterFootSurfaces.groundGeometry !== groundGeometry) {
+        const objects = currentLocationData.objects || [];
+        const structures = objects.filter(object => object.type === 'floor' || object.type === 'stairs').map(object => {
+            const floor = object.type === 'floor';
+            const pose = floor ? floorVisualPose(object, objects) : structurePose(object);
+            const height = getTileHeight(object.tile_x, object.tile_y) + structureLevelOffset(object)
+                + Number(object.properties?.elevation || 0) + (floor ? FLOOR_SURFACE_OFFSET : 0);
+            return { level: structureLevel(object), pose, height, floor,
+                parts: floor ? floorSlabParts(object, objects) : [{ x: 0, z: 0, width: pose.width, depth: pose.depth }] };
+        });
+        const terrain = createTerrainSurfaceHeightSampler(currentLocationData.tiles_data,
+            { rendered: true, limitRelief: locationGroundReliefLimit() });
+        characterFootSurfaces = { location: currentLocationData, version: movementMapVersion, groundGeometry,
+            levels: new Map(), terrain, structures };
+    }
+    const index = characterFootSurfaces;
+    if (!index.levels.has(level)) {
+        const structures = index.structures.filter(item => item.level === level || !item.floor && item.level === level - 1);
+        const cells = new Map();
+        const width = index.location.grid_width, depth = index.location.grid_height;
+        for (const item of structures) {
+            const { pose } = item;
+            for (const part of item.parts) {
+                const x = pose.x + part.x * pose.axis.x + part.z * pose.normal.x;
+                const z = pose.z + part.x * pose.axis.z + part.z * pose.normal.z;
+                const rx = (Math.abs(pose.axis.x) * part.width + Math.abs(pose.normal.x) * part.depth) / 2;
+                const rz = (Math.abs(pose.axis.z) * part.width + Math.abs(pose.normal.z) * part.depth) / 2;
+                for (let iz = Math.max(0, Math.floor(z - rz)); iz < depth && iz <= z + rz; iz++) {
+                    for (let ix = Math.max(0, Math.floor(x - rx)); ix < width && ix <= x + rx; ix++) {
+                        const key = iz * width + ix;
+                        if (!cells.has(key)) cells.set(key, []);
+                        cells.get(key).push({ item, part });
+                    }
+                }
+            }
+        }
+        index.levels.set(level, (x, z, reference) => {
+            const ix = Math.floor(x), iz = Math.floor(z);
+            if (!index.location.tiles_data[iz]?.[ix]) return null;
+            let support = null;
+            for (const { item, part } of cells.get(iz * width + ix) || []) {
+                const { pose, height, floor } = item;
+                const dx = x - pose.x, dz = z - pose.z;
+                const a = dx * pose.axis.x + dz * pose.axis.z, b = dx * pose.normal.x + dz * pose.normal.z;
+                if (Math.abs(a - part.x) > part.width / 2 || Math.abs(b - part.z) > part.depth / 2) continue;
+                const y = floor ? height : stairSurfaceHeight(pose, height, x, z);
+                if (Math.abs(y - reference) > .36) continue;
+                if (support === null || Math.abs(y - reference) < Math.abs(support - reference)) support = y;
+            }
+            if (support !== null) return support;
+            if (level !== 0) return null;
+            return index.terrain(x, z);
+        });
+    }
+    return index.levels.get(level);
+}
+
 export function updateCharacterPosition(characterId, posX, posY, options = {}) {
-    portableLightRenderer?.dirty();
     queueTrueSightRefresh();
     const entry = getCharacterModelEntry(characterId);
     if (!entry) return;
-    const origin = options.jump&&options.path?.length
-        ?new THREE.Vector3(options.path[0].x+.5,options.path[0].height,options.path[0].y+.5):entry.model.position.clone();
+    const path = options.path?.length > 1 ? options.path : null;
+    const first = path?.[0];
     const previousFloor = entry.floorLevel || 0;
-    entry.floorLevel = options.floor_level ?? entry.floorLevel ?? 0;
+    const floorLevel = options.floor_level ?? previousFloor;
+    const tileHeight = options.height ?? getTileHeight(posX, posY) + floorLevel * STOREY_HEIGHT;
+    if (!path && entry.positionAnimation && entry.posX === posX && entry.posY === posY
+        && previousFloor === floorLevel && entry.physicalHeight === tileHeight) return;
+    if (entry.positionAnimation?.followPathFacing || entry.positionAnimation?.climb) {
+        entry.model.rotation.y = Math.atan2(entry.facingX, entry.facingY);
+    }
+    const origin = first ? new THREE.Vector3(first.x + .5, first.height, first.y + .5) : entry.model.position.clone();
+    entry.floorLevel = floorLevel;
     if (entry.floorLevel !== previousFloor) {
         entry.model.traverse(child => {
             for (const material of [].concat(child.material || [])) locationStaticLightField?.detach(material);
         });
         attachStaticLightFieldToRoot(entry.model, entry.floorLevel);
     }
-    const tileHeight = options.height ?? getTileHeight(posX, posY) + entry.floorLevel * STOREY_HEIGHT;
     entry.physicalHeight = tileHeight;
     entry.model.position.set(posX + 0.5, tileHeight, posY + 0.5);
+    if (!origin.equals(entry.model.position)) portableLightRenderer?.dirty(origin, entry.model.position);
     tintLocationMesh(entry.model, darknessFactorAt(posX, posY));
     entry.label.position.set(posX + 0.5, tileHeight + characterLabelOffset(entry), posY + 0.5);
     entry.posX = posX;
     entry.posY = posY;
-    if (options.path?.length > 1 && !document.hidden) {
-        const marker = {};
+    const freeRun = options.free_run === true && !options.jump && !options.fall;
+    const hasMovementFacing = freeRun && Number.isFinite(options.facing_x) && Number.isFinite(options.facing_y);
+    if (hasMovementFacing) {
+        applyCharacterFacingVisual(characterId, options.facing_x, options.facing_y, { deferRefresh: true });
+    }
+    if (path && !document.hidden) {
+        const climb = options.movement_animation === 'terrain_climb'
+            ? createTerrainClimbMotion(first, path.at(-1), characterFootSurface(0)) : null;
+        const marker = { airborne: Boolean(options.jump || options.fall || climb), followPathFacing: hasMovementFacing, climb };
         entry.positionAnimation = marker;
-        const nodes = options.path;
+        entry.renderFloorLevel = first.level ?? previousFloor;
+        const nodes = path;
+        const mode = options.movement_mode === 'backward_sideways' ? 'walk' : options.movement_mode ?? 'walk';
+        const canStride = !marker.airborne && entry.humanAppearanceModel
+            && !entry.collapsed && humanStrideTileMs.has(mode);
+        const strideTileMs = (freeRun ? {standing: 240, sitting: 400, prone: 520}
+            : {standing: humanStrideTileMs.get(mode), sitting: 920, prone: 1400})[entry.posture];
+        const segments = nodes.slice(1).map((b, index) => {
+            const a = nodes[index], dx = b.x - a.x, dz = b.y - a.y;
+            const distance = Math.hypot(dx, dz);
+            const direction = marker.followPathFacing ? 'forward' : characterMovementDirection(entry.model.rotation.y, dx, dz);
+            const speedFactor = direction === 'forward' ? 1 : direction === 'back' ? 1.22 : 1.35;
+            const duration = climb ? TERRAIN_CLIMB_MS : options.jump ? 650 / (nodes.length - 1)
+                : canStride && strideTileMs && distance ? distance * strideTileMs * speedFactor : 180;
+            return { a, b, dx, dz, duration, movement: canStride && distance ? { mode, direction } : null };
+        });
+        // Дальние маршруты вне боя проигрываются быстрее, сохраняя все повороты пути.
+        const duration = segments.reduce((total, segment) => total + segment.duration, 0);
+        const playbackRate = freeRun ? Math.max(1, duration / 5000) : 1;
         const started = performance.now();
+        const climbPosition = climb && new THREE.Vector3();
+        const idleYaw = entry.model.rotation.y;
+        const climbTurn = climb && Math.atan2(climb.forward.x, climb.forward.z) - idleYaw;
+        const turn = climb && Math.atan2(Math.sin(climbTurn), Math.cos(climbTurn));
+        let index = 0, segmentStart = 0;
         const tick = time => {
             if (entry.positionAnimation !== marker || getCharacterModelEntry(characterId) !== entry) return;
-            const progress = Math.max(0, Math.min(nodes.length - 1, (time - started) / (options.jump?650/(nodes.length-1):180)));
-            const index = Math.min(nodes.length - 2, Math.floor(progress));
-            const t = progress - index;
-            const a = index === 0 ? {x:origin.x-.5,y:origin.z-.5,height:origin.y,level:nodes[0].level} : nodes[index];
-            const b = nodes[index+1];
-            const x = a.x + (b.x-a.x)*t + .5, z = a.y + (b.y-a.y)*t + .5;
+            const elapsed = (time - started) * playbackRate;
+            while (index < segments.length - 1 && elapsed - segmentStart >= segments[index].duration) {
+                segmentStart += segments[index].duration;
+                index += 1;
+            }
+            const { a, b, dx, dz, duration, movement } = segments[index];
+            const t = Math.max(0, Math.min(1, (elapsed - segmentStart) / duration));
+            const finished = t === 1 && index === segments.length - 1;
+            if (marker.followPathFacing && (dx || dz)) entry.model.rotation.y = Math.atan2(dx, dz);
+            if (movement) movement.direction = characterMovementDirection(entry.model.rotation.y, dx, dz);
+            marker.movement = movement;
+            let x = a.x + dx*t + .5, z = a.y + dz*t + .5;
             let height = a.height + (b.height-a.height)*t;
-            const stair = !options.jump && (currentLocationData?.objects || []).find(o => {
+            if (climb) {
+                climb.progress = t;
+                terrainClimbRoot(climb, t, climbPosition);
+                ({ x, y: height, z } = climbPosition);
+                entry.model.rotation.y = idleYaw + turn * THREE.MathUtils.smoothstep(t, 0, .19)
+                    * (1 - THREE.MathUtils.smoothstep(t, .83, 1));
+            }
+            const stair = !climb && !options.jump && (currentLocationData?.objects || []).find(o => {
                 if (o.type !== 'stairs') return false;
                 const p=structurePose(o),dx=x-p.x,dz=z-p.z;
                 return Math.abs(dx*p.axis.x+dz*p.axis.z)<p.width/2
@@ -7237,30 +7671,54 @@ export function updateCharacterPosition(characterId, posX, posY, options = {}) {
                     && [a.level,b.level].includes(structureLevel(o));
             });
             if (stair) {
-                const p=structurePose(stair), along=(x-p.x)*p.normal.x+(z-p.z)*p.normal.z;
-                const count=Math.max(1,Math.ceil(p.height/.2));
-                const step=Math.min(count,Math.max(1,Math.floor((along/p.depth+.5)*count)+1));
-                height=getTileHeight(stair.tile_x,stair.tile_y)+structureLevelOffset(stair)
-                    + Number(stair.properties?.elevation||0)+p.height*step/count;
+                const bottom = getTileHeight(stair.tile_x, stair.tile_y) + structureLevelOffset(stair)
+                    + Number(stair.properties?.elevation || 0);
+                height = stairSurfaceHeight(structurePose(stair), bottom, x, z);
             }
             const previousRenderFloor = entry.renderFloorLevel ?? entry.floorLevel;
-            entry.renderFloorLevel = progress === nodes.length-1 ? entry.floorLevel : a.level;
+            entry.renderFloorLevel = finished ? entry.floorLevel : a.level;
             entry.model.position.set(x,height,z);
             entry.label.position.set(x,height+characterLabelOffset(entry),z);
             if (previousRenderFloor !== entry.renderFloorLevel) applyFogOfWar();
-            if (progress < nodes.length-1) requestAnimationFrame(tick);
-            else { entry.positionAnimation=null; entry.renderFloorLevel=null; applyFogOfWar(); }
+            if (!finished) requestAnimationFrame(tick);
+            else {
+                if (marker.followPathFacing) entry.model.rotation.y = Math.atan2(entry.facingX, entry.facingY);
+                entry.positionAnimation=null; entry.renderFloorLevel=null; applyFogOfWar();
+            }
         };
+        const firstHorizontal = marker.followPathFacing && segments.find(({dx, dz}) => dx || dz);
+        if (firstHorizontal) entry.model.rotation.y = Math.atan2(firstHorizontal.dx, firstHorizontal.dz);
         entry.model.position.copy(origin);
+        entry.label.position.set(origin.x, origin.y + characterLabelOffset(entry), origin.z);
         requestAnimationFrame(tick);
-    } else if (!options.deferRefresh) {
+    } else {
         entry.positionAnimation = null;
         entry.renderFloorLevel = null;
     }
     if (!options.deferRefresh) {
         invalidateMovementMapCache();
         applyFogOfWar();
+        syncPortableLights();
     }
+}
+
+export function relocateLocationCharacter(character) {
+    const entry = getCharacterModelEntry(character.id);
+    if (!entry) return false;
+    entry.positionAnimation = null;
+    entry.renderFloorLevel = null;
+    entry.characterOwnerId = Number(character.owner_id) || null;
+    entry.controlledBy = Number(character.controlled_by) || entry.characterOwnerId;
+    entry.ownerId = entry.controlledBy || 0;
+    entry.hpZones = character.hp_zones;
+    entry.effects = character.effects;
+    updateCharacterPosition(character.id, character.pos_x, character.pos_y, { ...character, deferRefresh: true });
+    updateCharacterTeamVisual(character.id, character.team_name, character.team_color);
+    applyCharacterFacingVisual(character.id, character.facing_x, character.facing_y, { deferRefresh: true });
+    invalidateMovementMapCache();
+    applyFogOfWar();
+    syncPortableLights();
+    return true;
 }
 
 export function removeCharacterFromLocation(characterId) {
@@ -7272,9 +7730,7 @@ export function removeCharacterFromLocation(characterId) {
         disposeObject(entry.model);
         scene.remove(entry.model);
     }
-    if (entry.label) {
-        scene.remove(entry.label);
-    }
+    entry.label?.removeFromParent();
     characterModels.delete(characterId);
     if (combatActionMenuCharacterId === characterId && combatActionMenu) {
         combatActionMenu.style.display = 'none';
@@ -7379,9 +7835,7 @@ function clearAllCharacters() {
             disposeObject(entry.model);
             scene.remove(entry.model);
         }
-        if (entry.label) {
-            scene.remove(entry.label);
-        }
+        entry.label?.removeFromParent();
     });
     characterModels.clear();
 }
@@ -7756,6 +8210,28 @@ function showSniperTraumaChoices() {
     });panel.append(cards);modal.append(panel);document.body.append(modal);
 }
 
+function currentTurnCameraTarget() {
+    const current = combatState?.current_character;
+    if (combatState?.status !== 'active' || !current || !combatCharacterVisibleToPlayer(current)) return null;
+    const entry = getCharacterModelEntry(current.character_id);
+    if (!entry) return null;
+    if (!window.isGM && !canControlCharacter(current.character_id) && fogIsActive()
+        && !isCharacterVisibleToPlayer(entry, getFogVisionSources())) return null;
+    return entry;
+}
+
+function focusCombatTurnCharacter() {
+    const entry = currentTurnCameraTarget();
+    if (!entry || !camera || !controls) return;
+    stopFirstPersonView();
+    const offset = camera.position.clone().sub(controls.target).clampLength(3, 16);
+    controls.target.copy(entry.model.position);
+    controls.target.y += .7;
+    camera.position.copy(controls.target).add(offset);
+    setLocationViewLevel(entry.renderFloorLevel ?? entry.floorLevel ?? 0);
+    controls.update();
+}
+
 function renderCombatHud() {
     if(window.locationScoutView&&window.isLocationActive){
         ensureCombatHud();
@@ -7776,6 +8252,9 @@ function renderCombatHud() {
     ensureCombatHud();
     const visibleToPlayer = combatCharacterVisibleToPlayer;
     const currentVisible = visibleToPlayer(combatState.current_character);
+    const focusTurnButton = currentTurnCameraTarget()
+        ? '<button type="button" class="btn btn-sm btn-secondary combat-focus-turn-btn" title="К персонажу текущего хода" aria-label="К персонажу текущего хода">◎</button>'
+        : '';
     const charactersByLocationId = new Map((combatState.characters || []).map((char) => [char.location_character_id, char]));
     const orderLabels = [...new Set(combatState.turn_order || [])]
         .map((id) => {
@@ -7843,6 +8322,7 @@ function renderCombatHud() {
                 <div style="font-weight:700; font-size:15px;">Бой</div>
                 <div style="font-size:11px; opacity:0.7; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${compactStatus}</div>
             </div>
+            ${isCollapsed ? focusTurnButton : ''}
             <button
                 type="button"
                 class="combat-hud-collapse-btn"
@@ -7872,7 +8352,7 @@ function renderCombatHud() {
             ${isCombatActive ? `
             <div>Статус: <strong>${combatStatusLabel}</strong></div>
             <div>Раунд: <strong>${combatState.round_number || 0}</strong></div>
-            <div>Ход: <strong>${currentVisible ? (combatState.current_character?.name || 'нет') : 'Скрытый участник'}</strong></div>
+            <div>Ход: <strong>${currentVisible ? (combatState.current_character?.name || 'нет') : 'Скрытый участник'}</strong> ${focusTurnButton}</div>
             ${currentVisible ? `<div>Положение: <strong>${combatState.current_character?.posture_label || 'Стоя'}</strong></div>
             <div>ОД: ${combatState.current_character?.action_points_current ?? 0}/${combatState.current_character?.action_points_max ?? 0}</div>
             <div>СД: ${combatState.current_character?.free_actions_current ?? 0}/${combatState.current_character?.free_actions_max ?? 0}</div>
@@ -7925,7 +8405,7 @@ function renderCombatHud() {
                 ${combatState.status === 'active' && window.isGM ? '<button class="btn btn-sm btn-danger combat-end-combat-btn" style="margin-top:8px; margin-left:6px;">Закончить бой</button>' : ''}
             </div>
             <div style="margin-top:8px; font-size:12px; opacity:0.75;">
-                ${combatState.current_character && canActWithCombatCharacter(combatState.current_character) ? 'ПКМ по модели персонажа открывает боевое меню.' : 'Сейчас управление доступно только активному персонажу.'}
+                ПКМ по модели открывает меню этого персонажа.
             </div>
             ` : `
             <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;">
@@ -7937,6 +8417,7 @@ function renderCombatHud() {
         </div>
     `;
     ensureCombatHudDragging();
+    combatHud.querySelector('.combat-focus-turn-btn')?.addEventListener('click', focusCombatTurnCharacter);
     combatHud.querySelector('.combat-start-requests-btn')?.addEventListener('click', showCombatStartRequestMenu);
     combatHud.querySelectorAll('.combat-deferred-cancel').forEach(button => {
         button.onclick = async () => {
@@ -8137,11 +8618,11 @@ function renderCombatHud() {
 }
 
 export function setCombatState(state) {
+    if (state?.location_id != null && Number(state.location_id) !== Number(currentLocationId)) return;
     queueTrueSightRefresh();
     combatState = state || null;
     refreshSniperCoverMarks();
     window.locationCombatState = combatState;
-    syncPortableLights();
     window.updateCharacterTraitContext?.(combatState?.characters||[]);
     if (combatState?.current_character?.slippery_movement?.forced_from && armedMovementType && armedMovementType !== 'correction') {
         armedMovementType = 'walk';
@@ -8159,19 +8640,21 @@ export function setCombatState(state) {
                 character.x,character.y,character.hp_zones,character.effects,character.controlled_by,
                 character.team_name,character.team_color,character.facing_x,character.facing_y,
                 character.is_mutant,character.is_npc,character.gm_hidden,character.mutant_type,
-                character.posture,character.prone_on_back,character.floor_level,character.height);
+                character.posture,character.prone_on_back,character.floor_level,character.height,
+                character.appearance,character.condition?.state);
             entry=getCharacterModelEntry(character.character_id);
         }
         if (entry) {
             entry.hpZones = character.hp_zones;
             entry.effects = character.effects;
-            entry.conditionState = character.condition?.state;
             entry.artifactDaylightVision = character.artifact_daylight_vision === true;
             entry.ignitionAuraRange = character.portable_lights?.find(source => source.ignition_aura)?.range || 0;
         }
         updateCharacterPosition(character.character_id, character.x, character.y, { ...character, deferRefresh: true });
         updateCharacterTeamVisual(character.character_id, character.team_name, character.team_color);
-        applyCharacterPostureVisual(character.character_id, character.posture);
+        applyCharacterPostureVisual(character.character_id, character.posture, {
+            proneOnBack: character.prone_on_back, conditionState: character.condition?.state,
+        });
         applyCharacterFacingVisual(
             character.character_id,
             character.facing_x,
@@ -8191,6 +8674,7 @@ export function setCombatState(state) {
     if (!syncArtifactDaylightVision()) applyFogOfWar();
     syncPortableLights();
     showAvailableOpportunityAttack();
+    refreshFirstPersonNightVision();
     window.dispatchEvent(new CustomEvent('combat-state-updated', { detail: combatState }));
     if (combatActionMenuCharacterId != null && combatActionMenu?.style.display === 'block') {
         const rect = combatActionMenu.getBoundingClientRect();
@@ -8199,6 +8683,7 @@ export function setCombatState(state) {
     resumeCompletedCombatAction(combatState);
     renderCombatHud();
     void autoEndBlockedCombatTurn();
+    if (Number(state?.location_id) === Number(currentLocationId)) finishInitialLocationState?.();
 }
 
 function showAvailableOpportunityAttack() {
@@ -8343,13 +8828,13 @@ export function getCombatState() {
 }
 
 function clearSniperCoverMarks(){
-    for(const mark of sniperCoverMarks){scene?.remove(mark);mark.element.remove();}
+    for(const mark of sniperCoverMarks)mark.removeFromParent();
     sniperCoverMarks=[];
 }
 
 function refreshSniperCoverMarks(){
     clearSniperCoverMarks();
-    if(!scene)return;
+    if(!labelScene)return;
     const userId=Number(localStorage.getItem('user_id'));
     for(const actor of combatState?.characters||[]){
         const hint=actor.sniper_position;
@@ -8361,7 +8846,7 @@ function refreshSniperCoverMarks(){
         element.textContent=`⌖ Укрытие · ${actor.name} · ${formatMovementNumber(cover.distance)} м`;
         const mark=new CSS2DObject(element);
         mark.position.set(cover.x+.5,getTileHeight(cover.x,cover.y)+(cover.floor_level||0)*STOREY_HEIGHT+.3,cover.y+.5);
-        scene.add(mark);sniperCoverMarks.push(mark);
+        labelScene.add(mark);sniperCoverMarks.push(mark);
     }
 }
 
@@ -8525,7 +9010,7 @@ function createLocationProfileControl(container) {
     panel.className = 'scene-profile-results';
     panel.hidden = true;
     copyButton.style.bottom = '64px';
-    panel.style.bottom = '108px';
+    panel.style.bottom = '144px';
     container.append(button, copyButton, panel);
     let reportText = '';
 
@@ -8545,7 +9030,7 @@ function createLocationProfileControl(container) {
             if (grass) grass.visible = false;
         }, restore() { if (grass) grass.visible = grassWasVisible; } },
         { name: 'Без визуалов аномалий', apply() {
-            anomalyVisibility = anomalyEffectMeshes.map(mesh => [mesh, mesh.visible]);
+            anomalyVisibility = locationAnomalyRoots().map(mesh => [mesh, mesh.visible]);
             anomalyVisibility.forEach(([mesh]) => { mesh.visible = false; });
         }, restore() { anomalyVisibility.forEach(([mesh, visible]) => { mesh.visible = visible; }); } },
         { name: 'Без света аномалий', apply() {
@@ -8678,6 +9163,8 @@ export function initLocationScene(containerId) {
     }
 
     // CSS2D рендерер
+    labelScene = new THREE.Scene();
+    labelScene.matrixWorldAutoUpdate = false;
     labelRenderer = new CSS2DRenderer();
     labelRenderer.setSize(container.clientWidth, container.clientHeight);
     labelRenderer.domElement.style.position = 'absolute';
@@ -8689,7 +9176,7 @@ export function initLocationScene(containerId) {
     // Сцена
     scene = new THREE.Scene();
     scene.background = new THREE.Color(0x111122);
-    let weatherSurfaceSampler = null, weatherSurfaceVersion = -1;
+    let weatherSurfaceSampler = null, weatherSurfaceVersion = -1, weatherGroundGeometry = null;
     locationWeather = createLocationWeather(THREE, scene, {
         bounds: () => ({width: currentLocationData?.grid_width || 1, height: currentLocationData?.grid_height || 1,
             centerX: controls?.target.x, centerZ: controls?.target.z,
@@ -8697,9 +9184,12 @@ export function initLocationScene(containerId) {
         terrain: getTileHeight,
         terrainType: (x, z) => currentLocationData?.tiles_data[z]?.[x]?.terrain,
         surface: (x, z) => {
-            if (!weatherSurfaceSampler || weatherSurfaceVersion !== movementMapVersion) {
-                weatherSurfaceSampler = createTerrainSurfaceHeightSampler(currentLocationData?.tiles_data || []);
+            if (!weatherSurfaceSampler || weatherSurfaceVersion !== movementMapVersion
+                || weatherGroundGeometry !== terrainSurfaceMesh?.geometry) {
+                weatherSurfaceSampler = createTerrainSurfaceHeightSampler(currentLocationData?.tiles_data || [],
+                    { rendered: true, limitRelief: currentLocationData ? locationGroundReliefLimit() : undefined });
                 weatherSurfaceVersion = movementMapVersion;
+                weatherGroundGeometry = terrainSurfaceMesh?.geometry;
             }
             return weatherSurfaceSampler(x, z);
         },
@@ -8715,6 +9205,7 @@ export function initLocationScene(containerId) {
     // Камера
     camera = new THREE.PerspectiveCamera(45, container.clientWidth / container.clientHeight, 0.1, 1000);
     camera.position.set(50, 60, 50);
+    locationContactShadows = createLocationContactShadows({ container, renderer, scene, camera });
 
     // Контролы
     controls = new OrbitControls(camera, renderer.domElement);
@@ -8757,6 +9248,7 @@ export function initLocationScene(containerId) {
             if (objectEdit || editorHistory.state().busy || isDraggingCharacter) return false;
             cancelLocationPaste(); clearEditorSelection(); clearLocationAssetPreset(); clearBuildPreview();
             clearPendingCombatAction(); closeCombatMenus();
+            clearTerrainClimbTarget();
             if (structureActionMenu) structureActionMenu.style.display = 'none';
             pendingStructureAction = null; armedMoveCharacterId = null;
             return true;
@@ -8766,6 +9258,8 @@ export function initLocationScene(containerId) {
     createHighlight();
 
     // Анимация
+    anomalyRenderBatches = createAnomalyRenderBatches(scene);
+    const updateCharacterLabelOcclusion = createCharacterLabelOcclusion(THREE, locationLabelBlocked);
     let previousFrameTime = performance.now();
     let locationFrameWorkMs = 0;
     let locationSampleFrames = 0;
@@ -8773,7 +9267,7 @@ export function initLocationScene(containerId) {
     let previousProfileCamera = null;
     function animate(frameTime = performance.now()) {
         animationFrameId = requestAnimationFrame(animate);
-        if (locationSceneLoading) return;
+        if (locationSceneLoading || finishInitialLocationState) return;
         const deltaSeconds = Math.min(0.1, Math.max(0, (frameTime - previousFrameTime) / 1000));
         previousFrameTime = frameTime;
         if (document.hidden) {
@@ -8798,15 +9292,21 @@ export function initLocationScene(containerId) {
         previousProfileCamera = cameraPose;
         updateLocationSculpt(frameTime);
         flushPendingTerrainRefresh();
-        updateLocationCameraMovement(deltaSeconds);
-        if (controls) controls.update();
-        locationWeather?.update(deltaSeconds, movementMapVersion);
+        const firstPersonObserver = positionFirstPersonCamera();
+        if (!firstPersonObserver) {
+            updateLocationCameraMovement(deltaSeconds);
+            if (controls) controls.update();
+        }
+        refreshGmRelocationPreview();
+        portableLightRenderer?.updatePositions(camera);
+        locationWeather?.update(deltaSeconds, `${movementMapVersion}:${terrainSurfaceMesh?.geometry.id ?? ''}`);
         updateAnomalyRenderLights(frameTime);
         updateLampPreviewLights();
         const roofStartedAt = profiling ? performance.now() : 0;
         updateRoofVisibility();
         const roofVisibilityMs = profiling ? performance.now() - roofStartedAt : 0;
-        animateAnomalyEffects(anomalyEffectMeshes, frameTime);
+        const anomalyRoots = locationAnomalyRoots();
+        animateAnomalyEffects(anomalyRoots, frameTime);
         for (const [characterId, cloud] of crystalCloudMeshes) {
             const entry = getCharacterModelEntry(characterId);
             cloud.visible = Boolean(entry?.model.visible && (entry.renderFloorLevel ?? entry.floorLevel) === locationViewLevel);
@@ -8815,31 +9315,77 @@ export function initLocationScene(containerId) {
                 cloud.position.y += .44;
             }
         }
-        for(const root of locationObjectMeshes)if(root.visible&&root.userData.locationObject?.type==='anomaly')animateAnomalyEffects([root],frameTime);
-        updateAnomalyLabelVisibility(frameTime);
         animateFireObjectModels(locationObjectMeshes, frameTime);
         animateFireObjectModels(objectMeshes, frameTime);
-        waterSurfaceMesh?.material.map?.offset.set((frameTime * 0.000002) % 1, (frameTime * 0.000001) % 1);
+        if (camera) {
+            for (const [characterId, entry] of characterModels) {
+                if (entry.humanAppearanceModel) {
+                    const visible = entry.model.visible;
+                    const distance = visible ? camera.position.distanceToSquared(entry.model.position) : Infinity;
+                    const nearby = distance < 2500;
+                    const surface = distance < 400 && !entry.collapsed && entry.posture !== 'prone' && !entry.positionAnimation?.airborne
+                        ? characterFootSurface(entry.renderFloorLevel ?? entry.floorLevel) : null;
+                    animateCharacterAppearanceIdle(entry.humanAppearanceModel, frameTime, characterId, nearby, visible,
+                        entry.positionAnimation?.movement, surface, entry.positionAnimation?.climb);
+                }
+            }
+            for (const [root, idle] of perchedCrowIdles) {
+                if (root.visible && camera.position.distanceToSquared(root.position) < 900) idle.update(deltaSeconds);
+            }
+        }
+        if (locationCrowFlight && currentLocationData) {
+            locationCrowFlight.update(deltaSeconds, currentLocationData.grid_width, currentLocationData.grid_height);
+        }
+        const rippleX = (frameTime * 0.000002) % 1, rippleZ = (frameTime * 0.000001) % 1;
+        waterSurfaceMesh?.material.map?.offset.set(rippleX, rippleZ);
         const renderStartedAt = profiling || lampTrace || loadFrame
             ? performance.now() : 0;
         let renderFinishedAt = 0;
-        if (renderer && scene && camera) {
-            locationShadowPass?.run(()=>locationShadowCache?.update(scene, renderer));
-            try {
-                locationRenderBatches?.prepare(camera);
-                renderer.render(scene, camera);
-            } finally {
-                locationRenderBatches?.restore();
+        const autoUpdateMatrices = scene?.matrixWorldAutoUpdate;
+        let labelsStartedAt = 0;
+        try {
+            if (renderer && scene && camera) {
+                // Геометрия, тени и подписи читают одни и те же матрицы в этом кадре.
+                scene.updateMatrixWorld();
+                scene.matrixWorldAutoUpdate = false;
+                if (locationDirectionalLight?.visible) {
+                    locationShadowPass?.run(()=>locationShadowCache?.update(scene, renderer));
+                }
+                const observerVisible = firstPersonObserver?.model.visible;
+                const ambient = locationAmbientLight?.intensity;
+                try {
+                    if (firstPersonObserver) firstPersonObserver.model.visible = false;
+                    if (locationAmbientLight && firstPersonView?.showEffect && firstPersonView.nvgProfile) {
+                        const gain = { pnv1p: .48, sidr: .52, supernova: .64 }[firstPersonView.nvgProfile];
+                        locationAmbientLight.intensity = Math.max(ambient, gain);
+                    }
+                    locationRenderBatches?.prepare(true);
+                    anomalyRenderBatches?.prepare(anomalyRoots);
+                    if (locationWaterReflection && waterSurfaceMesh?.visible) {
+                        locationWaterReflection.update(renderer, scene, camera, waterSurfaceMesh, movementMapVersion);
+                    }
+                    if (!locationContactShadows?.render()) renderer.render(scene, camera);
+                } finally {
+                    anomalyRenderBatches?.restore();
+                    locationRenderBatches?.restore();
+                    if (firstPersonObserver) firstPersonObserver.model.visible = observerVisible;
+                    if (locationAmbientLight) locationAmbientLight.intensity = ambient;
+                }
+                renderFinishedAt = profiling || lampTrace || loadFrame
+                    ? performance.now() : 0;
+                if (!renderer.isUnavailableRenderer) locationFpsCounter.frame(frameTime);
+                else locationFpsCounter.pause();
             }
-            renderFinishedAt = profiling || lampTrace || loadFrame
-                ? performance.now() : 0;
-            if (!renderer.isUnavailableRenderer) locationFpsCounter.frame(frameTime);
-            else locationFpsCounter.pause();
-        }
-        const labelsStartedAt = profiling ? performance.now() : 0;
-        if (labelRenderer && !locationProfiler?.skipLabels) {
-            updateCharacterLabelDistances();
-            labelRenderer.render(scene, camera);
+            labelsStartedAt = profiling ? performance.now() : 0;
+            if (labelRenderer && !firstPersonObserver && !locationProfiler?.skipLabels) {
+                updateCharacterLabelDistances();
+                labelScene.updateMatrixWorld();
+                updateCharacterLabelOcclusion(characterModels, camera, frameTime, hoveredCharacterId,
+                    `${movementMapVersion}:${updateRoofVisibility.lastState}`);
+                labelRenderer.render(labelScene, camera);
+            }
+        } finally {
+            if (scene) scene.matrixWorldAutoUpdate = autoUpdateMatrices;
         }
         if (renderer && !renderer.isUnavailableRenderer) {
             const finishedAt = performance.now();
@@ -9030,16 +9576,45 @@ export async function useLocationVerticalAccess(objectId, direction, characterId
 const stashHosts = new Set(['household_stump','household_hollow_tree','household_fallen_tree',
     'household_wood_stove','household_sauna_stove']);
 const stashCrates = new Set(['box','military_crate','chest','household_wood_crate']);
+const diggableStashTerrain = new Set(['grass', 'sand', 'bare_dirt', 'dirt', 'mud', 'muddy_tracks',
+    'brown_mud', 'brown_mud_02', 'brown_mud_03', 'dry_mud_field_001']);
 const buriedStash = object => object.properties?.stash_buried || object.properties?.stash_mask?.mode==='buried';
 const stashContents = object => object.properties?.stash_contents ?? object.properties?.stash_compartment?.contents;
+const isLocationGenerator = object => object.type === 'household_generator'
+    || object.properties?.visual_asset === 'household_generator';
+
+function canReachLocationGenerator(object, actor) {
+    const position = getObjectGridPosition(object);
+    return (actor.floorLevel || 0) === structureLevel(object)
+        && Math.hypot(actor.posX - position.x - (Number(object.properties?.offset_x) || 0),
+            actor.posY - position.y - (Number(object.properties?.offset_z) || 0)) <= 1.5;
+}
+
+async function openLocationGenerator(object, actorCharacterId = null) {
+    const characters = getControlledLocationCharacters().filter(actor => canReachLocationGenerator(object, actor));
+    if (!characters.length || actorCharacterId != null
+        && !characters.some(actor => Number(actor.characterId) === Number(actorCharacterId))) return false;
+    hideStructureInteraction();
+    const { showGenerator } = await import('./generatorPanel.js');
+    await showGenerator({ lobbyId: window.currentLobbyId, locationId: currentLocationId, object, characters, actorCharacterId });
+    return true;
+}
+
+function characterKnowsStash(object, characterId) {
+    const properties = object.properties;
+    const known = properties?.stash_character_ids ?? properties?.stash_mask?.known_characters
+        ?? properties?.stash_compartment?.known_characters;
+    return !Array.isArray(known) || known.includes(Number(characterId));
+}
 
 function getObjectActions(object) {
     if (buriedStash(object)) return ['trap_dig_up_stash'];
     const actions = [...(object.properties?.interactions || objectInteractions[object.type] || [])];
+    if (isLocationGenerator(object) && !actions.includes('use_generator')) actions.push('use_generator');
     if (stashCrates.has(object.type) || stashHosts.has(object.type)) actions.push('trap_mask_stash');
     if (stashCrates.has(object.type) && !actions.includes('move')) actions.push('move');
+    if (stashCrates.has(object.type) || stashHosts.has(object.type)) actions.push('trap_search_stash');
     if (stashHosts.has(object.type)) {
-        actions.push('trap_detect');
         if (Array.isArray(stashContents(object))) actions.push('open_stash_compartment');
     }
     if (['ladder','stairs','hatch','floor_opening'].includes(object.type) && !actions.includes('drop_down')) actions.push('drop_down');
@@ -9097,12 +9672,13 @@ function getActionRequirement(object, actionKey) {
 }
 
 function getStructureActionLabel(object, actionKey) {
+    if (actionKey === 'use_generator') return 'Электрогенератор';
     if(actionKey==='open_lock')return object.properties?.lock_jammed?'Замок заклинило':'Вскрыть замок';
     if(actionKey==='trap_mask')return 'Замаскировать · 5 ОД';
     if(actionKey==='trap_mask_stash')return stashCrates.has(object.type)?'Закопать ящик · 5 ОД':'Устроить тайник · 5 ОД';
     if(actionKey==='trap_dig_up_stash')return 'Раскопать ящик · 5 ОД';
     if(actionKey==='open_stash_compartment')return 'Открыть тайник';
-    if(actionKey==='trap_detect')return 'Осмотреть клетку';
+    if(actionKey==='trap_search_stash')return 'Поискать тайник';
     if(actionKey==='trap_defuse')return 'Обезвредить · 2 ОД';
     if(actionKey==='trap_recover')return 'Подобрать';
     if(actionKey==='trap_escape_net')return 'Освободиться из сети · 2 ОД';
@@ -9125,6 +9701,7 @@ function getStructureActionLabel(object, actionKey) {
 }
 
 function getStructureActionIcon(actionKey) {
+    if (actionKey === 'use_generator') return '⚡';
     if(actionKey==='open_lock')return '⚿';
     if(['trap_mask','trap_mask_stash','trap_dig_up_stash','open_stash_compartment'].includes(actionKey))return '◌';
     if(actionKey==='trap_defuse')return '⚒';
@@ -9520,7 +10097,14 @@ function getCharacterTileDistance(characterId, object) {
 function isStructureActionAllowed(object, actionKey, characterId = null) {
     const actor = getCurrentInteractionActor(characterId);
     if (!actor) return false;
+    if (actionKey === 'use_generator') return combatState?.status !== 'active' && canReachLocationGenerator(object, actor);
+    if ((actionKey === 'open_stash_compartment' || actionKey === 'trap_dig_up_stash'
+            || actionKey === 'open_container' && object.type === 'ground_stash')
+        && !characterKnowsStash(object, actor.model?.userData?.characterId ?? characterId)) return false;
     const actorLevel = actor.floorLevel || 0, level = structureLevel(object);
+    if (actionKey === 'trap_search_stash') {
+        return actorLevel === level && Math.hypot(object.tile_x - actor.posX, object.tile_y - actor.posY) <= 1.5;
+    }
     if (['ladder','stairs','hatch','floor_opening'].includes(object.type)) {
         const lower = level - Number(['hatch','floor_opening'].includes(object.type));
         if (actionKey === 'drop_down' && actorLevel !== lower+1) return false;
@@ -9591,6 +10175,11 @@ function ensureStructureActionMenu() {
     };
     document.addEventListener('click', onClick);
     handlers.document.structureMenuClick = onClick;
+    structureActionMenu.addEventListener('mouseleave', event => {
+        if (event.relatedTarget !== renderer?.domElement && structureActionMenu?.style.display === 'block') {
+            clearTerrainClimbTarget();
+        }
+    });
 }
 
 function ensureStructureRotationMenu() {
@@ -9901,6 +10490,7 @@ function ensureStructureMovePreviewHint() {
 }
 
 function hideStructureInteraction() {
+    clearTerrainClimbTarget();
     clearStructureActionMenu();
     clearStructureRotationMenu();
     clearStructureMovePreview();
@@ -9921,6 +10511,7 @@ function beginStructureInteractionMode(characterId) {
         showNotification('Вы не можете управлять этим персонажем');
         return false;
     }
+    clearTerrainClimbTarget();
     pendingStructureAction = {
         actorCharacterId: characterId,
         actorLocationCharacterId: findCombatCharacterByCharacterId(characterId)?.location_character_id || null,
@@ -9932,9 +10523,100 @@ function beginStructureInteractionMode(characterId) {
     clearMovementPreview();
     clearStructureActionMenu();
     clearStructureMovePreview();
-    showNotification('Наведи на структуру или соседнего персонажа и выбери действие', 'system');
+    const actor = getCharacterModelEntry(characterId);
+    showNotification(`${actor?.name || 'Персонаж'} · Наведи на клетку, объект или персонажа для взаимодействия`, 'system');
     renderCombatHud();
     return true;
+}
+
+function clearTerrainClimbTarget() {
+    const target = pendingStructureAction?.terrainTarget;
+    if (!target) return;
+    target.request.abort();
+    pendingStructureAction.terrainTarget = null;
+    if (structureActionMenuState?.objectId === target.menuId) clearStructureActionMenu();
+}
+
+async function showTerrainClimbMenu(clientX, clientY, fromContextMenu = false) {
+    const interaction = pendingStructureAction;
+    if (!interaction) return;
+    const characterId = interaction.actorCharacterId;
+    const tile = getLocationTileAtScreen(clientX, clientY);
+    const locationId = currentLocationId;
+    const start = getCharacterModelEntry(characterId);
+    const eligible = () => {
+        const actor = getCharacterModelEntry(characterId);
+        return tile && actor?.posture === 'standing' && !actor.positionAnimation
+            && (actor.floorLevel || 0) === 0 && locationViewLevel === 0
+            && canControlCharacter(characterId) && isCurrentCombatTurnForCharacter(characterId)
+            && getLocationCharacterCondition(characterId).state === 'active'
+            && (tile.x !== actor.posX || tile.y !== actor.posY)
+            && Math.hypot(tile.x - actor.posX, tile.y - actor.posY) <= 1.5 + 1e-9;
+    };
+    if (!eligible()) {
+        clearTerrainClimbTarget();
+        return;
+    }
+    const menuId = `terrain:${tile.x}:${tile.y}`;
+    const previous = interaction.terrainTarget;
+    if (!fromContextMenu && previous?.menuId === menuId
+        && previous.startX === start.posX && previous.startY === start.posY) {
+        previous.clientX = clientX;
+        previous.clientY = clientY;
+        return;
+    }
+    clearTerrainClimbTarget();
+    const target = { menuId, clientX, clientY, startX: start.posX, startY: start.posY,
+        request: new AbortController() };
+    interaction.terrainTarget = target;
+    const current = () => {
+        const actor = getCharacterModelEntry(characterId);
+        return pendingStructureAction === interaction && interaction.terrainTarget === target
+            && currentLocationId === locationId && actor?.posX === target.startX && actor?.posY === target.startY
+            && eligible();
+    };
+    try {
+        const response = await fetch(`/lobbies/${window.currentLobbyId}/locations/${locationId}/movement-preview`, {
+            method: 'POST',
+            signal: target.request.signal,
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${localStorage.getItem('access_token')}` },
+            body: JSON.stringify({ character_id: characterId, x: tile.x, y: tile.y,
+                floor_level: 0, special_action: 'climb_up' }),
+        });
+        if (!response.ok || !current()) return;
+        const { route } = await response.json();
+        if (route?.special_action !== 'climb_up' || !current()) return;
+        ensureStructureActionMenu();
+        structureActionMenuState = { objectId: menuId };
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'btn btn-secondary';
+        button.dataset.terrainClimb = '';
+        button.textContent = 'Залезть';
+        button.style.margin = '8px';
+        button.onclick = async () => {
+            if (!current() || !window.socket) return hideStructureInteraction();
+            button.disabled = true;
+            structureActionMenu.style.display = 'none';
+            const payment = await chooseTraversalPayment(route);
+            if (!current()) return;
+            if (!payment) {
+                button.disabled = false;
+                positionStructureActionMenu(target.clientX, target.clientY, 0);
+                return;
+            }
+            hideStructureInteraction();
+            window.socket.emit('move_in_location', {
+                token: localStorage.getItem('access_token'), location_id: locationId,
+                character_id: characterId, x: tile.x, y: tile.y, floor_level: 0,
+                special_action: 'climb_up', climb_payment: payment,
+            });
+        };
+        structureActionMenu.replaceChildren(button);
+        positionStructureActionMenu(target.clientX, target.clientY, 0);
+    } catch (error) {
+        if (fromContextMenu && current()) showNotification('Не удалось проверить подъём', 'system');
+    }
 }
 
 function canInteractWithCharacter(actorCharacterId, targetCharacterId, requireIncapacitated = false) {
@@ -10041,6 +10723,7 @@ export async function showCharacterTradeMenu(actorLocationCharacterId, actorChar
         targetEntries:getCharacterTransferEntries(snapshot.target_data || {}),
         quantity:getTransferItemQuantity,
         merchant:npc && targetData.merchant?.enabled ? targetData.merchant : null,
+        merchantPurchasePrices:snapshot.merchant_purchase_prices,
         onConfigure:window.isGM && npc ? async () => {
             try {
                 const templates = await Server.getLobbyTemplates(window.currentLobbyId, '');
@@ -10487,8 +11170,6 @@ function showCharacterInteractionMenu(clientX, clientY, targetCharacterId) {
         };
         structureActionMenu.appendChild(button);
     });
-    structureActionMenu.style.display = 'block';
-    const rect = structureActionMenu.getBoundingClientRect();
     let anchorX = clientX;
     let anchorY = clientY;
     const model = getCharacterModelEntry(targetCharacterId)?.model;
@@ -10502,8 +11183,14 @@ function showCharacterInteractionMenu(clientX, clientY, targetCharacterId) {
             anchorY = ((1 - anchor.y) / 2) * window.innerHeight;
         }
     }
-    let left = anchorX + 10;
-    if (left + rect.width > window.innerWidth - 8) left = anchorX - rect.width - 10;
+    positionStructureActionMenu(anchorX, anchorY);
+}
+
+function positionStructureActionMenu(anchorX, anchorY, gap = 10) {
+    structureActionMenu.style.display = 'block';
+    const rect = structureActionMenu.getBoundingClientRect();
+    let left = anchorX + gap;
+    if (left + rect.width > window.innerWidth - 8) left = anchorX - rect.width - gap;
     structureActionMenu.style.left = `${Math.max(8, Math.min(left, window.innerWidth - rect.width - 8))}px`;
     structureActionMenu.style.top = `${Math.max(8, Math.min(anchorY - rect.height / 2, window.innerHeight - rect.height - 8))}px`;
 }
@@ -10517,6 +11204,7 @@ async function executeStructureAction(object, actionKey, actorCharacterId = pend
         showNotification('Слишком далеко до объекта', 'system');
         return false;
     }
+    if (actionKey === 'use_generator') return openLocationGenerator(object, actorCharacterId);
     if(actionKey==='open_lock'){
         try{
             const {showObjectLock}=await import('./objectLocks.js');
@@ -10544,18 +11232,28 @@ async function executeStructureAction(object, actionKey, actorCharacterId = pend
             return true;
         }catch(error){showNotification(error.message,'system');return false;}
     }
+    if (actionKey === 'trap_search_stash') {
+        hideStructureInteraction();
+        try {
+            await submitLocationTrapTarget(actorCharacterId, { operation: 'search_stash',
+                search_object_id: object.id, operation_id: crypto.randomUUID() });
+            return true;
+        } catch (error) {
+            showNotification(error.message, 'system');
+            return false;
+        }
+    }
     if(actionKey.startsWith('trap_')){
         const {showTrapAction}=await import('./traps.js');
         const operation=actionKey.slice(5);
         await showTrapAction({characterId:actorCharacterId,lobbyId:window.currentLobbyId,locationId:currentLocationId,
             trap:object,operation,inCombat:combatState?.status==='active',
             locationCharacterId:findCombatCharacterByCharacterId(actorCharacterId)?.location_character_id,
-            cell:operation==='detect'?{x:object.tile_x,y:object.tile_y}:undefined,
             requireShovel:stashCrates.has(object.type)});
         return true;
     }
     if(actionKey==='open_stash_compartment'){
-        await showContainerInteractionMenu(object,true);
+        await showContainerInteractionMenu(object, true, actorCharacterId);
         return true;
     }
 
@@ -10591,7 +11289,7 @@ async function executeStructureAction(object, actionKey, actorCharacterId = pend
 
     if (actionKey === 'open_container') {
         hideStructureInteraction();
-        showContainerInteractionMenu(object);
+        showContainerInteractionMenu(object, false, actorCharacterId);
         return true;
     }
 
@@ -11233,6 +11931,7 @@ function showObjectContextMenu(clientX, clientY, object) {
     }
     createContextMenu();
     contextMenu.innerHTML = '';
+    const interactionCharacterId = pendingStructureAction?.actorCharacterId ?? null;
     const isCover=isStructureCoverObject(object);
     const coverClass = object.properties?.cover_class || 'medium';
     const coverDefaults = COVER_CLASS_DEFAULTS[coverClass] || COVER_CLASS_DEFAULTS.medium;
@@ -11249,6 +11948,12 @@ function showObjectContextMenu(clientX, clientY, object) {
             'system'
         )
     }];
+    if (isLocationGenerator(object) && combatState?.status !== 'active') {
+        if (getControlledLocationCharacters().some(actor => canReachLocationGenerator(object, actor)
+            && (interactionCharacterId === null || Number(actor.characterId) === Number(interactionCharacterId)))) {
+            actions.push({ label: 'Генератор', action: () => openLocationGenerator(object, interactionCharacterId) });
+        }
+    }
     if(object.properties?.portable_station && combatState?.status!=='active') {
         const actor=getCurrentInteractionActor();const characterId=actor?.model?.userData?.characterId;
         if(characterId&&canControlCharacter(characterId)) {
@@ -11270,8 +11975,12 @@ function showObjectContextMenu(clientX, clientY, object) {
     }
     getObjectActions(object).forEach(action => {
         if(action.startsWith('trap_')||action==='open_stash_compartment'){
-            const characterId=getCurrentInteractionActor()?.model?.userData?.characterId;
-            if(characterId&&canControlCharacter(characterId))actions.push({label:getStructureActionLabel(object,action),action:()=>executeStructureAction(object,action,characterId)});
+            const characterId=pendingStructureAction?.actorCharacterId;
+            if (characterId && canControlCharacter(characterId)
+                && (!['trap_search_stash', 'trap_dig_up_stash', 'open_stash_compartment'].includes(action)
+                    || isStructureActionAllowed(object, action, characterId))) {
+                actions.push({ label: getStructureActionLabel(object,action), action: () => executeStructureAction(object,action,characterId) });
+            }
             return;
         }
         if(['move_crafted_cover','recover_crafted_cover'].includes(action)){
@@ -11305,9 +12014,16 @@ function showObjectContextMenu(clientX, clientY, object) {
             });
         }
         if (action === 'open_container') {
+            if (object.type === 'ground_stash') {
+                const characterId = getCurrentInteractionActor()?.model?.userData?.characterId;
+                if (characterId && canControlCharacter(characterId) && isStructureActionAllowed(object, action, characterId)) {
+                    actions.push({ label: 'Открыть тайник', action: () => executeStructureAction(object, action, characterId) });
+                }
+                return;
+            }
             actions.push({
                 label: (object?.type === 'ground_item' || object?.properties?.is_ground_item) ? 'Поднять' : 'Открыть содержимое',
-                action: () => showContainerInteractionMenu(object)
+                action: () => showContainerInteractionMenu(object, false, interactionCharacterId)
             });
         }
         if (action === 'move') {
@@ -11628,6 +12344,60 @@ function refreshFloorRugHeights() {
     }
 }
 
+function locationGroundReliefLimit() {
+    const tiles = currentLocationData.tiles_data;
+    if (!tiles.some(row => row.some(tile => hasLocalTerrainRelief(tile.terrain)))) return undefined;
+    const width = currentLocationData.grid_width;
+    const objects = currentLocationData.objects || [];
+    const floorTiles = new Map();
+    // Запас в один шаг сетки вокруг плиты, чтобы треугольники не выступали на её краю.
+    const margin = .125;
+    for (const floor of objects) {
+        if (floor.type !== 'floor' || structureLevel(floor) !== 0) continue;
+        const pose = floorVisualPose(floor, objects);
+        const top = getTileHeight(floor.tile_x, floor.tile_y)
+            + clampAssetElevation(floor.properties?.elevation) + FLOOR_SURFACE_OFFSET;
+        for (const part of floorSlabParts(floor, objects)) {
+            const halfWidth = part.width / 2, halfDepth = part.depth / 2;
+            const x = pose.x + part.x * pose.axis.x + part.z * pose.normal.x;
+            const z = pose.z + part.x * pose.axis.z + part.z * pose.normal.z;
+            const radiusX = Math.abs(pose.axis.x) * halfWidth + Math.abs(pose.normal.x) * halfDepth + .4;
+            const radiusZ = Math.abs(pose.axis.z) * halfWidth + Math.abs(pose.normal.z) * halfDepth + .4;
+            const footprint = { x, z, axis: pose.axis, normal: pose.normal, top, halfWidth, halfDepth };
+            for (let tz = Math.max(0, Math.floor(z - radiusZ)); tz < tiles.length && tz <= z + radiusZ; tz++) {
+                for (let tx = Math.max(0, Math.floor(x - radiusX)); tx < width && tx <= x + radiusX; tx++) {
+                    const key = tz * width + tx;
+                    if (!floorTiles.has(key)) floorTiles.set(key, []);
+                    floorTiles.get(key).push(footprint);
+                }
+            }
+        }
+    }
+    if (!floorTiles.size) return undefined;
+    return (x, z, y, offset) => {
+        if (offset <= 0 || x < 0 || x >= width || z < 0 || z >= tiles.length) return offset;
+        const floors = floorTiles.get(Math.floor(z) * width + Math.floor(x));
+        if (!floors) return offset;
+        let limit = offset;
+        for (const floor of floors) {
+            if (floor.top < y || floor.top >= y + offset + .004) continue;
+            const dx = x - floor.x, dz = z - floor.z;
+            const outside = Math.max(Math.abs(dx * floor.axis.x + dz * floor.axis.z) - floor.halfWidth,
+                Math.abs(dx * floor.normal.x + dz * floor.normal.z) - floor.halfDepth);
+            const blend = Math.max(0, Math.min(1, (outside - margin) / margin));
+            const maxOffset = Math.max(0, floor.top - y - .004);
+            limit = Math.min(limit, maxOffset + (offset - maxOffset) * blend);
+        }
+        return limit;
+    };
+}
+
+function refreshGroundReliefAtFloors() {
+    if (terrainSurfaceMesh && currentLocationData?.tiles_data.some(row => row.some(tile => hasLocalTerrainRelief(tile.terrain)))) {
+        queueTerrainRefresh([], { surface: true });
+    }
+}
+
 function usesStaticLightField(object) {
     return Boolean(object?.type)&&object.type!=='anomaly';
 }
@@ -11672,6 +12442,21 @@ function locationObjectMaterialColor(object) {
         : new THREE.Color(properties.color || '#aa8866');
 }
 
+function tintImportedLocationMaterial(material, asset, vegetationColors, color) {
+    if (asset.colorChannels) {
+        if (material.name === 'rock_moss_set_02') {
+            applyVegetationTint(THREE, material, vegetationColors, 'moss');
+            return;
+        }
+        const wood = !asset.colorChannels.foliage_color || material.name.startsWith('Ветви болотного кустарника');
+        const tint = wood ? vegetationColors.wood_color : vegetationColors.foliage_color;
+        if (tint && tint !== '#ffffff') material.color?.multiply(new THREE.Color(tint));
+    } else if (color) {
+        if (asset.visual.family === 'household') material.color?.set(color);
+        else material.color?.multiply(new THREE.Color(color));
+    }
+}
+
 // Batch static pieces within one editable object. Materials and object IDs remain
 // independent for darkness, selection, openings and roof cutaway.
 function batchStructureParts(group) {
@@ -11708,11 +12493,14 @@ function batchStructureParts(group) {
 function createLocationObjectMesh(obj, forPreview = false, relatedObjects = currentLocationData?.objects) {
     const properties = obj.properties || {};
     const asset = visualAssetForLocationObject(obj.type, properties);
+    const vegetationColors = asset?.colorChannels ? vegetationColorValues(asset, properties) : undefined;
     const groundCache = obj.type==='ground_stash' || buriedStash(obj);
     const household = asset?.visual?.family === 'household';
+    const perchedCrow = asset?.id === 'art_crow';
     const floorPose = obj.type === 'floor' ? floorVisualPose(obj, relatedObjects) : null;
-    const dimensions = properties.dimensions || floorPose
-        || (household || isFireObject(obj) ? baseAssetDimensions(obj.type, 'structure') : getStructureDimensions(obj.type));
+    const dimensions = properties.dimensions ? assetDimensions(obj, 'structure', asset?.id || obj.type)
+        : floorPose || (household || vegetationColors || obj.type === 'rock' || perchedCrow || asset?.id === 'information_sign' || isFireObject(obj)
+            ? baseAssetDimensions(asset?.id || obj.type, 'structure') : getStructureDimensions(obj.type));
     const width = floorPose?.width || dimensions.width || 1;
     const depth = floorPose?.depth || dimensions.depth || 1;
     const height = dimensions.height || 1;
@@ -11735,16 +12523,19 @@ function createLocationObjectMesh(obj, forPreview = false, relatedObjects = curr
     if (obj.type === 'floor') applyInteriorFloorShade(material, width, depth,
         floorEntrancePoint(floorPose, relatedObjects, obj));
     if (usePbrMaterial && material) {
-        applyLocationPbrMaterial(material, asset.visual.maps);
+        applyLocationPbrMaterial(material, asset.visual.maps, renderer);
     }
     const group = new THREE.Group();
     let main;
 
     if (obj.type==='anomaly') {
         const effect=createAnomalyEffect(properties.anomalyType||'void',properties.color||'#79d7dd',1,
-            properties.anomaly_key||properties.anomalyKey||'',obj.name||'');
+            properties.anomaly_key||properties.anomalyKey||'');
         effect.scale.set(width,Math.min(height,1),depth);
         group.add(effect);
+    } else if (asset?.id === 'information_sign') {
+        group.add(createInformationSign(width, depth, height, properties.color || asset.color,
+            properties.sign_text, properties.sign_back_text, properties.sign_text_color));
     } else if (obj.type==='poster') {
         const poster=createPosterMesh(properties.color);
         applyDecorSize(poster,{dimensions:{width,depth,height}},'poster');
@@ -11762,7 +12553,7 @@ function createLocationObjectMesh(obj, forPreview = false, relatedObjects = curr
         group.add(createHouseholdModel(THREE,{id:'ground_stash',visual:{modelId:'ground_stash'}},
             {width:.72,height:.045,depth:.6}));
     } else if (household) {
-        group.add(createHouseholdModel(THREE, asset, {width, depth, height}, properties.color));
+        group.add(createHouseholdModel(THREE, asset, {width, depth, height}, properties.color, vegetationColors));
     } else if (['ladder','hatch','floor_opening'].includes(obj.type)) {
         group.add(createVerticalAccessModel(THREE,obj,{width,depth,height},material));
         if(damagedOpening(obj)){
@@ -11836,12 +12627,15 @@ function createLocationObjectMesh(obj, forPreview = false, relatedObjects = curr
         } else {
         const start = plan.spans[0]?.start ?? -width / 2;
         const end = plan.spans[plan.spans.length - 1]?.end ?? width / 2;
+        const broken = damagedWall(obj);
+        const corrugated = asset?.id === 'art_corrugated_iron_wall' && !broken;
         for (const span of plan.spans) {
             const spanWidth = span.end - span.start;
             const spanHeight = span.top - span.bottom;
             const centerX = (span.start + span.end) / 2;
             const centerY = (span.bottom + span.top) / 2;
-            const geometry = damagedWall(obj)
+            const geometry = corrugated ? createCorrugatedPanelGeometry(THREE, span, depth)
+                : broken
                 ? createBrokenWallGeometry(THREE,spanWidth,spanHeight,depth,
                     `${wallDamageSeed}:${span.start}:${span.end}`)
                 : new THREE.BoxGeometry(spanWidth, spanHeight, depth,
@@ -11860,7 +12654,7 @@ function createLocationObjectMesh(obj, forPreview = false, relatedObjects = curr
             const piece = new THREE.Mesh(
                 geometry, material,
             );
-            if (usePbrMaterial) {
+            if (usePbrMaterial && !corrugated) {
                 tileLocationPbrBoxUvs(piece.geometry, spanWidth, spanHeight, depth);
             }
             piece.position.set(centerX, centerY, 0);
@@ -11872,6 +12666,8 @@ function createLocationObjectMesh(obj, forPreview = false, relatedObjects = curr
         const glassMaterial = new THREE.MeshStandardMaterial({
             color: properties.color || '#9bb7bc', transparent: true, opacity: 0.42,
             metalness: 0.08, roughness: 0.12, side: THREE.DoubleSide,
+            // Два прохода Three меняют версию материала каждый кадр и сбрасывают кэш тени.
+            forceSinglePass: true,
         });
         for (const sign of [-1, 1]) {
             const post = new THREE.Mesh(new THREE.BoxGeometry(0.07, height, depth + 0.04), frameMaterial);
@@ -12047,22 +12843,29 @@ function createLocationObjectMesh(obj, forPreview = false, relatedObjects = curr
     group.userData = { ...group.userData, locationObjectId: obj.id, locationObject: obj };
     if (properties.gm_hidden && window.isGM) makeGmHiddenGhost(group);
     const customColor = properties.color && String(properties.color).toLowerCase() !== asset?.color?.toLowerCase();
-    if (asset?.visual?.renderMode === 'glb' && (!customColor || household)) {
+    const allowsModelTint = household || vegetationColors || obj.type === 'rock' || obj.type === 'swamp_rock_09_1';
+    if (asset?.visual?.renderMode === 'glb' && (!customColor || allowsModelTint)) {
         const fallback = [...group.children];
         mountLocationModel(group, asset, { width, depth, height }, model => {
             fallback.forEach(child => {
                 group.remove(child);
                 disposeObject(child);
             });
+            const tinted = new Set();
             model.traverse(child => {
                 if (!child.isMesh) return;
-                if (household && customColor) {
-                    for (const mat of [].concat(child.material)) mat.color?.set(properties.color);
+                for (const mat of [].concat(child.material)) {
+                    if (tinted.has(mat)) continue;
+                    tinted.add(mat);
+                    tintImportedLocationMaterial(mat, asset, vegetationColors, customColor ? properties.color : null);
+                    if (asset.visual.colorGain) mat.color?.multiplyScalar(asset.visual.colorGain);
                 }
                 child.castShadow = !forPreview && !child.userData.importedNoShadow;
                 child.receiveShadow = !forPreview;
             });
             group.add(model);
+            if (!forPreview) locationWaterReflection?.invalidate();
+            if (!forPreview && perchedCrow) perchedCrowIdles.set(group, createCrowIdle(model));
             if (forPreview) fadeEditorPreview(model);
             if (properties.gm_hidden && window.isGM) makeGmHiddenGhost(model);
             else if (!forPreview) tintLocationMesh(model, darknessFactorAt(group.position.x, group.position.z));
@@ -12289,6 +13092,7 @@ function createLampPreviewLights() {
     const spot = new THREE.SpotLight('#ffffff', 0, 7, Math.PI / 5, 0.55, 2);
     for (const light of [point, spot]) {
         light.userData.lampPreviewSlot = true;
+        light.visible = false;
         group.add(light);
     }
     group.add(spot.target);
@@ -12311,7 +13115,8 @@ function updateLampPreviewLights() {
     if (!lampPreviewLights) return;
     const preview = buildPreviewMesh?.userData.lampPreviewSource;
     for (const light of [lampPreviewLights.point, lampPreviewLights.spot]) {
-        const active = preview && (light.isSpotLight === (preview.kind === 'spot' || preview.lightKind === 'spot'));
+        const active = Boolean(preview && (light.isSpotLight === (preview.kind === 'spot' || preview.lightKind === 'spot')));
+        light.visible = active;
         light.intensity = active ? Math.min(Number(preview.intensity || 2), 2) : 0;
         if (active) setLampPreviewLight(light, preview,
             buildPreviewMesh.position.x, buildPreviewMesh.position.y, buildPreviewMesh.position.z);
@@ -12593,6 +13398,7 @@ function locationBuildingAt(x, z) {
 }
 
 function locationLevelVisible(level, buildingId, x, z, object = null) {
+    if (firstPersonView && object) return true;
     const view = (buildingId && getLocationBuildingViews().get(buildingId)) || locationBuildingAt(x, z);
     if (level < 0 && locationViewLevel >= 0) {
         // Terrain/lids still occlude these meshes. Keep the structure behind
@@ -12784,12 +13590,14 @@ function updateRoofVisibility() {
     const views = getLocationBuildingViews();
     const previous = updateRoofVisibility.lastState;
     const state = { views, tiles: currentLocationData?.tiles_data, level: locationViewLevel, editMode,
+        firstPerson: Boolean(firstPersonView),
         roofsVisible: locationRoofsVisible,
         pose: [camera.position.x, camera.position.y, camera.position.z,
             controls.target.x, controls.target.y, controls.target.z] };
     const geometryChanged = wasDirty || !previous || previous.views !== views || previous.tiles !== state.tiles;
     if (!geometryChanged && previous.level === state.level && previous.editMode === editMode
-        && previous.roofsVisible === locationRoofsVisible && state.pose.every((v,i)=>v===previous.pose[i])) return;
+        && previous.roofsVisible === locationRoofsVisible && previous.firstPerson === state.firstPerson
+        && state.pose.every((v,i)=>v===previous.pose[i])) return;
     // Terrain clipping and contours do not depend on the camera position.
     if (geometryChanged || previous.level !== state.level || previous.editMode !== editMode) updateStoreyTerrainVisibility();
     updateRoofVisibility.lastState = state;
@@ -12818,7 +13626,8 @@ function updateRoofVisibility() {
     const planOpacity = new Map();
     for (const {mesh, object, pose, coveredBySlab, coveringPlan} of state.panels) {
         if(coveringPlan&&!planOpacity.has(coveringPlan))planOpacity.set(coveringPlan,roofOpacityForCamera(coveringPlan,controls.target,distance,locationRoofsVisible,false,camera.position));
-        const opacity = coveredBySlab || locationViewLevel < 0 && structureLevel(object) > locationViewLevel ? 0
+        const opacity = coveredBySlab ? 0 : firstPersonView ? 1
+            : locationViewLevel < 0 && structureLevel(object) > locationViewLevel ? 0
             : editMode && !coveringPlan ? Number(locationRoofsVisible) : coveringPlan ? planOpacity.get(coveringPlan) : roofOpacityForCamera({ ...pose, rise: 0,
             eaveY: mesh.position.y + pose.height }, controls.target, distance,
             locationRoofsVisible, false, camera.position);
@@ -12844,7 +13653,7 @@ function updateRoofVisibility() {
         }
     }
     for (const roof of roofMeshes) {
-        const opacity = roof.userData.floorLevel > locationViewLevel && locationViewLevel < 0 ? 0
+        const opacity = firstPersonView ? 1 : roof.userData.floorLevel > locationViewLevel && locationViewLevel < 0 ? 0
             : roofOpacityForCamera(roof.userData.roofPlan, controls.target,
                 distance, locationRoofsVisible, false, camera.position);
         if (opacity === roof.userData.roofOpacity) continue;
@@ -13491,6 +14300,113 @@ async function restoreGeneratedLocationFloorImpl(buildingId, level = 0) {
     }
 }
 
+function informationSignLightBackground(color) {
+    const rgb = new THREE.Color(color).getHex();
+    const [red, green, blue] = [rgb >> 16, rgb >> 8 & 255, rgb & 255].map(channel => {
+        const srgb = channel / 255;
+        return srgb <= 0.04045 ? srgb / 12.92 : ((srgb + 0.055) / 1.055) ** 2.4;
+    });
+    return red * 0.2126 + green * 0.7152 + blue * 0.0722 >= 0.18;
+}
+
+function wrapInformationSignText(ctx, paragraph, width) {
+    const lines = [];
+    let line = '';
+    for (const word of paragraph.trim().split(/\s+/)) {
+        const next = line ? `${line} ${word}` : word;
+        if (ctx.measureText(next).width <= width) {
+            line = next;
+            continue;
+        }
+        if (line) lines.push(line);
+        line = '';
+        if (ctx.measureText(word).width <= width) {
+            line = word;
+            continue;
+        }
+        for (const letter of word) {
+            if (line && ctx.measureText(line + letter).width > width) {
+                lines.push(line);
+                line = '';
+            }
+            line += letter;
+        }
+    }
+    lines.push(line);
+    return lines;
+}
+
+function createInformationSignTexture(color, text, textColor, width, height) {
+    const canvas = document.createElement('canvas');
+    const density = 1024 / Math.max(width, height);
+    canvas.width = Math.max(1, Math.round(width * density));
+    canvas.height = Math.max(1, Math.round(height * density));
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = color;
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    const lightBackground = informationSignLightBackground(color);
+    ctx.strokeStyle = lightBackground ? '#63513c' : '#d6c6a3';
+    const borderInset = Math.min(canvas.width, canvas.height) * (12 / 512);
+    ctx.lineWidth = borderInset / 2;
+    ctx.strokeRect(borderInset, borderInset, canvas.width - 2 * borderInset, canvas.height - 2 * borderInset);
+    ctx.fillStyle = textColor || (lightBackground ? '#242017' : '#fff8e8');
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    const textWidth = canvas.width * 0.9;
+    const textHeight = canvas.height * 0.86;
+    const fontScale = Math.min(canvas.height / 512, textWidth / 280);
+    const paragraphs = String(text).slice(0, 280).split('\n');
+    let lines = [];
+    let lineHeight = 0;
+    for (let size = 58; size >= 26; size -= 4) {
+        const fontSize = size * fontScale;
+        lineHeight = fontSize * 1.22;
+        ctx.font = `bold ${fontSize}px sans-serif`;
+        lines = paragraphs.flatMap(paragraph => wrapInformationSignText(ctx, paragraph, textWidth));
+        if (lines.length * lineHeight <= textHeight) break;
+    }
+    const maxLines = Math.floor(textHeight / lineHeight);
+    if (lines.length > maxLines) lines.splice(maxLines - 1, lines.length, '…');
+    lines.forEach((line, i) => ctx.fillText(line, canvas.width / 2,
+        canvas.height / 2 + (i - (lines.length - 1) / 2) * lineHeight));
+
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.colorSpace = THREE.SRGBColorSpace;
+    return texture;
+}
+
+function createInformationSign(width, depth, height, color, frontText = '', backText = frontText, textColor = null) {
+    const sign = new THREE.Group();
+    const boardHeight = height * 0.61;
+    const wood = new THREE.MeshStandardMaterial({ color: '#514338', roughness: 0.95 });
+    const board = new THREE.Mesh(new THREE.BoxGeometry(width, boardHeight, depth), wood);
+    board.position.y = height - boardHeight / 2;
+    sign.add(board);
+    const postHeight = height - boardHeight * 0.65;
+    for (const offset of [-0.35, 0.35]) {
+        const post = new THREE.Mesh(
+            new THREE.BoxGeometry(width * 0.048, postHeight, depth * 0.8), wood.clone());
+        post.position.set(width * offset, postHeight / 2, 0);
+        sign.add(post);
+    }
+
+    const panelWidth = width * 0.98;
+    const panelHeight = boardHeight * 0.96;
+    const frontTexture = createInformationSignTexture(color, frontText, textColor, panelWidth, panelHeight);
+    const backTexture = backText == null || backText === frontText
+        ? frontTexture : createInformationSignTexture(color, backText, textColor, panelWidth, panelHeight);
+    for (const side of [1, -1]) {
+        const texture = side > 0 ? frontTexture : backTexture;
+        const panel = new THREE.Mesh(new THREE.PlaneGeometry(panelWidth, panelHeight),
+            new THREE.MeshStandardMaterial({ map: texture, roughness: 0.96 }));
+        panel.position.set(0, board.position.y, side * (depth / 2 + 0.001));
+        if (side < 0) panel.rotation.y = Math.PI;
+        if (side > 0 || backTexture !== frontTexture) panel.texture = texture;
+        sign.add(panel);
+    }
+    return sign;
+}
+
 function createPosterMesh(color) {
     const group = new THREE.Group();
     const frame = new THREE.Mesh(
@@ -13509,25 +14425,47 @@ function createPosterMesh(color) {
     return group;
 }
 
-function createEditorDecorPreview(type, color) {
+function createEditorDecorPreview(type, color, source = {}, forPreview = true) {
     if (type.startsWith('anomaly_')) {
         const key = type.slice('anomaly_'.length);
         const profile = (window.locationAnomalyCatalog || []).find(anomaly => anomaly.key === key);
-        return createAnomalyEffect(profile?.visual || 'void', color || '#79d7dd', 1, key, '');
+        return createAnomalyEffect(profile?.visual || 'void', color || '#79d7dd', 1, key);
     }
     if (type === 'poster') return createPosterMesh(color);
     if (type === 'tent') return createTentModel(THREE, color || '#9b9778');
     const group = new THREE.Group();
-    const material = new THREE.MeshStandardMaterial({ color: color || '#7f9674' });
     if (type === 'tree') {
         group.add(createHouseholdModel(THREE, findLocationAsset('nature_oak_green'),
-            baseAssetDimensions('tree', 'decor'), color));
-    } else {
-        const geometry = type === 'rock' ? new THREE.DodecahedronGeometry(0.35)
-            : new THREE.CylinderGeometry(0.23, 0.3, 0.16, 8);
-        const mesh = new THREE.Mesh(geometry, material);
-        mesh.position.y = type === 'rock' ? 0.2 : 0.08;
-        group.add(mesh);
+            baseAssetDimensions('tree', 'decor'), color,
+            vegetationColorValues(findLocationAsset('tree'), { ...source, color })));
+        return group;
+    }
+    const rock = type === 'rock';
+    const material = new THREE.MeshStandardMaterial({ color: color || (rock ? '#888888' : '#7f9674') });
+    const fallback = new THREE.Mesh(rock ? new THREE.DodecahedronGeometry(0.3)
+        : new THREE.CylinderGeometry(0.23, 0.3, 0.16, 8), material);
+    fallback.position.y = rock ? 0.15 : 0.08;
+    group.add(fallback);
+    if (rock) {
+        const asset = findLocationAsset('rock');
+        mountLocationModel(group, asset, baseAssetDimensions(type, 'decor'), model => {
+            group.remove(fallback);
+            disposeObject(fallback);
+            model.traverse(child => {
+                if (!child.isMesh) return;
+                if (typeof color === 'string' && color.toLowerCase() !== asset.color) {
+                    for (const mat of [].concat(child.material)) tintImportedLocationMaterial(mat, asset, undefined, color);
+                }
+                child.castShadow = child.receiveShadow = !forPreview;
+            });
+            group.add(model);
+            if (forPreview) fadeEditorPreview(model);
+            else if (group.userData.gmHiddenGhost) makeGmHiddenGhost(model);
+            else {
+                tintLocationMesh(model, darknessFactorAt(group.position.x, group.position.z));
+                attachStaticLightFieldToRoot(model, 0);
+            }
+        });
     }
     return group;
 }
@@ -13616,7 +14554,7 @@ function createEditorGroupMovePreview(entries = null, relatedObjects = currentLo
                 getTileHeight(Math.floor(source.x), Math.floor(source.z)) + Number(source.height), Number(source.z));
         } else {
             const type = source.type === 'anomaly' ? `anomaly_${source.anomalyKey}` : source.type;
-            mesh = createEditorDecorPreview(type, source.color);
+            mesh = createEditorDecorPreview(type, source.color, source);
             applyDecorSize(mesh, source, type);
             mesh.rotation.y = THREE.MathUtils.degToRad(Number(source.rotation) || 0);
             mesh.position.set(selection.x + 0.5 + Number(source.x || 0),
@@ -13798,6 +14736,9 @@ function updateBuildPreview() {
         source?.id || source?.type || source?.kind,
         source?.properties?.rotation ?? source?.rotation ?? source?.azimuth,
         source?.properties?.elevation ?? source?.elevation ?? source?.height,
+        source?.properties?.color ?? source?.color,
+        source?.properties?.wood_color ?? source?.wood_color,
+        source?.properties?.foliage_color ?? source?.foliage_color,
         source?.x ?? source?.offsetX, source?.z ?? source?.offsetZ,
         JSON.stringify(source?.dimensions || source?.properties?.dimensions || null),
         structureWidth, structureDepth, structureHeight, structureColor, structureRotation, brushObjectRotation,
@@ -13859,7 +14800,7 @@ function updateBuildPreview() {
                     ...(source.id === 'opening' ? { is_open: true } : {}),
                     ...(placementForLocationAsset(source).visualAsset ? { visual_asset: source.id } : {}),
                     ...(isFireObject({ type: source.id }) ? { is_lit: true } : {}),
-                    ...(isElectricFixture({ type: source.id }) ? { is_on: true } : {}),
+                    ...(isElectricFixture({ type: source.id }) ? { is_on: false } : {}),
                 },
             };
             buildPreviewMesh = createLocationObjectMesh(object, true);
@@ -13880,7 +14821,7 @@ function updateBuildPreview() {
         } else {
             const decorType = source.type === 'anomaly'
                 ? `anomaly_${source.anomalyKey}` : source.type || source.id;
-            buildPreviewMesh = createEditorDecorPreview(decorType, source.color);
+            buildPreviewMesh = createEditorDecorPreview(decorType, source.color, source);
             const decorPreview = editorResizeMode
                 ? { ...source, dimensions: editorResizeDimensions, scale: 1 } : source;
             applyDecorSize(buildPreviewMesh, decorPreview, decorType);
@@ -14270,6 +15211,7 @@ export function applyLocationObjectsChange({ location_id, objects = [], deleted_
     locationBuildingViewsDirty = true;
     const changed = [...added, ...removedObjects];
     const architecture = changed.filter(o => ['floor','wall','door','window','stairs','ladder','hatch','floor_opening','roof','ceiling'].includes(o.type));
+    if (architecture.some(o => o.type === 'floor' || o.type === 'floor_opening')) refreshGroundReliefAtFloors();
     if (architecture.length) refreshArchitecturalMeshes(architecture, new Set(added.map(o => Number(o.id))));
     else { applyFogOfWar(); refreshLocationDarkness(); }
     for (const object of removedObjects) if (isObjectLightSource(object)) refreshObjectLightSource(false);
@@ -14319,6 +15261,7 @@ export function addLocationObject(object) {
     if (objectEdit?.phase === 'preview') return;
     const fire = isObjectLightSource(object);
     addLocationObjectMesh(object, !fire);
+    if (object.type === 'floor' || object.type === 'floor_opening') refreshGroundReliefAtFloors();
     if (object.type === 'floor') { refreshFloorRugHeights(); rebuildLocationGrid(); rebuildGrassDetailMesh(); rebuildLocationRoofs(); }
     if (['wall', 'door', 'window', 'stairs', 'ladder', 'hatch', 'floor_opening'].includes(object.type)) refreshArchitecturalMeshes([object]);
     if (fire) {
@@ -14345,6 +15288,7 @@ export function removeLocationObject(objectId) {
     if(removed?.type==='ground_item')syncPortableLights();
     locationBuildingViewsDirty = true;
     refreshLocationFloorMenu();
+    if (removed?.type === 'floor' || removed?.type === 'floor_opening') refreshGroundReliefAtFloors();
     if (removed?.type === 'floor') { refreshFloorRugHeights(); rebuildLocationGrid(); rebuildGrassDetailMesh(); rebuildLocationRoofs(); }
     if (['wall', 'door', 'window', 'stairs', 'ladder', 'hatch', 'floor_opening'].includes(removed?.type)) refreshArchitecturalMeshes([removed]);
     const fire = isObjectLightSource(removed);
@@ -14372,11 +15316,13 @@ export function updateLocationObject(object) {
     const fire = isObjectLightSource(object) || isObjectLightSource(previous);
     replaceLocationObjectMesh(object, !fire);
     if (object.type === 'floor' || previous?.type === 'floor') {
+        refreshGroundReliefAtFloors();
         refreshFloorRugHeights();
         rebuildLocationGrid();
         rebuildGrassDetailMesh();
         rebuildLocationRoofs();
     }
+    if (object.type === 'floor_opening' || previous?.type === 'floor_opening') refreshGroundReliefAtFloors();
     if (['wall', 'door', 'window', 'stairs', 'ladder', 'hatch', 'floor_opening'].includes(object.type)) refreshArchitecturalMeshes([object, previous]);
     if (fire) {
         refreshObjectLightSource();
@@ -14433,6 +15379,11 @@ function applyVisualLocationLights() {
     locationAmbientLight.intensity = Number(visual.ambient_intensity);
     locationDirectionalLight.color.set(visual.directional_color);
     locationDirectionalLight.intensity = Number(visual.directional_intensity);
+    const hasDirectionalLight = locationDirectionalLight.intensity > 0;
+    if (locationDirectionalLight.visible !== hasDirectionalLight) {
+        locationDirectionalLight.visible = hasDirectionalLight;
+        if (hasDirectionalLight && locationDirectionalLight.shadow) locationDirectionalLight.shadow.needsUpdate = true;
+    }
 }
 
 export function setLocationLightingPreset(preset) {
@@ -14491,6 +15442,8 @@ export function applyLocationLighting(settings, persist = true, origin = 'direct
         window.lobbyGameTimeMinutes ?? 480,
         clarity,
     );
+    const naturalDetailChanged = resolvedLightingProfile
+        && resolvedLightingProfile.natural_detail !== profile.natural_detail;
     resolvedLightingProfile = profile;
     applyVisualLocationLights();
     const azimuth = Number(profile.directional_azimuth) * Math.PI / 180;
@@ -14515,6 +15468,12 @@ export function applyLocationLighting(settings, persist = true, origin = 'direct
     shadowCamera.far = distance * 3 + 20;
     shadowCamera.updateProjectionMatrix();
     scene.background.set(profile.background_color);
+    locationWeather?.setLocalFog(profile.fog_density, profile.background_color);
+    if (waterRegions.size && waterSurfaceMesh && !renderer.isUnavailableRenderer
+        && Boolean(locationWaterReflection) !== profile.water_reflections) rebuildWaterSurfaceMesh();
+    else if (naturalDetailChanged && waterSurfaceMesh) rebuildWaterDetailGroup();
+    if (naturalDetailChanged) rebuildGrassDetailMesh();
+    locationWaterReflection?.invalidate();
 
     const rebuildStartedAt = lampTrace ? performance.now() : 0;
     const reusableLampFixtures = takeReusableLampFixtures(locationLightGroup, profile.local_lights || []);
@@ -14801,6 +15760,12 @@ function getPrimaryLocationEditorAsset() {
     const source = getSelectedEditorSource();
     if (!source) return null;
     const kind = editorSelection.kind;
+    const properties = kind === 'structure' ? source.properties : source;
+    const definition = visualAssetForLocationObject(source.type, properties);
+    const colorChannels = definition?.colorChannels;
+    const colors = vegetationColorValues(definition, properties);
+    const signColor = source.properties?.visual_asset === 'information_sign'
+        ? source.properties.color || findLocationAsset('information_sign').color : null;
     if (kind === 'structure') return {
         kind, label: source.properties?.roof_section ? `Корпус ${source.properties.roof_section.owner+1} · ${{flat:'Плоская кровля',shed:'Односкатная кровля',gable:'Двускатная кровля'}[source.properties.roof_section.bodies[source.properties.roof_section.owner]?.type]||'Кровля'}`
             : locationObjectLabel(source),
@@ -14809,9 +15774,17 @@ function getPrimaryLocationEditorAsset() {
         rotation: normalizedBearing(objectRotationToBearing(source.properties?.rotation || 0)),
         elevation: source.properties?.roof_section ? Number(source.properties.elevation)||0 : clampAssetElevation(source.properties?.elevation),
         color: `#${locationObjectMaterialColor(source).getHexString()}`,
+        colorChannels, ...colors,
         buildingId: structureBuildingId(source) || '',
         level: structureLevel(source),
         structureType: source.type,
+        signText: signColor ? {
+            front: source.properties.sign_text || '',
+            back: source.properties.sign_back_text ?? source.properties.sign_text ?? '',
+            color: `#${new THREE.Color(signColor).getHexString()}`,
+            textColor: source.properties.sign_text_color || (informationSignLightBackground(signColor) ? '#242017' : '#fff8e8'),
+            autoTextColor: !source.properties.sign_text_color,
+        } : null,
         roofSection: source.properties?.roof_section ? {
             ...source.properties.roof_section.bodies[source.properties.roof_section.owner],
             owner:source.properties.roof_section.owner,
@@ -14840,7 +15813,8 @@ function getPrimaryLocationEditorAsset() {
         z: editorSelection.z + 0.5 + Number(source.z || 0),
         rotation: normalizedBearing(-(Number(source.rotation) || 0)),
         elevation: clampAssetElevation(source.elevation),
-        color: source.color || '#aa8866',
+        color: source.color || definition?.color || '#aa8866',
+        colorChannels, ...colors,
         dimensions: assetDimensions(source, 'decor', source.type),
         resizable: true,
     };
@@ -15403,6 +16377,7 @@ export async function finishLocationBrushStroke(cancel = false) {
         // Return to the established merged meshes once, after the stroke.
         queueTerrainRefresh([...context.cells.values()], { smooth:true, surface:true, grid:true, water:context.sculpt.water, fogGeometry:true, fog:true });
     }
+    if (context.relief) queueTerrainRefresh([...context.cells.values()], { surface: true });
     context.phase = 'save';
     const change = { objects: [...context.objects.values()].map(before => ({ id: before.id, before, after: null })), tiles: [],
         cells: [...context.cells.values()].map(i => ({ ...i, after: copy(currentLocationData.tiles_data[i.z][i.x]) }))
@@ -15668,7 +16643,7 @@ function sendDecorTileUpdates(positions) {
     notifyEditorSelection();
 }
 
-export function setLocationAssetPreset(assetId) {
+export function setLocationAssetPreset(assetId, { deferPreview = false } = {}) {
     window.cancelCommonMapTool?.();
     selectedLocationAsset = typeof assetId === 'object' ? assetId : findLocationAsset(assetId);
     if (!selectedLocationAsset) return;
@@ -15689,14 +16664,18 @@ export function setLocationAssetPreset(assetId) {
         setLocationBrushObjectOffsetX(selectedLocationAsset.offsetX || 0);
         setLocationBrushObjectOffsetZ(selectedLocationAsset.offsetZ || 0);
         setLocationBrushObjectScale(1);
-        setLocationBrushObjectRotation(-Number(selectedLocationAsset.rotation || 0));
+        setLocationBrushObjectRotation(-Number(selectedLocationAsset.rotation || 0), false);
         brushObjectMode = true;
         buildMode = 'terrain';
     } else {
         buildMode = 'light';
     }
     syncLocationPlacementAngle();
-    updateBuildPreview();
+    if (deferPreview) {
+        hoveredTileCoords = null;
+        hoveredPointerClient = null;
+        clearBuildPreview();
+    } else updateBuildPreview();
     if (lampTrace) {
         lampTrace.timings.selectionHandlerMs = +(performance.now() - handlerStartedAt).toFixed(1);
         lampTrace.timings.previewLightCreated = Number(Boolean(
@@ -15907,6 +16886,32 @@ async function deleteSelectedLocationAssetImpl() {
 export async function toggleSelectedLocationFire(...args) {
     return runLocationObjectCommand(() => toggleSelectedLocationFireImpl(...args));
 }
+
+export async function setSelectedLocationSignText({ front, back, color, textColor, autoTextColor }) {
+    return runLocationObjectCommand(async () => {
+        if (!window.isGM || editorSelections.length !== 1 || editorSelection?.kind !== 'structure') return false;
+        const source = getSelectedEditorSource();
+        if (source?.properties?.visual_asset !== 'information_sign' || !/^#[0-9a-f]{6}$/i.test(color)) return false;
+        if (!autoTextColor && !/^#[0-9a-f]{6}$/i.test(textColor)) return false;
+        try {
+            const object = await editorUpdateObject(window.currentLobbyId, source.id, {
+                properties: {
+                    sign_text: front.trim().slice(0, 280),
+                    sign_back_text: back.trim().slice(0, 280),
+                    sign_text_color: autoTextColor ? null : textColor,
+                    color,
+                    material_color_exact: true,
+                },
+            });
+            updateLocationObject(object);
+            notifyEditorSelection();
+            return true;
+        } catch (error) {
+            showNotification(error.message || 'Не удалось сохранить табличку', 'system');
+            return false;
+        }
+    });
+}
 async function toggleSelectedLocationFireImpl() {
     if (!window.isGM || editorSelections.length !== 1 || editorSelection?.kind !== 'structure') return false;
     const source = getSelectedEditorSource();
@@ -16000,7 +17005,9 @@ async function updateSelectedLocationAssetGroupImpl(transform) {
             editorSelection = located || selection;
         } else editorSelection = selection;
         const details = { ...originals[index], ...updates[index] };
-        if (!Object.hasOwn(updates[index], 'dimensions')) delete details.dimensions;
+        for (const key of ['dimensions', 'color', 'wood_color', 'foliage_color']) {
+            if (!Object.hasOwn(updates[index], key)) delete details[key];
+        }
         const saved = await updateSelectedLocationAssetDetails(details);
         allSaved = Boolean(saved) && allSaved;
         remaining.push(editorSelection);
@@ -16067,7 +17074,8 @@ export async function setSelectedLocationCover({coverClass,maxHp,hp,protection})
         showNotification(error.message||'Не удалось сохранить укрытие','system');return false;
     }
 }
-async function updateSelectedLocationAssetDetailsImpl({ x, z, height, elevation, intensity, distance, color, rotation, dimensions, roofType, buildingId, level, detachRoof } = {}) {
+async function updateSelectedLocationAssetDetailsImpl({ x, z, height, elevation, intensity, distance,
+    color, wood_color, foliage_color, rotation, dimensions, roofType, buildingId, level, detachRoof } = {}) {
     const source = getSelectedEditorSource();
     if (!source || !currentLocationData) return false;
     if (!Number.isFinite(x) || !Number.isFinite(z)
@@ -16085,7 +17093,14 @@ async function updateSelectedLocationAssetDetailsImpl({ x, z, height, elevation,
         showNotification('Некорректные размеры объекта', 'system');
         return false;
     }
-    if (color !== undefined && !/^#[0-9a-fA-F]{6}$/.test(color)) return false;
+    if ([color, wood_color, foliage_color].some(value => value !== undefined
+        && (typeof value !== 'string' || !/^#[0-9a-f]{6}$/i.test(value)))) return false;
+    const properties = editorSelection.kind === 'structure' ? source.properties : source;
+    const asset = visualAssetForLocationObject(source.type, properties);
+    const currentColors = vegetationColorValues(asset, properties);
+    const colorPatch = Object.fromEntries(Object.entries({ wood_color, foliage_color })
+        .filter(([key, value]) => asset?.colorChannels?.[key] && value !== undefined
+            && value.toLowerCase() !== currentColors[key]));
     if (editorSelection.kind === 'structure') {
         if (level !== undefined && !Number.isInteger(level)) return false;
         if (buildingId !== undefined && buildingId.length > 64) return false;
@@ -16104,7 +17119,7 @@ async function updateSelectedLocationAssetDetailsImpl({ x, z, height, elevation,
         const lights = [...currentLocationData.lighting.local_lights];
         const azimuth = ((Number(rotation) + 180) % 360 + 360) % 360 - 180;
         lights[editorSelection.index] = {
-            ...source, x, z, height, intensity, distance, color, azimuth, level:lampDisplayLevel(source),
+            ...source, x, z, height, intensity, distance, color: color ?? source.color, azimuth, level:lampDisplayLevel(source),
             ...(dimensions ? { dimensions } : {}),
         };
         return persistLocationLights(lights);
@@ -16118,7 +17133,8 @@ async function updateSelectedLocationAssetDetailsImpl({ x, z, height, elevation,
                     offset_z: z - Math.floor(z) - 0.5,
                     rotation: bearingToObjectRotation(rotation),
                     elevation: elevation ?? (source.properties?.roof_section?Number(source.properties.elevation)||0:clampAssetElevation(source.properties?.elevation)),
-                    ...(color !== undefined && color.toLowerCase() !== `#${locationObjectMaterialColor(source).getHexString()}`
+                    ...colorPatch,
+                    ...(!asset?.colorChannels && color !== undefined && color.toLowerCase() !== `#${locationObjectMaterialColor(source).getHexString()}`
                         ? { color, material_color_exact: true } : {}),
                     ...(dimensions ? { dimensions } : {}),
                     ...(buildingId !== undefined ? { building_id: buildingId } : {}),
@@ -16143,21 +17159,25 @@ async function updateSelectedLocationAssetDetailsImpl({ x, z, height, elevation,
     }
     const old = { x: editorSelection.x, z: editorSelection.z };
     const next = { x: Math.floor(x), z: Math.floor(z) };
-    currentLocationData.tiles_data[old.z][old.x].objects.splice(editorSelection.index, 1);
+    const sameTile = old.x === next.x && old.z === next.z;
     source.rotation = -Number(rotation);
     source.elevation = elevation ?? clampAssetElevation(source.elevation);
-    if (color !== undefined) source.color = color;
+    if (!asset?.colorChannels && color !== undefined) source.color = color;
+    Object.assign(source, colorPatch);
     if (dimensions) {
         source.dimensions = dimensions;
         source.scale = 1;
     }
     source.x = x - next.x - 0.5;
     source.z = z - next.z - 0.5;
-    const objects = currentLocationData.tiles_data[next.z][next.x].objects;
-    objects.push(source);
-    editorSelection = { kind: 'decor', ...next, index: objects.length - 1 };
-    if (editorSelections.length === 1) editorSelections = [editorSelection];
-    sendDecorTileUpdates(old.x === next.x && old.z === next.z ? [old] : [old, next]);
+    if (!sameTile) {
+        currentLocationData.tiles_data[old.z][old.x].objects.splice(editorSelection.index, 1);
+        const objects = currentLocationData.tiles_data[next.z][next.x].objects;
+        objects.push(source);
+        editorSelection = { kind: 'decor', ...next, index: objects.length - 1 };
+        if (editorSelections.length === 1) editorSelections = [editorSelection];
+    }
+    sendDecorTileUpdates(sameTile ? [old] : [old, next]);
     return true;
 }
 
@@ -16494,7 +17514,7 @@ async function commitEditorAssetResize() {
     const saved = await updateSelectedLocationAssetDetails({
         x: center.x, z: center.z,
         height: selection.height, intensity: selection.intensity,
-        distance: selection.distance, color: selection.color,
+        distance: selection.distance,
         rotation: selection.rotation, elevation: selection.kind === 'structure'
             ? elevation : selection.elevation,
         dimensions,
@@ -16551,7 +17571,7 @@ async function commitEditorAssetRotation() {
     const saved = await updateSelectedLocationAssetDetails({
         x: selection.x, z: selection.z,
         height: selection.height, intensity: selection.intensity,
-        distance: selection.distance, color: selection.color,
+        distance: selection.distance,
         rotation: editorRotateAngle, elevation: selection.elevation,
     });
     if (saved) {
@@ -16583,7 +17603,7 @@ async function commitEditorAssetMove(x, z) {
     if (await updateSelectedLocationAssetDetails({
         x, z, rotation: current.rotation,
         height: source.height, intensity: source.intensity,
-        distance: source.distance, color: source.color, elevation: current.elevation,
+        distance: source.distance, elevation: current.elevation,
     })) {
         editorMoveMode = false;
         editorMovePreviewPoint = null;
@@ -16647,9 +17667,41 @@ async function placeSelectedLocationAssetImpl(x, z, client = null) {
 
 // ========== Загрузка данных локации ==========
 let locationSceneLoading = false;
+let finishInitialLocationState = null;
+
+function warmLocationFirstFrame() {
+    const lights = portableLightRenderer;
+    if (!lights) return;
+    Promise.resolve().then(() => {
+        if (lights === portableLightRenderer) return lights.warm(renderer, camera);
+    }).catch(error => console.warn('Не удалось подготовить шейдеры фонарей', error));
+}
+
+export function prepareInitialLocationFrame(signal, waitForCharacters) {
+    if (!waitForCharacters || signal?.aborted) {
+        if (!signal?.aborted) warmLocationFirstFrame();
+        return Promise.resolve();
+    }
+    return new Promise(resolve => {
+        const finish = () => {
+            clearTimeout(timeout);
+            signal?.removeEventListener('abort', finish);
+            if (finishInitialLocationState === finish) {
+                finishInitialLocationState = null;
+                if (!signal?.aborted) warmLocationFirstFrame();
+            }
+            resolve();
+        };
+        // Первый кадр использует фонари персонажей из начального состояния сцены.
+        const timeout = setTimeout(finish, 1600);
+        finishInitialLocationState = finish;
+        signal?.addEventListener('abort', finish, { once: true });
+    });
+}
 
 export function loadLocation(data) {
     for (const stage of buildLocationStages(data)) { /* synchronous callers */ }
+    warmLocationFirstFrame();
     window.dispatchEvent(new Event('map-surface-changed'));
 }
 
@@ -16673,6 +17725,8 @@ export async function loadLocationInStages(data, { signal, onProgress } = {}) {
 }
 
 function* buildLocationStages(data) {
+    locationCrowFlight?.dispose();
+    locationCrowFlight = null;
     portableLightRenderer?.dispose();portableLightRenderer=null;
     basementCutaway?.dispose(); basementCutaway = null;
     basementContour = null; basementContourSignature = '';
@@ -16725,14 +17779,18 @@ function* buildLocationStages(data) {
     // Очистка старых объектов (кроме света и highlight)
     locationTerrainMaterials?.dispose();
     locationWaterProfiles?.dispose();
-    locationWaterProfiles=createWaterProfileLayer(THREE,(x,z)=>currentLocationData?.tiles_data[z]?.[x]);
+    locationWaterProfiles=createWaterProfileLayer(THREE,(x,z)=>currentLocationData?.tiles_data[z]?.[x],
+        (x,z)=>waterRegions.get(`${x},${z}`));
     locationWaterProfiles.resize(data.grid_width,data.grid_height);
     locationWaterProfiles.updateRegion(0,0,data.grid_width,data.grid_height);
     let hasSeasonalSurface = false;
-    locationTerrainMaterials = createTerrainMaterialLayer(THREE, { onSeasonalSurface() {
-        hasSeasonalSurface = true;
-        portableLightRenderer?.useSeasonalTerrain();
-    } });
+    locationTerrainMaterials = createTerrainMaterialLayer(THREE, {
+        winterTextureArray: renderer.capabilities?.isWebGL2 === true,
+        onSeasonalSurface() {
+            hasSeasonalSurface = true;
+            portableLightRenderer?.useSeasonalTerrain();
+        },
+    });
     locationTerrainMaterials.resize(data.grid_width, data.grid_height);
     locationTerrainMaterials.fill(data.tiles_data);
     waterTileMesh = null;
@@ -16749,18 +17807,11 @@ function* buildLocationStages(data) {
     terrainGrassBlendTexture?.dispose();
     terrainGrassBlendTexture = null;
     locationGridMesh = null;
-    const toRemove = [];
-    scene.children.forEach(child => {
-        if (!child.isLight && child !== highlightBox && child !== locationLightGroup
-            && !child.userData.locationWeather && child !== locationDirectionalLight?.target) toRemove.push(child);
-    });
-    toRemove.forEach(child => {
-        disposeObject(child);
-        scene.remove(child);
-    });
+    clearAllCharacters();
+    disposeSceneObjects(child => child.isLight || child === highlightBox || child === locationLightGroup
+        || child.userData.locationWeather || child === locationDirectionalLight?.target);
     clearUnusedLocationModels();
     grassDetailGroup = null;
-    clearAllCharacters();
     portableLightRenderer=createPortableLightRenderer(THREE,scene);portableLightRenderer.prepare();
     if (hasSeasonalSurface) portableLightRenderer.useSeasonalTerrain();
     markLoadStage('resetMs');
@@ -16804,7 +17855,7 @@ function* buildLocationStages(data) {
     ], tileCount);
     locationTileMesh.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(tileCount * 3), 3);
     const waterMaterial = new THREE.MeshStandardMaterial({ color: 0xffffff });
-    waterMaterial.customProgramCacheKey = () => 'location-water-exterior-sides-v2';
+    waterMaterial.customProgramCacheKey = () => 'location-water-exterior-sides-v3';
     waterMaterial.onBeforeCompile = shader => {
         Object.assign(shader.uniforms,locationWaterProfiles.uniforms);
         shader.uniforms.sideWaterDarkness={value:locationDarknessTexture};
@@ -16846,7 +17897,10 @@ function* buildLocationStages(data) {
                 else if (vWaterSideNormal.x < -0.5) sideBit = 2.0;
                 else if (vWaterSideNormal.z > 0.5) sideBit = 4.0;
                 else if (vWaterSideNormal.z < -0.5) sideBit = 8.0;
-                if (sideBit > 0.0 && mod(floor(vWaterSideMask / sideBit), 2.0) < 0.5) discard;`);
+                // После интерполяции значение 4 может оказаться чуть меньше 4.
+                // Восстанавливаем целое, чтобы не отбрасывать фрагменты одной грани.
+                float sideMask = floor(vWaterSideMask + 0.5);
+                if (sideBit > 0.0 && mod(floor(sideMask / sideBit), 2.0) < 0.5) discard;`);
     };
     const waterTopMaterial = new THREE.MeshBasicMaterial({ colorWrite: false, depthWrite: false });
     const waterBoxGeometry = geometry.clone();
@@ -16885,6 +17939,10 @@ function* buildLocationStages(data) {
     loadStageAt = performance.now();
     rebuildSmoothTerrainMesh();
     rebuildLocationTerrainSurface();
+    const reliefLocation = currentLocationData;
+    void loadLocalTerrainRelief(TERRAIN_MATERIALS).then(loaded => {
+        if (loaded && currentLocationData === reliefLocation) queueTerrainRefresh([], { surface: true });
+    });
     const terrainWorkMs = performance.now() - loadStageAt;
     yield { percent: 50, detail: 'Подготавливаем воду и растительность.' };
     loadStageAt = performance.now() - terrainWorkMs;
@@ -16940,7 +17998,14 @@ function* buildLocationStages(data) {
         locationLoadTrace.loadMs = +Object.values(locationLoadTrace.stages).reduce((sum, ms) => sum + ms, 0).toFixed(1);
         locationLoadTrace.loadedAt = performance.now();
     }
-    portableLightRenderer?.warm(renderer,camera);
+    yield { percent: 88, detail: 'Подготавливаем освещение.' };
+    let skyFloor = 0;
+    for (const row of data.tiles_data) {
+        for (const tile of row) skyFloor = Math.max(skyFloor, Number(tile.height) || 0);
+    }
+    if (!renderer.isUnavailableRenderer) {
+        locationCrowFlight = createCrowFlight(THREE, scene, { scale: .95, speed: 3.2, altitude: skyFloor + 13, spacing: 1.7, camera });
+    }
     yield { percent: 90, detail: 'Подготавливаем интерфейс.' };
 }
 
@@ -17001,7 +18066,7 @@ function terrainEditTouchesWater(changed) {
     return changed.some(({ x, z }) => {
         for (let dz = -1; dz <= 1; dz++) {
             for (let dx = -1; dx <= 1; dx++) {
-                if (tiles[z + dz]?.[x + dx]?.terrain === 'water') return true;
+                if (['water', 'shallow_water'].includes(tiles[z + dz]?.[x + dx]?.terrain)) return true;
             }
         }
         return false;
@@ -17048,7 +18113,7 @@ function flushPendingTerrainRefresh() {
                 currentLocationData.tiles_data, smoothTerrainMesh, terrainSurfaceMesh, terrainFoundationY);
         }
         sculptPreview?.update(changed, (x,z)=>new THREE.Color(terrainColors[currentLocationData.tiles_data[z][x].terrain] || 0x3a5f0b)
-            .multiplyScalar(darknessFactorAt(x,z)), terrainFoundationY);
+            .multiplyScalar(darknessFactorAt(x,z)), terrainFoundationY, locationGroundReliefLimit());
     }
     if (work.smooth && !localSculpt) rebuildSmoothTerrainMesh(true);
     else if (work.terrainColor) updateSmoothTerrainColors(indices);
@@ -17057,7 +18122,7 @@ function flushPendingTerrainRefresh() {
     if (work.water) {
         if (localSculpt) objectEdit.sculpt.water = true;
         else rebuildWaterSurfaceMesh();
-    }
+    } else if (work.waterDetail && waterSurfaceMesh) rebuildWaterDetailGroup();
     if (work.grid) {
         if (localSculpt) {
             if (locationGridMesh) {
@@ -17246,7 +18311,7 @@ function ensureTerrainGrassDetail() {
             texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
             texture.minFilter = THREE.LinearMipmapLinearFilter;
             texture.magFilter = THREE.LinearFilter;
-            texture.encoding = THREE.sRGBEncoding;
+            texture.colorSpace = THREE.SRGBColorSpace;
             return texture;
         };
         terrainGrassDetail = { earth: createPhotoTexture(), forest: createPhotoTexture(),
@@ -17262,6 +18327,18 @@ function ensureTerrainGrassDetail() {
     }
     terrainGrassDetail.blend = terrainGrassBlendTexture;
     return terrainGrassDetail;
+}
+
+function createLocationGroundMaterial(polygonOffset = false) {
+    const material = new THREE.MeshStandardMaterial({
+        map: terrainSurfaceTexture, side: THREE.DoubleSide, roughness: 0.97,
+        polygonOffset, polygonOffsetFactor: 0, polygonOffsetUnits: -1,
+    });
+    applySurfaceDarkness(material, locationDarknessTexture,
+        new THREE.Vector2(currentLocationData.grid_width, currentLocationData.grid_height),
+        null, ensureTerrainGrassDetail());
+    locationTerrainMaterials?.apply(material, { grassBlend: true });
+    return material;
 }
 
 function rebuildLocationTerrainSurface(preserveTexture = false, reuseMaterial = false) {
@@ -17294,7 +18371,7 @@ function rebuildLocationTerrainSurface(preserveTexture = false, reuseMaterial = 
         terrainSurfaceTexture.minFilter = terrainMipmaps
             ? THREE.LinearMipmapLinearFilter : THREE.LinearFilter;
         terrainSurfaceTexture.generateMipmaps = terrainMipmaps;
-        terrainSurfaceTexture.encoding = THREE.sRGBEncoding;
+        terrainSurfaceTexture.colorSpace = THREE.SRGBColorSpace;
         terrainSurfaceTexture.needsUpdate = true;
         terrainGrassBlendTexture = new THREE.DataTexture(image.grassBlendData,
             image.width, image.height, THREE.RGBAFormat, THREE.UnsignedByteType);
@@ -17311,7 +18388,7 @@ function rebuildLocationTerrainSurface(preserveTexture = false, reuseMaterial = 
         topByVertex: smoothTerrainMesh.geometry.attributes.terrainTop.array,
         tileByFace: smoothTerrainMesh.userData.tileByFace,
     } : null;
-    const { positions, normals, uvs, indices } = buildTerrainSurfaceData(tiles, smoothData);
+    const { positions, normals, uvs, indices } = buildTerrainSurfaceData(tiles, smoothData, undefined, locationGroundReliefLimit());
     if (!positions.length) {
         if (reusableMesh) {
             scene.remove(reusableMesh);
@@ -17330,14 +18407,8 @@ function rebuildLocationTerrainSurface(preserveTexture = false, reuseMaterial = 
         reusableMesh.geometry = geometry;
         return;
     }
-    const material = new THREE.MeshStandardMaterial({
-        map: terrainSurfaceTexture, side: THREE.DoubleSide, roughness: 0.97,
-        // A slope-dependent bias can pull this cap in front of nearby floors at grazing angles.
-        polygonOffset: true, polygonOffsetFactor: 0, polygonOffsetUnits: -1,
-    });
-    applySurfaceDarkness(material, locationDarknessTexture,
-        new THREE.Vector2(width, height), null, ensureTerrainGrassDetail());
-    locationTerrainMaterials?.apply(material);
+    // A slope-dependent bias can pull this cap in front of nearby floors at grazing angles.
+    const material = createLocationGroundMaterial(true);
     if (locationStaticLightField) locationStaticLightField.attach(material, 0);
     terrainSurfaceMesh = new THREE.Mesh(geometry, material);
     terrainSurfaceMesh.raycast = () => {};
@@ -17346,6 +18417,8 @@ function rebuildLocationTerrainSurface(preserveTexture = false, reuseMaterial = 
 }
 
 function rebuildWaterSurfaceMesh() {
+    locationWaterReflection?.dispose();
+    locationWaterReflection = null;
     waterFogSurfaces = null;
     clearFogOverlay();
     if (waterSurfaceMesh) {
@@ -17371,15 +18444,18 @@ function rebuildWaterSurfaceMesh() {
     }
     if (!scene || !currentLocationData) return;
     const waterTiles = currentLocationData.tiles_data;
-    locationTerrainMaterials?.setShoreGrass(ensureTerrainGrassDetail());
+    const landSurfaceHeightAt = createTerrainSurfaceHeightSampler(waterTiles);
     const data = buildRoundedWaterData(waterTiles, 0.24, undefined, null, waterLevelForTile, {
         shorelineRing: true,
-        landSurfaceHeightAt: createTerrainSurfaceHeightSampler(waterTiles),
+        landSurfaceHeightAt,
         captureFog: true,
     });
     waterFogSurfaces = data.fogByTile;
     const previousRegions = waterRegions;
     waterRegions = data.regions;
+    if (previousRegions.size !== waterRegions.size || [...previousRegions].some(([key, value])=>waterRegions.get(key)!==value)) {
+        locationWaterProfiles?.updateRegion(0, 0, currentLocationData.grid_width, currentLocationData.grid_height);
+    }
     if (waterTileMesh) {
         let changed = false;
         for (const [key, kind] of waterRegions) {
@@ -17395,35 +18471,36 @@ function rebuildWaterSurfaceMesh() {
             waterTileMesh.geometry.getAttribute('waterCornerDrops').needsUpdate = true;
         }
     }
-    if (!data.water.length) return;
-    const waterGeometry = new THREE.BufferGeometry();
-    waterGeometry.setAttribute('position', new THREE.Float32BufferAttribute(data.water, 3));
-    waterGeometry.setAttribute('color', new THREE.Float32BufferAttribute(data.waterColors, 3));
-    waterGeometry.setAttribute('normal', new THREE.Float32BufferAttribute(smoothWaterNormals(data.water),3));
-    const waterMaterial = createWaterMaterial({profileLayer:locationWaterProfiles});
-    waterMaterial.vertexColors = false;
+    const waterGeometry = createLocationWaterGeometry(THREE, data.water, waterTiles, landSurfaceHeightAt, data.waterMargins);
+    if (!waterGeometry) return;
+    const hasShallow = waterGeometry.hasAttribute('waterDepth');
+    const reflections = resolvedLightingProfile?.water_reflections ?? currentLocationData.lighting?.water_reflections;
+    if (reflections && data.regions.size && !renderer.isUnavailableRenderer) {
+        const firstWater = data.regions.keys().next().value;
+        const [x, z] = firstWater.split(',').map(Number);
+        const level = waterLevelForTile(waterTiles[z][x], data.regions.get(firstWater)) + .012;
+        locationWaterReflection = createLocationWaterReflection(THREE, level, waterGeometry);
+    }
+    const waterMaterial = createWaterMaterial({ profileLayer: locationWaterProfiles,
+        reflection: locationWaterReflection, hasShallow, hasShore: true });
     applySurfaceDarkness(waterMaterial, locationDarknessTexture,
         new THREE.Vector2(currentLocationData.grid_width, currentLocationData.grid_height));
     waterSurfaceMesh = new THREE.Mesh(waterGeometry, waterMaterial);
+    waterSurfaceMesh.name = 'location-water-surface';
+    waterSurfaceMesh.userData.compactPools = data.compactPools;
     waterSurfaceMesh.raycast = () => {};
     waterSurfaceMesh.castShadow = false;
     waterSurfaceMesh.receiveShadow = false;
     attachStaticLightFieldToRoot(waterSurfaceMesh, 0);
     scene.add(waterSurfaceMesh);
+    if (hasShallow) updateRoofVisibility.lastState = null;
     if (data.bank.length) {
         const bankGeometry = new THREE.BufferGeometry();
         bankGeometry.setAttribute('position', new THREE.Float32BufferAttribute(data.bank, 3));
-        bankGeometry.setAttribute('color', new THREE.Float32BufferAttribute(Array(data.bank.length).fill(1), 3));
         bankGeometry.setAttribute('uv', new THREE.Float32BufferAttribute(data.bankUvs, 2));
-        bankGeometry.setAttribute('normal',new THREE.Float32BufferAttribute(smoothWaterNormals(data.bank,data.sandBank),3));
-        const bankMaterial = new THREE.MeshStandardMaterial({
-            vertexColors: true, side: THREE.DoubleSide, roughness: 0.97,
-        });
-        bankGeometry.setAttribute('terrainTileCoord',new THREE.Float32BufferAttribute(shoreOwners(data.bank,waterTiles),2));
-        bankGeometry.setAttribute('terrainTop',new THREE.Float32BufferAttribute(Array(data.bank.length/3).fill(0),1));
-        locationTerrainMaterials?.apply(bankMaterial,{sides:true,smooth:true,shore:true});
-        applySurfaceDarkness(bankMaterial, locationDarknessTexture,
-            new THREE.Vector2(currentLocationData.grid_width, currentLocationData.grid_height));
+        bankGeometry.setAttribute('normal',new THREE.Float32BufferAttribute(
+            smoothWaterNormals(data.bank,data.sandBank,data.bankShoulders),3));
+        const bankMaterial = createLocationGroundMaterial();
         waterBankMesh = new THREE.Mesh(bankGeometry, bankMaterial);
         waterBankMesh.raycast = () => {};
         waterBankMesh.receiveShadow = true;
@@ -17433,25 +18510,74 @@ function rebuildWaterSurfaceMesh() {
     if (data.sandBank.length) {
         const bankGeometry = new THREE.BufferGeometry();
         bankGeometry.setAttribute('position', new THREE.Float32BufferAttribute(data.sandBank, 3));
-        bankGeometry.setAttribute('color', new THREE.Float32BufferAttribute(Array(data.sandBank.length).fill(1), 3));
-        bankGeometry.setAttribute('terrainTileCoord',new THREE.Float32BufferAttribute(shoreOwners(data.sandBank,waterTiles),2));
-        bankGeometry.setAttribute('terrainTop',new THREE.Float32BufferAttribute(Array(data.sandBank.length/3).fill(0),1));
-        bankGeometry.setAttribute('normal',new THREE.Float32BufferAttribute(smoothWaterNormals(data.sandBank,data.bank),3));
-        const bankMaterial = new THREE.MeshStandardMaterial({
-            vertexColors: true, side: THREE.DoubleSide, roughness: 0.97,
-        });
-        locationTerrainMaterials?.apply(bankMaterial,{sides:true,smooth:true,shore:true});
-        applySurfaceDarkness(bankMaterial, locationDarknessTexture,
-            new THREE.Vector2(currentLocationData.grid_width, currentLocationData.grid_height));
+        bankGeometry.setAttribute('uv', new THREE.Float32BufferAttribute(data.sandBankUvs, 2));
+        bankGeometry.setAttribute('normal',new THREE.Float32BufferAttribute(
+            smoothWaterNormals(data.sandBank,data.bank,data.sandBankShoulders),3));
+        const bankMaterial = createLocationGroundMaterial();
         sandBankMesh = new THREE.Mesh(bankGeometry, bankMaterial);
         sandBankMesh.raycast = () => {};
         sandBankMesh.receiveShadow = true;
         attachStaticLightFieldToRoot(sandBankMesh, 0);
         scene.add(sandBankMesh);
     }
-    waterDetailGroup = createWaterDetailGroup(THREE, currentLocationData.tiles_data, waterRegions);
+    rebuildWaterDetailGroup();
+}
+
+function rebuildWaterDetailGroup() {
+    if (waterDetailGroup) {
+        scene.remove(waterDetailGroup);
+        disposeObject(waterDetailGroup);
+    }
+    const settings = resolvedLightingProfile || currentLocationData.lighting;
+    const tiles = currentLocationData.tiles_data;
+    const getHeight = createTerrainSurfaceHeightSampler(tiles);
+    waterDetailGroup = createWaterDetailGroup(THREE, tiles, waterRegions, settings?.natural_detail, {
+        addModels: addNaturalSwampModels,
+        shallowLevel: (x, z) => getHeight(x, z) + SHALLOW_WATER_OFFSET,
+        surfaceGeometry: waterSurfaceMesh?.geometry,
+        compactPools: waterSurfaceMesh?.userData.compactPools,
+    });
     attachStaticLightFieldToRoot(waterDetailGroup, 0);
     scene.add(waterDetailGroup);
+}
+
+function addNaturalSwampModels(parent, id, placements, pose) {
+    if (!placements.length) return;
+    const asset = findLocationAsset(id);
+    const [width, depth, height] = asset.dimensions;
+    const root = new THREE.Group();
+    root.name = `swamp-decor-${id}`;
+    parent.add(root);
+    mountLocationModel(root, asset, { width, depth, height }, model => {
+        model.updateMatrixWorld(true);
+        const byArea = new Map();
+        for (const item of placements) {
+            const key = `${Math.floor(item.x / 12)},${Math.floor(item.z / 12)}`;
+            if (!byArea.has(key)) byArea.set(key, []);
+            byArea.get(key).push(item);
+        }
+        const dummy = new THREE.Object3D(), matrix = new THREE.Matrix4();
+        const tint = new THREE.Color();
+        model.traverse(part => {
+            if (!part.isMesh) return;
+            for (const area of byArea.values()) {
+                const mesh = new THREE.InstancedMesh(part.geometry, part.material, area.length);
+                area.forEach((item, index) => {
+                    const shade = pose(dummy, item);
+                    dummy.updateMatrix();
+                    mesh.setMatrixAt(index, matrix.multiplyMatrices(dummy.matrix, part.matrixWorld));
+                    mesh.setColorAt(index, tint.setRGB(shade, shade, shade));
+                });
+                mesh.instanceMatrix.needsUpdate = true;
+                mesh.instanceColor.needsUpdate = true;
+                mesh.receiveShadow = true;
+                mesh.raycast = () => {};
+                root.add(mesh);
+            }
+        });
+        attachStaticLightFieldToRoot(root, 0);
+        locationWaterReflection?.invalidate();
+    }, error => console.warn('Не удалось загрузить модель болотного декора', error));
 }
 
 export function getLocationGrassDiagnostics() {
@@ -17463,7 +18589,7 @@ export function getLocationGrassDiagnostics() {
         frustum = new THREE.Frustum().setFromProjectionMatrix(new THREE.Matrix4()
             .multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse));
     }
-    const kinds = Object.fromEntries(['medium01'].map(kind => {
+    const kinds = Object.fromEntries(Object.keys(naturalGrassAssets || {}).map(kind => {
         const matching = meshes.filter(mesh => mesh.userData.naturalGrassKind === kind);
         const sample = matching[0];
         let firstInstance = null;
@@ -17494,7 +18620,7 @@ export function getLocationGrassDiagnostics() {
                 alphaMapLoaded: Boolean(sample.material.alphaMap?.image),
                 colorMapLoaded: Boolean(sample.material.map?.image),
                 normalMapLoaded: Boolean(sample.material.normalMap?.image),
-                colorMapEncoding: sample.material.map?.encoding === THREE.sRGBEncoding
+                colorMapEncoding: sample.material.map?.colorSpace === THREE.SRGBColorSpace
                     ? 'sRGB' : 'linear',
                 opacity: sample.material.opacity,
                 transparent: sample.material.transparent,
@@ -17507,8 +18633,7 @@ export function getLocationGrassDiagnostics() {
     }));
     return {
         locationId: currentLocationId,
-        model: 'grass_medium_01_game_d8.glb',
-        rendererOutputEncoding: renderer?.outputEncoding === THREE.sRGBEncoding
+        rendererOutputEncoding: renderer?.outputColorSpace === THREE.SRGBColorSpace
             ? 'sRGB' : 'linear',
         lighting: { ambient: locationAmbientLight?.intensity,
             directional: locationDirectionalLight?.intensity },
@@ -17526,12 +18651,12 @@ export function getLocationGrassDiagnostics() {
             density: naturalGrassBuild?.stats.densityRejected || 0,
             blend: naturalGrassBuild?.stats.blendRejected || 0,
             floor: naturalGrassBuild?.stats.floorRejected || 0,
-            slope: naturalGrassBuild?.slopeRejected || { medium01: 0 },
+            slope: naturalGrassBuild?.slopeRejected || {},
         },
         kinds,
         understory: grassDetailGroup?.userData.detailCounts?.understory || 0,
         flowers: grassDetailGroup?.userData.detailCounts?.flowers || 0,
-        triangles: naturalGrassBuild?.triangles || { medium01: 0, understory: 0, total: 0 },
+        triangles: naturalGrassBuild?.triangles || { understory: 0, total: 0 },
     };
 }
 
@@ -17546,11 +18671,15 @@ function rebuildGrassDetailMesh(changedTiles = null) {
     }
     if (!scene || !currentLocationData) return;
     const tiles = currentLocationData.tiles_data;
+    const settings = resolvedLightingProfile || currentLocationData.lighting;
+    const naturalDetail = settings?.natural_detail ?? null;
+    const hasNaturalGrass = naturalDetail !== false && tiles.some(row => row.some(tile =>
+        tile.terrain === 'grass' && (naturalDetail ?? tile.natural_detail ?? true)));
     if (!partial) naturalGrassBuild = null;
-    if (!naturalGrassAssets && !naturalGrassLoading && tiles.some(row => row.some(tile => tile.terrain === 'grass'))) {
+    if (!naturalGrassAssets && !naturalGrassLoading && hasNaturalGrass) {
         naturalGrassLoading = true;
         naturalGrassError = null;
-        loadNaturalGrassAssets(THREE, renderer.outputEncoding).then(assets => {
+        loadNaturalGrassAssets(THREE).then(assets => {
             naturalGrassAssets = assets;
             naturalGrassLoading = false;
             if (currentLocationData) rebuildGrassDetailMesh();
@@ -17566,15 +18695,7 @@ function rebuildGrassDetailMesh(changedTiles = null) {
         loadGrassGroundPixels().then(() => {
             grassGroundReady = true;
             grassGroundLoading = false;
-            if (terrainSurfaceTexture && currentLocationData) {
-                const image = createLocationTerrainPixels(currentLocationData.tiles_data,
-                    terrainSurfaceTexture.image.width / currentLocationData.grid_width, true);
-                terrainSurfaceTexture.image.data.set(image.data);
-                terrainSurfaceTexture.image.grassBlendData.set(image.grassBlendData);
-                terrainSurfaceTexture.needsUpdate = true;
-                terrainGrassBlendTexture.needsUpdate = true;
-                ensureTerrainGrassDetail();
-            }
+            if (terrainSurfaceTexture && currentLocationData) ensureTerrainGrassDetail();
         }).catch(error => {
             grassGroundLoading = false;
             console.warn('Grass ground unavailable; using procedural soil fallback', error);
@@ -17583,7 +18704,7 @@ function rebuildGrassDetailMesh(changedTiles = null) {
     const objects = currentLocationData.objects || [];
     const floors = objects.filter(object => object.type === 'floor')
         .map(object => floorVisualPose(object, objects));
-    const isCovered = (x, z, radius = 0) => floors.some(floor => {
+    const isCoveredByFloor = (x, z, radius) => floors.some(floor => {
         const dx = x - floor.x;
         const dz = z - floor.z;
         // Distance to the rotated slab, rather than a few samples around
@@ -17593,8 +18714,14 @@ function rebuildGrassDetailMesh(changedTiles = null) {
         return along < 0 && across < 0
             || radius > 0 && Math.hypot(Math.max(0, along), Math.max(0, across)) <= radius;
     });
+    const isCovered = (x, z, radius = 0) =>
+        !(naturalDetail ?? tiles[Math.floor(z)]?.[Math.floor(x)]?.natural_detail ?? true)
+        || isCoveredByFloor(x, z, radius);
     const getHeight = createTerrainSurfaceHeightSampler(tiles);
-    const details = createGrassDetailGroup(THREE, tiles, getHeight, isCovered, true);
+    const details = createGrassDetailGroup(THREE, tiles, getHeight, isCovered, true, naturalDetail, {
+        addModels: addNaturalSwampModels,
+        createPoolMaterial: () => createWaterMaterial({ profileLayer: locationWaterProfiles, mudOverlay: true }),
+    });
     if (partial) {
         // Other ground decor keeps its existing full refresh; preserve natural chunks.
         for (const child of [...grassDetailGroup.children]) {
@@ -17613,18 +18740,16 @@ function rebuildGrassDetailMesh(changedTiles = null) {
     } else {
         grassDetailGroup = details;
         const placements = naturalGrassPlacements(tiles, isCovered);
-        naturalGrassBuild = { stats: placements.stats,
-            created: { medium01: placements.medium01.length } };
+        naturalGrassBuild = { stats: placements.stats, created: {} };
         if (naturalGrassAssets) Object.assign(naturalGrassBuild,
             addNaturalGrassInstances(THREE, grassDetailGroup, placements, naturalGrassAssets, getHeight));
         attachStaticLightFieldToRoot(grassDetailGroup, 0);
         scene.add(grassDetailGroup);
     }
     if (naturalGrassAssets) {
-        naturalGrassBuild.triangles.understory =
-            grassDetailGroup.userData.detailCounts.understoryTriangles;
-        naturalGrassBuild.triangles.total = naturalGrassBuild.triangles.medium01
-            + naturalGrassBuild.triangles.understory;
+        const triangles = naturalGrassBuild.triangles;
+        triangles.understory = grassDetailGroup.userData.detailCounts.understoryTriangles;
+        triangles.total = Object.values(triangles).reduce((sum, count) => sum + count, 0);
     }
     if (naturalGrassAssets && !naturalGrassReported) {
         console.info('[game grass] scene:', {
@@ -17705,11 +18830,9 @@ function rebuildTileObjects(tileX, tileZ) {
         let isAnomalyEffect = false;
         switch (obj.type) {
             case 'tree':
-                break;
             case 'rock':
-                geometry = new THREE.DodecahedronGeometry(0.3);
-                material = new THREE.MeshStandardMaterial({ color: 0x888888 });
-                yOffset = 0.15;
+                mesh = createEditorDecorPreview(obj.type, obj.color, obj, false);
+                yOffset = 0;
                 break;
             case 'house':
                 geometry = new THREE.BoxGeometry(0.7, 0.7, 0.7);
@@ -17738,7 +18861,6 @@ function rebuildTileObjects(tileX, tileZ) {
                     obj.color || '#00ffff',
                     1,
                     obj.anomalyKey || '',
-                    obj.anomalyName || obj.anomalyKey || '',
                 );
                 yOffset = 0;
                 isAnomalyEffect = true;
@@ -17748,11 +18870,7 @@ function rebuildTileObjects(tileX, tileZ) {
                 material = new THREE.MeshStandardMaterial({ color: 0xffaa44 });
                 yOffset = 0.25;
         }
-        if (obj.type === 'tree') {
-            mesh = createHouseholdModel(THREE, findLocationAsset('nature_oak_green'),
-                baseAssetDimensions('tree', 'decor'), obj.color);
-            yOffset = 0;
-        } else if (!mesh) {
+        if (!mesh) {
             mesh = new THREE.Mesh(geometry, material);
         }
         mesh.userData = { ...mesh.userData, tileX, tileZ, objType: obj.type, sourceObject: obj };
@@ -17799,9 +18917,11 @@ export function applyLocationTilesUpdate(locationId, updates) {
     updateRoofVisibility.lastState = null;
     let heightChanged = false;
     let terrainChanged = false;
+    let reliefChanged = false;
     let grassSubtypeChanged = false;
     let waterTopologyChanged = false;
     let waterShoreChanged = false;
+    let waterDetailChanged = false;
     let lightChanged = false;
     let movementSurfaceChanged = false;
     const changed = [];
@@ -17819,6 +18939,7 @@ export function applyLocationTilesUpdate(locationId, updates) {
         }
         const previousObjects = tile.objects;
         const previousTerrain = tile.terrain;
+        const previousWaterProfile = normalizeWaterProfile(tile.water_profile);
         if(upd.water_profile!==undefined)tile.water_profile=normalizeWaterProfile(upd.water_profile);
         const previousGrassSubtype = tile.grass_subtype;
         const previousHeight = getTileHeight(upd.x, upd.z);
@@ -17846,8 +18967,12 @@ export function applyLocationTilesUpdate(locationId, updates) {
             tile = currentLocationData.tiles_data[upd.z][upd.x] = copy(upd.state);
             if (!objectsChanged && Object.hasOwn(tile, 'objects') && previousObjects) tile.objects = previousObjects;
         }
-        waterShoreChanged ||= tile.terrain!==previousTerrain&&[previousTerrain,tile.terrain].some(t=>t==='sand'||t==='swamp');
+        waterShoreChanged ||= tile.terrain!==previousTerrain&&[previousTerrain,tile.terrain].some(t=>t==='sand'||t==='swamp'||t==='shallow_water');
+        waterDetailChanged ||= tile.terrain === 'water'
+            && normalizeWaterProfile(tile.water_profile) !== previousWaterProfile;
         terrainChanged ||= tile.terrain !== previousTerrain;
+        reliefChanged ||= tile.terrain !== previousTerrain
+            && (hasLocalTerrainRelief(previousTerrain) || hasLocalTerrainRelief(tile.terrain));
         waterTopologyChanged ||= (tile.terrain === 'water') !== (previousTerrain === 'water');
         grassSubtypeChanged ||= tile.grass_subtype !== previousGrassSubtype;
         if (getTileHeight(upd.x, upd.z) !== previousHeight) {
@@ -17871,9 +18996,11 @@ export function applyLocationTilesUpdate(locationId, updates) {
         smooth: (heightChanged || waterTopologyChanged) && smoothAffected,
         texture: terrainChanged || grassSubtypeChanged,
         terrainColor: terrainChanged,
-        surface: heightChanged || waterTopologyChanged,
+        surface: heightChanged || waterTopologyChanged || reliefChanged,
         water: (heightChanged || waterTopologyChanged || waterShoreChanged) &&
-            (waterTopologyChanged || terrainEditTouchesWater(changed)),
+            (waterTopologyChanged || (waterShoreChanged && waterSurfaceMesh?.geometry.hasAttribute('waterDepth'))
+                || terrainEditTouchesWater(changed)),
+        waterDetail: waterDetailChanged,
         grid: heightChanged || waterTopologyChanged,
         // Slope probes can cross onto a neighboring water tile as well as land.
         grass: terrainChanged || grassSubtypeChanged || heightChanged,
@@ -17916,6 +19043,7 @@ export function applyLocationWaterProfile(centers,profile,radius=0,basin=false,b
         updates.push({x,z,water_profile:profile});
     }
     if (passabilityChanged) invalidateMovementMapCache();
+    if (updates.length) queueTerrainRefresh([], { waterDetail: true });
     if(updates.length && !objectEdit)window.socket?.emit('update_location_tiles',{
         token:localStorage.getItem('access_token'),location_id:window.currentLocationId,updates});
     return updates.length;
@@ -17969,6 +19097,7 @@ export function applyLocationBrush(centerX, centerZ, updates, radius) {
     const changed = [];
     let heightChanged = false;
     let terrainChanged = false;
+    let reliefChanged = false;
     let grassSubtypeChanged = false;
     let waterTopologyChanged = false;
     let waterShoreChanged = false;
@@ -17998,8 +19127,9 @@ export function applyLocationBrush(centerX, centerZ, updates, radius) {
             const previousHeight = getTileHeight(x, z);
             let needUpdate = false;
             if (updates.terrain !== undefined && tile.terrain !== updates.terrain) {
+                reliefChanged ||= hasLocalTerrainRelief(tile.terrain) || hasLocalTerrainRelief(updates.terrain);
                 waterTopologyChanged ||= (tile.terrain === 'water') !== (updates.terrain === 'water');
-                waterShoreChanged ||= [tile.terrain,updates.terrain].some(t=>t==='sand'||t==='swamp');
+                waterShoreChanged ||= [tile.terrain,updates.terrain].some(t=>t==='sand'||t==='swamp'||t==='shallow_water');
                 tile.terrain = updates.terrain;
                 delete tile.water_profile;
                 if (tile.terrain !== 'grass') delete tile.grass_subtype;
@@ -18013,6 +19143,7 @@ export function applyLocationBrush(centerX, centerZ, updates, radius) {
             }
             if(tile.terrain==='water'&&updates.water_profile!==undefined&&normalizeWaterProfile(tile.water_profile)!==normalizeWaterProfile(updates.water_profile)){
                 tile.water_profile=normalizeWaterProfile(updates.water_profile);needUpdate=true;
+                queueTerrainRefresh([], { waterDetail: true });
             }
             if (updates.grass_subtype !== undefined && tile.terrain === 'grass'
                 && tile.grass_subtype !== updates.grass_subtype) {
@@ -18116,6 +19247,7 @@ export function applyLocationBrush(centerX, centerZ, updates, radius) {
         }
     }
     if (changed.length === 0 || objectEdit?.phase === 'preview') return;
+    if (reliefChanged && objectEdit?.phase === 'stroke') objectEdit.relief = true;
     if(terrainChanged||updates.water_profile!==undefined)for(const {x,z} of changed)locationWaterProfiles?.updateRegion(x,z);
     const foundationChanged = refreshTerrainFoundation();
     const tilesNeedSmooth = updateTileCubes(changed);
@@ -18124,9 +19256,10 @@ export function applyLocationBrush(centerX, centerZ, updates, radius) {
         smooth: (heightChanged || waterTopologyChanged) && smoothAffected,
         texture: terrainChanged || grassSubtypeChanged,
         terrainColor: terrainChanged,
-        surface: heightChanged || waterTopologyChanged,
+        surface: heightChanged || waterTopologyChanged || (reliefChanged && objectEdit?.phase !== 'stroke'),
         water: (heightChanged || waterTopologyChanged || waterShoreChanged) &&
-            (waterTopologyChanged || terrainEditTouchesWater(changed)),
+            (waterTopologyChanged || (waterShoreChanged && waterSurfaceMesh?.geometry.hasAttribute('waterDepth'))
+                || terrainEditTouchesWater(changed)),
         grid: heightChanged || waterTopologyChanged,
         grass: terrainChanged || grassSubtypeChanged || heightChanged,
         roofs: heightChanged && terrainEditTouchesRoof(changed),
@@ -18180,72 +19313,87 @@ function setupCharacterDragging() {
     window.addEventListener('pointerdown',cancelPlacementOnRightPointerDown,true);
     handlers.window.characterPlacementCancelPointerDown=cancelPlacementOnRightPointerDown;
 
-    function getCharacterAtScreen(clientX, clientY) {
+    const pickBounds = new THREE.Sphere(new THREE.Vector3(), 2.1);
+    const pickedPoseRevisions = new WeakMap();
+    function getCharacterAtScreen(clientX, clientY, checkCover = false) {
         const rect = canvas.getBoundingClientRect();
         mouse.x = ((clientX - rect.left) / rect.width) * 2 - 1;
         mouse.y = -((clientY - rect.top) / rect.height) * 2 + 1;
         raycaster.setFromCamera(mouse, camera);
         const models = [];
         characterModels.forEach((entry) => {
-        if (entry.model.visible) models.push(entry.model);
+            if (!entry.model.visible) return;
+            const rig = entry.humanAppearanceModel;
+            if (rig) {
+                pickBounds.center.setFromMatrixPosition(entry.model.matrixWorld);
+                if (!raycaster.ray.intersectsSphere(pickBounds)) return;
+                const poseRevision = rig.userData.shadowPoseRevision || 0;
+                if (pickedPoseRevisions.get(rig) !== poseRevision) {
+                    pickedPoseRevisions.set(rig, poseRevision);
+                    rig.traverseVisible(mesh => {
+                        if (!mesh.isSkinnedMesh) return;
+                        mesh.boundingBox = null;
+                        mesh.boundingSphere = null;
+                    });
+                }
+            }
+            models.push(entry.model);
         });
-        const intersects = profiledLocationRaycast(models, true, 'character');
-        if (intersects.length > 0) {
-            let obj = intersects[0].object;
+        const hit = profiledLocationRaycast(models, true, 'character')
+            .find(candidate => !candidate.object.userData.pickOnly && visibleEditorHit(candidate));
+        if (hit) {
+            if (checkCover) {
+                const far = raycaster.far;
+                try {
+                    raycaster.far = Math.max(0, hit.distance - .02);
+                    if (locationLabelBlocked(raycaster, hit.point)) return null;
+                } finally {
+                    raycaster.far = far;
+                }
+            }
+            let obj = hit.object;
             while (obj) {
                 if (obj.userData && obj.userData.isCharacter) {
                     return obj;
                 }
                 obj = obj.parent;
             }
-            return intersects[0].object;
+            return hit.object;
         }
         return null;
     }
 
-    // mousemove для подсветки
+    function setHoveredCharacter(characterId) {
+        if (characterId === hoveredCharacterId) return;
+        for (const id of [hoveredCharacterId, characterId]) {
+            if (id == null) continue;
+            const entry = getCharacterModelEntry(id);
+            for (const child of entry?.model.children || []) {
+                if (!child.isMesh) continue;
+                child.material.emissive = new THREE.Color(id === characterId ? 0x444466 : 0x000000);
+                child.material.emissiveIntensity = id === characterId ? .3 : 0;
+            }
+        }
+        hoveredCharacterId = characterId;
+        if (characterId != null) canvas.style.cursor = 'grab';
+        else if (canvas.style.cursor === 'grab') canvas.style.cursor = 'default';
+    }
+
     const onMouseMove = (e) => {
+        if (pendingCharacterPlacement?.gmRelocation || pendingCombatAction?.trapTarget) return;
         if(pendingStationPlacement){updateStationPreview(e.clientX,e.clientY);return;}
         if (pendingFacingSelection) {
             updateFacingPreview(e.clientX, e.clientY);
             return;
         }
         if (!isDraggingCharacter) {
-            const obj = getCharacterAtScreen(e.clientX, e.clientY);
-            if (obj) {
-                const charId = obj.userData.characterId;
-                if (charId && hoveredCharacterId !== charId) {
-                    hoveredCharacterId = charId;
-                    canvas.style.cursor = 'grab';
-                    const entry = characterModels.get(charId);
-                    if (entry) {
-                        entry.model.children.forEach(child => {
-                            if (child.isMesh) {
-                                child.material.emissive = new THREE.Color(0x444466);
-                                child.material.emissiveIntensity = 0.3;
-                            }
-                        });
-                    }
-                }
-            } else if (hoveredCharacterId !== null) {
-                const entry = characterModels.get(hoveredCharacterId);
-                if (entry) {
-                    entry.model.children.forEach(child => {
-                        if (child.isMesh) {
-                            child.material.emissive = new THREE.Color(0x000000);
-                            child.material.emissiveIntensity = 0;
-                        }
-                    });
-                }
-                hoveredCharacterId = null;
-                canvas.style.cursor = 'default';
-            }
+            const obj = getCharacterAtScreen(e.clientX, e.clientY, true);
+            setHoveredCharacter(obj?.userData.characterId ?? null);
         }
 
         if (armedMoveCharacterId && !isDraggingCharacter) {
             updateMovementPreview(e.clientX, e.clientY);
         }
-        if (pendingCharacterPlacement?.gmRelocation) updateGmRelocationPreview(e.clientX,e.clientY);
         if (pendingCombatAction) {
             updateAttackPreview(e.clientX, e.clientY);
         }
@@ -18263,6 +19411,7 @@ function setupCharacterDragging() {
                     targetCharacterId
                 )
             ) {
+                clearTerrainClimbTarget();
                 hoveredStructureObjectId = null;
                 canvas.style.cursor = 'pointer';
                 const interactionKey = `character:${targetCharacterId}`;
@@ -18274,6 +19423,7 @@ function setupCharacterDragging() {
             const structureObj = getLocationObjectAtScreen(e.clientX, e.clientY);
             const structure = structureObj?.userData?.locationObject || null;
             if (structure) {
+                clearTerrainClimbTarget();
                 if (structureHoverLastObjectId !== structure.id) {
                     structureHoverLastObjectId = structure.id;
                 }
@@ -18293,6 +19443,7 @@ function setupCharacterDragging() {
                 hoveredStructureObjectId = null;
                 structureHoverLastObjectId = null;
                 if (!menuOpen) clearStructureActionMenu();
+                void showTerrainClimbMenu(e.clientX, e.clientY);
             }
         }
     };
@@ -18304,6 +19455,11 @@ function setupCharacterDragging() {
     };
     canvas.addEventListener('mousemove', onMouseMoveProfiled);
     handlers.canvas.mousemove = onMouseMoveProfiled;
+    handlers.canvas.mouseleave = (event) => {
+        setHoveredCharacter(null);
+        if (!structureActionMenu?.contains(event.relatedTarget)) clearTerrainClimbTarget();
+    };
+    canvas.addEventListener('mouseleave', handlers.canvas.mouseleave);
 
     // pointerdown - начало перетаскивания
     const onPointerDown = (e) => {
@@ -18319,6 +19475,12 @@ function setupCharacterDragging() {
             return;
         }
         if (e.button !== 0) return;
+        if (pendingCombatAction?.trapTarget) {
+            e.preventDefault();
+            e.stopImmediatePropagation();
+            void resolveTrapTarget(pendingCombatAction, e.clientX, e.clientY);
+            return;
+        }
         if (pendingCharacterPlacement?.gmRelocation) {
             e.preventDefault();e.stopImmediatePropagation();
             void commitGmCharacterRelocation(e.clientX,e.clientY);
@@ -18426,30 +19588,22 @@ function setupCharacterDragging() {
 
         dragCharacter = {
             characterId: charId,
-            model: entry.model,
             offsetX: entry.model.position.x - intersectPoint.x,
             offsetZ: entry.model.position.z - intersectPoint.z,
             startX: entry.posX,
-            startZ: entry.posY
+            startZ: entry.posY,
+            startFloor: entry.floorLevel || 0,
+            planeY,
+            destination: null,
         };
+        clearMovementPreview();
         isDraggingCharacter = true;
         controls.enabled = false;
         canvas.setPointerCapture?.(e.pointerId);
         canvas.style.cursor = 'grabbing';
         armedMoveCharacterId = null;
 
-        if (hoveredCharacterId !== null) {
-            const oldEntry = characterModels.get(hoveredCharacterId);
-            if (oldEntry) {
-                oldEntry.model.children.forEach(child => {
-                    if (child.isMesh) {
-                        child.material.emissive = new THREE.Color(0x000000);
-                        child.material.emissiveIntensity = 0;
-                    }
-                });
-            }
-            hoveredCharacterId = null;
-        }
+        setHoveredCharacter(null);
     };
     canvas.addEventListener('pointerdown', onPointerDown);
     handlers.canvas.charPointerDown = onPointerDown;
@@ -18457,73 +19611,62 @@ function setupCharacterDragging() {
     // pointermove - перемещение
     const onPointerMove = (e) => {
         if (!isDraggingCharacter || !dragCharacter) return;
+        const entry = characterModels.get(dragCharacter.characterId);
+        if (!entry) return;
         e.preventDefault();
         const rect = canvas.getBoundingClientRect();
         mouse.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
         mouse.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
         raycaster.setFromCamera(mouse, camera);
-        const planeY = dragCharacter.model.position.y;
-        const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -planeY);
+        const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -dragCharacter.planeY);
         const intersectPoint = new THREE.Vector3();
         if (!raycaster.ray.intersectPlane(plane, intersectPoint)) return;
-        const hit = hasStoreyNavigation() ? getMovementPointerPoint(e.clientX,e.clientY,getCharacterModelEntry(dragCharacter.characterId)) : intersectPoint;
-        let newX = (hit || intersectPoint).x + dragCharacter.offsetX;
-        let newZ = (hit || intersectPoint).z + dragCharacter.offsetZ;
-        newX = Math.max(0.5, Math.min(currentLocationData.grid_width - 0.5, newX));
-        newZ = Math.max(0.5, Math.min(currentLocationData.grid_height - 0.5, newZ));
-        const destination=movementPointerPosition({x:newX,z:newZ});
-        newX=destination.x+.5;
-        newZ=destination.y+.5;
-        const tileX = Math.floor(newX);
-        const tileZ = Math.floor(newZ);
-        const height = getTileHeight(tileX, tileZ) + (getCharacterModelEntry(dragCharacter.characterId)?.floorLevel || 0) * STOREY_HEIGHT;
-        dragCharacter.model.position.set(newX, height, newZ);
-        const entry = characterModels.get(dragCharacter.characterId);
-        if (entry) {
-            entry.label.position.set(newX, height + characterLabelOffset(entry), newZ);
-            entry.posX = Number((newX-.5).toFixed(1));
-            entry.posY = Number((newZ-.5).toFixed(1));
+        const hit = hasStoreyNavigation() ? getMovementPointerPoint(e.clientX, e.clientY, entry) : null;
+        const point = hit || intersectPoint;
+        const { x, y } = movementPointerPosition({ x: point.x + dragCharacter.offsetX, z: point.z + dragCharacter.offsetZ });
+        const level = hit ? movementTargetLevel : dragCharacter.startFloor;
+        if (x === dragCharacter.startX && y === dragCharacter.startZ && level === dragCharacter.startFloor) {
+            dragCharacter.destination = null;
+            if (movementPreviewGhost) movementPreviewGhost.visible = false;
+            return;
         }
-        if (armedMoveCharacterId && dragCharacter.characterId === armedMoveCharacterId) {
-            updateMovementPreview(e.clientX, e.clientY);
-        }
+        dragCharacter.destination = { x, y, floor_level: level };
+        const height = hit?.y ?? getTileHeight(x, y) + level * STOREY_HEIGHT;
+        const preview = ensureMovementPreviewGhost(entry.model);
+        preview.visible = true;
+        preview.position.set(x + .5, height, y + .5);
     };
     canvas.addEventListener('pointermove', onPointerMove);
     handlers.canvas.charPointerMove = onPointerMove;
 
     // pointerup / pointercancel - завершение
-    const endDrag = (e) => {
+    const endDrag = (e, cancelled = false) => {
         if (!isDraggingCharacter || !dragCharacter) {
             controls.enabled = true;
             return;
         }
         e.preventDefault();
-        const entry = characterModels.get(dragCharacter.characterId);
-        if (entry) {
-            const newX = entry.posX;
-            const newY = entry.posY;
-            const movementCost = Math.max(Math.abs(newX - dragCharacter.startX), Math.abs(newY - dragCharacter.startZ));
+        const { characterId, startX, startZ, startFloor, destination } = dragCharacter;
+        const entry = characterModels.get(characterId);
+        if (!cancelled && destination && entry?.posX === startX && entry.posY === startZ && (entry.floorLevel || 0) === startFloor) {
+            const movementCost = Math.max(Math.abs(destination.x - startX), Math.abs(destination.y - startZ));
             const activeCombatCharacter = combatState?.current_character || null;
             const isCombatActive = combatState?.status === 'active';
             const isCurrentTurn = Boolean(
                 !isCombatActive ||
-                activeCombatCharacter?.character_id === dragCharacter.characterId
+                activeCombatCharacter?.character_id === characterId
             );
             const availableMovement = activeCombatCharacter?.movement_points_current ?? 0;
             if (isCombatActive && !isCurrentTurn) {
-                updateCharacterPosition(dragCharacter.characterId, dragCharacter.startX, dragCharacter.startZ);
                 showNotification('Сейчас не ход этого персонажа', 'system');
             } else if (isCombatActive && movementCost > availableMovement) {
-                updateCharacterPosition(dragCharacter.characterId, dragCharacter.startX, dragCharacter.startZ);
                 showNotification('Недостаточно ОП для этого перемещения', 'system');
             } else if (window.socket && window.currentLocationId) {
                 window.socket.emit('move_in_location', {
                     token: localStorage.getItem('access_token'),
                     location_id: window.currentLocationId,
-                    character_id: dragCharacter.characterId,
-                    x: newX,
-                    y: newY,
-                    floor_level: hasStoreyNavigation() ? movementTargetLevel : (entry.floorLevel || 0),
+                    character_id: characterId,
+                    ...destination,
                 });
             }
         }
@@ -18536,7 +19679,7 @@ function setupCharacterDragging() {
         canvas.style.cursor = 'default';
     };
     const onPointerUp = (e) => { endDrag(e); };
-    const onPointerCancel = (e) => { endDrag(e); };
+    const onPointerCancel = (e) => { endDrag(e, true); };
     canvas.addEventListener('pointerup', onPointerUp);
     canvas.addEventListener('pointercancel', onPointerCancel);
     handlers.canvas.charPointerUp = onPointerUp;
@@ -18560,14 +19703,20 @@ function setupCharacterDragging() {
             showNotification('Размещение персонажа отменено','system');
             return;
         }
+        if (pendingCombatAction?.trapTarget) {
+            clearPendingCombatAction();
+            showNotification('Выбор цели отменён', 'system');
+            return;
+        }
         if (cancelLocationEditorContextAction()) return;
         if (pendingCombatAction) {
             showNotification('Выберите цель левой кнопкой мыши или нажмите Esc для отмены', 'system');
             return;
         }
+        clearTerrainClimbTarget();
         const obj = getCharacterAtScreen(e.clientX, e.clientY);
         const locationObject = getLocationObjectAtScreen(e.clientX, e.clientY);
-        let charId = obj?.userData?.characterId || hoveredCharacterId;
+        let charId = obj?.userData?.characterId;
         // A character underneath a closed hatch must not intercept its click.
         if (['hatch','floor_opening'].includes(locationObject?.userData.locationObject?.type)) {
             const hatchHit = raycaster.intersectObject(locationObject,true)[0];
@@ -18579,27 +19728,19 @@ function setupCharacterDragging() {
             return;
         }
         if (!locationObject){
-            const actor=getCurrentInteractionActor(),characterId=actor?.model?.userData?.characterId,point=localMapToolPoint(e.clientX,e.clientY);
-            if(!characterId||!canControlCharacter(characterId)||!point)return;
-            createContextMenu();contextMenu.replaceChildren();
-            for(const [operation,label] of [['detect','Осмотреть клетку'],['bury_ground_stash','Прикопать тайник']]){
-                const button=document.createElement('button');button.type='button';button.textContent=label;button.className='btn btn-secondary';
-                button.onclick=async()=>{contextMenu.style.display='none';const {showTrapAction}=await import('./traps.js');
-                    await showTrapAction({characterId,lobbyId:window.currentLobbyId,locationId:currentLocationId,operation,
-                        requireShovel:operation==='bury_ground_stash',inCombat:combatState?.status==='active',
-                        locationCharacterId:findCombatCharacterByCharacterId(characterId)?.location_character_id,
-                        cell:{x:Math.floor(point.x),y:Math.floor(point.z)}});};
-                contextMenu.append(button);
+            if (contextMenu) contextMenu.style.display = 'none';
+            if (pendingStructureAction) {
+                clearStructureActionMenu();
+                void showTerrainClimbMenu(e.clientX, e.clientY, true);
             }
-            contextMenu.style.left=e.clientX+'px';contextMenu.style.top=e.clientY+'px';contextMenu.style.display='block';
+            return;
+        }
+        if (pendingStructureAction && combatState?.status === 'active') {
+            showStructureActionMenu(e.clientX, e.clientY, locationObject.userData.locationObject);
             return;
         }
         if (combatState?.status === 'active') {
-            if (pendingStructureAction) {
-                showStructureActionMenu(e.clientX, e.clientY, locationObject.userData.locationObject);
-            } else {
-                showNotification('Сначала выбери "Взаим." в меню персонажа', 'system');
-            }
+            showNotification('Сначала выбери "Взаим." в меню персонажа', 'system');
             return;
         }
         showObjectContextMenu(e.clientX, e.clientY, locationObject.userData.locationObject);
@@ -18610,13 +19751,9 @@ function setupCharacterDragging() {
     const onKeyDown = (e) => {
         if (e.target?.isContentEditable || isKeyboardInputTarget(e.target)
             || Array.from(document.querySelectorAll('.modal')).some(modal => modal.getClientRects().length)) return;
-        if(pendingStationPlacement&&['KeyQ','KeyE','Escape'].includes(e.code)) {
+        if(pendingStationPlacement && e.code === 'Escape') {
             e.preventDefault();e.stopImmediatePropagation();
-            if(!pendingStationPlacement.busy){
-                if(e.code==='Escape')clearStationPlacement();
-                else if(!pendingStationPlacement.request&&pendingStationPlacement.coverKey!=='recipe-m18'){pendingStationPlacement.rotation+=(e.code==='KeyQ'?1:-1)*Math.PI/12;
-                    pendingStationPlacement.ghost.rotation.y=pendingStationPlacement.rotation;}
-            }
+            if(!pendingStationPlacement.busy)clearStationPlacement();
             return;
         }
         if (window.isGM && window.locationEditMode && e.ctrlKey && !e.altKey && !e.metaKey
@@ -18850,6 +19987,10 @@ export function setupLocationEditing() {
     const onPointerMove = (e) => {
         if (!locationActive) return;
         if(e.buttons&2)return;
+        if (pendingCharacterPlacement?.gmRelocation) {
+            pendingCharacterPlacement.previewPointer = { x:e.clientX, y:e.clientY, overCanvas:e.target===canvas };
+            return;
+        }
         if (objectEdit?.phase === 'stroke' && objectEdit.sculpt) {
             hoveredPointerClient = {x:e.clientX,y:e.clientY};
             const point=getPointerWorldPoint(e.clientX,e.clientY,objectEdit.sculpt.planeHeight);
@@ -18908,7 +20049,7 @@ export function setupLocationEditing() {
             locationPointerProfile?.count('domWrites');
             locInfo.innerHTML = `
                 <b>(${x}, ${z})</b><br>
-                Ландшафт: ${tile.terrain}<br>
+                Ландшафт: ${terrainLabel(tile.terrain)}<br>
                 Высота: ${tile.height}<br>
                 ${window.locationEditorTool==='terrain'&&terrainBrushMode()!=='terrain'&&locationViewLevel===0
                     ? `Проходимость: ${tile.difficult_surface===true?'×2 вручную':tile.difficult_surface===false?'×1 вручную':'автоматически'}<br>` : ''}
@@ -19108,6 +20249,7 @@ export function setupLocationEditing() {
                 { x: e.clientX, y: e.clientY });
             return;
         }
+        if (window.locationEditorTool === 'settings') return;
         if (window.locationEditorTool === 'light' && !e.altKey && !e.shiftKey) {
             e.preventDefault();
             e.stopImmediatePropagation();
@@ -19173,8 +20315,8 @@ export function setupLocationEditing() {
             if (eraserMode) removeStructuresAtTile(x, z, brushRadius);
             return;
         }
-        if(window.locationEditorTool==='terrain'&&currentBrushTerrain==='water'&&document.getElementById('loc-water-basin')?.checked)return;
         const updates = getEditBrushUpdates();
+        if(updates.terrain==='water'&&document.getElementById('loc-water-basin')?.checked)return;
         if (Object.keys(updates).length) {
             const path = lastBrushTile
                 ? brushStrokeTiles(lastBrushTile.x, lastBrushTile.z, x, z) : [[x, z]];
@@ -19537,6 +20679,17 @@ function cancelCharacterPlacement() {
 
 function clearCharacterPlacementPreview() {
     clearMovementPreview();
+    const placement = pendingCharacterPlacement;
+    if (placement?.gmRelocation) {
+        placement.previewPointer = null;
+        if (placement.preview) {
+            const { model, material, skeletons } = placement.preview;
+            scene?.remove(model);
+            material.dispose();
+            for (const skeleton of skeletons) skeleton.dispose();
+            placement.preview = null;
+        }
+    }
     if(previewSprite){
         scene?.remove(previewSprite);
         previewSprite.material.map?.dispose();
@@ -19594,7 +20747,12 @@ function beginGmCharacterRelocation(characterId) {
     closeFacingMenu();
     closeMovementTypeMenu();
     armedMoveCharacterId=null;
-    clearMovementPreview();
+    hideHighlight();
+    hoveredTileCoords = null;
+    hoveredPointerClient = null;
+    lastHighlightCoords = null;
+    const tileInfo = document.getElementById('location-tile-info');
+    if (tileInfo) tileInfo.style.display = 'none';
     return beginCharacterPlacement({id:characterId,name:entry.name},{gmRelocation:true});
 }
 
@@ -19602,39 +20760,58 @@ function gmRelocationDestination(clientX,clientY) {
     let point=getPointerWorldPoint(clientX,clientY);
     if (!point) return null;
     const level=locationViewLevel;
-    for (let i=0;i<4;i++) {
-        point=getPointerWorldPoint(clientX,clientY,getTileHeight(Math.floor(point.x),Math.floor(point.z))+level*STOREY_HEIGHT);
-        if (!point) return null;
-    }
     const floors=locationObjectMeshes.filter(root=>root.visible
         && root.userData.locationObject?.type==='floor' && structureLevel(root.userData.locationObject)===level);
-    const floorHit=raycaster.intersectObjects(floors,true).find(hit=>hit.object.visible);
-    const terrainHit=level===0?raycaster.intersectObjects(tileCubes,false)[0]:null;
-    point=floorHit?.point || terrainHit?.point || point;
+    const floorHit=profiledLocationRaycast(floors,true,'editor').find(hit=>hit.object.visible);
+    const terrainHit=!floorHit&&level===0?profiledLocationRaycast(tileCubes,false,'surface')[0]:null;
+    const hit=floorHit||terrainHit;
+    if (hit) point=hit.point;
+    else {
+        const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+        for (let i=0;i<4;i++) {
+            plane.constant = -(getTileHeight(Math.floor(point.x), Math.floor(point.z)) + level * STOREY_HEIGHT);
+            if (!raycaster.ray.intersectPlane(plane, point)) return null;
+        }
+    }
     if(point.x<.5||point.z<.5||point.x>currentLocationData.grid_width-.5||point.z>currentLocationData.grid_height-.5)return null;
     return {...movementPointerPosition(point),level,height:point.y};
 }
 
-function updateGmRelocationPreview(clientX,clientY) {
-    if (!window.isGM || !pendingCharacterPlacement?.gmRelocation) return null;
-    const destination=gmRelocationDestination(clientX,clientY);
-    const entry=getCharacterModelEntry(pendingCharacterPlacement.characterId);
-    if (!entry || !destination) {
-        if(movementPreviewGhost)movementPreviewGhost.visible=false;
-        return null;
+function refreshGmRelocationPreview() {
+    const placement = pendingCharacterPlacement;
+    if (!placement?.gmRelocation || !placement.previewPointer) return;
+    const pointer = placement.previewPointer;
+    placement.previewPointer = null;
+    const entry = getCharacterModelEntry(placement.characterId);
+    const destination = pointer.overCanvas && entry ? gmRelocationDestination(pointer.x, pointer.y) : null;
+    if (!destination || (entry.floorLevel === destination.level && entry.posX === destination.x && entry.posY === destination.y)) {
+        if (placement.preview) placement.preview.model.visible = false;
+        return;
     }
-    renderer.domElement.style.cursor='crosshair';
-    if(!movementPreviewGhost){movementPreviewGhost=createTransparentClone(entry.model,.35);scene.add(movementPreviewGhost);}
-    movementPreviewGhost.visible=true;
-    movementPreviewGhost.position.set(destination.x+.5,destination.height,destination.y+.5);
-    movementPreviewGhost.rotation.copy(entry.model.rotation);
-    movementPreviewGhost.scale.copy(entry.model.scale);
-    return destination;
+    if (!placement.preview) {
+        const model = entry.model.clone(true);
+        const skeletons = cloneSkeletons(entry.model, model);
+        const material = new THREE.MeshBasicMaterial({ color:0xa7c3d0, transparent:true, opacity:.42, depthWrite:false });
+        model.traverse(child => {
+            if (!child.isMesh) return;
+            child.castShadow = false;
+            child.receiveShadow = false;
+            child.raycast = () => {};
+            child.material = material;
+        });
+        placement.preview = { model, material, skeletons };
+        scene.add(model);
+    }
+    const { model } = placement.preview;
+    model.visible = true;
+    model.position.set(destination.x+.5, destination.height, destination.y+.5);
+    model.rotation.copy(entry.model.rotation);
+    model.scale.copy(entry.model.scale);
 }
 
 async function commitGmCharacterRelocation(clientX,clientY) {
     if (!window.isGM || !pendingCharacterPlacement?.gmRelocation) return false;
-    const destination=updateGmRelocationPreview(clientX,clientY);
+    const destination=gmRelocationDestination(clientX,clientY);
     if(!destination)return false;
     const characterId=pendingCharacterPlacement.characterId;
     cancelCharacterPlacement();
@@ -19792,7 +20969,7 @@ export function setLocationBrushObjectScale(scale) {
     const span = document.getElementById('loc-obj-scale-value');
     if (span) span.textContent = brushObjectScale.toFixed(2);
 }
-export function setLocationBrushObjectRotation(rot) {
+export function setLocationBrushObjectRotation(rot, refreshPreview = true) {
     const degrees = parseInt(rot, 10) || 0;
     brushObjectRotation = ((degrees % 360) + 360) % 360;
     const input = document.getElementById('loc-obj-rotation');
@@ -19800,7 +20977,7 @@ export function setLocationBrushObjectRotation(rot) {
     const span = document.getElementById('loc-obj-rotation-value');
     if (span) span.textContent = brushObjectRotation + '°';
     syncLocationPlacementAngle();
-    updateBuildPreview();
+    if (refreshPreview) updateBuildPreview();
 }
 
 // ========== Остальные экспорты ==========
@@ -20019,13 +21196,22 @@ export function addLocationFloorMenu() {
 }
 
 export function destroyLocationScene() {
+    if (animationFrameId !== null) {
+        cancelAnimationFrame(animationFrameId);
+        animationFrameId = null;
+    }
+    cancelCharacterPlacement();
+    stopFirstPersonView({ restore: false });
     clearStationPlacement();document.getElementById('station-tools-modal')?.remove();
     locationWeather?.dispose(); locationWeather = null;
+    locationWaterReflection?.dispose(); locationWaterReflection = null;
+    locationCrowFlight?.dispose(); locationCrowFlight = null;
     portableLightRenderer?.dispose();portableLightRenderer=null;
+    finishInitialLocationState?.();
     visionObjectIndex = null;
-    anomalyLabelOcclusionCache = null;
-    anomalyLabelVisibilityKey = null;
-    anomalyLabelVisibilityAt = 0;
+    locationLabelOcclusionCache = null;
+    anomalyRenderBatches?.dispose();
+    anomalyRenderBatches = null;
     setLocalMapSceneContext(null);
     clearSculptPreview();
     locationSceneLoading = false;
@@ -20054,6 +21240,8 @@ export function destroyLocationScene() {
     pendingTerrainRefresh = null;
     locationProfiler?.destroy();
     locationProfiler = null;
+    locationContactShadows?.dispose();
+    locationContactShadows = null;
     locationPointerProfile = null;
     locationFpsCounter?.destroy();
     locationFpsCounter = null;
@@ -20144,6 +21332,7 @@ export function destroyLocationScene() {
     contextMenuCharacterId = null;
     combatActionMenuCharacterId = null;
     pendingCombatAction = null;
+    clearTerrainClimbTarget();
     pendingStructureAction = null;
     containerInteractionState = null;
     armedMoveCharacterId = null;
@@ -20168,18 +21357,10 @@ export function destroyLocationScene() {
         terrainGrassDetail?.earth.dispose();
         terrainGrassDetail?.forest.dispose();
         terrainGrassDetail = null;
-        const objectsToRemove = [];
-        scene.traverse((child) => {
-            if (child.isLight || child.type === 'Camera') return;
-            if (child === highlightBox) return;
-            objectsToRemove.push(child);
-        });
-        objectsToRemove.forEach(obj => {
-            disposeObject(obj);
-            scene.remove(obj);
-        });
+        clearAllCharacters();
+        disposeSceneObjects();
         clearUnusedLocationModels();
-        releaseLocationPbrTextures();
+        releaseLocationPbrTextures(renderer);
         releaseHouseholdRendererResources(THREE);
         releaseSurfaceTextures(['wall', 'floor', 'roof']);
         tileCubes = [];
@@ -20202,13 +21383,7 @@ export function destroyLocationScene() {
         roofMeshes = [];
         darknessEditorOverlay = null;
         darknessOverlayRequested = false;
-        clearAllCharacters();
-
-        if (highlightBox) {
-            scene.remove(highlightBox);
-            disposeObject(highlightBox);
-            highlightBox = null;
-        }
+        highlightBox = null;
         scene = null;
     }
     locationAmbientLight = null;
@@ -20244,6 +21419,7 @@ export function destroyLocationScene() {
     lampEditPending = false;
 
     // Рендереры
+    labelScene = null;
     if (labelRenderer) {
         if (labelRenderer.domElement && labelRenderer.domElement.parentNode) {
             labelRenderer.domElement.parentNode.removeChild(labelRenderer.domElement);
@@ -20274,6 +21450,7 @@ export function destroyLocationScene() {
     editorHistory.reset();
     objectEdit = null;
     currentLocationData = null;
+    characterFootSurfaces = null;
     combatState = null;
     window.locationCombatState = null;
     if (combatHud && combatHud.parentNode) {
@@ -20314,6 +21491,7 @@ export function resizeLocationScene() {
             const width = container.clientWidth;
             const height = container.clientHeight;
             renderer.setSize(width, height);
+            locationContactShadows?.resize(width, height);
             camera.aspect = width / height;
             camera.updateProjectionMatrix();
         }
@@ -20333,7 +21511,7 @@ function closeContainerInteractionMenu() {
     containerInteractionRefresh = null;
 }
 
-async function showContainerInteractionMenu(object, compartment = false) {
+async function showContainerInteractionMenu(object, compartment = false, actorCharacterId = null) {
     if(!compartment&&object.properties?.locked&&!window.isGM){showNotification('Объект заперт. Сначала вскройте замок','system');return;}
     closeContainerInteractionMenu();
     containerExchangeTarget = object;
@@ -20369,8 +21547,10 @@ async function showContainerInteractionMenu(object, compartment = false) {
         handlers.document.containerMenuClick = onClick;
     }
 
-    const controlledCharacters = getControlledLocationCharacters();
-    const preferredCharacterId = getPreferredLocationCharacterId();
+    const stash = compartment || object.type === 'ground_stash';
+    const controlledCharacters = getControlledLocationCharacters()
+        .filter(character => !stash || characterKnowsStash(object, character.characterId));
+    const preferredCharacterId = actorCharacterId || getPreferredLocationCharacterId();
     containerInteractionState = {
         objectId: object.id,
         selectedCharacterId: preferredCharacterId,
@@ -20404,7 +21584,8 @@ async function showContainerInteractionMenu(object, compartment = false) {
                 option.textContent = character.name || `Персонаж ${character.characterId}`;
                 select.appendChild(option);
             });
-            select.value = String(preferredCharacterId || controlledCharacters[0].characterId);
+            select.value = String(controlledCharacters.some(character => Number(character.characterId) === Number(preferredCharacterId))
+                ? preferredCharacterId : controlledCharacters[0].characterId);
         }
     }
 
@@ -20421,6 +21602,21 @@ async function showContainerInteractionMenu(object, compartment = false) {
             localStorage.setItem('selectedLocationCharacterId', String(selectedCharacterId));
         }
 
+        let containerView = object;
+        if (stash) {
+            try {
+                containerView = selectedCharacterId
+                    ? await Server.getLocationObject(window.currentLobbyId, object.id, selectedCharacterId) : null;
+            } catch {
+                containerView = null;
+            }
+            if (version !== renderVersion || Number(containerInteractionState?.objectId) !== Number(object.id)) return;
+            if (!containerView || compartment && !Array.isArray(stashContents(containerView))) {
+                closeContainerInteractionMenu();
+                showNotification('Персонаж ещё не обнаружил этот тайник', 'system');
+                return;
+            }
+        }
         const character = selectedCharacterId ? await Server.getCharacter(selectedCharacterId).catch(() => null) : null;
         if (version !== renderVersion || Number(containerInteractionState?.objectId) !== Number(object.id)) return;
         const characterData = character?.data || null;
@@ -20434,7 +21630,7 @@ async function showContainerInteractionMenu(object, compartment = false) {
                 const fresh = await Server.getCharacter(selectedCharacterId);
                 const result = await Server.transferLocationItem(window.currentLobbyId, object.id, {
                     character_id: selectedCharacterId, character_revision: fresh.data._revision,
-                    object_revision: object.revision, direction, item_path: entry.path,
+                    object_revision: containerView.revision, direction, item_path: entry.path,
                     expected_item: entry.item, amount, stash_compartment:compartment,
                 });
                 if (result.deleted) {
@@ -20443,7 +21639,7 @@ async function showContainerInteractionMenu(object, compartment = false) {
                 } else {
                     object = result.object;
                     updateLocationObject(object);
-                    await showContainerInteractionMenu(object,compartment);
+                    await showContainerInteractionMenu(object, compartment, selectedCharacterId);
                 }
                 showNotification('Предмет перемещён', 'success');
             } finally {
@@ -20489,7 +21685,7 @@ async function showContainerInteractionMenu(object, compartment = false) {
         }
 
         const renderContainerEntries = () => {
-            const currentItems = compartment ? stashContents(object) || [] : getContainerItems(object);
+            const currentItems = compartment ? stashContents(containerView) || [] : getContainerItems(containerView);
             const currentEntries = getContainerTransferEntries(currentItems);
             targetList.innerHTML = '';
             if (!currentEntries.length) {

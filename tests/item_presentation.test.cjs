@@ -9,6 +9,15 @@ async function load(name){
     }
     const module=await moduleAt(path.resolve(__dirname,'../app/static/js/',name));await module.evaluate();return module.namespace;
 }
+test('состояние питания различает разряд, погасший источник и новый ХИС', async () => {
+    const { itemPowerWarning } = await load('itemPresentation.js');
+    assert.equal(itemPowerWarning({ lightPower: { uses_left: 0 } }), 'Разряжен');
+    assert.equal(itemPowerWarning({ pdaState: { charge_percent: 0 } }), 'Разряжен');
+    assert.equal(itemPowerWarning({ deviceState: { remaining_seconds: 0 } }), 'Разряжен');
+    assert.equal(itemPowerWarning({ glowState: { activated: true, remaining_seconds: 0 } }), 'Свечение погасло');
+    assert.equal(itemPowerWarning({ name: 'ХИС', glowState: { activated: false, remaining_seconds: 0 } }), '');
+    assert.equal(itemPowerWarning({ lightPower: { uses_left: 4 } }), '');
+});
 test('Морфин не сохраняет долг боли, а Воля сохраняет',async()=>{
     const {applyEffectToHealth}=await load('effects.js');
     for(const [type,debt] of [['analgesia',undefined],['pain_block',3]]){
@@ -49,6 +58,16 @@ test('Пустой фильтр выключает радиозащиту про
     const model=itemTooltipModel(template,{installedModules:[{slotType:'filter',durability:1}]});
     assert.ok(model.metrics.includes('Радиационная защита: 30%'));
     assert.ok(itemTooltipModel(template).metrics.includes('Радиационная защита: 30%'));
+});
+test('Подсказка встроенного шлема показывает оба штрафа экземпляра',async()=>{
+    const {itemTooltipModel}=await load('itemPresentation.js');
+    const model=itemTooltipModel({},{
+        name:'Шлем Купол-М',category:'helmet',integratedWithArmor:true,durability:75,
+        protection:{physical:.35},accuracyPenalty:3,charismaBonus:-2,
+    });
+    assert.ok(model.metrics.includes('Физическая защита: 35%'));
+    assert.ok(model.metrics.includes('Штраф точности: 3'));
+    assert.ok(model.metrics.includes('Штраф харизмы: 2'));
 });
 test('Импортное описание не повторяется разбором direct и техническими effects',async()=>{
     const {itemTooltipModel}=await load('itemPresentation.js');

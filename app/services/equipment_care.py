@@ -116,7 +116,7 @@ def preserve(current,incoming):
 def advance(data,seconds):
     from app.services.portable_lights import walk
     changed=False
-    for _,item in walk(data,True):
+    for path,item in walk(data,True):
         brace=item.get('neckBraceState')
         if seconds>0 and isinstance(brace,dict) and brace.get('charged') is False:
             before=brace.get('remaining_seconds',0);brace['remaining_seconds']=max(0,float(before)-seconds)
@@ -131,7 +131,7 @@ def advance(data,seconds):
             item['currentStageDurability']=min(item['stageDurability'],before+seconds/6)
             changed=changed or before!=item['currentStageDurability']
         state=item.get('sterility')
-        if not medical_gloves(item) or not isinstance(state,dict):continue
+        if path != ['equipment', 'gloves'] or not medical_gloves(item) or not isinstance(state,dict):continue
         before=state.get('remaining_seconds',0)
         state['remaining_seconds']=max(0,float(before)-max(0,seconds))
         changed=changed or before!=state['remaining_seconds']
@@ -140,10 +140,11 @@ def advance(data,seconds):
 
 def has_timers(data):
     from app.services.portable_lights import walk
-    return any((medical_gloves(item) and item.get('sterility')) or regenerating_armor(item)
+    return any((path == ['equipment', 'gloves'] and medical_gloves(item)
+                and (item.get('sterility') or {}).get('remaining_seconds', 0) > 0) or regenerating_armor(item)
                or isinstance(item.get('neckBraceState'),dict) and item['neckBraceState'].get('remaining_seconds',0)>0
                or isinstance(item.get('liquidCrystalState'),dict) and item['liquidCrystalState'].get('remaining_seconds',0)>0
-        for _,item in walk(data,True))
+        for path,item in walk(data,True))
 
 
 def infection_multiplier(data):

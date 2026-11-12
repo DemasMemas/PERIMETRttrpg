@@ -14,7 +14,7 @@ test('осмотр аномалии не выдаёт параметры или 
     const context=createSceneContext({combatState:{status:'idle'},pendingStructureAction:null,
         contextMenu:menu,createContextMenu(){},window:{isGM:true,innerWidth:1000,innerHeight:800},
         COVER_CLASS_DEFAULTS:{medium:{maxHp:1000,protection:50,label:'Среднее'}},getObjectActions:()=>[],
-        isStructureCoverObject:object=>object.type!=='anomaly',document:{createElement:()=>({style:{}})},showNotification:message=>messages.push(message)});
+        isLocationGenerator:()=>false,isStructureCoverObject:object=>object.type!=='anomaly',document:{createElement:()=>({style:{}})},showNotification:message=>messages.push(message)});
     const start=source.indexOf('function showObjectContextMenu('),end=source.indexOf('function disposeLocationObject(',start);
     vm.runInContext(source.slice(start,end),context);
     context.showObjectContextMenu(300,300,{name:'Баня',type:'anomaly',properties:{cover_hp:999,cover_physical_protection:100}});
@@ -160,11 +160,12 @@ test('R keeps uniform preview for decor while structure resizing uses face handl
 test('asset color is editable beyond lamps and is persisted on structures and decor', () => {
     const main = read('main.js');
     const scene = read('locationScene.js');
-    assert.match(main, /<label>Цвет <input[^>]+data-asset-field="color"/);
+    assert.match(main, /Object\.entries\(selection\.colorChannels \|\| \{ color: 'Цвет' \}\)/);
+    assert.match(main, /type="color" data-asset-field="\$\{field\}"/);
     assert.match(scene, /color: `#\$\{locationObjectMaterialColor\(source\)\.getHexString\(\)\}`/);
     assert.match(scene, /color: source\.color/);
-    assert.match(scene, /\.\.\.\(color !== undefined && color\.toLowerCase\(\) !==/);
-    assert.match(scene, /if \(color !== undefined\) source\.color = color/);
+    assert.match(scene, /\.\.\.\(!asset\?\.colorChannels && color !== undefined && color\.toLowerCase\(\) !==/);
+    assert.match(scene, /if \(!asset\?\.colorChannels && color !== undefined\) source\.color = color/);
 });
 
 test('local water has a solid backing and surface grid fits both map dimensions', async () => {
@@ -190,10 +191,10 @@ test('local water has a solid backing and surface grid fits both map dimensions'
     assert.equal(Math.max(...zs), 3);
 });
 
-test('anomaly label stays outside the pulsing visual group', () => {
+test('anomaly marker stays outside the pulsing visual group', () => {
     const source = read('anomalies.js');
     assert.match(source, /group\.userData\.anomalyVisual = visual/);
-    assert.match(source, /if \(label\) group\.add\(label\)/);
+    assert.match(source, /if \(marker\) group\.add\(marker\)/);
     assert.match(source, /visual\.scale\.setScalar\(pulse\)/);
     assert.doesNotMatch(source, /node\.scale\.setScalar\(pulse\)/);
 });

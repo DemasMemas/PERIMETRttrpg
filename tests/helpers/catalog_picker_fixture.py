@@ -34,9 +34,17 @@ def install(app,db,check_database,run_id,*,controlled_pepper=False,belt_artifact
         legacy.append(ItemTemplate(id=9600,name='Контрольный артефакт крепления',category='artifact',weight=2,volume=2,
             attributes={'positive_effect':'Защита от физического урона +15%',
                         'negative_effect':'Штраф перемещения +2 3 Радиации за перемещение'}))
-        from app.services.world_rules import world_rules
+        from app.services.world_rules import artifact_catalog
+        for template_id, name in [(9603, 'Ядро мысли'), (9604, 'Хозяин свечения')]:
+            artifact = next(row for row in artifact_catalog() if row['name'] == name)
+            legacy.append(ItemTemplate(
+                id=template_id, name=name, category='artifact', item_class=artifact['artifact_class'],
+                subcategory=artifact['anomaly_type'], description=artifact['appearance'],
+                price=artifact['price'], weight=artifact['weight'], volume=1,
+                attributes={**artifact, 'import_source': 'world_rules', 'special_recharge_hours': 24},
+            ))
         for template_id, grade in [(9601, '1'), (9602, 'trash')]:
-            artifact = next(row for row in world_rules()['artifacts'] if row['artifact_class'] == grade)
+            artifact = next(row for row in artifact_catalog() if row['artifact_class'] == grade)
             legacy.append(ItemTemplate(id=template_id, name=artifact['name'], category='artifact', item_class=grade,
                 weight=artifact['weight'], volume=1, attributes={'artifact_class': grade}))
     db.session.add_all(legacy);db.session.commit()

@@ -18,6 +18,12 @@ def furniture(**options):
     return json.loads(result.stdout)
 
 
+def room_cell_is_free(target, maps):
+    x, y, level = target
+    blocked, climb_costs = maps[level]
+    return (x, y) not in blocked and not climb_costs.get((x, y))
+
+
 @pytest.mark.parametrize('shape', ['rectangle', 'L', 'U', 'C', 'T', 'cross', 'compound'])
 @pytest.mark.parametrize('condition', ['intact', 'damaged', 'ruins'])
 def test_furniture_keeps_room_routes_and_basement_ladders(app, shape, condition):
@@ -40,11 +46,28 @@ def test_furniture_keeps_room_routes_and_basement_ladders(app, shape, condition)
             level = room['level']
             cx = sum(c['x'] for c in room['cells'])/len(room['cells'])
             cz = sum(c['z'] for c in room['cells'])/len(room['cells'])
-            candidates = sorted(room['cells'], key=lambda c: (c['x']-cx)**2+(c['z']-cz)**2)
-            target = next(((c['x'], c['z'], level) for c in candidates
-                           if (c['x'], c['z']) not in old_maps[level][0] and not old_maps[level][1].get((c['x'], c['z']))), None)
-            if target and find_path(location, original, (*anchor, level), target, lambda l: old_maps[l]):
-                assert find_path(location, original+additions, (*anchor, level), target, lambda l: new_maps[l]), (shape, condition, room)
+            start = (*anchor, level)
+            candidates = sorted(
+                ((c['x'], c['z'], level) for c in room['cells']),
+                key=lambda cell: (cell[0] - cx)**2 + (cell[1] - cz)**2,
+            )
+            reachable_before = (
+                target for target in candidates
+                if room_cell_is_free(target, old_maps)
+                and find_path(location, original, start, target, old_maps.__getitem__)
+            )
+            first_target = next(reachable_before, None)
+            if first_target is None:
+                continue
+            # Мебель может занять ближайшую к центру клетку. Проверяем проход
+            # к ближайшей из тех, куда можно было дойти и где ещё можно встать.
+            target = first_target if room_cell_is_free(first_target, new_maps) else next(
+                (cell for cell in reachable_before if room_cell_is_free(cell, new_maps)), None,
+            )
+            assert target is not None, (shape, condition, room['id'], 'В комнате не осталось свободной цели')
+            assert find_path(location, original + additions, start, target, new_maps.__getitem__), (
+                shape, condition, room['id'], start, target,
+            )
         for stair in (o for o in original if o.type == 'ladder'):
             start = (*anchor, stair.properties['level'])
             end = (*anchor, stair.properties['level']+1)

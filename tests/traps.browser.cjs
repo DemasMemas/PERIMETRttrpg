@@ -1,6 +1,12 @@
 // Ловушки в настоящей сцене Припяти; только собственная БД и браузер.
 const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path');
 const {loadFixture,waitForDocument}=require('./durable_reload.browser.cjs');
+async function chooseInteractionActor(page, characterId) {
+    await page.evaluate(`(L.showCombatActionMenu(650,350,${characterId}), true)`);
+    const interaction = 'document.querySelector(\'[aria-label="Взаим."]\')';
+    await page.until(`${interaction} && !${interaction}.disabled`, 'Персонаж выбран через меню модели');
+    await page.evaluate(`(${interaction}.click(), true)`);
+}
 module.exports=async({page,request,token,lobby,base,safeSession})=>{
     assert.equal(process.env.VTT_SAFE_SCENARIO,'traps');assert.ok(safeSession.verified);
     const api=`/lobbies/${lobby.id}`,{fixture}=loadFixture();
@@ -34,6 +40,7 @@ module.exports=async({page,request,token,lobby,base,safeSession})=>{
     await page.until(`L.sceneGraphicsForTest().roots.some(r=>r.userData.locationObjectId===${trap.id})`,'Ловушка появилась по сетевому событию');
     await checkTrapTraits({page,request,token,api,loc,lobby,location,template,trap,safeSession});
     trap=(await request(loc,null,token,'GET')).objects.find(o=>o.id===trap.id);
+    await chooseInteractionActor(page, actor.id);
     await page.evaluate(`L.showObjectContextMenu(650,350,${JSON.stringify(trap)});true`);
     await page.until("[...document.querySelectorAll('button')].some(b=>b.textContent.includes('Замаскировать'))",'Действие маскировки');
     await page.evaluate("[...document.querySelectorAll('button')].find(b=>b.textContent.includes('Замаскировать')).click();true");
@@ -49,6 +56,7 @@ module.exports=async({page,request,token,lobby,base,safeSession})=>{
     await page.evaluate(`socket.emit('move_in_location',{token:${JSON.stringify(token)},location_id:${location.id},character_id:${actor.id},x:44,y:48});true`);
     await page.until(`(async()=>{const c=await (await import('/static/js/api.js')).Server.getCharacter(${actor.id});return !!c.data.health.combatMeta?.trappedNet})()`,'Наступивший персонаж удерживается сетью');
     let detail=await request(loc,null,token,'GET');trap=detail.objects.find(o=>o.type==='placed_trap');assert.equal(trap.properties.trap_status,'spent');
+    await chooseInteractionActor(page, actor.id);
     await page.evaluate(`L.showObjectContextMenu(650,350,${JSON.stringify(trap)});true`);
     await page.until("[...document.querySelectorAll('button')].some(b=>b.textContent.includes('Освободиться из сети'))",'Освобождение из сети');
     await page.evaluate("[...document.querySelectorAll('button')].find(b=>b.textContent.includes('Освободиться из сети')).click();true");
@@ -82,8 +90,9 @@ async function checkStashAndBuckshot({page,request,token,api,loc,lobby,location,
     await request(loc+'/spawn_character',{character_id:actor.id,tile_x:45,tile_y:48},token);
     const crate=await request(loc+'/objects',{name:'Пень',type:'household_stump',tile_x:46,tile_y:48,
         properties:{contents:[{id:'visible-nail',name:'Гвозди',quantity:1}],floor_level:0}},token);
-    await page.evaluate(`window.closeCharacterSheet();window.currentLocationCharacterId=${actor.id};
-        L.showObjectContextMenu(650,350,${JSON.stringify(crate)});true`);
+    await page.evaluate(`(window.closeCharacterSheet(), true)`);
+    await chooseInteractionActor(page, actor.id);
+    await page.evaluate(`(L.showObjectContextMenu(650,350,${JSON.stringify(crate)}), true)`);
     const action="[...document.querySelectorAll('button')].find(b=>b.textContent.includes('Устроить тайник'))";
     await page.until(action,'Действие на пне');
     await page.evaluate(`${action}.click();true`);

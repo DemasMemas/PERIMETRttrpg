@@ -4,6 +4,8 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 const source = fs.readFileSync(path.join(__dirname, '../app/static/js/characterSheet.js'), 'utf8');
+const effects = vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../app/static/js/effects.js'), 'utf8')
+    .replace(/^export /gm, '') + '\n;({normalizeEffectList})');
 
 function sheet(data) {
     const container = { innerHTML: '' };
@@ -12,14 +14,58 @@ function sheet(data) {
         window: { isGM: true }, currentCharacterData: data, currentCharacterCanEdit:true,sheetSaveBlocked:false,
         document: { getElementById: () => container },
         loadTemplatesForLobby: async () => [], getExoskeletonPowerProfile: () => ({ powered: false }),
+        normalizeEffectList: effects.normalizeEffectList,
         renderSpecialTraits() {}, applySheetEditPermissions(){},updateDataFromFields(){},showNotification() {}, scheduleAutoSave() { saves++; },
     });
     vm.runInContext(fs.readFileSync(path.join(__dirname,'../app/static/js/characterTraits.js'),'utf8').replaceAll('export ',''),context);
     vm.runInContext(fs.readFileSync(path.join(__dirname,'../app/static/js/artifactSkillBonuses.js'),'utf8').replace(/^export /gm,''),context);
+    vm.runInContext(source.slice(source.indexOf('function willLevelModifier('), source.indexOf('function getIntoxicationProfile(')), context);
     vm.runInContext(source.slice(source.indexOf('function getRequiredXp('), source.indexOf('// ========== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ')), context);
     vm.runInContext(source.slice(source.indexOf('async function renderSkillsTab('), source.indexOf('function renderSpecialTraits(')), context);
     return { context, container, saves: () => saves, render: () => context.renderSkillsTab(data) };
 }
+
+test('профиль артефактов меняет показанный бонус и расчёт навыков без записи в базу навыка', async () => {
+    const data = {
+        skills: {physical: {will: {base: 10, bonus: 1}}, other: {stealth: {base: 10, bonus: 0}}},
+        _artifact_profile: {skill_physical: 3, skill_other: 2, skill_will: 4, skill_stealth: -6},
+    };
+    const ui = sheet(data);
+    assert.equal(ui.context.getSkillEffectiveValue(data, 'physical.will'), 18);
+    assert.equal(ui.context.getSkillEffectiveValue(data, 'other.stealth'), 6);
+    await ui.render();
+    assert.match(ui.container.innerHTML, /name="skills.physical.will.bonus" value="8" data-transient-bonus="7"/);
+    assert.match(ui.container.innerHTML, /name="skills.other.stealth.bonus" value="-4" data-transient-bonus="-4"/);
+    assert.equal(data.skills.physical.will.bonus, 1);
+    assert.equal(data.skills.other.stealth.bonus, 0);
+    data._artifact_profile = {};
+    assert.equal(ui.context.getSkillEffectiveValue(data, 'physical.will'), 11);
+});
+
+test('подавление Воли уменьшает текущий уровень и исчезает после истечения', async () => {
+    const effect = {type: 'anomaly_will_penalty', will_modifier: -2, remaining: 2};
+    const data = {skills: {physical: {will: {base: 14, bonus: 0}}}, health: {effects: [effect]}};
+    const ui = sheet(data);
+    assert.equal(ui.context.getSkillEffectiveValue(data, 'physical.will'), 12);
+    await ui.render();
+    assert.match(ui.container.innerHTML, /name="skills.physical.will.bonus" value="-2" data-transient-bonus="-2"/);
+    effect.remaining = 0;
+    assert.equal(ui.context.getSkillEffectiveValue(data, 'physical.will'), 14);
+    await ui.render();
+    assert.match(ui.container.innerHTML, /name="skills.physical.will.bonus" value="0" data-transient-bonus="0"/);
+    assert.equal(data.skills.physical.will.bonus, 0);
+});
+
+test('порог 10 Пси меняет текущий уровень Воли и снимается при восстановлении', async () => {
+    const data = {skills: {physical: {will: {base: 14, bonus: 0}}}, health: {psyState: 10}};
+    const ui = sheet(data);
+    assert.equal(ui.context.getSkillEffectiveValue(data, 'physical.will'), 13);
+    await ui.render();
+    assert.match(ui.container.innerHTML, /name="skills.physical.will.bonus" value="-1" data-transient-bonus="-1"/);
+    data.health.psyState = 9;
+    assert.equal(ui.context.getSkillEffectiveValue(data, 'physical.will'), 14);
+    assert.equal(data.skills.physical.will.bonus, 0);
+});
 
 test('цена повышения определяется целевым значением, включая 12→13 за 3 XP', () => {
     const { context } = sheet({});

@@ -117,10 +117,11 @@ test('floor menu uses the actual signed levels with zero as ground',()=>{
 });
 
 test('stair movement tolerates a RAF timestamp before the event and ends at server height',()=>{
-    const vector=(x=0,y=0,z=0)=>({x,y,z,set(x,y,z){Object.assign(this,{x,y,z});},copy(v){this.set(v.x,v.y,v.z);},clone(){return vector(this.x,this.y,this.z);}});
+    const vector=(x=0,y=0,z=0)=>({x,y,z,set(x,y,z){Object.assign(this,{x,y,z});},copy(v){this.set(v.x,v.y,v.z);},clone(){return vector(this.x,this.y,this.z);},equals(v){return this.x===v.x&&this.y===v.y&&this.z===v.z;}});
     let shadowInvalidations=0;
-    const callbacks=[],entry={floorLevel:0,model:{position:vector(1.5,1,1.5),traverse(){}},label:{position:vector()}};
-    const context=createSceneContext({getCharacterModelEntry:()=>entry,STOREY_HEIGHT:2.4,currentLocationData:{objects:[]},
+    const callbacks=[],entry={floorLevel:0,model:{position:vector(1.5,1,1.5),rotation:{y:0},traverse(){}},label:{position:vector()}};
+    const context=createSceneContext({getCharacterModelEntry:()=>entry,THREE:{Vector3:function (x,y,z){return vector(x,y,z);}},characterMovementDirection:()=> 'forward',
+        syncPortableLights(){},humanStrideTileMs:new Map([['walk',680]]),STOREY_HEIGHT:2.4,currentLocationData:{objects:[]},
         queueTrueSightRefresh(){},portableLightRenderer:{dirty(){shadowInvalidations++;}},
         getTileHeight:()=>1,attachStaticLightFieldToRoot(){},locationStaticLightField:null,
         tintLocationMesh(){},darknessFactorAt:()=>1,characterLabelOffset:()=>1.9,

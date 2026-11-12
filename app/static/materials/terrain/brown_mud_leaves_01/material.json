@@ -1,0 +1,14 @@
+{
+  "id": "brown_mud_leaves_01",
+  "sourceUrl": "https://polyhaven.com/a/brown_mud_leaves_01",
+  "license": "CC0",
+  "resolution": "1k",
+  "normalFormat": "OpenGL",
+  "maps": {
+    "color": {
+      "file": "color.jpg",
+      "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/brown_mud_leaves_01/brown_mud_leaves_01_diff_1k.jpg",
+      "sha256": "c598c555f13cd5328409fd5e2a45496a26e319e52299e3959042f1449c2f1b06"
+    }
+  }
+}

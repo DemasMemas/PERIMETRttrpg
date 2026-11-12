@@ -44,7 +44,7 @@ def test_mount_preserves_physical_artifact_and_activates_both_sides_without_armo
     assert profile['protection']['physical']==15 and profile['movement_penalty']==2 and profile['accuracy']==-1
     assert CombatService._target_armor(data,'chest')[0]==15
     assert CombatService._inventory_weight_details(data)['total_weight']==2*quantity
-    apply_artifact_world_movement(data);assert data['health']['radiation']==3
+    apply_artifact_world_movement(data);assert data['health']['radiation']==3*quantity
     assert pair['actor_location'].action_points_current==17
     assert data['health']['combatMeta']['actionJournal'][-1]['label']=='Крепление артефакта на поясе'
 
@@ -55,7 +55,7 @@ def test_unmount_restores_same_artifact_and_removes_effects(client,pair,auth_hea
     data=pair['actor_character'].data;returned=data['inventory']['pockets'][0]
     assert returned['id']==item['id'] and 'slotType' not in returned
     assert artifact_passive_profile(data)['protection']['physical']==0
-    assert artifact_passive_profile(data)['radiation_per_movement']==0
+    assert artifact_passive_profile(data)['radiation_per_movement']==3
     assert pair['actor_location'].action_points_current==14
 
 

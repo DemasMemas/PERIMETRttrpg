@@ -68,10 +68,10 @@ def item_from_template(template,quantity=1):
           'volume':0 if attrs.get('book_kind') else template.volume or 0,'quantity':quantity,'attributes':attrs,
           'installedModules':[],'modifications':[],'contents':[], 'compatible_ids':deepcopy(template.compatible_ids or [])}
     item['description']=glove_description(item) or item['description']
-    from app.services.liquid_containers import is_canister
-    if template.category in {'container', 'backpack', 'pouch'} or is_canister(item):
-        item.update(isContainer=True, capacity=attrs.get('liquid_capacity_liters',
-            attrs.get('capacity', attrs.get('limit', template.volume or 0))))
+    from app.services.liquid_containers import liquid_capacity
+    capacity = liquid_capacity(item)
+    if template.category in {'container', 'backpack', 'pouch'} or capacity:
+        item.update(isContainer=True, capacity=capacity or attrs.get('capacity', attrs.get('limit', template.volume or 0)))
     if isinstance(attrs.get('pouches'), list):
         item['pouches'] = deepcopy(attrs['pouches'])
     if attrs.get('uses') is not None:item.update(uses=attrs['uses'],maxUses=attrs['uses'])

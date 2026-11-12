@@ -29,7 +29,10 @@ test('new and existing storage objects expose container actions even in old save
     assert.ok(start >= 0 && end > start && interactionsStart >= 0 && interactionsEnd > interactionsStart);
     const context = vm.createContext({ isFireObject: () => false, findLocationAsset });
     vm.runInContext(source.slice(interactionsStart, interactionsEnd + 3), context);
-    vm.runInContext(source.slice(start, end), context);
+    const stashStart = source.indexOf('const stashHosts =');
+    const stashEnd = source.indexOf('function canReachLocationGenerator(', stashStart);
+    assert.ok(stashStart >= 0 && stashEnd > stashStart);
+    vm.runInContext(source.slice(stashStart, stashEnd) + source.slice(start, end), context);
     for (const type of ['box', 'military_crate', 'shelf', 'chest',
         ...['nightstand','wardrobe','dresser','wall_shelf','storage_rack','refrigerator','cooker',
             'kitchen_cabinet','sink','wood_stove','wood_crate','cardboard_box'].map(id => 'household_'+id)]) {

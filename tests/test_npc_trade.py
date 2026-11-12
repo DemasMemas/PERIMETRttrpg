@@ -124,6 +124,46 @@ def test_merchant_automatically_exchanges_goods_for_server_calculated_money(clie
     assert entry['money_given'] - entry['money_received'] == 1000 - actor_balance
 
 
+@pytest.mark.parametrize('background,template_name,display_name,attributes,unit_price', [
+    ({'ruleId': 'background-m'}, 'Банка пива', 'Напиток', {'is_alcohol': True}, 56),
+    ({'name': 'Прогульщик'}, 'Сигареты Петр Второй', 'Пачка', {}, 56),
+    ({'name': 'Прогульщик'}, 'Вода', 'Банка пива', {}, 75),
+    ({}, 'Банка пива', 'Банка пива', {'is_alcohol': True}, 75),
+])
+def test_merchant_quotes_and_charges_customer_discount_only_on_eligible_purchases(
+        client, shop, auth_headers, background, template_name, display_name, attributes, unit_price):
+    actor = shop['actor_character']
+    target = shop['target_character']
+    buyer = shop['target_user']
+    actor_data = deepcopy(actor.data)
+    actor_data.setdefault('basic', {})['background'] = background
+    actor.data = actor_data
+    actor.owner_id = buyer['id']
+    shop['actor_location'].controlled_by = buyer['id']
+    shop['water'].name = template_name
+    shop['water'].attributes = attributes
+    target_data = deepcopy(target.data)
+    target_data['inventory']['backpack'][0]['name'] = display_name
+    target.data = target_data
+    db.session.commit()
+
+    url = (f"/lobbies/{shop['lobby'].id}/locations/{shop['location'].id}"
+           f"/characters/{target.id}/interaction?actor_location_character_id={shop['actor_location'].id}")
+    preview = client.get(url, headers=auth_headers(buyer))
+    assert preview.status_code == 200, preview.json
+    template_key = str(shop['water'].id)
+    assert preview.json['merchant_purchase_prices'] == ({template_key: unit_price} if unit_price < 75 else {})
+    assert preview.json['target_data']['merchant']['prices'][template_key]['sell'] == 75
+
+    result = propose(client, shop, auth_headers, sell=1, buy=2, as_user='target_user')
+    assert result.status_code == 201, result.json
+    assert result.json['payload']['purchase_total'] == 2 * unit_price
+    assert result.json['payload']['sale_total'] == 25
+    assert actor.data['inventory']['money'] == 1000 - 2 * unit_price + 25
+    assert target.data['inventory']['money'] == 500 + 2 * unit_price - 25
+    assert target.data['merchant']['prices'][template_key]['sell'] == 75
+
+
 @pytest.mark.parametrize('fault', ['empty','too_many','customer_money','merchant_money','too_far','unpriced','disabled','created_manually'])
 def test_invalid_shop_operation_does_not_change_goods_money_or_ap(client, shop, auth_headers, fault):
     sell, buy = 0, 1

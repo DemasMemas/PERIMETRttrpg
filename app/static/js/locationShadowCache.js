@@ -19,7 +19,27 @@ export function createLocationShadowPass(renderer,roots,withOriginals=draw=>draw
         }
         try{return draw();}finally{for(let i=changes.length-1;i>=0;i--){const [o,key,value]=changes[i];o[key]=value;}}
     }
-    renderer.shadowMap.render=function(...args){return withOriginals(()=>run(()=>original.apply(this,args)));};
+    renderer.shadowMap.render = function (lights, ...args) {
+        if (Array.isArray(lights) && (!this.enabled || (!this.autoUpdate && !this.needsUpdate)
+            || (!this.needsUpdate && !lights.some(light => light.shadow?.autoUpdate || light.shadow?.needsUpdate)))) {
+            return original.call(this, lights, ...args);
+        }
+        return withOriginals(() => run(() => {
+            const force = this.needsUpdate;
+            const filtered = Array.isArray(lights) ? lights.filter(light => light.shadow?.portableOwner
+                && (force || light.shadow.autoUpdate || light.shadow.needsUpdate)) : [];
+            if (!filtered.length) return original.call(this, lights, ...args);
+            original.call(this, lights.filter(light => !filtered.includes(light)), ...args);
+            for (const light of filtered) {
+                const owner = light.shadow.portableOwner;
+                const visible = owner.visible;
+                owner.visible = false;
+                this.needsUpdate = force;
+                try { original.call(this, [light], ...args); }
+                finally { owner.visible = visible; }
+            }
+        }));
+    };
     return{run,dispose(){renderer.shadowMap.render=original;}};
 }
 
@@ -36,24 +56,29 @@ export function createLocationShadowCache(light) {
         frame++;
         let dirty=Boolean(renderer.shadowMap.needsUpdate),count=0;
         function record(node) {
-            if(!node)return;
+            if(!node)return false;
             let old=records.get(node);
-            if(old?.frame===frame)return;
+            if(old?.frame===frame)return false;
             const p=node.position,q=node.quaternion,s=node.scale,g=node.geometry;
             const values=[p?.x,p?.y,p?.z,q?.x,q?.y,q?.z,q?.w,s?.x,s?.y,s?.z,
                 node.visible,node.castShadow,node.layers?.mask,g?.id,g?.attributes?.position?.version,
-                g?.attributes?.normal?.version,g?.index?.version,node.instanceMatrix?.version,g?.drawRange?.start,g?.drawRange?.count];
+                g?.attributes?.normal?.version,g?.index?.version,node.instanceMatrix?.version,g?.drawRange?.start,g?.drawRange?.count,
+                node.userData?.shadowPoseRevision];
             if(!old||old.frame!==frame-1||values.some((v,i)=>v!==old.values[i]))dirty=true;
             if(!old){old={};records.set(node,old);}
             old.frame=frame;old.values=values;
+            return true;
         }
         scene.traverseVisible(node=>{
             if(!node.isMesh||!node.castShadow)return;
             count++;
             // Skeletal/morph/custom depth animation can change without a local
             // transform; those scenes keep the ordinary per-frame shadow pass.
-            if(node.isSkinnedMesh||node.morphTargetInfluences?.length||node.customDepthMaterial)dirty=true;
-            for(let item=node;item;item=item.parent)record(item);
+            // Для дыхания и движений головы оставляем тень позы между изменениями сцены.
+            if(node.customDepthMaterial||((node.isSkinnedMesh||node.morphTargetInfluences?.length)&&
+                !node.userData?.staticIdleShadow))dirty=true;
+            // Проверенный предок уже включает всю цепочку до сцены.
+            for(let item=node;item;item=item.parent)if(!record(item))break;
             for(const material of Array.isArray(node.material)?node.material:[node.material]){
                 if(!material)continue;
                 let old=records.get(material);

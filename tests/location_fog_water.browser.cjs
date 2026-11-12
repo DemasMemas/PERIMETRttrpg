@@ -56,6 +56,15 @@ module.exports=async({page,request,token,lobby,base,connect,debugPort,safeSessio
     assert.ok(after.every(mesh=>mesh.count<=mesh.capacity),'индексы тумана не обрезаны');
     fs.writeFileSync(path.join(safeSession.artifacts,'fog-deep-water.png'),
         Buffer.from((await page.call('Page.captureScreenshot',{format:'png'})).data,'base64'));
+    const contactShadows="document.querySelector('.scene-contact-shadows-button')";
+    if (await page.evaluate(`Boolean(${contactShadows})`)) {
+        await page.evaluate(`${contactShadows}.click()`);
+        await page.until(`${contactShadows}.getAttribute('aria-pressed')==='true'`,'Контактные тени включены над водой');
+        await page.evaluate(`(async()=>{await new Promise(requestAnimationFrame);await new Promise(requestAnimationFrame);})()`);
+        assert.deepEqual(await inspect(),after,'Контактные тени сохраняют геометрию и видимость тумана');
+        fs.writeFileSync(path.join(safeSession.artifacts,'fog-deep-water-contact.png'),
+            Buffer.from((await page.call('Page.captureScreenshot',{format:'png'})).data,'base64'));
+    }
     await page.evaluate('exitLocation();true');
     await page.evaluate(`(async()=>{await enterLocation(${location.id});true})()`);
     await page.until('window.fogCheckScene&&document.getElementById("scene-loading-screen").classList.contains("is-hidden")','ГМ наблюдает полную сцену');

@@ -78,6 +78,8 @@ class ContainerTransferService:
         actor = LocationCharacter.query.filter_by(location_id=obj.location_id, character_id=character.id).first()
         if not actor:
             raise NotFoundError('Character is not in this location')
+        if not stashes.visible(obj, user_id, character.id):
+            raise NotFoundError('Тайник не найден')
         CombatService.ensure_character_can_act(actor)
         state = LocationCombatState.query.filter_by(location_id=obj.location_id).first()
         if state and state.status == 'active':
@@ -88,7 +90,7 @@ class ContainerTransferService:
         if stashes.buried(obj):
             raise ValidationError('Сначала раскопайте ящик')
         compartment = payload.get('stash_compartment') is True
-        if compartment and not stashes.compartment_visible(obj, user_id):
+        if compartment and not stashes.compartment_visible(obj, user_id, character.id):
             raise NotFoundError('Тайник не найден')
         if compartment or obj.type=='ground_stash':
             from app.services.location_navigation import level_of

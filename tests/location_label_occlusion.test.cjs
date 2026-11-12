@@ -1,5 +1,5 @@
 const test=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm');
-const {createLabelOcclusionIndex}=vm.runInNewContext(fs.readFileSync(require('node:path').join(__dirname,'../app/static/js/locationLabelOcclusion.js'),'utf8').replace('export ','')+'\n;({createLabelOcclusionIndex})');
+const {createLabelOcclusionIndex}=vm.runInNewContext(fs.readFileSync(require('node:path').join(__dirname,'../app/static/js/locationLabelOcclusion.js'),'utf8').replaceAll('export ','')+'\n;({createLabelOcclusionIndex})');
 
 // Для проверки отбора достаточно луча вдоль X; преобразования выполняет Three.js.
 class Vector3 {constructor(x=0){this.x=x;}distanceToSquared(v){return(this.x-v.x)**2;}}

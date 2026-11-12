@@ -5,6 +5,65 @@ function triangleGeometry(THREE, triangles) {
     return geometry;
 }
 
+export function createCorrugatedPanelGeometry(THREE, span, depth) {
+    const { start, end, bottom, top } = span;
+    const centerX = (start + end) / 2;
+    const centerY = (bottom + top) / 2;
+    // Размеры трапециевидного профиля в метрах, от впадины до следующей впадины.
+    const pitch = 0.1375;
+    const folds = [0, 0.0675, 0.085, 0.12, pitch];
+    const profileHeight = Math.min(0.018, depth * 0.85);
+    const halfThickness = Math.min(0.0015, depth - profileHeight) / 2;
+    const xValues = [start];
+    for (let period = Math.floor(start / pitch); period * pitch < end; period++) {
+        for (const fold of folds.slice(0, -1)) {
+            const x = period * pitch + fold;
+            if (x > start + 1e-7 && x < end - 1e-7) xValues.push(x);
+        }
+    }
+    xValues.push(end);
+    const section = xValues.map(x => {
+        const offset = x - Math.floor(x / pitch) * pitch;
+        const rise = Math.max(0, Math.min(1,
+            (offset - folds[1]) / (folds[2] - folds[1]),
+            (pitch - offset) / (pitch - folds[3])));
+        const z = (rise - 0.5) * profileHeight;
+        return {
+            frontBottom: [x, bottom, z + halfThickness],
+            frontTop: [x, top, z + halfThickness],
+            backBottom: [x, bottom, z - halfThickness],
+            backTop: [x, top, z - halfThickness],
+        };
+    });
+    const positions = [], uvs = [], indices = [];
+    const quad = (vertices, surface) => {
+        const first = positions.length / 3;
+        for (const [x, y, z] of vertices) {
+            positions.push(x - centerX, y - centerY, z);
+            uvs.push((surface === 'end' ? z : x) / 2, (surface === 'rim' ? z : y) / 2);
+        }
+        indices.push(first, first + 1, first + 2, first, first + 2, first + 3);
+    };
+    for (let i = 1; i < section.length; i++) {
+        const l = section[i - 1], r = section[i];
+        quad([l.frontBottom, r.frontBottom, r.frontTop, l.frontTop], 'face');
+        quad([r.backBottom, l.backBottom, l.backTop, r.backTop], 'face');
+        quad([l.backTop, l.frontTop, r.frontTop, r.backTop], 'rim');
+        quad([l.frontBottom, l.backBottom, r.backBottom, r.frontBottom], 'rim');
+    }
+    const left = section[0], right = section.at(-1);
+    quad([left.backBottom, left.frontBottom, left.frontTop, left.backTop], 'end');
+    quad([right.frontBottom, right.backBottom, right.backTop, right.frontTop], 'end');
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    const uv = new THREE.Float32BufferAttribute(uvs, 2);
+    geometry.setAttribute('uv', uv);
+    geometry.setAttribute('uv2', uv.clone());
+    geometry.setIndex(indices);
+    geometry.computeVertexNormals();
+    return geometry;
+}
+
 function rodBetween(THREE, group, from, to, radius, color) {
     const start = new THREE.Vector3(...from);
     const end = new THREE.Vector3(...to);

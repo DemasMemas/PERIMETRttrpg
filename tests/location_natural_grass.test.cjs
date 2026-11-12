@@ -9,12 +9,13 @@ const detailSource = fs.readFileSync(path.join(root, 'locationGrassDetail.js'), 
 const detailUrl = `data:text/javascript;base64,${Buffer.from(detailSource).toString('base64')}`;
 const moduleUrl = `data:text/javascript;base64,${Buffer.from(source.replace(
     "'./locationGrassDetail.js'", `'${detailUrl}'`)).toString('base64')}`;
+const modelsUrl = `data:text/javascript;base64,${fs.readFileSync(path.join(root, 'locationGrassModels.js')).toString('base64')}`;
 test('whole natural grass clumps clear hard paving, not only their centre roots',async()=>{
     const {naturalGrassPlacements}=await import(moduleUrl);
     for(const terrain of ['concrete','granite_tiles','metal','wood_floor']){
         const tiles=Array.from({length:10},()=>Array.from({length:10},(_,x)=>({terrain:x<5?'grass':terrain})));
-        const plan=naturalGrassPlacements(tiles);assert.ok(plan.medium01.length>0);
-        for(const p of plan.medium01)for(const dx of [-.4,0,.4])for(const dz of [-.4,0,.4])assert.notEqual(tiles[Math.floor(p.z+dz)]?.[Math.floor(p.x+dx)]?.terrain,terrain);
+        const plan=naturalGrassPlacements(tiles);assert.ok(plan.plants.length>0);
+        for(const p of plan.plants)for(const dx of [-.4,0,.4])for(const dz of [-.4,0,.4])assert.notEqual(tiles[Math.floor(p.z+dz)]?.[Math.floor(p.x+dx)]?.terrain,terrain);
     }
 });
 
@@ -41,26 +42,33 @@ test('natural grass uses deterministic placements with forest more open than pla
     assert.equal(plain.stats.grassTiles, 400);
     assert.equal(plain.stats.plainTiles, 400);
     assert.equal(plain.stats.forestTiles, 0);
+    const coverage = new Uint8Array(20 * 20);
+    for (const plant of plain.plants) coverage[Math.floor(plant.z) * 20 + Math.floor(plant.x)]++;
+    assert.ok(coverage.filter(count => count === 0).length >= 50, 'между зарослями остаётся открытый грунт');
+    assert.ok(coverage.filter(count => count >= 6).length >= 70, 'густые участки различимы на игровой высоте');
     tiles.forEach(row => row.forEach(tile => { tile.grass_subtype = 'forest'; }));
     const forest = naturalGrassPlacements(tiles);
     assert.equal(forest.stats.forestTiles, 400);
-    assert.ok(forest.medium01.length < plain.medium01.length);
-    assert.ok(plain.medium01.length > 600);
-    assert.ok(forest.medium01.length >= 400);
+    assert.ok(forest.plants.length < plain.plants.length);
+    assert.ok(plain.plants.length > 600);
+    assert.ok(forest.plants.length >= 400);
+    assert.deepEqual(new Set(plain.plants.map(plant => plant.kind)), new Set(['low', 'dry', 'seeded']));
+    assert.ok(plain.plants.filter(plant => plant.kind === 'seeded').length / plain.plants.length
+        > forest.plants.filter(plant => plant.kind === 'seeded').length / forest.plants.length);
 });
 
-test('forest tiles stay populated and GLB grass feathers onto dry neighbors', async () => {
+test('трава растёт в лесном грунте и заходит на соседнюю сухую землю', async () => {
     const { naturalGrassPlacements } = await import(moduleUrl);
     const forest = Array.from({ length: 3 }, () => Array.from({ length: 7 },
         () => ({ terrain: 'grass', grass_subtype: 'forest' })));
     const placed = naturalGrassPlacements(forest);
-    assert.ok(placed.medium01.length >= 21);
+    assert.ok(placed.plants.length >= 21);
     const mixed = Array.from({ length: 12 }, () => Array.from({ length: 12 }, (_, x) =>
         ({ terrain: x < 6 ? 'grass' : 'sand' })));
-    const fringe = naturalGrassPlacements(mixed).medium01;
+    const fringe = naturalGrassPlacements(mixed).plants;
     assert.ok(fringe.some(plant => mixed[Math.floor(plant.z)]?.[Math.floor(plant.x)]?.terrain === 'sand'));
     mixed.forEach(row => { row[6].terrain = 'water'; });
-    const withWater = naturalGrassPlacements(mixed).medium01;
+    const withWater = naturalGrassPlacements(mixed).plants;
     assert.ok(withWater.every(plant => mixed[Math.floor(plant.z)]?.[Math.floor(plant.x)]?.terrain !== 'water'));
 });
 
@@ -70,24 +78,36 @@ test('natural grass respects non-grass cells and floor coverage', async () => {
         () => ({ terrain: 'grass' })));
     tiles[0][0] = { terrain: 'sand' };
     const covered = naturalGrassPlacements(tiles, () => true);
-    assert.equal(covered.medium01.length, 0);
+    assert.equal(covered.plants.length, 0);
     assert.equal(covered.stats.grassTiles, 63);
     assert.ok(covered.stats.floorRejected > 0);
 });
 
-test('full grass location uses instanced model without procedural grass blades', async () => {
+test('подлокация использует три модели листьев без текстурных карточек', async () => {
     const { naturalGrassPlacements } = await import(moduleUrl);
+    const { createNaturalGrassAssets } = await import(modelsUrl);
     const { grassPlacements } = await import(detailUrl);
+    const THREE = await import('../app/static/vendor/three-0.162.0/build/three.module.min.js');
     const tiles = Array.from({ length: 48 }, () => Array.from({ length: 48 },
         () => ({ terrain: 'grass' })));
-    const model = naturalGrassPlacements(tiles).medium01.length;
+    const plants = naturalGrassPlacements(tiles).plants;
+    const assets = createNaturalGrassAssets(THREE);
     const details = grassPlacements(tiles, () => false, false);
-    const triangles = model * 457;
+    const triangles = plants.reduce((sum, plant) =>
+        sum + assets[plant.kind].geometry.index.count / 3, 0);
+    const top = kind => assets[kind].geometry.boundingBox.max.y;
+    assert.ok(top('low') < top('dry') && top('dry') < top('seeded'));
+    for (const { geometry, material } of Object.values(assets)) {
+        assert.equal(geometry.boundingBox.min.y, 0);
+        assert.equal(geometry.getAttribute('color').count, geometry.getAttribute('position').count);
+        assert.equal(material.alphaTest, 0);
+        assert.equal(material.alphaMap, null);
+    }
     assert.equal(details.tufts.length, 0);
-    assert.ok(model > 5000 && model < 8000);
-    assert.ok(triangles < 3600000);
+    assert.ok(plants.length > 5000 && plants.length < 8000);
+    assert.ok(triangles < plants.length * 457 * .62);
     const scene = fs.readFileSync(path.join(root, 'locationScene.js'), 'utf8');
-    assert.match(scene, /createGrassDetailGroup\(THREE, tiles, getHeight, isCovered, true\)/);
+    assert.match(scene, /createGrassDetailGroup\(THREE, tiles, getHeight, isCovered, true,/);
 });
 
 test('optimized grass adds one shared instanced model at ground height', async () => {
@@ -125,18 +145,18 @@ test('optimized grass adds one shared instanced model at ground height', async (
         index: { count: triangles * 3 } });
     const material = () => ({ clone() { return { ...this }; } });
     const assets = {
-        medium01: { geometry: geometry(457), material: material(), bottom: 0,
+        low: { geometry: geometry(160), material: material(), bottom: 0,
             scale: 1, spread: 1 },
     };
     const group = { children: [], userData: { detailCounts: { tufts: 0 } },
         add(mesh) { this.children.push(mesh); } };
-    const placements = { medium01: [{ x: 2.5, z: 3.5, size: 1,
+    const placements = { plants: [{ x: 2.5, z: 3.5, kind: 'low', size: 1,
         width: 1, depth: 1, lean: 0, tone: 0.5, turn: 0 }] };
     const result = addNaturalGrassInstances(THREE, group, placements, assets, () => 1);
-    assert.deepEqual(result.added, { medium01: 1 });
-    assert.deepEqual(result.triangles, { medium01: 457 });
+    assert.deepEqual(result.added, { low: 1 });
+    assert.deepEqual(result.triangles, { low: 160 });
     assert.equal(group.children.length, 1);
     assert.equal(group.children[0].transforms[0].position[1], 0.982);
-    assert.deepEqual(group.children[0].color, [1, 1, 1]);
+    assert.ok(group.children[0].color.every(channel => channel > .9 && channel < 1));
     assert.equal(group.children[0].instanceColor.needsUpdate, true);
 });

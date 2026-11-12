@@ -1,0 +1,31 @@
+{
+  "id": "rusty_corrugated_iron",
+  "sourceUrl": "https://polyhaven.com/a/rusty_corrugated_iron",
+  "license": "CC0",
+  "resolution": "1k",
+  "normalFormat": "OpenGL",
+  "maps": {
+    "color": {
+      "file": "color.jpg",
+      "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/rusty_corrugated_iron/rusty_corrugated_iron_diff_1k.jpg",
+      "sha256": "5f58ae559ba91bec82c69076418b14acd4c88e6d5ed4ca2455113ec346d0f7de",
+      "preAdjustmentSha256": "2525deb17323eefe39e8a90c6384033e31832b6aa9736bea27f81f4148508087",
+      "sourceMd5": "6e30158f4ff9f8492cfc800803b484dd"
+    },
+    "normal": {
+      "file": "normal.jpg",
+      "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/rusty_corrugated_iron/rusty_corrugated_iron_nor_gl_1k.jpg",
+      "md5": "b4effdfcd2ec71faa91bb6c92f531f48",
+      "sha256": "09f015ab44ff5e5a2f8e3f4718f2848df9eaa1ce42f184d361a5b902f200a216"
+    },
+    "arm": {
+      "file": "arm.jpg",
+      "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/rusty_corrugated_iron/rusty_corrugated_iron_arm_1k.jpg",
+      "md5": "9d24b3fa4c2abf82d262f18ee58e57e1",
+      "sha256": "ae6da49b59bfe3e3eba5dd4c738a5f82e190c562e582f6680e89e0b1dc9c4674"
+    }
+  },
+  "albedoProcessing": {
+    "description": "Приглушены яркие полосы исходной карты. Добавлены мелкие нерегулярные следы коррозии, потёки и матовый налёт грязи на серой стали."
+  }
+}

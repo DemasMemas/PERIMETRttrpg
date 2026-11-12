@@ -1,3 +1,6 @@
+import json
+from pathlib import Path
+
 import pytest
 
 from app.extensions import db
@@ -110,6 +113,65 @@ def inventory_item(template, **updates):
     }
     item.update(updates)
     return item
+
+
+CATALOG_ARMOR = [
+    item for item in json.loads((Path(__file__).resolve().parents[1] / 'app/data/equipment_catalog.json')
+                               .read_text(encoding='utf-8'))['templates']
+    if item['category'] in {'armor', 'helmet'} and item['attributes'].get('max_durability', 0) > 0
+]
+
+
+@pytest.mark.parametrize('entry', CATALOG_ARMOR, ids=[item['name'] for item in CATALOG_ARMOR])
+def test_catalog_armor_and_helmets_initialize_condition_and_slots(app, entry):
+    from app.services.combat import ARMOR_MATERIAL_COEFFICIENTS
+
+    attributes = entry['attributes']
+    slot = entry['category']
+    template = add_template(entry['name'], slot, subcategory=entry.get('subcategory'), attributes=attributes)
+    source = inventory_item(template, durability=None, maxDurability=None)
+    data = {'inventory': {'backpack': [source]}}
+    if attributes.get('is_exoskeleton'):
+        tools = add_template('Инструменты бронника', 'tool', attributes={'repair_profile': {'kind': 'armor'}})
+        data['inventory']['backpack'].append(inventory_item(tools))
+    details = CombatService.equipment_action_details(data, 'equip', slot, item_path=['inventory', 'backpack', 0])
+    CombatService.apply_equipment_action(data, details)
+    worn = data['equipment'][slot]
+    material = attributes.get('material', 'Текстиль')
+    capacity = int(10 * attributes['max_durability'] * ARMOR_MATERIAL_COEFFICIENTS.get(material.lower(), 1))
+    assert worn['durability'] == worn['maxDurability'] == attributes['max_durability']
+    assert worn['stageDurability'] == worn['currentStageDurability'] == capacity
+    assert worn['stage'] == 1 and worn['material'] == material
+    if slot == 'armor':
+        assert worn.get('containers', []) == [{'item': None}] * attributes.get('container_slots', 0)
+    profile = attributes.get('integrated_helmet_profile')
+    if profile:
+        helmet = data['equipment']['helmet']
+        assert helmet['accuracyPenalty'] == profile['accuracy_penalty']
+        assert helmet['charismaBonus'] == -profile['charisma_penalty']
+
+
+def test_worn_armor_recovers_catalog_defaults_and_preserves_broken_helmet_and_loaded_slots(app):
+    entry = next(item for item in CATALOG_ARMOR if item['name'] == 'Комбинезон Купол-М')
+    template = add_template(entry['name'], 'armor', attributes=entry['attributes'])
+    loaded = {'item': {'id': 'saved-container'}}
+    armor = inventory_item(template, durability=0, maxDurability=0, stage=1, stageDurability=0,
+                           currentStageDurability=0, containers=[loaded])
+    data = {'equipment': {'armor': armor, 'helmet': {'integratedWithArmor': True}}}
+    CombatService.normalize_worn_armor(data)
+    CombatService.normalize_worn_armor(data)
+    helmet = data['equipment']['helmet']
+    assert (armor['durability'], armor['currentStageDurability']) == (75, 375)
+    assert armor['containers'] == [loaded, {'item': None}, {'item': None}]
+    assert (helmet['accuracyPenalty'], helmet['charismaBonus']) == (3, -2)
+    assert CombatService._equipment_accuracy_penalty(data) == 3
+    roll = CombatService._narrative_skill_check(data, 'skills.social.charisma')
+    assert roll['equipment_modifier'] == -2
+    helmet_template = add_template('Проверочный шлем', 'helmet', attributes={'max_durability': 50})
+    broken = inventory_item(helmet_template, stage=5, durability=0, currentStageDurability=0, brokenDamage=100)
+    data['equipment'] = {'helmet': broken}
+    CombatService.normalize_worn_armor(data)
+    assert (broken['durability'], broken['stage'], broken['currentStageDurability']) == (0, 5, 0)
 
 
 def test_armor_equipment_cost_includes_inventory_retrieval_and_preserves_item(app):
@@ -241,7 +303,7 @@ def test_integrated_helmet_armor_does_not_overwrite_head_equipment(app, occupied
         "equipment": occupied_slot,
     }
 
-    with pytest.raises(ValidationError, match="Remove the"):
+    with pytest.raises(ValidationError, match="Сначала снимите.*встроенный шлем"):
         CombatService.equipment_action_details(
             data,
             "equip",

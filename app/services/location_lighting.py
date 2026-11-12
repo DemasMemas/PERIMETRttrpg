@@ -40,6 +40,11 @@ def normalize_location_lighting(value, width, height):
         result[key] = _color(result[key], key)
     for key in ('ambient_intensity', 'directional_intensity'):
         result[key] = _number(result[key], key, 0, 3)
+    result['fog_density'] = _number(result['fog_density'], 'Плотность дымки', 0, 0.1)
+    if type(result['water_reflections']) is not bool:
+        raise ValidationError('Параметр отражений в воде должен быть логическим')
+    if result['natural_detail'] is not None and type(result['natural_detail']) is not bool:
+        raise ValidationError('Параметр природного декора должен быть логическим')
     result['directional_azimuth'] = _number(result['directional_azimuth'], 'Направление света', -180, 180)
     result['directional_elevation'] = _number(result['directional_elevation'], 'Высота света', 0, 90)
     lights = result['local_lights']

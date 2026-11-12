@@ -11,7 +11,7 @@ export const normalizeWaterProfile = value => WATER_PROFILES.some(([id])=>id===v
 export function terrainWaterComponents(tile) {
     switch(tile?.terrain){
         case 'sand': return VALUES.sandy;
-        case 'swamp': return VALUES.peat;
+        case 'swamp': case 'shallow_water': return VALUES.peat;
         case 'rock': case 'gravel': case 'concrete': case 'granite_tiles': return VALUES.mineral;
         case 'metal': case 'rusty_metal': return VALUES.industrial;
         case 'snow': return VALUES.clean;
@@ -20,10 +20,11 @@ export function terrainWaterComponents(tile) {
     }
 }
 export const WATER_CONTEXT_RADIUS = 3;
-export function waterComponentsAt(getTile,x,z) {
+export function waterComponentsAt(getTile,x,z,basinKind) {
     const tile=getTile(x,z),manual=normalizeWaterProfile(tile?.water_profile);
     if(tile?.terrain!=='water')return terrainWaterComponents(tile);
     if(manual!=='auto')return VALUES[manual];
+    if(basinKind==='swamp')return VALUES.peat;
     const sum=[0,0,0,0];let weight=0,total=0,nearest=Infinity;
     for(let dz=-3;dz<=3;dz++)for(let dx=-3;dx<=3;dx++){
         if(!dx&&!dz)continue;
@@ -55,7 +56,7 @@ export function connectedWaterCells(getTile,x,z) {
     return cells;
 }
 
-export function createWaterProfileLayer(THREE,getTile) {
+export function createWaterProfileLayer(THREE,getTile,getBasinKind) {
     const uniforms={waterProfiles:{value:null},waterProfilesSize:{value:new THREE.Vector2(1,1)}};
     let texture,width=0,height=0,queued=false,disposed=false,revision=0;
     const pending=new Set();
@@ -63,7 +64,8 @@ export function createWaterProfileLayer(THREE,getTile) {
         queued=false;if(disposed||!texture)return;
         let dirty=false;
         for(const index of pending){
-            const values=waterComponentsAt(getTile,index%width,Math.floor(index/width));
+            const x=index%width,z=Math.floor(index/width);
+            const values=waterComponentsAt(getTile,x,z,getBasinKind?.(x,z));
             for(let c=0;c<4;c++){
                 const value=Math.round(Math.max(0,Math.min(1,values[c]))*255),offset=index*4+c;
                 if(texture.image.data[offset]!==value){texture.image.data[offset]=value;dirty=true;}
@@ -77,7 +79,7 @@ export function createWaterProfileLayer(THREE,getTile) {
             texture?.dispose();width=w;height=h;pending.clear();
             texture=new THREE.DataTexture(new Uint8Array(w*h*4),w,h,THREE.RGBAFormat,THREE.UnsignedByteType);
             texture.magFilter=texture.minFilter=THREE.LinearFilter;texture.generateMipmaps=false;
-            texture.encoding=THREE.LinearEncoding;texture.needsUpdate=true;
+            texture.colorSpace=THREE.LinearSRGBColorSpace;texture.needsUpdate=true;
             uniforms.waterProfiles.value=texture;uniforms.waterProfilesSize.value.set(w,h);
         },
         updateRegion(x,z,w=1,h=1){

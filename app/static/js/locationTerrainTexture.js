@@ -9,6 +9,10 @@ const COLORS = {
     concrete: [179, 177, 168], gravel: [130, 121, 107],
     snow: [212, 217, 217], ice: [194, 207, 209], metal: [133, 101, 77],
     bare_dirt: [122, 105, 79], granite_tiles: [179, 177, 168], wood_floor: [119, 86, 53],
+    muddy_tracks: [112, 99, 82], brown_mud_03: [91, 71, 53], brown_mud_02: [108, 88, 67],
+    dry_mud_field_001: [136, 116, 94], brown_mud: [115, 89, 64],
+    brown_mud_leaves_01: [87, 77, 59],
+    concrete005: [138, 134, 124],
 };
 
 let forestGroundPixels = null;
@@ -99,6 +103,7 @@ function terrainAt(tiles, x, z) {
     const clampedZ = Math.max(0, Math.min(tiles.length - 1, z));
     const clampedX = Math.max(0, Math.min(tiles[clampedZ].length - 1, x));
     const tile = tiles[clampedZ][clampedX];
+    if (tile?.terrain === 'shallow_water') return 'brown_mud_03';
     return tile?.terrain === 'grass' && grassSubtype(tile) === 'forest'
         ? 'grass_forest' : tile?.terrain || 'grass';
 }
@@ -172,10 +177,13 @@ function terrainColor(kind, detail, x, z, useGrassGroundPixels = true, profile =
     return color.map(value => value + broad * 8);
 }
 
+const isGrassTerrain = kind => kind === 'grass' || kind === 'grass_forest';
+
 function paintPixels(tiles, image, pixelsPerTile, startX, startZ, endX, endZ,
     originX = 0, originZ = 0, sampleTerrain = (x, z) => terrainAt(tiles, x, z),
     useGrassGroundPixels = true, profile = null) {
-    const { data, width } = image;
+    const { data, width, grassBlendData } = image;
+    const bakeGrassPhotos = useGrassGroundPixels && !grassBlendData;
     // World regions revisit the same few terrain tiles for thousands of pixels.
     let worldRows = null;
     let firstTileX = 0;
@@ -211,21 +219,48 @@ function paintPixels(tiles, image, pixelsPerTile, startX, startZ, endX, endZ,
             const wobbleZ = uniformWorldTile ? 0 : (noise(x, iz + 0.5, 2.4, 71) - 0.5) * 0.13;
             const wx = uniformWorldTile ? 0 : smoothstep((cx - ix - 0.28 - wobbleX) / 0.44);
             const wz = uniformWorldTile ? 0 : smoothstep((cz - iz - 0.28 - wobbleZ) / 0.44);
-            const w00 = (1 - wx) * (1 - wz);
-            const w10 = wx * (1 - wz);
-            const w01 = (1 - wx) * wz;
-            const w11 = wx * wz;
-            const k00 = w00 ? (worldRows ? raw00 : sampleTerrain(ix, iz)) : null;
-            const k10 = w10 ? (worldRows ? raw10 : sampleTerrain(ix + 1, iz)) : null;
-            const k01 = w01 ? (worldRows ? raw01 : sampleTerrain(ix, iz + 1)) : null;
-            const k11 = w11 ? (worldRows ? raw11 : sampleTerrain(ix + 1, iz + 1)) : null;
-            const grass = k00 === 'grass' || k00 === 'grass_forest'
-                || k10 === 'grass' || k10 === 'grass_forest'
-                || k01 === 'grass' || k01 === 'grass_forest'
-                || k11 === 'grass' || k11 === 'grass_forest';
-            const swamp = k00 === 'swamp' || k10 === 'swamp' || k01 === 'swamp' || k11 === 'swamp';
-            const detailColor = (k00 && k00 !== 'water') || (k10 && k10 !== 'water')
-                || (k01 && k01 !== 'water') || (k11 && k11 !== 'water');
+            let w00 = (1 - wx) * (1 - wz);
+            let w10 = wx * (1 - wz);
+            let w01 = (1 - wx) * wz;
+            let w11 = wx * wz;
+            let k00 = w00 ? (worldRows ? raw00 : sampleTerrain(ix, iz)) : null;
+            let k10 = w10 ? (worldRows ? raw10 : sampleTerrain(ix + 1, iz)) : null;
+            let k01 = w01 ? (worldRows ? raw01 : sampleTerrain(ix, iz + 1)) : null;
+            let k11 = w11 ? (worldRows ? raw11 : sampleTerrain(ix + 1, iz + 1)) : null;
+            let bedWeight = 0;
+            if (tiles && (k00 === 'water' || k10 === 'water' || k01 === 'water' || k11 === 'water')) {
+                if (k00 === 'water') w00 = 0;
+                if (k10 === 'water') w10 = 0;
+                if (k01 === 'water') w01 = 0;
+                if (k11 === 'water') w11 = 0;
+                // Широкая выборка продолжает рисунок берега до воды там,
+                // где заканчивается обычная полоса смешивания материалов.
+                const extension = 1 - smoothstep((w00 + w10 + w01 + w11) / 0.24);
+                if (extension > 0) {
+                    k00 ??= sampleTerrain(ix, iz);
+                    k10 ??= sampleTerrain(ix + 1, iz);
+                    k01 ??= sampleTerrain(ix, iz + 1);
+                    k11 ??= sampleTerrain(ix + 1, iz + 1);
+                    const wideX = smoothstep(cx - ix);
+                    const wideZ = smoothstep(cz - iz);
+                    if (k00 !== 'water') w00 += extension * (1 - wideX) * (1 - wideZ);
+                    if (k10 !== 'water') w10 += extension * wideX * (1 - wideZ);
+                    if (k01 !== 'water') w01 += extension * (1 - wideX) * wideZ;
+                    if (k11 !== 'water') w11 += extension * wideX * wideZ;
+                }
+                const groundWeight = w00 + w10 + w01 + w11;
+                const normalizer = Math.max(groundWeight, 0.02);
+                bedWeight = 1 - groundWeight / normalizer;
+                w00 /= normalizer; w10 /= normalizer; w01 /= normalizer; w11 /= normalizer;
+            }
+            const grass = w00 > 0 && (k00 === 'grass' || k00 === 'grass_forest')
+                || w10 > 0 && (k10 === 'grass' || k10 === 'grass_forest')
+                || w01 > 0 && (k01 === 'grass' || k01 === 'grass_forest')
+                || w11 > 0 && (k11 === 'grass' || k11 === 'grass_forest');
+            const swamp = w00 > 0 && k00 === 'swamp' || w10 > 0 && k10 === 'swamp'
+                || w01 > 0 && k01 === 'swamp' || w11 > 0 && k11 === 'swamp';
+            const detailColor = (w00 && k00 !== 'water') || (w10 && k10 !== 'water')
+                || (w01 && k01 !== 'water') || (w11 && k11 !== 'water');
             const redundantPhotoDetail = uniformWorldTile && useGrassGroundPixels
                 && forestGroundPixels && plainGroundPixels
                 && (raw00 === 'grass' || raw00 === 'grass_forest');
@@ -239,22 +274,41 @@ function paintPixels(tiles, image, pixelsPerTile, startX, startZ, endX, endZ,
                 wet: swamp ? smoothstep((noise(x, z, 3.4, 51)
                     + (noise(x, z, 10.4, 52) - 0.5) * 0.22 - 0.62) * 10) : 0,
             };
+            const plain = grassBlendData && grass ? (k00 === 'grass' ? w00 : 0) + (k10 === 'grass' ? w10 : 0)
+                + (k01 === 'grass' ? w01 : 0) + (k11 === 'grass' ? w11 : 0) : 0;
+            const forest = grassBlendData && grass ? (k00 === 'grass_forest' ? w00 : 0) + (k10 === 'grass_forest' ? w10 : 0)
+                + (k01 === 'grass_forest' ? w01 : 0) + (k11 === 'grass_forest' ? w11 : 0) : 0;
+            const grassWeight = plain + forest;
+            let baseWeight = 1;
+            if (grassWeight > 0 && grassWeight < 1 - 0.5 / 255) {
+                // Локальный шейдер добавит травяной грунт по маске. Здесь сохраняем
+                // средний цвет остальных покрытий для той доли, которая им осталась.
+                if (isGrassTerrain(k00)) w00 = 0;
+                if (isGrassTerrain(k10)) w10 = 0;
+                if (isGrassTerrain(k01)) w01 = 0;
+                if (isGrassTerrain(k11)) w11 = 0;
+                baseWeight = 1 - grassWeight;
+            }
             const rgb = [0, 0, 0];
-            const firstKind = k00 || k10 || k01 || k11;
-            if ((!k00 || k00 === firstKind) && (!k10 || k10 === firstKind)
-                && (!k01 || k01 === firstKind) && (!k11 || k11 === firstKind)) {
-                const sample = terrainColor(firstKind, detail, x, z, useGrassGroundPixels, profile);
-                rgb[0] = sample[0]; rgb[1] = sample[1]; rgb[2] = sample[2];
+            const firstKind = (w00 && k00) || (w10 && k10) || (w01 && k01) || (w11 && k11);
+            if (firstKind && (!w00 || k00 === firstKind) && (!w10 || k10 === firstKind)
+                && (!w01 || k01 === firstKind) && (!w11 || k11 === firstKind)) {
+                const sample = terrainColor(firstKind, detail, x, z, bakeGrassPhotos, profile);
+                for (let channel = 0; channel < 3; channel++) rgb[channel] = sample[channel] * (baseWeight - bedWeight);
             } else {
                 for (const [kind, weight] of [[k00, w00], [k10, w10], [k01, w01], [k11, w11]]) {
-                    if (!kind) continue;
-                    const sample = terrainColor(kind, detail, x, z, useGrassGroundPixels, profile);
+                    if (!weight) continue;
+                    const sample = terrainColor(kind, detail, x, z, bakeGrassPhotos, profile);
                     for (let channel = 0; channel < 3; channel++) rgb[channel] += sample[channel] * weight;
                 }
             }
+            if (bedWeight > 0) {
+                const bed = terrainColor('brown_mud_03', detail, x, z, bakeGrassPhotos, profile);
+                for (let channel = 0; channel < 3; channel++) rgb[channel] += bed[channel] * bedWeight;
+            }
             const index = (pz * width + px) * 4;
             for (let channel = 0; channel < 3; channel++) {
-                data[index + channel] = Math.max(0, Math.min(255, Math.round(rgb[channel])));
+                data[index + channel] = Math.max(0, Math.min(255, Math.round(rgb[channel] / baseWeight)));
             }
             if (image.grassCoverageInAlpha) {
                 if (uniformWorldTile || !grass) {
@@ -269,17 +323,11 @@ function paintPixels(tiles, image, pixelsPerTile, startX, startZ, endX, endZ,
             } else {
                 data[index + 3] = 255;
             }
-            if (image.grassBlendData) {
-                const plain = (k00 === 'grass' ? w00 : 0) + (k10 === 'grass' ? w10 : 0)
-                    + (k01 === 'grass' ? w01 : 0) + (k11 === 'grass' ? w11 : 0);
-                const forest = (k00 === 'grass_forest' ? w00 : 0)
-                    + (k10 === 'grass_forest' ? w10 : 0)
-                    + (k01 === 'grass_forest' ? w01 : 0)
-                    + (k11 === 'grass_forest' ? w11 : 0);
-                image.grassBlendData[index] = Math.round(plain * 255);
-                image.grassBlendData[index + 1] = Math.round(forest * 255);
-                image.grassBlendData[index + 2] = 0;
-                image.grassBlendData[index + 3] = 255;
+            if (grassBlendData) {
+                grassBlendData[index] = Math.round(plain * 255);
+                grassBlendData[index + 1] = Math.round(forest * 255);
+                grassBlendData[index + 2] = 0;
+                grassBlendData[index + 3] = 255;
             }
         }
     }

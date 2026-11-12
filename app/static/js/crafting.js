@@ -182,6 +182,7 @@ export async function showCrafting({characterId,lobbyId,onSaved,recipeId='',stat
                     const plan=response.result;preview.replaceChildren(el('p',`Результат: ${plan.recipe.output_name} × ${plan.recipe.output_count}`),
                         el('p',`Итоговая СЛ ${plan.difficulty}${plan.automatic_success?' · автоуспех':''}`));
                     if(plan.station_name)preview.append(el('p',`Устройство: ${plan.station_name}${plan.spoil_chance?` · риск порчи результата ${plan.spoil_chance}%`:''}`));
+                    if(plan.generator_difficulty_bonus)preview.append(el('p',`Питание от генератора · −${plan.generator_difficulty_bonus} к СЛ`));
                     if(approval)preview.append(el('p','ГМ подтвердил условие сцены. СЛ не меняется.'));
                     if(plan.constructor_materials)preview.append(el('p','«Конструктору» нужны два комплекта материалов до первого успеха.'));
                     let statusIndex=0;
@@ -339,7 +340,7 @@ export async function showCrafting({characterId,lobbyId,onSaved,recipeId='',stat
             const doubleLabel=el('label','20 зарядов вместо 10 · СЛ −25','modification-checkbox');doubleLabel.prepend(double);fields.append(doubleLabel);
             const replacement=select('Заменяемая модификация',[]);
             const replacementLabel=el('label','Замена');replacementLabel.append(replacement);fields.append(replacementLabel);
-            const materialSection=el('details');materialSection.append(el('summary','Дополнительные материалы · −1 СЛ за 150 ₽'));
+            const materialSection=el('details');materialSection.append(el('summary','Дополнительные материалы · −1 СЛ за 150\u00a0₽'));
             const materialInputs=[];
             for(const entry of snapshot.inventory.filter(e=>e.item.category==='crafting_material')){
                 const label=el('label',`${entry.item.name} · ${entry.item.price||0} ₽/шт.`),input=el('input',null,'form-control');
@@ -367,6 +368,7 @@ export async function showCrafting({characterId,lobbyId,onSaved,recipeId='',stat
                     const plan=response.result;
                     preview.replaceChildren();
                     if(plan.station_name)preview.append(el('p',`${plan.station_name} · риск порчи результата ${plan.spoil_chance}%`));
+                    if(plan.generator_difficulty_bonus)preview.append(el('p',`Питание от генератора · −${plan.generator_difficulty_bonus} к СЛ`));
                     if(plan.material_value)preview.append(el('p',`Материалы на ${plan.material_value} ₽ будут потрачены при начале установки.`));
                     preview.append(el('p',`Итоговая СЛ ${plan.difficulty} · ${plan.tool_uses===1?'1 заряд':`${plan.tool_uses} зарядов`} · ${plan.duration_seconds/60} мин`),el('p',`Установка у специалиста: ${plan.professional_price} ₽`),
                         button('Установить самостоятельно',()=>act('modify',payload)));

@@ -8,23 +8,18 @@ const read = name => fs.readFileSync(path.join(__dirname, '..', name), 'utf8');
 const models = read('app/static/js/mutantModels.js');
 const benchmark = read('app/static/js/performanceBenchmark.js');
 
-test('игровой Кабан укладывается в бюджет геометрии и встроенных текстур', () => {
-    const bytes=fs.readFileSync(path.join(__dirname,'../app/static/models/mutants/boar/sekach-game.glb'));
+test('игровой Кабан использует одну сетку с цветами вершин', () => {
+    const bytes=fs.readFileSync(path.join(__dirname,'../app/static/models/mutants/boar/wild-boar-light.glb'));
     assert.equal(bytes.readUInt32LE(0),0x46546c67);
     const jsonLength=bytes.readUInt32LE(12),asset=JSON.parse(bytes.subarray(20,20+jsonLength));
     const primitives=asset.meshes.flatMap(mesh=>mesh.primitives);
     const triangles=primitives.reduce((sum,p)=>sum+asset.accessors[p.indices].count/3,0);
-    assert.ok(triangles<=15000,'отдельные волоски не должны возвращать 85 тысяч треугольников');
-    assert.ok(primitives.length<=3,'шерсть объединена без лишних вызовов отрисовки');
-    assert.ok(bytes.length<4*1024*1024);
-    assert.ok(asset.materials.every(m=>!m.alphaMode||m.alphaMode==='OPAQUE'),'нет больших прозрачных поверхностей шерсти');
-    const binaryAt=20+jsonLength+8;
-    for(const image of asset.images){
-        assert.equal(image.uri,undefined,'текстуры встроены, внешние файлы не требуются');
-        const view=asset.bufferViews[image.bufferView],at=binaryAt+(view.byteOffset||0);
-        assert.equal(image.mimeType,'image/png');
-        assert.ok(bytes.readUInt32BE(at+16)<=1024&&bytes.readUInt32BE(at+20)<=1024);
-    }
+    assert.equal(triangles,2308);
+    assert.equal(primitives.length,1);
+    assert.ok(Number.isInteger(primitives[0].attributes.COLOR_0));
+    assert.ok(bytes.length<256*1024);
+    assert.equal(asset.images?.length ?? 0,0);
+    assert.ok(asset.materials.every(m=>!m.alphaMode||m.alphaMode==='OPAQUE'));
 });
 
 function threeStub() {
@@ -58,7 +53,7 @@ function threeStub() {
         }
     }
     return {
-        Group: Object3D, Mesh, BufferGeometry: Geometry,LinearEncoding:3000,sRGBEncoding:3001,
+        Group: Object3D, Mesh, BufferGeometry: Geometry,LinearSRGBColorSpace:'srgb-linear',SRGBColorSpace:'srgb',
         Float32BufferAttribute: class { constructor(array) { this.array = array; } },
         SphereGeometry: Geometry, ConeGeometry: Geometry, CylinderGeometry: Geometry,
         MeshLambertMaterial: class {
@@ -88,7 +83,7 @@ test('every catalog mutant appears in the benchmark and modeled types build sele
         assert.equal(model.userData.mutantModel, true, type);
         if(type==='Кабан'){
             assert.equal(mounts.length,1);
-            assert.equal(mounts[0].asset.visual.modelPath,'/static/models/mutants/boar/sekach-game.glb');
+            assert.equal(mounts[0].asset.visual.modelPath,'/static/models/mutants/boar/wild-boar-light.glb');
             assert.ok(model.children[0].children[0].geometry.attributes.color,'исходная форма доступна до загрузки GLB');
             continue;
         }
@@ -102,15 +97,15 @@ test('every catalog mutant appears in the benchmark and modeled types build sele
 });
 
 test('цвет Кабана соответствует выводу сцены, карты нормалей не перекодируются', () => {
-    for(const encoding of [3000,3001]){
+    for(const colorSpace of ['srgb-linear','srgb']){
         let ready;
         const context=vm.createContext({THREE:threeStub(),mountLocationModel:(_root,_asset,_dimensions,callback)=>{ready=callback;return true;}});
         vm.runInContext(models.replace(/^import[^\n]*\n/gm,'').replaceAll('export ',''),context);
-        const root=context.createMutantModel('Кабан',encoding),map={encoding:3001,needsUpdate:false},normalMap={encoding:3000};
+        const root=context.createMutantModel('Кабан',colorSpace),map={colorSpace:'srgb',needsUpdate:false},normalMap={colorSpace:''};
         const material={map,normalMap,needsUpdate:false},mesh={isMesh:true,material};
         ready({traverse:visit=>visit(mesh)});
-        assert.equal(map.encoding,encoding);assert.equal(normalMap.encoding,3000);
-        assert.equal(map.needsUpdate,encoding!==3001);
+        assert.equal(map.colorSpace,colorSpace);assert.equal(normalMap.colorSpace,'');
+        assert.equal(map.needsUpdate,colorSpace!=='srgb');
         assert.equal(root.children.length,1);assert.equal(root.lastEvent.type,'model-ready');
         assert.ok(mesh.castShadow&&mesh.receiveShadow,'материал продолжает получать свет и отбрасывать тень');
     }
@@ -123,10 +118,10 @@ test('mutant type reaches initial state, spawns, live model and fog memory', () 
     assert.match(read('app/static/js/main.js'), /s\.gm_hidden,\s*s\.mutant_type/);
     assert.match(read('app/static/js/main.js'), /data\.character\.gm_hidden,\s*data\.character\.mutant_type/);
     const scene = read('app/static/js/locationScene.js');
-    assert.match(scene, /isMutant && createMutantModel\(mutantType, renderer.outputEncoding\)/);
+    assert.match(scene, /isMutant && createMutantModel\(mutantType, renderer.outputColorSpace\)/);
     assert.match(scene, /if \(characterModels\.has\(characterId\)\) \{\s*const old = characterModels\.get\(characterId\);\s*disposeObject\(old\.model\)/);
     assert.match(scene, /mutantType: entry\.mutantType \|\| ''/);
-    assert.match(scene, /createMutantModel\(snapshot\.mutantType, renderer.outputEncoding\)/);
+    assert.match(scene, /createMutantModel\(snapshot\.mutantType, renderer.outputColorSpace\)/);
 });
 
 test('benchmark isolates hidden anomaly animation from baseline and grass measurements', () => {

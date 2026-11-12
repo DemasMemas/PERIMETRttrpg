@@ -109,7 +109,11 @@ class CharacterInteractionService:
             target_character_id,
         )
         condition = CombatService._location_character_condition(target)
-        return CombatService._incapacitated_character_snapshot(actor, target, condition)
+        snapshot = CombatService._incapacitated_character_snapshot(actor, target, condition)
+        from app.services.npc_trade import discounted_purchase_prices, enabled
+        if enabled(target.character):
+            snapshot['merchant_purchase_prices'] = discounted_purchase_prices(snapshot['target_data'], actor.character.data or {})
+        return snapshot
 
     @staticmethod
     @atomic_operation

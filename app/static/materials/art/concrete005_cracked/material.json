@@ -1,0 +1,30 @@
+{
+  "asset": "concrete005_cracked",
+  "sourceUrl": "https://ambientcg.com/view?id=Concrete005",
+  "license": "CC0",
+  "resolution": "1k",
+  "normalFormat": "OpenGL",
+  "additionalSourceUrl": "https://polyhaven.com/a/cracked_concrete",
+  "maps": {
+    "color": {
+      "file": "color.jpg",
+      "sha256": "f9d122d3326b312ff4cf0fa873bfc76a893de54717f220f6173d0b2d8f701d00"
+    },
+    "normal": {
+      "file": "normal.jpg",
+      "sha256": "88f5961c34034de57f3050ebe590d15bf4e2e3ee479bbb14930fdb640573baa4"
+    },
+    "arm": {
+      "file": "arm.jpg",
+      "sha256": "da5532fc59215e5198e8078d8d5f183a5da743670a6816100de287497f5e2b2e"
+    },
+    "height": {
+      "file": "height.png",
+      "sha256": "d81049f6f3ec73c7f00b93d09b57423ff3642b9d0bb03b79925fb616e972e89f"
+    }
+  },
+  "albedoProcessing": {
+    "description": "Холодный серый бетон с сохранённым контрастом трещин."
+  },
+  "heightSourceUrl": "https://polyhaven.com/a/cracked_concrete"
+}

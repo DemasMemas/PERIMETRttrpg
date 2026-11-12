@@ -7,7 +7,9 @@ from sqlalchemy.orm.attributes import flag_modified
 from app.extensions import db
 from app.models import Lobby, LobbyCharacter
 from app.models.templates import ItemTemplate
+from app.services.addictions import resolve_addiction_profile
 from app.services.character_roles import is_npc
+from app.services.character_traits import background_is
 from app.services.exceptions import ConflictError, NotFoundError, PermissionDenied, ValidationError
 from app.services.trade import money
 from app.services.transaction import atomic_operation
@@ -133,19 +135,43 @@ def price_for(data, item, side):
     return tool_price(item, price)
 
 
+def discounted_purchase_prices(merchant_data, buyer_data):
+    if not background_is(buyer_data, 'Прогульщик'):
+        return {}
+    prices = ((merchant_data.get('merchant') or {}).get('prices') or {})
+    template_ids = [int(key) for key, entry in prices.items() if key.isdecimal() and entry.get('sell') is not None]
+    if not template_ids:
+        return {}
+    templates = ItemTemplate.query.filter(ItemTemplate.id.in_(template_ids), ItemTemplate.category == 'consumable')
+    discounted = {}
+    for template in templates:
+        attributes = template.attributes or {}
+        profile = attributes.get('consumable')
+        direct = profile.get('direct') if isinstance(profile, dict) else None
+        addiction = resolve_addiction_profile(profile, template.name, template.price)
+        if (attributes.get('is_alcohol') is True or attributes.get('alcohol') is True
+                or (isinstance(direct, dict) and direct.get('is_alcohol') is True)
+                or (isinstance(addiction, dict) and addiction.get('kind') in {'alcohol', 'nicotine'})):
+            key = str(template.id)
+            discounted[key] = prices[key]['sell'] * 3 // 4
+    return discounted
+
+
 def totals(actor_data, target_data, actor_offer, target_offer):
     from app.services.combat import CombatService
-    def total(data, offer, side):
+    def total(data, offer, side, purchase_prices):
         result = 0
         for entry in offer:
             path = entry['path']
             if side == 'sell' and path[:1] != ['inventory']:
                 raise ValidationError('Торговец продаёт товары из инвентаря, а не надетое снаряжение')
             item = CombatService._inventory_item_at_path(data, path)
-            result += price_for(target_data, item, side) * entry['amount']
+            price = price_for(target_data, item, side)
+            result += purchase_prices.get(str(item.get('templateId')), price) * entry['amount']
         return money(result, label='Стоимость предложения')
-    sale = total(actor_data, actor_offer, 'buy')
-    purchase = total(target_data, target_offer, 'sell')
+    purchase_prices = discounted_purchase_prices(target_data, actor_data) if target_offer else {}
+    sale = total(actor_data, actor_offer, 'buy', {})
+    purchase = total(target_data, target_offer, 'sell', purchase_prices)
     return {'actor_money': max(0, purchase - sale), 'target_money': max(0, sale - purchase),
             'purchase_total': purchase, 'sale_total': sale}
 

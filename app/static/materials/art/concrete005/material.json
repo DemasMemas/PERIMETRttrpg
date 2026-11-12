@@ -1,0 +1,26 @@
+{
+  "asset": "concrete005",
+  "sourceUrl": "https://ambientcg.com/view?id=Concrete005",
+  "license": "CC0",
+  "resolution": "1k",
+  "normalFormat": "OpenGL",
+  "maps": {
+    "color": {
+      "file": "color.jpg",
+      "sha256": "69a5684c197181cdf16fe87df9a653389b7b4f385e3fcee252c0baa20c10db70"
+    },
+    "normal": {
+      "file": "normal.jpg",
+      "sha256": "d7295cd04044b78def367066983cac56b23d31d33e1968659f2306dff4216a68"
+    },
+    "arm": {
+      "file": "arm.jpg",
+      "sha256": "021b5e0f42916b0f48bd9df9774fff594b7b7f4d80484f0ffda80d138cab6979"
+    },
+    "height": {
+      "file": "height.jpg",
+      "sha256": "c7826ab6306fe802b336a5b4f49951e0e677df71de53e36688b3db78ed351dc9"
+    }
+  },
+  "heightSourceUrl": "https://ambientcg.com/view?id=Concrete005"
+}

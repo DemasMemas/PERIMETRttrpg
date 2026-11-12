@@ -538,6 +538,25 @@ def test_background_training_rules(name,path,roll,expected):
     assert result['trainingPoints']==expected and result['freePoints']==1
 
 
+@pytest.mark.parametrize('payload,roll,points,rolls', [
+    ({'usedBackgroundWeapon': True}, 90, 2, []),
+    ({'usedBackgroundWeapon': False}, 90, 0, [90]),
+    ({'usedBackgroundWeapon': False}, 40, 2, [40]),
+    ({'weaponType': 'pistols'}, 90, 2, []),
+])
+def test_security_background_weapon_checkbox(payload, roll, points, rolls):
+    from app.services.character_development import award_session
+
+    class Dice:
+        def randint(self, low, high):
+            return roll
+
+    data = build_character('СБшник', plan('СБшник', backgroundWeapon='pistols'))
+    result = award_session(data, {'operationId': 'shooting', 'trainingSkill': 'physical.shooting', **payload}, rng=Dice())
+    assert result['trainingPoints'] == points
+    assert result['rolls'] == rolls
+
+
 def test_fractional_learning_does_not_lose_half_point():
     from app.services.character_development import add_skill_experience
     data=build_character('Имя',plan(traits=[trait('Заинтересованный',skill='physical.agility')]))

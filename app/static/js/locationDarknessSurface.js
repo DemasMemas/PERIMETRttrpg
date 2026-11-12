@@ -77,17 +77,18 @@ export function applySurfaceDarkness(material, texture, size, terrainDetail = nu
                 diffuseColor.rgb *= mix(vec3(1.0), swampTint, swampMask * 0.63);
                 diffuseColor.rgb *= 0.61 + 0.44 * terrainShade;
             ` : '';
+        const grassBlend = grassDetail ? `
+                vec2 grassWeights = texture2D(locationGrassBlend,
+                    clamp(vLocationDarkXZ / locationDarknessSize, vec2(0.0), vec2(1.0))).rg;
+                float grassCoverage = min(1.0, grassWeights.r + grassWeights.g);
+            ` : '';
         const grassColor = grassDetail ? `
-                if (locationGrassReady > 0.5) {
-                    vec2 grassWeights = texture2D(locationGrassBlend,
-                        clamp(vLocationDarkXZ / locationDarknessSize, vec2(0.0), vec2(1.0))).rg;
-                    float grassCoverage = min(1.0, grassWeights.r + grassWeights.g);
-                    if (grassCoverage > 0.005) {
+                if (grassCoverage > 0.0) {
+                    vec3 grassPhoto = vec3(0.112, 0.087, 0.050);
+                    if (locationGrassReady > 0.5) {
                         vec2 grassUv = vLocationDarkXZ * 0.125;
-                        vec3 earthPhoto = mapTexelToLinear(
-                            texture2D(locationGrassEarth, grassUv)).rgb;
-                        vec3 forestPhoto = mapTexelToLinear(
-                            texture2D(locationGrassForest, grassUv)).rgb;
+                        vec3 earthPhoto = texture2D(locationGrassEarth, grassUv).rgb;
+                        vec3 forestPhoto = texture2D(locationGrassForest, grassUv).rgb;
                         vec3 slopeNormal = abs(normalize(vLocationGrassSide.xyz));
                         float slopeProjection = smoothstep(0.12, 0.55, 1.0 - slopeNormal.y);
                         if (slopeProjection > 0.001) {
@@ -96,24 +97,28 @@ export function applySurfaceDarkness(material, texture, size, terrainDetail = nu
                             float sideZWeight = slopeNormal.z
                                 / max(slopeNormal.x + slopeNormal.z, 0.0001);
                             vec3 sideEarth = mix(
-                                mapTexelToLinear(texture2D(locationGrassEarth, sideXUv)).rgb,
-                                mapTexelToLinear(texture2D(locationGrassEarth, sideZUv)).rgb,
+                                texture2D(locationGrassEarth, sideXUv).rgb,
+                                texture2D(locationGrassEarth, sideZUv).rgb,
                                 sideZWeight);
                             vec3 sideForest = mix(
-                                mapTexelToLinear(texture2D(locationGrassForest, sideXUv)).rgb,
-                                mapTexelToLinear(texture2D(locationGrassForest, sideZUv)).rgb,
+                                texture2D(locationGrassForest, sideXUv).rgb,
+                                texture2D(locationGrassForest, sideZUv).rgb,
                                 sideZWeight);
                             earthPhoto = mix(earthPhoto, sideEarth, slopeProjection);
                             forestPhoto = mix(forestPhoto, sideForest, slopeProjection);
                         }
-                        vec3 plainPhoto = mix(earthPhoto, forestPhoto, 0.82)
-                            * vec3(0.86, 1.06, 0.84);
-                        vec3 woodlandPhoto = forestPhoto * vec3(0.88, 0.93, 0.84);
-                        vec3 grassPhoto = (plainPhoto * grassWeights.r
-                            + woodlandPhoto * grassWeights.g) / grassCoverage;
-                        diffuseColor.rgb = mix(diffuseColor.rgb, grassPhoto,
-                            grassCoverage * 0.96);
+                        float litter = texture2D(locationGrassForest, grassUv * 0.34 + vec2(0.21, 0.63)).g;
+                        vec3 plainPhoto = mix(earthPhoto, forestPhoto, 0.14 + 0.22 * smoothstep(0.24, 0.56, litter));
+                        vec3 luma = vec3(0.2126, 0.7152, 0.0722);
+                        plainPhoto = mix(plainPhoto, vec3(dot(plainPhoto, luma)), 0.58)
+                            * vec3(1.02, 0.98, 0.91);
+                        plainPhoto = mix(vec3(0.29, 0.269, 0.237), plainPhoto, 0.84);
+                        vec3 woodlandPhoto = mix(forestPhoto, vec3(dot(forestPhoto, luma)), 0.42)
+                            * vec3(0.93, 0.92, 0.86);
+                        grassPhoto = (plainPhoto * grassWeights.r
+                            + woodlandPhoto * grassWeights.g) / (grassWeights.r + grassWeights.g);
                     }
+                    diffuseColor.rgb = mix(diffuseColor.rgb, grassPhoto, grassCoverage);
                 }
             ` : '';
         shader.fragmentShader = shader.fragmentShader
@@ -124,7 +129,7 @@ export function applySurfaceDarkness(material, texture, size, terrainDetail = nu
                 ${detailUniform}
                 ${grassUniforms}
             `)
-            .replace('#include <color_fragment>', `#include <color_fragment>
+            .replace('#include <color_fragment>', `${grassBlend}#include <color_fragment>
                 ${detailColor}
                 ${grassColor}
                 diffuseColor.rgb *= texture2D(locationDarknessMap,

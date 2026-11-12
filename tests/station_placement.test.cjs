@@ -4,11 +4,11 @@ function setup(send){
     const requests=[],added=[],disposed=[];
     const scene={add(ghost){ghost.parent=this;},remove(){}};
     const context=vm.createContext({currentLocationData:{},currentLocationId:5,pendingStationPlacement:null,
-        combatState:{status:'idle'},window:{currentLobbyId:2},scene,crypto:{randomUUID:()=> 'station-operation'},
+        combatState:{status:'idle'},window:Object.assign(new EventTarget(),{currentLobbyId:2}),AbortController,scene,crypto:{randomUUID:()=> 'station-operation'},
         getLocationCharacterById:()=>({floorLevel:0}),canControlCharacter:()=>true,
         findLocationAsset:()=>({id:'station_electrician',baseType:'household_workbench',dimensions:[1.6,.7,.9]}),
         placementForLocationAsset:asset=>({type:asset.baseType,visualAsset:asset.id}),
-        clearPendingCombatAction(){},hideStructureInteraction(){},showNotification(){},
+        clearPendingCombatAction(){},hideStructureInteraction(){},closeMapEditorQuickMenu(){},showNotification(){},
         createLocationObjectMesh:()=>({traverse(){},position:{copy(point){this.x=point.x;this.z=point.z;}},rotation:{}}),
         disposeObject:ghost=>disposed.push(ghost),point:{x:5.7,z:4.5,floor_level:0},
         localMapToolPoint(){return context.point;},
@@ -28,7 +28,8 @@ test('предпросмотр и отмена не списывают пред�
     c.updateStationPreview(1,1);assert.equal(c.pendingStationPlacement.ghost.visible,true);
     c.point={x:5,z:5,floor_level:1};c.updateStationPreview(1,1);
     assert.equal(c.pendingStationPlacement.ghost.visible,false);
-    c.clearStationPlacement();assert.equal(c.pendingStationPlacement,null);
+    const signal=c.pendingStationPlacement.keys.signal;
+    c.clearStationPlacement();assert.equal(c.pendingStationPlacement,null);assert.equal(signal.aborted,true);
     assert.equal(requests.length,0);assert.equal(disposed.length,1);
 });
 

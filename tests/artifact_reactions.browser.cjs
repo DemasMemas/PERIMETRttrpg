@@ -106,6 +106,8 @@ module.exports=async({page,request,token,lobby,base,safeSession})=>{
         persistedAfterSave:true,expired:true,networkVisible:true,shard:{roll:50,damage:hitResult.damage,backlash:40,poolOnly:true},skin:{before:7,afterRound:5}},null,2));
     console.log('Артефакты: настоящее горение, временный штраф, сохранение, сетевое обновление и истечение по раундам проверены в Припяти.');
     console.log('Пылающий осколок: настоящее попадание, 50% на границе, 50 термического до защиты/40 после, только общий пул ОЗ.');
+    await require('./artifact_penalties.browser.cjs')({page,request,token,loc,shooterId:actor.id,targetId:dummy.id,
+        shooterLocationId:first.location_character_id,targetLocationId:second.location_character_id,rules,safeSession});
     await require('./daily_needs.browser.cjs')({page,request,token,characterId:actor.id,safeSession});
     await require('./artifact_devices.browser.cjs')({page,request,token,lobby,loc,characterId:actor.id,rules,safeSession});
     await require('./pda_spam.browser.cjs')({page,request,token,lobby,loc,characterId:actor.id,locationId:location.id,safeSession});

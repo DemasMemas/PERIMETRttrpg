@@ -12,6 +12,7 @@ from app.services.health import apply_health_maximums, health_zones_to_location
 from app.services.inventory import normalize_inventory_ammo_stacks
 from app.services.effects import normalize_effect_list, sync_health_derived_statuses
 from app.services.character_merge import clean_snapshot, merge_sheet_data
+from app.services.character_appearance import public_character_appearance
 from app.services.character_roles import follows_world_time
 
 logger = logging.getLogger(__name__)
@@ -115,6 +116,7 @@ def _preserve_server_medical_retry(current_data, incoming_data):
 class CharacterUpdate:
     character: LobbyCharacter
     posture_updates: list
+    appearance_changed: bool = False
 
 
 class CharacterService:
@@ -197,42 +199,42 @@ class CharacterService:
     @staticmethod
     def sync_location_health(character, health,character_data=None,notify_observed=True):
         """Keep sheet effects, body zones and the placed model in sync."""
+        from app.services.combat import CombatService
+
         health['effects'] = normalize_effect_list(health.get('effects') or [])
         sync_health_derived_statuses(health)
-        effect_types = {
-            effect.get('type') for effect in health['effects']
-            if isinstance(effect, dict) and effect.get('active', True)
-        }
-        zones = health.get('zones') or {}
-        vital_zone_zero = any(
-            float((zones.get(zone) or {}).get('max') or 0) > 0
-            and float((zones.get(zone) or {}).get('current') or 0) <= 0
-            for zone in ('head', 'chest')
-        )
-        total_zero = health.get('current') is not None and float(health['current']) <= 0
-        incapacitated = bool(
-            effect_types.intersection({'shock', 'unconsciousness', 'critical_condition', 'death'})
-            or total_zero or vital_zone_zero
-        )
+        data = character_data if character_data is not None else character.data
+        condition = CombatService._character_condition({**(data or {}), 'health': health})['state']
+        previous_data = character.data or {}
+        previous_condition = CombatService._character_condition(previous_data)['state']
         posture_updates = []
         clear_breathless = bool((health.get('combatMeta') or {}).pop('clearBreathlessOnce', False))
         for model in LocationCharacter.query.filter_by(character_id=character.id).all():
             if clear_breathless:
                 model.strenuous_movement_blocked_until_round = 0
+            previous_posture = model.posture
+            previous_back = bool(model.prone_on_back)
+            previous_model_condition = previous_condition
+            if previous_condition == condition and model.effects != health['effects']:
+                previous_model_condition = CombatService._character_condition({
+                    **previous_data,
+                    'health': {**(previous_data.get('health') or {}), 'effects': model.effects or []},
+                })['state']
             model.effects = deepcopy(health['effects'])
             model.hp_zones = health_zones_to_location(health)
-            if incapacitated:
-                if model.posture != 'prone':
-                    posture_updates.append({
-                        'location_id': model.location_id,
-                        'character_id': character.id,
-                        'posture': 'prone',
-                    })
-                model.posture = 'prone'
-                model.cover_object_id = None
-                model.weapon_braced = False
-                model.braced_weapon_index = None
-            from app.services.combat import CombatService
+            if condition in {'pain_shock', 'critical', 'dead'}:
+                CombatService._collapse_character(model, previous_model_condition)
+            else:
+                model.prone_on_back = False
+            if (model.posture != previous_posture or previous_back != bool(model.prone_on_back)
+                    or (model.posture == 'prone' and previous_model_condition != condition)):
+                posture_updates.append({
+                    'location_id': model.location_id,
+                    'character_id': character.id,
+                    'posture': model.posture,
+                    'prone_on_back': bool(model.prone_on_back),
+                    'condition_state': condition,
+                })
             if notify_observed:CombatService._notify_observed_death(model,character_data=character_data)
         return posture_updates
 
@@ -521,6 +523,7 @@ class CharacterService:
             raise ValidationError("Manual fields must be a list of paths")
         access = None
         posture_updates = []
+        appearance_changed = False
         if 'visible_to' in updates or 'editable_to' in updates:
             if not is_gm:
                 raise PermissionDenied("Only GM can change visibility")
@@ -615,6 +618,7 @@ class CharacterService:
                 apply_intoxication_dose(incoming_health, new_intoxication - old_intoxication)
             health = apply_health_maximums(character_data)
             posture_updates = CharacterService.sync_location_health(character, health,character_data=character_data)
+            appearance_changed = public_character_appearance(character.data) != public_character_appearance(character_data)
             character.data = character_data
         if 'name' in updates:
             character.name = updates['name']
@@ -623,7 +627,7 @@ class CharacterService:
         if commit:
             db.session.commit()
         logger.debug("Character %s updated by user %s", character_id, user_id)
-        return CharacterUpdate(character, posture_updates)
+        return CharacterUpdate(character, posture_updates, appearance_changed)
 
     @staticmethod
     def delete_character(character_id, user_id):

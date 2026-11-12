@@ -7,7 +7,7 @@ export function buildMovementSurfaceCosts(location, footprint, levelOf) {
     (location?.tiles_data || []).forEach((row, y) => {
         if (!Array.isArray(row)) return;
         row.forEach((tile, x) => {
-            if (['snow', 'sand', 'swamp', 'ice'].includes(tile?.terrain)) costs.set(key(x, y, 0), 2);
+            if (['snow', 'sand', 'swamp', 'ice', 'shallow_water'].includes(tile?.terrain)) costs.set(key(x, y, 0), 2);
             if (typeof tile?.difficult_surface === 'boolean') overrides.set(key(x, y, 0), tile.difficult_surface);
             for (const object of tile?.objects || []) objects.push({ ...object, tile_x: x, tile_y: y });
         });

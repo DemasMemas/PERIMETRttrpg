@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { scene, directionalLight, ambientLight, fillLight, waterMat, setSkyConditions, setCelestialTime } from './lobby3d.js';
+import { scene, directionalLight, ambientLight, fillLight, waterMat, setSkyConditions, setCelestialTime, WORLD_HORIZON_HAZE } from './lobby3d.js';
 
 let rainParticles = null;
 let rainSound = null;
@@ -61,7 +61,7 @@ function applyWorldLighting() {
         directionalLight.color.lerp(new THREE.Color(0xff6666), currentEmission.intensity);
         ambientLight.color.lerp(new THREE.Color(0x882222), currentEmission.intensity);
     }
-    setSkyConditions(daylight, clarity, starlight);
+    setSkyConditions(daylight, clarity, starlight, currentEmission.enabled ? currentEmission.intensity : 0);
     setCelestialTime(worldTimeMinutes);
 }
 
@@ -140,8 +140,7 @@ export function applyWeather(settings) {
     currentEmission = emission;
 
     // Туман
-    scene.fog.density = fog.enabled ? 0.02 * fog.intensity : 0;
-    scene.fog.color.setHex(0xcccccc);
+    scene.fog.density = Math.max(WORLD_HORIZON_HAZE, fog.enabled ? 0.02 * fog.intensity : 0);
 
     // Вода всегда непрозрачная
     if (waterMat) {
@@ -168,10 +167,6 @@ export function applyWeather(settings) {
     // Выброс
     if (emission.enabled) {
         const intensity = emission.intensity;
-        if (scene.fog) {
-            scene.fog.color.lerpColors(new THREE.Color(0xcccccc), new THREE.Color(0xaa3333), intensity);
-        }
-
         desiredEmissionAudio = { enabled: true, volume: intensity * EMISSION_VOLUME_FACTOR };
     } else {
         desiredEmissionAudio = { enabled: false, volume: 0 };

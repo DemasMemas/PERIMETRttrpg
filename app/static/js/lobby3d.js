@@ -1,8 +1,12 @@
 import { createWaterProfileLayer } from './waterProfiles.js';
 import { radiationTooltipLine } from './radiationReadings.js';
 import { createWorldInstanceBatches } from './worldInstanceBatches.js';
+import { createWorldTrees, worldTreeSpecies } from './worldTrees.js';
+import { createTreeSurfaceTexture } from './locationHouseholdModels.js';
+import { buildWorldGroundSides } from './worldGroundSides.js';
+import { createCrowFlight } from './crowFlight.js';
 import * as THREE from 'three';
-import { OrbitControls } from 'https://unpkg.com/three@0.128.0/examples/jsm/controls/OrbitControls.js';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { updateRain } from './weather.js';
 import { createAnomalyEffect, animateAnomalyEffects } from './anomalies.js';
 import { createFpsCounter } from './fpsCounter.js';
@@ -84,7 +88,7 @@ const terrainColors = {
     water: 0x1E90FF
 };
 
-const treeGeo = new THREE.ConeGeometry(0.3, 1, 8);
+const treeGeo = new THREE.BoxGeometry(.6, 1, .6);
 const houseGeo = new THREE.BoxGeometry(0.6, 0.6, 0.6);
 const po2Fence = createPo2Fence(THREE, () => {
     worldShadowsDirty = true;
@@ -127,11 +131,8 @@ function landmarkGeometry(parts) {
 }
 
 const WORLD_LANDMARKS = {
-    forest: { geometry: landmarkGeometry([
-        [new THREE.ConeGeometry(0.26, 1.0, 6), -0.23, 0.19, 0.02],
-        [new THREE.ConeGeometry(0.29, 1.18, 7), 0.16, 0.28, -0.16],
-        [new THREE.ConeGeometry(0.23, 0.86, 6), 0.22, 0.12, 0.24],
-    ]), width: 1.05, height: 1.5, depth: 1.05, color: '#244832' },
+    forest: { geometry: new THREE.BoxGeometry(1.25, 1.18, 1.23).translate(-.035, .28, -.02),
+        width: 1.05, height: 1.5, depth: 1.05, color: '#244832' },
     hamlet: { geometry: landmarkGeometry([
         [new THREE.BoxGeometry(0.55, 0.28, 0.45), 0, -0.12, 0],
         [new THREE.ConeGeometry(0.42, 0.25, 4), 0, 0.13, 0, 1, 1, 1, Math.PI / 4],
@@ -235,16 +236,23 @@ export function showWorldRoadPreview(plan,settings) {
     for(const mesh of [surface,...frames])if(mesh){scene.add(mesh);mesh.renderOrder=20;mesh.userData.roadRoutePreview=true;roadPreviewMeshes.push(mesh);}
 }
 
-const treeMat = new THREE.MeshStandardMaterial();
+const treeMat = new THREE.MeshBasicMaterial({ visible: false });
+const worldTreeMaterial = new THREE.MeshStandardMaterial({
+    map: createTreeSurfaceTexture(THREE), vertexColors: true, side: THREE.DoubleSide, roughness: .94,
+});
 const houseMat = new THREE.MeshStandardMaterial();
 const fenceMat = po2Fence.material;
 
 const scene = new THREE.Scene();
 // Одна программа материалов и для ясной погоды, и для тумана: меняется только uniform.
-scene.fog = new THREE.FogExp2(0xcccccc, 0);
+export const WORLD_HORIZON_HAZE = .0018;
+scene.fog = new THREE.FogExp2(0xaab4b6, WORLD_HORIZON_HAZE);
 // Keep chunk meshes/instance indices for picking and editing, but submit identical
 // visible object instances together. Terrain, water and road meshes are untouched.
 const worldInstanceBatches = createWorldInstanceBatches(THREE, scene, chunksMap);
+const worldTrees = createWorldTrees(THREE, scene, chunksMap, worldTreeMaterial, {
+    tree: getDefaultColorForType('tree'), forest: getDefaultColorForType('forest'),
+});
 scene.onBeforeRender = () => worldInstanceBatches.prepare();
 scene.onAfterRender = () => worldInstanceBatches.restore();
 scene.background = new THREE.Color(0x050510);
@@ -253,102 +261,245 @@ window.isLocationActive = false;
 
 function createCloudTexture() {
     const canvas = document.createElement('canvas');
-    canvas.width = 1024;
-    canvas.height = 512;
+    canvas.width = 512;
+    canvas.height = 256;
     const ctx = canvas.getContext('2d');
     let seed = 34171;
     const random = () => {
         seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
         return seed / 4294967296;
     };
-    const puff = (x, y, radiusX, radiusY, opacity) => {
-        for (const offset of [-canvas.width, 0, canvas.width]) {
-            const wrappedX = x + offset;
-            if (wrappedX + radiusX < 0 || wrappedX - radiusX > canvas.width) continue;
-            ctx.save();
-            ctx.translate(wrappedX, y);
-            ctx.scale(1, radiusY / radiusX);
-            const gradient = ctx.createRadialGradient(0, 0, 0, 0, 0, radiusX);
-            gradient.addColorStop(0, `rgba(255,255,255,${opacity})`);
-            gradient.addColorStop(0.45, `rgba(255,255,255,${opacity * 0.7})`);
-            gradient.addColorStop(1, 'rgba(255,255,255,0)');
-            ctx.fillStyle = gradient;
-            ctx.beginPath();
-            ctx.arc(0, 0, radiusX, 0, Math.PI * 2);
-            ctx.fill();
-            ctx.restore();
-        }
-    };
-    for (let i = 0; i < 65; i++) {
-        const x = random() * canvas.width;
-        const y = 20 + random() * (canvas.height - 40);
-        const width = 75 + random() * 90;
-        puff(x, y, width, 12 + random() * 19, 0.18);
-        for (let j = 0; j < 5; j++) {
-            const offset = (j - 2) * width * 0.28;
-            puff(x + offset, y - random() * 12, width * (0.32 + random() * 0.22),
-                15 + random() * 19, 0.23 + random() * 0.12);
+    // Несколько масштабов одного периодического поля: крупные облака, разрывы и неровные края.
+    const density = new Float32Array(canvas.width * canvas.height);
+    for (const [columns, rows, weight] of [[5, 4, .46], [10, 8, .26], [20, 16, .15], [40, 32, .09], [80, 64, .04]]) {
+        const grid = Float32Array.from({length: columns * rows}, random);
+        for (let y = 0; y < canvas.height; y++) {
+            const v = y * rows / canvas.height, iy = Math.floor(v), fy = v - iy;
+            const ty = fy * fy * (3 - 2 * fy);
+            const row = iy * columns, nextRow = ((iy + 1) % rows) * columns;
+            for (let x = 0; x < canvas.width; x++) {
+                const u = x * columns / canvas.width, ix = Math.floor(u), fx = u - ix;
+                const tx = fx * fx * (3 - 2 * fx), nextX = (ix + 1) % columns;
+                const a = grid[row + ix] * (1 - tx) + grid[row + nextX] * tx;
+                const b = grid[nextRow + ix] * (1 - tx) + grid[nextRow + nextX] * tx;
+                density[y * canvas.width + x] += weight * (a * (1 - ty) + b * ty);
+            }
         }
     }
+    const sample = (x, y) => {
+        const px = (x % canvas.width + canvas.width) % canvas.width;
+        const py = (y % canvas.height + canvas.height) % canvas.height;
+        const ix = Math.floor(px), iy = Math.floor(py), fx = px - ix, fy = py - iy;
+        const nextX = (ix + 1) % canvas.width, nextY = (iy + 1) % canvas.height;
+        const a = density[iy * canvas.width + ix] * (1 - fx) + density[iy * canvas.width + nextX] * fx;
+        const b = density[nextY * canvas.width + ix] * (1 - fx) + density[nextY * canvas.width + nextX] * fx;
+        return a * (1 - fy) + b * fy;
+    };
+    const pixels = ctx.createImageData(canvas.width, canvas.height);
+    for (let y = 0; y < canvas.height; y++) for (let x = 0; x < canvas.width; x++) {
+        // Крупные смещения разбивают одинаковую овальную форму, тонкие пряди соединяют плотные участки.
+        const warpX = (sample(x + 191, y + 83) - .5) * 110;
+        const warpY = (sample(x + 73, y + 17) - .5) * 58;
+        const body = sample(x + warpX, y + warpY);
+        const wisps = sample(x * 2 + warpY, y * 3 + warpX);
+        const thickness = Math.max(0, Math.min(1, (body * .84 + wisps * .16 - .37) * 4));
+        const litEdge = Math.max(0, Math.min(1, .5 + (sample(x + warpX - 4, y + warpY - 3) - body) * 12));
+        const i = (y * canvas.width + x) * 4;
+        pixels.data[i] = thickness * 255;
+        pixels.data[i + 1] = litEdge * 255;
+        pixels.data[i + 2] = wisps * 255;
+        pixels.data[i + 3] = Math.max(0, Math.min(1, (body * .88 + wisps * .12 - .35) * 3.2)) * 255;
+    }
+    ctx.putImageData(pixels, 0, 0);
 
     const texture = new THREE.CanvasTexture(canvas);
     texture.wrapS = THREE.RepeatWrapping;
-    texture.wrapT = THREE.ClampToEdgeWrapping;
-    texture.repeat.set(3, 1); // небольшое повторение для сглаживания шва
+    texture.wrapT = THREE.RepeatWrapping;
     return texture;
 }
 
 // Создаём текстуру один раз
 const cloudTexture = createCloudTexture();
+const cloudField = {
+    cloudTexture: { value: cloudTexture },
+    worldCloudDrift: { value: new THREE.Vector2() },
+    worldCloudHeight: { value: 390 },
+    worldCloudProjection: { value: new THREE.Vector2() },
+    worldCloudShade: { value: .27 },
+};
+const cloudFieldGlsl = `
+    uniform sampler2D cloudTexture;
+    uniform vec2 worldCloudDrift;
+    uniform float worldCloudHeight;
+    vec4 worldCloudSample(vec2 point) {
+        return texture2D(cloudTexture, point * vec2(0.00065, 0.00105) + worldCloudDrift);
+    }
+    float worldCloudPattern(vec2 point) {
+        return smoothstep(0.28, 0.79, worldCloudSample(point).a);
+    }
+`;
+
+const worldTerrainShadowReceiver = `
+    #ifdef USE_SHADOWMAP
+    #ifdef WORLD_TERRAIN_DEPTH_TEXTURE
+    uniform highp sampler2DShadow worldTerrainDepth;
+    #endif
+    float terrainShadowTap(sampler2D shadowMap, vec2 uv, vec3 coord, vec2 slope, float bias) {
+        float correction = clamp(dot(slope, uv - coord.xy), -0.00055, 0.00055);
+        return step(coord.z + bias + correction, unpackRGBAToDepth(texture2D(shadowMap, uv)));
+    }
+    float terrainShadowBilinear(sampler2D shadowMap, vec2 size, vec2 uv, vec3 coord, vec2 slope, float bias) {
+        #ifdef WORLD_TERRAIN_DEPTH_TEXTURE
+        float gradient = dot(abs(slope), 1.0 / size);
+        if (gradient < 0.00004) {
+            float correction = clamp(dot(slope, uv - coord.xy), -0.00055, 0.00055);
+            // Аппаратное сравнение четырёх соседних глубин за одну выборку.
+            return texture(worldTerrainDepth, vec3(uv, coord.z + bias + correction - gradient * 0.25));
+        }
+        #endif
+        vec2 grid = uv * size - 0.5;
+        vec2 p = (floor(grid) + 0.5) / size, f = fract(grid), texel = 1.0 / size;
+        float a = terrainShadowTap(shadowMap, p, coord, slope, bias);
+        float b = terrainShadowTap(shadowMap, p + vec2(texel.x, 0.0), coord, slope, bias);
+        float c = terrainShadowTap(shadowMap, p + vec2(0.0, texel.y), coord, slope, bias);
+        float d = terrainShadowTap(shadowMap, p + texel, coord, slope, bias);
+        return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
+    }
+    float getWorldTerrainShadow(sampler2D shadowMap, vec2 size, float bias, float radius, vec4 projected) {
+        vec3 coord = projected.xyz / projected.w;
+        vec3 dx = dFdx(coord), dy = dFdy(coord);
+        if (coord.x < 0.0 || coord.x > 1.0 || coord.y < 0.0 || coord.y > 1.0 || coord.z > 1.0) return 1.0;
+        float det = dx.x * dy.y - dx.y * dy.x;
+        vec2 slope = abs(det) > 1e-14 ? vec2(dx.z * dy.y - dy.z * dx.y,
+            dx.x * dy.z - dy.x * dx.z) / det : vec2(0.0);
+        if (radius <= 0.5) return terrainShadowBilinear(shadowMap, size, coord.xy, coord, slope, bias);
+        vec2 offset = radius / size;
+        float shadow = 0.0;
+        for (int y = -1; y <= 1; y++) {
+            for (int x = -1; x <= 1; x++) {
+                float weight = (x == 0 ? 2.0 : 1.0) * (y == 0 ? 2.0 : 1.0);
+                shadow += weight * terrainShadowBilinear(shadowMap, size,
+                    coord.xy + vec2(float(x), float(y)) * offset, coord, slope, bias);
+            }
+        }
+        return shadow / 16.0;
+    }
+    #endif
+`;
+
+function applyWorldCloudShade(material, terrainReceiver = false) {
+    const previous = material.onBeforeCompile;
+    const cacheKey = material.customProgramCacheKey.bind(material);
+    material.customProgramCacheKey = () => `${cacheKey()}:world-clouds:${terrainReceiver}`;
+    material.onBeforeCompile = function(shader, renderer) {
+        previous.call(this, shader, renderer);
+        Object.assign(shader.uniforms, cloudField);
+        const hardwareShadow = terrainReceiver && worldTerrainDepthTexture;
+        if (hardwareShadow) {
+            shader.uniforms.worldTerrainDepth = { value: worldTerrainDepthTexture };
+        }
+        shader.vertexShader = shader.vertexShader
+            .replace('#include <common>', '#include <common>\nvarying vec3 vWorldCloudPosition;')
+            .replace('#include <project_vertex>', `
+                vec4 cloudPosition = vec4(transformed, 1.0);
+                #ifdef USE_INSTANCING
+                    cloudPosition = instanceMatrix * cloudPosition;
+                #endif
+                vWorldCloudPosition = (modelMatrix * cloudPosition).xyz;
+                #include <project_vertex>
+            `);
+        let lighting = THREE.ShaderChunk.lights_fragment_begin.replace(
+            'getDirectionalLightInfo( directionalLight, directLight );', `
+            getDirectionalLightInfo( directionalLight, directLight );
+            #if UNROLLED_LOOP_INDEX == 0
+                if (worldCloudShade > 0.001) {
+                    vec2 cloudPoint = vWorldCloudPosition.xz +
+                        (worldCloudHeight - vWorldCloudPosition.y) * worldCloudProjection;
+                    directLight.color *= 1.0 - worldCloudShade * worldCloudPattern(cloudPoint);
+                }
+            #endif
+        `);
+        if (terrainReceiver) lighting = lighting.replace(
+            'getShadow( directionalShadowMap[ i ], directionalLightShadow.shadowMapSize, directionalLightShadow.shadowBias, directionalLightShadow.shadowRadius, vDirectionalShadowCoord[ i ] )',
+            'getWorldTerrainShadow( directionalShadowMap[ i ], directionalLightShadow.shadowMapSize, directionalLightShadow.shadowBias, directionalLightShadow.shadowRadius, vDirectionalShadowCoord[ i ] )');
+        shader.fragmentShader = shader.fragmentShader
+            .replace('#include <common>', `#include <common>
+                ${cloudFieldGlsl}
+                varying vec3 vWorldCloudPosition;
+                uniform vec2 worldCloudProjection;
+                uniform float worldCloudShade;
+            `)
+            .replace('#include <shadowmap_pars_fragment>', `#include <shadowmap_pars_fragment>
+                ${hardwareShadow ? '#define WORLD_TERRAIN_DEPTH_TEXTURE' : ''}
+                ${terrainReceiver ? worldTerrainShadowReceiver : ''}`)
+            .replace('#include <lights_fragment_begin>', lighting);
+    };
+}
 
 // Единое небо: время плавно смешивает день и ночь, облачность меняет покрытие.
 const worldSkySphere = (() => {
     const geometry = new THREE.SphereGeometry(980, 64, 40);
     const material = new THREE.ShaderMaterial({
         uniforms: {
-            cloudTexture: { value: cloudTexture },
+            ...cloudField,
             dayTopColor: { value: new THREE.Color(0x5c9db8) },
             dayBottomColor: { value: new THREE.Color(0xd5d5bd) },
             nightTopColor: { value: new THREE.Color(0x08111d) },
             nightBottomColor: { value: new THREE.Color(0x263646) },
+            horizonColor: { value: scene.fog.color },
             daylight: { value: 1 },
             clarity: { value: 1 },
             starlight: { value: 0 },
             starRotation: { value: 0 }
         },
         vertexShader: `
-            varying vec2 vUv;
             varying vec3 vPosition;
             void main() {
-                vUv = uv;
                 vPosition = position;
                 gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
             }
         `,
         fragmentShader: `
-            uniform sampler2D cloudTexture;
+            ${cloudFieldGlsl}
             uniform vec3 dayTopColor;
             uniform vec3 dayBottomColor;
             uniform vec3 nightTopColor;
             uniform vec3 nightBottomColor;
+            uniform vec3 horizonColor;
             uniform float daylight;
             uniform float clarity;
             uniform float starlight;
             uniform float starRotation;
-            varying vec2 vUv;
             varying vec3 vPosition;
 
             void main() {
                 vec3 direction = normalize(vPosition);
-                float h = smoothstep(-0.08, 0.8, direction.y);
+                float h = smoothstep(-0.16, 0.8, direction.y);
                 vec3 dayColor = mix(dayBottomColor, dayTopColor, h);
                 vec3 nightColor = mix(nightBottomColor, nightTopColor, h);
                 vec3 skyColor = mix(nightColor, dayColor, daylight);
-                float cloudPattern = smoothstep(0.04, 0.38, texture2D(cloudTexture, vUv).a);
-                float cloudCover = mix(0.82 + cloudPattern * 0.18, cloudPattern * 0.5, clarity);
+                // Пересечение луча с изогнутым слоем убирает край плоскости у горизонта.
+                const float curvature = 8400.0;
+                vec3 origin = cameraPosition + vec3(0.0, curvature, 0.0);
+                float along = dot(origin, direction);
+                float cloudRadius = curvature + worldCloudHeight;
+                float root = sqrt(max(0.0, along * along + cloudRadius * cloudRadius - dot(origin, origin)));
+                float nearHit = -along - root;
+                float cloudDistance = nearHit > 0.0 ? nearHit : max(0.0, -along + root);
+                vec2 cloudPoint = cameraPosition.xz + direction.xz * cloudDistance;
+                vec4 cloudSample = worldCloudSample(cloudPoint);
+                vec4 higherCloud = worldCloudSample(cloudPoint * 0.63 + vec2(780.0, 360.0));
+                float cloudPattern = smoothstep(0.28, 0.79, cloudSample.a * 0.82 + higherCloud.a * 0.18);
+                float cloudDepth = (1.0 - smoothstep(1050.0, 3450.0, cloudDistance))
+                    * smoothstep(-0.045, 0.18, direction.y) * step(0.001, cloudDistance);
+                float cloudCover = mix(0.74 + cloudPattern * 0.26,
+                    cloudPattern * mix(0.48, 0.9, cloudSample.r), clarity) * cloudDepth;
                 vec3 cloudColor = mix(vec3(0.09, 0.11, 0.14), vec3(0.52, 0.56, 0.59), daylight);
-                cloudColor += vec3(0.1, 0.1, 0.09) * daylight * cloudPattern;
-                vec3 finalColor = mix(skyColor, cloudColor, cloudCover);
+                cloudColor += vec3(0.18, 0.18, 0.16) * daylight * cloudSample.g;
+                cloudColor -= vec3(0.05, 0.05, 0.04) * cloudSample.r;
+                float horizonHaze = 1.0 - smoothstep(-0.025, 0.28, direction.y);
+                vec3 hazeColor = linearToOutputTexel(vec4(horizonColor, 1.0)).rgb;
+                vec3 finalColor = mix(mix(skyColor, cloudColor, cloudCover), hazeColor, horizonHaze);
                 vec3 rotatedStars = vec3(
                     direction.x * cos(starRotation) + direction.y * sin(starRotation),
                     direction.y * cos(starRotation) - direction.x * sin(starRotation),
@@ -362,7 +513,8 @@ const worldSkySphere = (() => {
                 vec2 starCell = floor(starGrid);
                 float starSeed = fract(sin(dot(starCell, vec2(12.9898, 78.233))) * 43758.5453);
                 float starShape = 1.0 - smoothstep(0.04, 0.16, length(fract(starGrid) - 0.5));
-                float star = step(0.975, starSeed) * starShape * starlight * clarity * (1.0 - cloudCover);
+                float star = step(0.975, starSeed) * starShape * starlight * clarity
+                    * (1.0 - cloudCover) * (1.0 - horizonHaze);
                 finalColor += vec3(0.9, 0.95, 1.0) * star;
                 gl_FragColor = vec4(finalColor, 1.0);
             }
@@ -415,7 +567,8 @@ worldSkySphere.add(sunDisc);
 worldSkySphere.add(moonDisc);
 
 let celestialMinutes = 480;
-const MIN_WORLD_SHADOW_LIGHT_Y = 0.8;
+const MIN_WORLD_SHADOW_LIGHT_Y = 0.35;
+const MAX_WORLD_SHADOW_LIGHT_SLOPE = 1;
 
 function updateCelestialPositions() {
     const angle = celestialMinutes >= 360 && celestialMinutes < 1200
@@ -431,12 +584,15 @@ function updateCelestialPositions() {
     stars.rotation.z = angle;
 
     const celestialLightDirection = sunDirection.y > 0 ? sunDirection : moonDirection;
-    // Keep the visible sun low at dawn/dusk without stretching terrain shadows across several tiles.
+    // Ограничиваем только скользящие лучи у самого горизонта.
     const lightDirection = new THREE.Vector3(
         celestialLightDirection.x,
-        Math.max(celestialLightDirection.y, MIN_WORLD_SHADOW_LIGHT_Y),
+        // В масштабе глобальной карты полуденный свет сохраняет читаемую тень перепадов.
+        Math.min(Math.max(celestialLightDirection.y, MIN_WORLD_SHADOW_LIGHT_Y),
+            Math.hypot(celestialLightDirection.x, celestialLightDirection.z) * MAX_WORLD_SHADOW_LIGHT_SLOPE),
         celestialLightDirection.z,
     ).normalize();
+    cloudField.worldCloudProjection.value.set(lightDirection.x / lightDirection.y, lightDirection.z / lightDirection.y);
     const centerX = (MAX_CHUNK_X + 1) * CHUNK_SIZE / 2;
     const centerZ = (MAX_CHUNK_Y + 1) * CHUNK_SIZE / 2;
     directionalLight.target.position.set(centerX, 0, centerZ);
@@ -454,13 +610,16 @@ export function setCelestialTime(minutes) {
     updateCelestialPositions();
 }
 
-export function setSkyConditions(daylight, clarity, starlight) {
+export function setSkyConditions(daylight, clarity, starlight, emission = 0) {
     const day = THREE.MathUtils.clamp(Number(daylight) || 0, 0, 1);
     const clear = THREE.MathUtils.clamp(Number(clarity) || 0, 0, 1);
     const visibleStars = THREE.MathUtils.clamp(Number(starlight) || 0, 0, 1);
+    cloudField.worldCloudShade.value = day * (.20 + (1 - clear) * .14);
     worldSkySphere.material.uniforms.daylight.value = day;
     worldSkySphere.material.uniforms.clarity.value = clear;
     worldSkySphere.material.uniforms.starlight.value = visibleStars;
+    const dayHorizon = new THREE.Color(0xaab4b6).lerp(new THREE.Color(0x9fb6be), clear);
+    scene.fog.color.setHex(0x243444).lerp(dayHorizon, day).lerp(new THREE.Color(0xaa3333), emission);
     stars.material.opacity = visibleStars * clear;
     stars.visible = stars.material.opacity > 0.01;
     sunDisc.material.opacity = (0.06 + 0.94 * clear) * (0.35 + 0.65 * day);
@@ -471,6 +630,7 @@ export function setSkyConditions(daylight, clarity, starlight) {
 // ===== Конец неба =====
 
 const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 5000);
+const worldCrowFlight = createCrowFlight(THREE, scene, { scale: 2.7, speed: 10, altitude: 39, spacing: 4, camera });
 camera.position.set(256, 300, 256);
 camera.lookAt(256, 0, 256);
 
@@ -485,6 +645,29 @@ renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 if (!renderer.isUnavailableRenderer) {
     renderer.shadowMap.autoUpdate = false;
     renderer.shadowMap.needsUpdate = true;
+    const renderShadowMap = renderer.shadowMap.render;
+    renderer.shadowMap.render = function(...args) {
+        if (!this.enabled || !this.needsUpdate) return renderShadowMap.apply(this, args);
+        const outsideView = [];
+        // Склон за краем кадра по-прежнему может затенять видимую землю.
+        for (const chunk of chunksMap.values()) {
+            if (!chunkWithinHorizontalDistance(chunk.bounds, controls.target, TERRAIN_RENDER_DISTANCE + CHUNK_SIZE)) continue;
+            for (const mesh of [chunk.terrainSurface, chunk.smoothTerrain, chunk.waterBank]) {
+                if (mesh?.castShadow && !mesh.visible) {
+                    outsideView.push(mesh);
+                    mesh.visible = true;
+                }
+            }
+        }
+        try {
+            worldTrees.prepareShadows(directionalLight, camera, renderer.domElement.height, chunk => chunkWithinHorizontalDistance(
+                chunk.bounds, controls.target, NATURAL_DETAIL_DISTANCE));
+            return renderShadowMap.apply(this, args);
+        } finally {
+            worldTrees.hideShadows();
+            for (const mesh of outsideView) mesh.visible = false;
+        }
+    };
 }
 const globalCanvasContainer = document.getElementById('canvas-container');
 globalCanvasContainer.appendChild(renderer.domElement);
@@ -495,6 +678,8 @@ if (renderer.isUnavailableRenderer) {
 }
 
 const controls = new OrbitControls(camera, renderer.domElement);
+let worldCameraChanged = true;
+controls.addEventListener('change', () => { worldCameraChanged = true; });
 controls.enablePointerCapture = false;
 controls.enableDamping = true;
 controls.dampingFactor = 0.05;
@@ -541,14 +726,59 @@ directionalLight.shadow.camera.left = -400;
 directionalLight.shadow.camera.right = 400;
 directionalLight.shadow.camera.top = 400;
 directionalLight.shadow.camera.bottom = -400;
-directionalLight.shadow.bias = 0;
-directionalLight.shadow.normalBias = 0;
+directionalLight.shadow.bias = -0.00002;
+directionalLight.shadow.normalBias = .02;
 scene.add(directionalLight);
 scene.add(directionalLight.target);
+
+let worldTerrainDepthTexture = null;
+if (renderer.capabilities?.isWebGL2) {
+    const size = Math.min(directionalLight.shadow.mapSize.x, renderer.capabilities.maxTextureSize);
+    directionalLight.shadow.mapSize.set(size, size);
+    worldTerrainDepthTexture = new THREE.DepthTexture(size, size, THREE.UnsignedIntType);
+    worldTerrainDepthTexture.compareFunction = THREE.LessEqualCompare;
+    worldTerrainDepthTexture.minFilter = worldTerrainDepthTexture.magFilter = THREE.LinearFilter;
+    directionalLight.shadow.map = new THREE.WebGLRenderTarget(size, size, {
+        minFilter: THREE.NearestFilter,
+        magFilter: THREE.NearestFilter,
+        depthTexture: worldTerrainDepthTexture,
+    });
+}
+
+let worldShadowRadius = 0;
+const worldShadowFocus = new THREE.Vector3(Infinity, 0, Infinity);
+const worldShadowDirection = new THREE.Vector3();
+function fitWorldShadowCamera() {
+    const viewRadius = camera.position.distanceTo(controls.target) * Math.tan(camera.fov * Math.PI / 360)
+        * Math.max(1, camera.aspect);
+    const radius = Math.max(20, Math.min(400, viewRadius * 1.6 + 12));
+    const moved = Math.hypot(controls.target.x - worldShadowFocus.x, controls.target.z - worldShadowFocus.z);
+    const recentered = directionalLight.target.position.x !== worldShadowFocus.x
+        || directionalLight.target.position.z !== worldShadowFocus.z;
+    if (!recentered && moved < worldShadowRadius * .15
+        && radius > worldShadowRadius * .7 && radius < worldShadowRadius * 1.15) return;
+    worldShadowDirection.subVectors(directionalLight.position, directionalLight.target.position);
+    worldShadowRadius = radius;
+    // Центр привязан к сетке карты глубины, чтобы мелкое движение камеры не сдвигало рисунок тени.
+    const texel = 2 * radius / directionalLight.shadow.mapSize.x;
+    directionalLight.shadow.radius = .085 / texel;
+    worldShadowFocus.set(Math.round(controls.target.x / texel) * texel, 0,
+        Math.round(controls.target.z / texel) * texel);
+    directionalLight.target.position.copy(worldShadowFocus);
+    directionalLight.position.copy(worldShadowFocus).add(worldShadowDirection);
+    const shadowCamera = directionalLight.shadow.camera;
+    shadowCamera.left = shadowCamera.bottom = -radius;
+    shadowCamera.right = shadowCamera.top = radius;
+    shadowCamera.updateProjectionMatrix();
+    directionalLight.target.updateMatrixWorld();
+    markWorldShadowsDirty();
+}
 
 const fillLight = new THREE.DirectionalLight(0xffffff, 0.3);
 fillLight.position.set(-50, 50, -50);
 scene.add(fillLight);
+for (const material of [worldTreeMaterial, houseMat, fenceMat, landmarkMat]) applyWorldCloudShade(material);
+applyWorldCloudShade(roadMaterial, true);
 
 const raycaster = new THREE.Raycaster();
 const mouse = new THREE.Vector2();
@@ -654,10 +884,10 @@ function refreshFenceChunkNeighbors(cx,cy) {
     }
 }
 
-function getGeometryForType(type) {
+function getGeometryForType(type, x, z) {
+    if (type === 'tree' || type === 'forest') return worldTrees.geometry(type === 'tree' ? worldTreeSpecies(x, z) : type, 'middle');
     if (WORLD_LANDMARKS[type]) return WORLD_LANDMARKS[type].geometry;
     switch(type) {
-        case 'tree': return treeGeo;
         case 'house': return houseGeo;
         case 'fence': return fenceGeo;
         default: return new THREE.BoxGeometry(0.5, 0.5, 0.5);
@@ -686,6 +916,10 @@ export function createPreviewObject(tile, params) {
         previewObject.scale.setScalar(scale);
         previewObject.rotation.y = THREE.MathUtils.degToRad(rotation);
         previewObject.material.color.set(color);
+        if (type === 'tree' || type === 'forest') {
+            previewObject.geometry = getGeometryForType(type, worldX, worldZ);
+            previewObject.material.color.copy(worldTrees.colorTint(previewObject.material.color, type));
+        }
         if(type==='fence'){previewObject.matrixAutoUpdate=false;setFenceMatrix(previewObject.matrix,params,worldX,worldZ)}
         return;
     }
@@ -707,9 +941,11 @@ export function createWorldObjectPreviewMesh(tile, params) {
     if (type === 'anomaly') {
         obj = createAnomalyPreview(worldX, yPos, worldZ, anomalyType, color, scale);
     } else {
-        const geo = getGeometryForType(type);
-        const mat = type === 'fence' ? fenceMat.clone() : new THREE.MeshStandardMaterial();
+        const geo = getGeometryForType(type, worldX, worldZ);
+        const vegetation = type === 'tree' || type === 'forest';
+        const mat = type === 'fence' ? fenceMat.clone() : vegetation ? worldTreeMaterial.clone() : new THREE.MeshStandardMaterial();
         mat.color.set(color);
+        if (vegetation) mat.color.copy(worldTrees.colorTint(mat.color, type));
         mat.transparent = true;
         mat.opacity = 0.5;
         obj = new THREE.Mesh(geo, mat);
@@ -1127,6 +1363,8 @@ const worldWaterBankMat = new THREE.MeshStandardMaterial({
     map: getSurfaceTexture(THREE, 'local_terrain'), vertexColors: true,
     side: THREE.DoubleSide, roughness: 0.97,
 });
+applyWorldCloudShade(waterMat, true);
+applyWorldCloudShade(worldWaterBankMat, true);
 const groundGeo = new THREE.BoxGeometry(1, 1, 1);
 // Terrain surfaces already cover the box tops. Keep the full box for picking,
 // but submit only its sides to avoid shading the buried caps a second time.
@@ -1162,12 +1400,15 @@ function raycastSmoothTerrain(raycaster, intersections) {
         this.geometry.setIndex(renderedIndex);
     }
 }
-const groundMat = new THREE.MeshStandardMaterial({ map: getSurfaceTexture(THREE, 'local_terrain') });
+const groundPickingMat = new THREE.MeshBasicMaterial({ visible: false });
+const groundMat = new THREE.MeshStandardMaterial({ map: getSurfaceTexture(THREE, 'local_terrain'), vertexColors: true });
 const smoothGroundMat = new THREE.MeshStandardMaterial({
     map: getSurfaceTexture(THREE, 'local_terrain'), vertexColors: true, side: THREE.DoubleSide,
 });
 worldTerrainMaterials.apply(groundMat, { sides: true });
 worldTerrainMaterials.apply(smoothGroundMat, { sides: true, smooth: true });
+applyWorldCloudShade(groundMat, true);
+applyWorldCloudShade(smoothGroundMat, true);
 let worldTerrainSidesPrepared = false;
 let worldIceSurfaceMaterial = null;
 
@@ -1233,6 +1474,43 @@ function prepareWorldTerrainSides() {
 }
 worldTerrainMaterials.apply(worldWaterBankMat, { sides:true, smooth:true, shore:true });
 
+const worldTerrainMinShadowRise = 0.075;
+const worldTerrainShadowDepth = new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking });
+worldTerrainShadowDepth.onBeforeCompile = shader => {
+    // Малый зазор оставляет видимую тень у невысокого рельефа.
+    shader.vertexShader = shader.vertexShader.replace('#include <begin_vertex>',
+        '#include <begin_vertex>\ntransformed.y -= 0.035;');
+};
+
+function applyWorldTerrainShadows(mesh, castsShadow) {
+    mesh.castShadow = castsShadow;
+    mesh.material.shadowSide = THREE.DoubleSide;
+    mesh.customDepthMaterial = worldTerrainShadowDepth;
+    mesh.onBeforeShadow = (_renderer, _object, _camera, _shadowCamera, geometry) => {
+        geometry.setDrawRange(geometry.userData.terrainShadowStart, Infinity);
+    };
+    mesh.onAfterShadow = (_renderer, _object, _camera, _shadowCamera, geometry) => {
+        geometry.setDrawRange(0, Infinity);
+    };
+}
+
+function partitionWorldTerrainShadowIndices(geometry) {
+    const indices = geometry.index.array, positions = geometry.attributes.position;
+    let shadowStart = indices.length;
+    for (let i = indices.length - 3; i >= 0; i -= 3) {
+        const a = positions.getY(indices[i]), b = positions.getY(indices[i + 1]), c = positions.getY(indices[i + 2]);
+        if (Math.max(a, b, c) - Math.min(a, b, c) < worldTerrainMinShadowRise) continue;
+        shadowStart -= 3;
+        for (let j = 0; j < 3; j++) {
+            const index = indices[i + j];
+            indices[i + j] = indices[shadowStart + j];
+            indices[shadowStart + j] = index;
+        }
+    }
+    geometry.userData.terrainShadowStart = shadowStart;
+    return shadowStart < indices.length;
+}
+
 function refreshWorldTerrainSurface(entry, smoothData) {
     const metrics = typeof window !== 'undefined' && window.worldLoadMetrics?.fullLoadMs === null
         ? window.worldLoadMetrics : null;
@@ -1268,19 +1546,27 @@ function refreshWorldTerrainSurface(entry, smoothData) {
             addVertex(left + 1, y, near + 1, 0, 1, 0);
         }
     }
-    for (let index = 0; index < smoothData.topByVertex.length; index += 3) {
-        if (smoothData.topByVertex[index] < 0.5) continue;
-        for (let corner = 0; corner < 3; corner++) {
-            const offset = (index + corner) * 3;
-            addVertex(smoothData.positions[offset] + baseX - 1,
-                smoothData.positions[offset + 1] + 0.002,
-                smoothData.positions[offset + 2] + baseZ - 1,
-                smoothData.normals[offset], smoothData.normals[offset + 1], smoothData.normals[offset + 2]);
+    let shadowStart;
+    for (const casts of [false, true]) {
+        if (casts) shadowStart = positions.length / 3;
+        for (let index = 0; index < smoothData.topByVertex.length; index += 3) {
+            if (smoothData.topByVertex[index] < 0.5) continue;
+            const first = index * 3;
+            const a = smoothData.positions[first + 1], b = smoothData.positions[first + 4], c = smoothData.positions[first + 7];
+            if ((Math.max(a, b, c) - Math.min(a, b, c) >= worldTerrainMinShadowRise) !== casts) continue;
+            for (let corner = 0; corner < 3; corner++) {
+                const offset = first + corner * 3;
+                addVertex(smoothData.positions[offset] + baseX - 1,
+                    smoothData.positions[offset + 1] + 0.002,
+                    smoothData.positions[offset + 2] + baseZ - 1,
+                    smoothData.normals[offset], smoothData.normals[offset + 1], smoothData.normals[offset + 2]);
+            }
         }
     }
     if (!positions.length) {
         clearWorldIceSurface(entry);
         if (entry.terrainSurface) {
+            if (entry.terrainSurface.castShadow) renderer.shadowMap.needsUpdate = true;
             scene.remove(entry.terrainSurface);
             entry.terrainSurface.geometry.dispose();
             entry.terrainSurface.material.dispose();
@@ -1300,11 +1586,15 @@ function refreshWorldTerrainSurface(entry, smoothData) {
     geometry.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
     geometry.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
     refreshWorldIceSurface(entry, geometry);
+    geometry.userData.terrainShadowStart = shadowStart;
+    const castsTerrainShadow = shadowStart < positions.length / 3;
+    if (castsTerrainShadow || entry.terrainSurface?.castShadow) renderer.shadowMap.needsUpdate = true;
     if (entry.terrainSurface) {
         const previousGeometry = entry.terrainSurface.geometry;
         entry.terrainSurface.geometry = geometry;
         previousGeometry.dispose();
         entry.terrainSurface.visible = entry.terrainVisible;
+        entry.terrainSurface.castShadow = castsTerrainShadow;
         if (metrics) metrics.terrainStages.geometryMs += performance.now() - geometryStartedAt;
         return;
     }
@@ -1313,6 +1603,7 @@ function refreshWorldTerrainSurface(entry, smoothData) {
     mesh.frustumCulled = false;
     mesh.visible = entry.terrainVisible;
     mesh.receiveShadow = true;
+    applyWorldTerrainShadows(mesh, castsTerrainShadow);
     mesh.raycast = () => {};
     scene.add(mesh);
     entry.terrainSurface = mesh;
@@ -1326,6 +1617,7 @@ function createWorldTerrainSurfaceMaterial(texture, layer) {
     });
     worldGrassDetail.apply(material);
     layer?.apply(material);
+    applyWorldCloudShade(material, true);
     return material;
 }
 
@@ -1335,7 +1627,7 @@ function prepareWorldTerrainSurfaceShader() {
     const startedAt = performance.now();
     const texture = new THREE.DataTexture(new Uint8Array([255, 255, 255, 255]), 1, 1,
         THREE.RGBAFormat, THREE.UnsignedByteType);
-    texture.encoding = THREE.sRGBEncoding;
+    texture.colorSpace = THREE.SRGBColorSpace;
     worldTerrainWarmupMaterial = createWorldTerrainSurfaceMaterial(texture, worldTerrainMaterials);
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute('position', new THREE.Float32BufferAttribute([0, 0, 0, 1, 0, 0, 0, 0, 1], 3));
@@ -1440,7 +1732,7 @@ function refreshWorldTerrainPixels(entry) {
         texture.magFilter = THREE.LinearFilter;
         texture.minFilter = THREE.LinearMipmapLinearFilter;
         texture.generateMipmaps = true;
-        texture.encoding = THREE.sRGBEncoding;
+        texture.colorSpace = THREE.SRGBColorSpace;
         texture.needsUpdate = true;
         entry.terrainTexture = texture;
     } else if (entry.terrainTextureRegion) {
@@ -1648,6 +1940,18 @@ function refreshWorldTerrainChunk(entry, neighborOnly = false, preview = false) 
         }
     }
     entry.ground.instanceMatrix.needsUpdate = true;
+    const groundSides = buildWorldGroundSides(THREE, entry.ground, entry.groundIndices, CHUNK_SIZE);
+    if (entry.groundSides) {
+        entry.groundSides.geometry.dispose();
+        entry.groundSides.geometry = groundSides;
+    } else {
+        entry.groundSides = new THREE.Mesh(groundSides, groundMat);
+        entry.groundSides.receiveShadow = true;
+        entry.groundSides.frustumCulled = false;
+        entry.groundSides.raycast = () => {};
+        scene.add(entry.groundSides);
+    }
+    entry.groundSides.visible = entry.terrainVisible;
     if (metrics) {
         metrics.terrainStages.dependentMeshesMs += performance.now() - stageStartedAt;
         stageStartedAt = performance.now();
@@ -1686,8 +1990,10 @@ function refreshWorldTerrainChunk(entry, neighborOnly = false, preview = false) 
         if (data.topByVertex[i] < 0.5) sideIndices.push(i, i + 1, i + 2);
     }
     const maxIndex = sideIndices[sideIndices.length - 1] || 0;
-    if (maxIndex < 65535 || renderer.capabilities.isWebGL2 || renderer.extensions.has('OES_element_index_uint')) {
+    const hasSideIndex = maxIndex < 65535 || renderer.capabilities.isWebGL2 || renderer.extensions.has('OES_element_index_uint');
+    if (hasSideIndex) {
         geometry.setIndex(sideIndices);
+        partitionWorldTerrainShadowIndices(geometry);
     }
     // Retain references to the existing CPU attributes, not a second geometry.
     entry.smoothTerrainData = { ...data,
@@ -1699,6 +2005,8 @@ function refreshWorldTerrainChunk(entry, neighborOnly = false, preview = false) 
     mesh.position.set(chunkX * CHUNK_SIZE - 1, 0, chunkY * CHUNK_SIZE - 1);
     mesh.frustumCulled = false;
     mesh.receiveShadow = true;
+    applyWorldTerrainShadows(mesh, hasSideIndex && geometry.userData.terrainShadowStart < sideIndices.length);
+    if (mesh.castShadow) renderer.shadowMap.needsUpdate = true;
     mesh.visible = entry.terrainVisible;
     scene.add(mesh);
     entry.smoothTerrain = mesh;
@@ -1796,7 +2104,7 @@ function refreshWorldWaterChunk(entry, padded) {
         mesh.visible = entry.terrainVisible;
         mesh.raycast = () => {};
         mesh.castShadow = false;
-        mesh.receiveShadow = false;
+        mesh.receiveShadow = true;
         scene.add(mesh);
         entry.waterSurface = mesh;
     }
@@ -1822,6 +2130,8 @@ function refreshWorldWaterChunk(entry, padded) {
         mesh.visible = entry.terrainVisible;
         mesh.raycast = () => {};
         mesh.receiveShadow = true;
+        applyWorldTerrainShadows(mesh, partitionWorldTerrainShadowIndices(geometry));
+        if (mesh.castShadow) renderer.shadowMap.needsUpdate = true;
         scene.add(mesh);
         entry.waterBank = mesh;
     }
@@ -1989,9 +2299,9 @@ function createLandmarkMeshes(tilesData, types = WORLD_LANDMARK_TYPES) {
     return Object.fromEntries(types.map(type => {
         const count = counts[type];
         if (!count) return [type, null];
-        const mesh = new THREE.InstancedMesh(WORLD_LANDMARKS[type].geometry, landmarkMat, count);
+        const mesh = new THREE.InstancedMesh(WORLD_LANDMARKS[type].geometry, type === 'forest' ? treeMat : landmarkMat, count);
         mesh.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(count * 3), 3);
-        mesh.castShadow = type !== 'road';
+        mesh.castShadow = type !== 'road' && type !== 'forest';
         mesh.receiveShadow = false;
         return [type, mesh];
     }));
@@ -2131,7 +2441,7 @@ export function addChunk(cx, cy, tilesData) {
     const size = tilesData.length;
     const totalTiles = size * size;
 
-    const groundInstances = new THREE.InstancedMesh(groundSideGeo, groundMat, totalTiles);
+    const groundInstances = new THREE.InstancedMesh(groundSideGeo, groundPickingMat, totalTiles);
     groundInstances.raycast = raycastGroundInstances;
     groundInstances.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(totalTiles * 3), 3);
 
@@ -2141,7 +2451,7 @@ export function addChunk(cx, cy, tilesData) {
     groundInstances.receiveShadow = true;
     groundInstances.frustumCulled = false;
     waterInstances.castShadow = false;
-    waterInstances.receiveShadow = false;
+    waterInstances.receiveShadow = true;
     waterInstances.frustumCulled = false;
 
     let treeCount = 0, houseCount = 0, fenceCount = 0;
@@ -2161,7 +2471,6 @@ export function addChunk(cx, cy, tilesData) {
     const treeInstances = treeCount > 0 ? new THREE.InstancedMesh(treeGeo, treeMat, treeCount) : null;
     if (treeInstances) {
         treeInstances.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(treeCount * 3), 3);
-        treeInstances.castShadow = true;
         treeInstances.receiveShadow = false;
     }
 
@@ -2300,6 +2609,7 @@ export function addChunk(cx, cy, tilesData) {
         waterShoreDirty: true,
         ...terrainIndices,
         bounds: box,
+        objectBoundsDirty: true,
         objectIndices: objectIndices,
         pendingRebuild: null,
         roadBoundaryDirty: false
@@ -2332,6 +2642,10 @@ export function removeChunk(cx, cy) {
     }
 
     scene.remove(entry.ground);
+    if (entry.groundSides) {
+        scene.remove(entry.groundSides);
+        entry.groundSides.geometry.dispose();
+    }
     scene.remove(entry.water);
     if (entry.waterSurface) {
         scene.remove(entry.waterSurface);
@@ -2434,6 +2748,7 @@ function updateTileObjectsPositions(entry, tileX, tileY, newHeight) {
     for (const mesh of Object.values(entry.landmarks || {})) {
         if (mesh) mesh.instanceMatrix.needsUpdate = true;
     }
+    entry.objectBoundsDirty = true;
 }
 
 // --- Пересборка отмеченных групп; без списка выполняется полная объектная сборка ---
@@ -2492,7 +2807,6 @@ function rebuildChunkObjects(entry, groups = null) {
         ? (treeCount > 0 ? new THREE.InstancedMesh(treeGeo, treeMat, treeCount) : null) : entry.trees;
     if (updateTrees && treeInstances) {
         treeInstances.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(treeCount * 3), 3);
-        treeInstances.castShadow = true;
         treeInstances.receiveShadow = false;
     }
 
@@ -2606,6 +2920,7 @@ function rebuildChunkObjects(entry, groups = null) {
         entry.farAnomalyActive = [];
     }
     entry.objectIndices = objectIndices;
+    entry.objectBoundsDirty = true;
     lastChunkVisibilityAt = -Infinity;
     lastHoverRaycastAt = -Infinity;
     markWorldShadowsDirty();
@@ -2805,6 +3120,24 @@ function chunkWithinHorizontalDistance(bounds, focus, distance) {
     return dx * dx + dz * dz <= distance * distance;
 }
 
+const worldObjectBoundsScratch = new THREE.Box3();
+
+function refreshWorldObjectBounds(chunk) {
+    if (!chunk.objectBoundsDirty) return;
+    chunk.objectBounds ||= new THREE.Box3();
+    chunk.objectBounds.makeEmpty();
+    for (const mesh of [chunk.trees, chunk.houses, chunk.fences, ...Object.values(chunk.landmarks || {})]) {
+        if (!mesh?.count) continue;
+        mesh.computeBoundingBox();
+        mesh.boundingSphere ||= new THREE.Sphere();
+        mesh.boundingBox.getBoundingSphere(mesh.boundingSphere);
+        mesh.updateWorldMatrix(true, false);
+        worldObjectBoundsScratch.copy(mesh.boundingBox).applyMatrix4(mesh.matrixWorld);
+        chunk.objectBounds.union(worldObjectBoundsScratch);
+    }
+    chunk.objectBoundsDirty = false;
+}
+
 function updateChunkVisibility() {
     camera.updateMatrixWorld();
     chunkFrustum.setFromProjectionMatrix(chunkProjectionMatrix.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse));
@@ -2812,39 +3145,39 @@ function updateChunkVisibility() {
 
     chunksMap.forEach((chunk) => {
         if (!chunk.bounds) return;
+        refreshWorldObjectBounds(chunk);
 
         if (!chunkWithinHorizontalDistance(chunk.bounds, controls.target, TERRAIN_RENDER_DISTANCE)) {
             setVisible(chunk, false);
             return;
         }
 
-        const visible = chunkFrustum.intersectsBox(chunk.bounds);
+        const terrainVisible = chunkFrustum.intersectsBox(chunk.bounds);
+        const visible = terrainVisible || Boolean(chunk.objectBounds && !chunk.objectBounds.isEmpty()
+            && chunkFrustum.intersectsBox(chunk.objectBounds));
         setVisible(
             chunk,
             visible,
             visible && chunkWithinHorizontalDistance(chunk.bounds, controls.target, NATURAL_DETAIL_DISTANCE),
             visible && chunkWithinHorizontalDistance(chunk.bounds, controls.target, STRUCTURE_DETAIL_DISTANCE),
             visible && chunkWithinHorizontalDistance(chunk.bounds, controls.target, ANOMALY_DETAIL_DISTANCE),
+            terrainVisible,
         );
     });
 }
 
-function setVisible(chunk, visible, naturalVisible = false, structureVisible = false, anomalyVisible = false) {
-    const groundVisible = visible && chunk.ground?.count !== 0;
-    const waterVisible = visible && chunk.water?.count !== 0;
-    const visibilityChanged = (chunk.ground && chunk.ground.visible !== groundVisible)
-        || (chunk.terrainSurface && chunk.terrainSurface.visible !== groundVisible)
-        || (chunk.smoothTerrain && chunk.smoothTerrain.visible !== groundVisible)
-        || (chunk.waterSurface && chunk.waterSurface.visible !== waterVisible)
-        || (chunk.waterBank && chunk.waterBank.visible !== waterVisible)
-        || (chunk.trees && chunk.trees.visible !== naturalVisible)
-        || (chunk.houses && chunk.houses.visible !== structureVisible)
+function setVisible(chunk, visible, naturalVisible = false, structureVisible = false, anomalyVisible = false, terrainVisible = visible) {
+    const groundVisible = terrainVisible && chunk.ground?.count !== 0;
+    const waterVisible = terrainVisible && chunk.water?.count !== 0;
+    // Рельеф и деревья отбираются отдельно при отрисовке теней.
+    const casterVisibilityChanged = (chunk.houses && chunk.houses.visible !== structureVisible)
         || (chunk.fences && chunk.fences.visible !== naturalVisible)
         || Object.entries(chunk.landmarks || {}).some(([type, mesh]) => (
-            mesh && mesh.visible !== (type === 'forest' ? naturalVisible : structureVisible)
+            mesh?.castShadow && type !== 'forest' && mesh.visible !== structureVisible
         ));
     chunk.terrainVisible = visible;
     if (chunk.ground) chunk.ground.visible = groundVisible;
+    if (chunk.groundSides) chunk.groundSides.visible = groundVisible;
     if (chunk.terrainSurface) chunk.terrainSurface.visible = groundVisible;
     if (chunk.iceSurface) chunk.iceSurface.visible = groundVisible;
     if (chunk.smoothTerrain) chunk.smoothTerrain.visible = groundVisible;
@@ -2859,7 +3192,7 @@ function setVisible(chunk, visible, naturalVisible = false, structureVisible = f
     }
     for (const mesh of chunk.roads || []) mesh.visible = visible;
     updateFarAnomalyInstances(chunk, anomalyVisible);
-    if (visibilityChanged) markWorldShadowsDirty();
+    if (casterVisibilityChanged) markWorldShadowsDirty();
 }
 
 export function setEditMode(enabled) {
@@ -3226,14 +3559,20 @@ function animate() {
         window.updateWorldSculpt?.(now);
         refreshWorldTerrainBrushPreview();
         updateGlobalCameraMovement(Math.min(0.1, Math.max(0, delta)));
-        const cameraMoved = controls.update();
-        if (cameraMoved || now - lastChunkVisibilityAt >= CHUNK_VISIBILITY_REFRESH_MS) {
+        controls.update();
+        const cameraMoved = worldCameraChanged;
+        worldCameraChanged = false;
+        if (cameraMoved || worldShadowsDirty) fitWorldShadowCamera();
+        if (cameraMoved || worldShadowsDirty || now - lastChunkVisibilityAt >= CHUNK_VISIBILITY_REFRESH_MS) {
             updateChunkVisibility();
+            worldTrees.updateVisible(camera, chunkFrustum, renderer.domElement.height);
             lastChunkVisibilityAt = now;
         }
         updateRain(delta);
         animateChunkAnomalies(now);
         waterTexture.offset.set((now * 0.000002) % 1, (now * 0.000001) % 1);
+        cloudField.worldCloudDrift.value.set((-now * 0.00000083) % 1, (now * 0.00000036) % 1);
+        if (chunksMap.size) worldCrowFlight.update(delta, (MAX_CHUNK_X + 1) * CHUNK_SIZE, (MAX_CHUNK_Y + 1) * CHUNK_SIZE);
         worldSkySphere.position.copy(camera.position);
         stars.position.copy(camera.position);
 
@@ -3280,6 +3619,7 @@ function animate() {
 animate();
 
 window.addEventListener('resize', () => {
+    worldCameraChanged = true;
     camera.aspect = window.innerWidth / window.innerHeight;
     camera.updateProjectionMatrix();
     renderer.setSize(window.innerWidth, window.innerHeight);

@@ -51,21 +51,29 @@ test('надевание перчаток из стопки сохраняет �
 });
 test('перенос в пустые карманы учитывает вместимость после перерисовки',async()=>{
     const data={inventory:{pockets:[],backpack:[{id:'ammo',volume:2,quantity:2}]}};
-    const handlers={},notices=[];
-    const dropTarget={classList:{add(){},remove(){}},setAttribute(){},addEventListener:(event,fn)=>{handlers[event]=fn;}};
+    const handlers={},notices=[],lists=[];
+    const dropTarget={classList:{add(){},remove(){}},setAttribute(){},addEventListener:(event,fn)=>{
+        assert.equal(handlers[event],undefined);handlers[event]=fn;
+    }};
     const context=vm.createContext({currentCharacterData:data,draggedItem:null,draggedItemPath:null,
         getItemByPath:keys=>keys.reduce((value,key)=>value[key],data),
         removeItemByPath:keys=>{keys.slice(0,-1).reduce((value,key)=>value[key],data).splice(keys.at(-1),1);return true;},
         pocketCapacity:()=>10,getTotalVolume:item=>item.volume*item.quantity,isLiquidCanister:()=>false,
-        showNotification:message=>notices.push(message),renderInventoryTab:async()=>{},recalculateInventoryTotals(){},scheduleAutoSave(){},forceSyncCharacter(){},
+        showNotification:message=>notices.push(message),rerenderContainer:async path=>lists.push(path.join(',')),
+        renderInventoryTab(){assert.fail('Достаточно обновить два списка');},recalculateInventoryTotals(){},scheduleAutoSave(){},forceSyncCharacter(){},
     });
     const start=source.indexOf('function setupDropTarget('),end=source.indexOf('\nwindow.getAllItemTemplates',start);
     vm.runInContext(source.slice(start,end),context);
-    context.setupDropTarget(dropTarget,['inventory','pockets'],data.inventory.pockets);
+    context.setupDropTarget(dropTarget,['inventory','pockets']);
+    context.setupDropTarget(dropTarget,['inventory','pockets']);
+    const previousPockets=data.inventory.pockets;
+    data.inventory.pockets=[];
     const event=()=>({preventDefault(){},stopPropagation(){},dataTransfer:{getData:type=>type==='application/x-inventory-path'?'["inventory","backpack",0]':''}});
     await handlers.drop(event());
     assert.equal(data.inventory.backpack.length,0);
     assert.equal(data.inventory.pockets[0].id,'ammo');
+    assert.equal(previousPockets.length,0);
+    assert.deepEqual(lists,['inventory,backpack','inventory,pockets']);
     data.inventory.backpack.push({id:'large',volume:7,quantity:1});
     await handlers.drop(event());
     assert.equal(data.inventory.backpack[0].id,'large');
@@ -94,7 +102,7 @@ test('надевание разгрузки из стопки и снятие с
     data.equipment.vest.pouches[0].contents.push({id:'bandage',quantity:4});
     assert.equal(item.pouches[0].contents.length,0);
     const removeStart=source.indexOf('window.unequipVest =');
-    vm.runInContext(source.slice(removeStart,source.indexOf('\n};',removeStart)+4),context);
+    vm.runInContext(source.slice(source.indexOf('function vestInventoryItem('),source.indexOf('\n};',removeStart)+4),context);
     await context.window.unequipVest();
     assert.equal(data.equipment.vest,undefined);
     assert.equal(data.inventory.backpack[1].id,'one-vest');

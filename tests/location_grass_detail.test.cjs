@@ -99,7 +99,7 @@ test('swamp pools and reeds are batched, repeatable, and excluded beneath floors
     const first = swampPlacements(tiles, x => x < 2);
     assert.deepEqual(first, swampPlacements(tiles, x => x < 2));
     assert.ok(first.pools.length > 10 && first.pools.length < 40);
-    assert.ok(first.reeds.length > 400 && first.reeds.length < 600);
+    assert.ok(first.reeds.length > 45 && first.reeds.length < 190);
     assert.ok([...first.pools, ...first.reeds].every(item => item.x >= 2));
     assert.equal(new Set(first.pools.map(item => `${Math.floor(item.x)},${Math.floor(item.z)}`)).size,
         first.pools.length);
@@ -107,9 +107,7 @@ test('swamp pools and reeds are batched, repeatable, and excluded beneath floors
         Math.floor(reed.x) !== Math.floor(item.x)
             || Math.floor(reed.z) !== Math.floor(item.z)
             || Math.hypot(reed.x - item.x, reed.z - item.z) > item.radius)));
-    assert.match(source, /new THREE\.InstancedMesh\(makeReedGeometry\(THREE\)/);
-    assert.match(source, /polygonOffset: true, polygonOffsetFactor: -1/);
-    assert.doesNotMatch(source, /transparent: true, opacity: 0\.88, depthWrite: false/);
+    assert.match(source, /addModels\?\.\(group, 'swamp_reeds_1', reeds/);
 });
 
 test('болотная лужа поворачивает вытянутый контур вместе с углом размещения', async () => {
@@ -122,6 +120,27 @@ test('болотная лужа поворачивает вытянутый ко
     assert.ok(Math.abs(north[0] - pool.x) < 1e-9);
     assert.ok(north[1] > pool.z);
     assert.ok(Math.abs((east[0] - pool.x) - (north[1] - pool.z)) < 1e-9);
+});
+
+test('болотные лужи по разные стороны общей грани имеют одно зеркало и один внешний контур', async () => {
+    const { settleSwampPools } = await import(moduleUrl);
+    const tiles = Array.from({ length: 5 }, () => Array.from({ length: 5 }, () => ({ terrain: 'swamp' })));
+    const a = { x: 1.5, z: 1.5, radius: .22, turn: .5, seed: .4 };
+    const b = { ...a, x: 2.5, z: 1.65 };
+    const [joined, ...rest] = settleSwampPools([a, b], tiles, () => 1, () => false);
+    assert.equal(rest.length, 0);
+    assert.equal(joined.level, 1.014);
+    assert.ok(joined.inner.some(([x]) => x < 2) && joined.inner.some(([x]) => x > 2));
+    assert.ok(joined.rim.every(([x, z], i) => {
+        const [nx, nz] = joined.rim[(i + 1) % joined.rim.length];
+        return (x - joined.x) * (nz - joined.z) > (z - joined.z) * (nx - joined.x);
+    }), 'треугольники от центра не пересекаются');
+    const settled = (neighbor, height = () => 1, covered = () => false) =>
+        settleSwampPools([a, neighbor], tiles, height, covered);
+    assert.equal(settled({ ...b, z: 2.5 }).length, 2, 'диагональ');
+    assert.equal(settled(b, x => x < 2 ? 1 : 1.12).length, 2, 'ступень');
+    assert.equal(settled(b, x => Math.abs(x - 2) < .20 ? 1.10 : 1).length, 2, 'перемычка грунта');
+    assert.equal(settled(b, () => 1, x => Math.abs(x - 2) < .12).length, 2, 'пол на стыке');
 });
 
 test('в любом квадрате 3×3 м остаётся не более двух болотных луж', async () => {
@@ -194,8 +213,10 @@ test('swamp water is upward-facing and skips steep ground', async () => {
     const flat = createGrassDetailGroup(THREE, tiles, () => 1, () => false);
     const pool = flat.children.find(mesh => mesh.constructor === Mesh);
     assert.ok(pool);
-    assert.equal(pool.material.transparent, undefined);
-    assert.equal(pool.material.polygonOffset, true);
+    assert.equal(pool.material.transparent, true);
+    assert.equal(pool.material.depthWrite, false);
+    const alpha = pool.geometry.attributes.color.array.filter((_, index) => index % 4 === 3);
+    assert.ok(alpha.includes(0) && alpha.includes(.94));
     const vertices = pool.geometry.attributes.position.array;
     assert.ok(vertices[1] > 1);
     const [ax, az, bx, bz, cx, cz] = [vertices[0], vertices[2], vertices[3],
@@ -208,7 +229,7 @@ test('swamp water is upward-facing and skips steep ground', async () => {
     assert.equal(steep.children.some(mesh => mesh.constructor === Mesh), false);
 });
 
-test('grass and reeds feather across land borders but never enter water', async () => {
+test('grass feathers across land borders and reeds stay out of open water', async () => {
     const { grassPlacements, swampPlacements } = await import(moduleUrl);
     const tiles = Array.from({ length: 12 }, (_, z) => Array.from({ length: 12 }, (_, x) => ({
         terrain: z < 2 ? 'water' : x < 6 ? 'grass' : 'swamp',
@@ -216,7 +237,7 @@ test('grass and reeds feather across land borders but never enter water', async 
     const grass = grassPlacements(tiles).tufts;
     const reeds = swampPlacements(tiles).reeds;
     assert.ok(grass.some(item => item.x > 6 && item.z >= 2));
-    assert.ok(reeds.some(item => item.x < 6 && item.z >= 2));
+    assert.ok(reeds.some(item => item.x < 7 && item.z >= 2));
     assert.ok([...grass, ...reeds].every(item => tiles[Math.floor(item.z)]?.[Math.floor(item.x)]?.terrain !== 'water'));
     const grassFringe = grass.filter(item => item.x > 6).map(item => item.x - 6);
     assert.ok(Math.max(...grassFringe) - Math.min(...grassFringe) > 0.06);

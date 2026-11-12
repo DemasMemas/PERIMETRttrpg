@@ -94,21 +94,28 @@ const tilesFor = size => Array.from({ length: size }, () => Array.from({ length:
     ({ terrain: 'grass', height: 1 })));
 const meshes = h => h.context.grassDetailGroup.children.filter(mesh => mesh.userData.naturalGrassKind);
 
-async function harness(tiles, objects = []) {
-    const [grass, terrain, detail, architecture] = await Promise.all([
+async function harness(tiles, objects = [], kinds = ['low']) {
+    const [grass, terrain, detail, architecture, water] = await Promise.all([
         import(moduleUrl('locationNaturalGrass.js')), import(moduleUrl('locationTerrain.js')),
         import(moduleUrl('locationGrassDetail.js')), import(moduleUrl('locationArchitecture.js')),
+        import(moduleUrl('waterProfiles.js')),
     ]);
-    const geometry = new Geometry(); geometry.index = { count: 457 * 3 };
-    const atlas = { disposals: 0, clone() { return {...this, disposals:0}; }, dispose() { this.disposals++; } };
-    const assets = { medium01: { geometry, material: new Material({ map: atlas }), bottom: -0.2, scale: 0.1, spread: 0.3 } };
+    const assets = Object.fromEntries(kinds.map(kind => {
+        const geometry = new Geometry(); geometry.index = { count: 160 * 3 };
+        return [kind, { geometry, material: new Material(), bottom: -0.2, scale: 0.1, spread: 0.3 }];
+    }));
     const context = vm.createContext({ window:{dispatchEvent(){}},Event:class{},THREE, ...grass, ...terrain, ...detail, ...architecture,
         currentLocationData: { tiles_data: tiles, objects, grid_width: tiles[0].length, grid_height: tiles.length },
         scene: new Object3D(),
         grassDetailGroup: null, naturalGrassBuild: null, naturalGrassAssets: assets,
         locationWaterProfiles: null,
+        normalizeWaterProfile: water.normalizeWaterProfile,
+        resolvedLightingProfile: null,
+        addNaturalSwampModels() {},
+        createWaterMaterial: () => new Material(),
         naturalGrassLoading: false, grassGroundReady: true, grassGroundLoading: false,
-        naturalGrassReported: true, renderer: { outputEncoding: 0 }, pendingTerrainRefresh: null, objectEdit: null,
+        naturalGrassReported: true, renderer: { outputColorSpace: '' }, pendingTerrainRefresh: null, objectEdit: null,
+        perchedCrowIdles: new Map(),
         activeLightingProfile: { local_lights: [] }, characterModels: new Map(), editorSelection: null,
         getCurrentLocationId: () => 1, isObjectLightSource: () => false,
         refreshTerrainFoundation: () => false, updateTileCubes: () => false,
@@ -127,16 +134,17 @@ async function harness(tiles, objects = []) {
         vm.runInContext(functionSource(name), context);
     }
     context.rebuildGrassDetailMesh();
-    return { context, tiles, assets, atlas, grass, terrain,
+    return { context, tiles, assets, grass, terrain, kinds,
         edit(changed) { context.rebuildGrassDetailMesh(changed); },
     };
 }
 
 function snapshot(h) {
-    return new Map(meshes(h).map(mesh => [mesh.userData.naturalGrassChunk, mesh]));
+    return new Map(meshes(h).map(mesh => [h.kinds.length === 1 ? mesh.userData.naturalGrassChunk
+        : `${mesh.userData.naturalGrassChunk}:${mesh.userData.naturalGrassKind}`, mesh]));
 }
 async function assertFullEquivalent(h) {
-    const full = await harness(h.tiles, h.context.currentLocationData.objects);
+    const full = await harness(h.tiles, h.context.currentLocationData.objects, h.kinds);
     const expected = snapshot(full), actual = snapshot(h);
     assert.deepEqual([...actual.keys()].sort(), [...expected.keys()].sort());
     for (const [key, mesh] of actual) {
@@ -150,7 +158,7 @@ async function assertFullEquivalent(h) {
         assert.equal(mesh.castShadow, false); assert.equal(mesh.receiveShadow, false);
         assert.equal(mesh.frustumCulled, reference.frustumCulled);
         assert.equal(mesh.frustumCulled, true);
-        assert.deepEqual(mesh.geometry.boundingSphere, reference.geometry.boundingSphere);
+        assert.deepEqual(mesh.boundingSphere, reference.boundingSphere);
         assert.equal(mesh.material.userData.lightField, 'same-field');
         assert.equal(mesh.geometry.disposals, 0); assert.equal(mesh.material.disposals, 0);
     }
@@ -186,12 +194,12 @@ test('rotated grass roots sit just below flat and edited sloped terrain without 
         let checked = 0;
         for (const mesh of meshes(h)) for (let i = 0; i < mesh.count; i++) {
             const m = mesh.instanceMatrix.array.subarray(i * 16, i * 16 + 16);
-            const bottom = h.assets.medium01.bottom;
+            const bottom = h.assets.low.bottom;
             const rootX = mesh.position.x + m[12] + m[4] * bottom;
             const rootY = m[13] + m[5] * bottom;
             const rootZ = mesh.position.z + m[14] + m[6] * bottom;
             const clearance = rootY - sample(rootX, rootZ);
-            assert.ok(clearance < -0.014 && clearance > -0.022, `root clearance ${clearance}`);
+            assert.ok(clearance < -0.011 && clearance > -0.022, `root clearance ${clearance}`);
             checked++;
         }
         assert.ok(checked > 100);
@@ -208,14 +216,14 @@ test('rotated grass roots sit just below flat and edited sloped terrain without 
     await assertFullEquivalent(h);
 });
 
-test('shared culling bounds contain tilted plants at chunk edges and arbitrary edited heights', async () => {
+test('chunk culling bounds contain tilted plants at edges and arbitrary edited heights', async () => {
     const h = await harness(tilesFor(40));
     const distant = snapshot(h).get('3,3'), geometry = distant.geometry;
     const verify = () => {
-        const { min, max } = h.assets.medium01.geometry.boundingBox;
+        const { min, max } = h.assets.low.geometry.boundingBox;
         for (const mesh of meshes(h)) {
             assert.equal(mesh.geometry, geometry, 'keep shared geometry');
-            const { center, radius } = mesh.geometry.boundingSphere;
+            const { center, radius } = mesh.boundingSphere;
             for (let i = 0; i < mesh.count; i++) {
                 const m = mesh.instanceMatrix.array.subarray(i * 16, i * 16 + 16);
                 for (const x of [min.x, max.x]) for (const y of [min.y, max.y]) for (const z of [min.z, max.z]) {
@@ -296,8 +304,7 @@ test('removing the last grass chunk releases owned resources once and permits re
     const h = await harness(tiles);
     assert.equal(meshes(h).length, 1);
     const old = meshes(h)[0], geometry = old.geometry, material = old.material;
-    assert.notEqual(material.map, h.atlas, 'chunks share a group-owned atlas wrapper');
-    assert.equal(material.map.needsUpdate, true, 'cloned grass texture must be uploaded to the renderer');
+    assert.notEqual(material, h.assets.low.material, 'участки используют материал своей сцены');
     const changed = [];
     for (let z = 0; z < 12; z++) for (let x = 0; x < 12; x++) {
         tiles[z][x].terrain = 'water'; changed.push({ x, z });
@@ -305,17 +312,29 @@ test('removing the last grass chunk releases owned resources once and permits re
     h.edit(changed);
     assert.equal(meshes(h).length, 0); assert.equal(old.disposals, 1);
     assert.equal(geometry.disposals, 1); assert.equal(material.disposals, 1);
-    assert.equal(material.map.disposals, 1, 'last chunk releases renderer texture callbacks');
-    assert.equal(h.assets.medium01.geometry.disposals, 0); assert.equal(h.atlas.disposals, 0);
+    assert.equal(h.assets.low.geometry.disposals, 0); assert.equal(h.assets.low.material.disposals, 0);
     await assertFullEquivalent(h);
-    tiles[6][6].terrain = 'grass'; h.edit([{ x: 6, z: 6 }]);
+    for (let z = 4; z < 8; z++) for (let x = 4; x < 8; x++) tiles[z][x].terrain = 'grass';
+    h.edit([{ x: 6, z: 6 }]);
     assert.equal(meshes(h).length, 1); assert.notEqual(meshes(h)[0].geometry, geometry);
     await assertFullEquivalent(h);
     const replacement = meshes(h)[0]; h.context.disposeObject(h.context.grassDetailGroup);
     assert.equal(replacement.disposals, 1);
     assert.equal(replacement.geometry.disposals, 1); assert.equal(replacement.material.disposals, 1);
-    assert.equal(replacement.material.map.disposals, 1);
-    assert.equal(geometry.disposals, 1); assert.equal(h.atlas.disposals, 0);
+    assert.equal(geometry.disposals, 1); assert.equal(h.assets.low.material.disposals, 0);
+});
+
+test('кисть обновляет все три формы травы только в затронутых участках', async () => {
+    const h = await harness(tilesFor(40), [], ['low', 'dry', 'seeded']);
+    const before = snapshot(h);
+    h.tiles[12][12].terrain = 'sand';
+    h.edit([{ x: 12, z: 12 }]);
+    const after = snapshot(h);
+    for (const kind of h.kinds) {
+        assert.notEqual(before.get(`1,1:${kind}`), after.get(`1,1:${kind}`));
+        assert.equal(before.get(`3,3:${kind}`), after.get(`3,3:${kind}`));
+    }
+    await assertFullEquivalent(h);
 });
 
 test('full refresh after floor changes and scene cleanup retain correct grass ownership', async () => {

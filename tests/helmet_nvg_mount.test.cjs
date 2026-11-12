@@ -9,7 +9,8 @@ const start=source.indexOf('function getItemSlots(item) {');
 const end=source.indexOf('\nfunction getEffectiveTorsoProtection(',start);
 assert.ok(start>=0&&end>start);
 const context=vm.createContext({allTemplatesCache:[],templatesCache:{},currentLobbyId:1});
-vm.runInContext(source.slice(start,end),context);
+const containerKind = source.match(/^function artifactContainerKind\([\s\S]*?^\}/m)[0];
+vm.runInContext(containerKind + '\n' + source.slice(start,end),context);
 
 test('крепление ПНВ добавляет слот шлему и не дублирует штатный',()=>{
     const helmet={category:'helmet',attributes:{slots:[{type:'visor',label:'Забрало'}]}};

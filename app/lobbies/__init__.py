@@ -25,7 +25,8 @@ from app.services.medical_procedure import MedicalProcedureService
 from app.services.general_consumable import GeneralConsumableService
 from app.services.custom_consumable_profile import validate_custom_consumable
 from app.services.exceptions import ConflictError, PermissionDenied, ValidationError, NotFoundError
-from app.services.character_events import emit_character_update, publish_character_save
+from app.services.character_events import emit_character_update, publish_character_appearance, publish_character_save
+from app.services.character_appearance import public_character_appearance
 from app.services.combat import CombatService
 from app.services.world_travel_events import anomaly_check_details, roll_travel_event, travel_scenario
 from app.services.character_interaction import CharacterInteractionService
@@ -328,6 +329,13 @@ def _serialize_world_group(group):
             {
                 'id': character_id,
                 'name': characters_by_id[character_id].name,
+                'is_mutant': CombatService._is_mutant_character(
+                    characters_by_id[character_id].data
+                    if isinstance(characters_by_id[character_id].data, dict) else {}
+                ),
+                **({'appearance': appearance} if (appearance := public_character_appearance(
+                    characters_by_id[character_id].data
+                )) else {}),
                 'movement_penalty': member_penalties[character_id],
                 'condition': carry_profiles[character_id]['condition'],
                 'requires_carry': carry_profiles[character_id]['requires_carry'],
@@ -1900,6 +1908,7 @@ def change_character_equipment_outside_combat(character_id):
         return jsonify({'error': 'Бой начался. Повторите действие с экипировкой.'}), 409
 
     payload = request.get_json(silent=True) or {}
+    previous_appearance = public_character_appearance(character.data)
     character_data = deepcopy(character.data or {})
     try:
         details = CombatService.equipment_action_details(
@@ -1927,6 +1936,8 @@ def change_character_equipment_outside_combat(character_id):
             'source': 'equipment_action',
         },
     )
+    if previous_appearance != public_character_appearance(character.data):
+        publish_character_appearance(character)
     lobby = db.session.get(Lobby, character.lobby_id)
     if lobby:
         for location_id in {
@@ -2619,6 +2630,20 @@ def delete_lobby_template(lobby_id, lobby, template_id):
 def create_location(lobby_id, lobby):
     schema = LocationCreateSchema()
     data = schema.load(request.get_json())
+    objects = []
+    if data.pop('preset', None) == 'swamp_bank':
+        from app.constants import CHUNK_SIZE
+        from app.services.location_presets import build_swamp_bank
+
+        x, z = data['world_tile_x'], data['world_tile_z']
+        if not (0 <= x < lobby.chunks_width * CHUNK_SIZE and 0 <= z < lobby.chunks_height * CHUNK_SIZE):
+            raise ValidationError('Точка подлокации находится за пределами карты')
+        db.session.get(Lobby, lobby_id, with_for_update=True)
+        if Location.query.filter_by(lobby_id=lobby_id, world_tile_x=x, world_tile_z=z).first():
+            return jsonify({'error': 'В этой точке уже есть подлокация'}), 409
+        preset = build_swamp_bank()
+        objects = preset.pop('objects')
+        data.update(preset)
     freeze_water_offsets(data['tiles_data'])
     location = Location(
         lobby_id=lobby_id,
@@ -2635,6 +2660,9 @@ def create_location(lobby_id, lobby):
         spawn_points=data['spawn_points']
     )
     db.session.add(location)
+    if objects:
+        db.session.flush()
+        db.session.add_all(LocationObject(location_id=location.id, **item) for item in objects)
     db.session.commit()
 
     socketio.emit('location_created', {
@@ -2683,7 +2711,7 @@ def get_location_detail(lobby_id, location_id, lobby, participant):
     objects = LocationObject.query.filter_by(location_id=location.id).all()
     from app.services import stashes
     is_gm = participant.user_id == lobby.gm_id
-    obj_schema = LocationObjectSchema(reveal_locked=is_gm,reveal_stashes=True)
+    obj_schema = LocationObjectSchema(reveal_locked=is_gm, reveal_stashes=True)
     from app.services.traps import projections
 
     return jsonify({
@@ -2698,9 +2726,9 @@ def get_location_detail(lobby_id, location_id, lobby, participant):
         'tiles_data': location.tiles_data,
         'lighting': location.lighting,
         'spawn_points': location.spawn_points,
-        'objects': [stashes.project(obj,participant.user_id,reveal_locked=is_gm)
-                    if (obj.properties or {}).get('stash_compartment') else obj_schema.dump(obj)
-                    for obj in objects if stashes.visible(obj,participant.user_id)]
+        'objects': [stashes.project(obj, participant.user_id, reveal_locked=is_gm)
+                    if {'stash_mask', 'stash_compartment'} & (obj.properties or {}).keys() else obj_schema.dump(obj)
+                    for obj in objects if stashes.visible(obj, participant.user_id)]
                     +projections(location_id,participant.user_id)
     }), 200
 
@@ -2744,10 +2772,16 @@ def preview_location_movement(lobby_id, location_id, lobby, participant):
     if not isinstance(movement_mode,str) or movement_mode not in {'walk','run','sprint','backward_sideways','correction'}:
         return jsonify({'error':'Неизвестный режим перемещения'}),400
     state = LocationCombatState.query.filter_by(location_id=location_id).first()
-    path = CombatService._find_movement_path(location, actor.pos_x, actor.pos_y, x, y, actor.character_id,
-        end_level=level,movement_mode=movement_mode if state and state.status=='active' else None)
-    if path is None:
-        path = CombatService._vertical_movement_plan(location,actor,x,y,level)
+    if payload.get('special_action') == 'climb_up':
+        if state and state.status == 'active' and state.current_location_character_id != actor.id:
+            return jsonify({'route': None}), 200
+        CombatService.ensure_character_can_act(actor)
+        path = CombatService._vertical_movement_plan(location,actor,x,y,level,terrain_only=True)
+    else:
+        path = CombatService._find_movement_path(location, actor.pos_x, actor.pos_y, x, y, actor.character_id,
+            end_level=level,movement_mode=movement_mode if state and state.status=='active' else None)
+        if path is None:
+            path = CombatService._vertical_movement_plan(location,actor,x,y,level)
     if path:
         path['climb_agility_bonus']=CombatService._climb_payment_profile(actor.character.data,[])['agility_bonus']
         # Разбиение нужно для серверного исполнения, предпросмотру достаточно цены и флага льда.
@@ -3111,7 +3145,14 @@ def get_location_object(lobby_id,object_id,lobby,participant):
     obj=db.session.get(LocationObject,object_id)
     if not obj or obj.location.lobby_id!=lobby_id or not stashes.visible(obj,participant.user_id):
         raise NotFoundError('Объект не найден')
-    return jsonify(stashes.project(obj,participant.user_id,reveal_locked=participant.user_id==lobby.gm_id))
+    character_id = request.args.get('character_id', type=int)
+    if character_id is not None:
+        actor = LocationCharacter.query.filter_by(location_id=obj.location_id, character_id=character_id).first()
+        if not actor or not stashes.visible(obj, participant.user_id, character_id):
+            raise NotFoundError('Объект не найден')
+        CharacterService.check_access(actor.character, participant.user_id, edit=True)
+    return jsonify(stashes.project(obj, participant.user_id, character_id=character_id,
+                                  reveal_locked=character_id is None and participant.user_id == lobby.gm_id))
 
 
 @lobbies_bp.route('/<int:lobby_id>/locations/objects/<int:object_id>/lock',methods=['POST'])
@@ -3171,7 +3212,7 @@ def update_location_object(lobby_id, object_id, lobby, participant):
     if not isinstance(data, dict):
         raise ValidationError('Object update must be an object')
     properties = data.get('properties') if isinstance(data.get('properties'), dict) else {}
-    if {'stash_mask','stash_compartment','stash_contents'} & properties.keys():
+    if {'stash_mask','stash_compartment','stash_contents','stash_character_ids'} & properties.keys():
         raise ValidationError('Используйте действие маскировки тайника')
     if stashes.buried(obj) and participant.user_id!=lobby.gm_id:
         raise ValidationError('Сначала раскопайте ящик')
@@ -3479,6 +3520,7 @@ def spawn_character_in_location(lobby_id, location_id):
     # Уведомляем всех в локации через сокет
     socketio.emit('character_spawned', {
         'action': action,
+        'location_id': location_id,
         'character': {
             'id': character.id,
             'name': CombatService._display_name(character),
@@ -3500,6 +3542,8 @@ def spawn_character_in_location(lobby_id, location_id):
             'is_mutant': CombatService._is_mutant_character(character.data or {}),
             'mutant_type': CombatService._mutant_profile_name(character.data),
             'is_npc': is_npc(character),
+            **({'appearance': appearance} if not loc_char.gm_hidden and (appearance :=
+                public_character_appearance(character.data)) else {}),
         }
     }, room=f"location_{location_id}")
     revealed = getattr(loc_char, '_revealed_anomaly', None)
@@ -3546,6 +3590,10 @@ def set_location_character_hidden(lobby_id, location_id, character_id, lobby):
     placed.gm_hidden = hidden
     db.session.commit()
     payload = {'location_id': location_id, 'character_id': character_id, 'gm_hidden': hidden}
+    if not hidden:
+        appearance = public_character_appearance(character.data)
+        if appearance:
+            payload['appearance'] = appearance
     socketio.emit('location_character_visibility_updated', payload, room=f'location_{location_id}')
     return jsonify(payload), 200
 
@@ -3685,6 +3733,7 @@ def change_character_posture_outside_combat(
         return jsonify({'error': 'Character is already in this posture'}), 400
 
     location_character.posture = target_posture
+    location_character.prone_on_back = False
     location_character.weapon_braced = False
     location_character.braced_weapon_index = None
     if target_posture == 'standing':
@@ -3777,6 +3826,8 @@ def transfer_location_item(lobby_id, object_id, lobby, participant):
 @jwt_required()
 @requires_participant
 def drop_location_item(lobby_id, location_id, lobby, participant):
+    from app.services.portable_lights import glow
+
     character, obj, created = ContainerTransferService.drop(
         lobby_id, location_id, participant.user_id, request.get_json() or {},
     )
@@ -3784,7 +3835,31 @@ def drop_location_item(lobby_id, location_id, lobby, participant):
     payload = LocationObjectSchema().dump(obj)
     socketio.emit('location_object_created' if created else 'location_object_updated',
                   {'location_id': location_id, 'object': payload}, room=f'location_{location_id}')
+    if any(glow(item) and (item.get('glowState') or {}).get('remaining_seconds', 0) > 0
+           for item in (obj.properties or {}).get('contents', [])):
+        socketio.emit('combat_state_updated', CombatService.get_state(location_id, participant.user_id),
+                      room=f'location_{location_id}')
     return jsonify({'data': character.data_snapshot(), 'object': payload, 'created': created}), 200
+
+
+@lobbies_bp.route('/<int:lobby_id>/locations/<int:location_id>/generators/<int:generator_id>', methods=['GET', 'POST'])
+@jwt_required()
+@requires_participant
+def operate_generator(lobby_id, location_id, generator_id, lobby, participant):
+    from app.services.generators import operate, snapshot
+
+    user_id = participant.user_id
+    if request.method == 'GET':
+        return jsonify(snapshot(lobby_id, location_id, user_id, generator_id, request.args.get('character_id', type=int)))
+    character, obj, station, inventory_changed, result = operate(
+        lobby_id, location_id, user_id, generator_id, request.get_json(silent=True))
+    for changed in (obj, station):
+        if changed is not None:
+            socketio.emit('location_object_updated',
+                {'location_id': location_id, 'object': LocationObjectSchema().dump(changed)}, room=f'location_{location_id}')
+    if inventory_changed:
+        emit_character_update({'character_id': character.id, 'updates': {'data': character.data_snapshot()}, 'source': 'generator'})
+    return jsonify(result)
 
 
 @lobbies_bp.route('/<int:lobby_id>/locations/<int:location_id>/stations', methods=['POST'])
@@ -5362,8 +5437,8 @@ def portable_lights(character_id):
                 'blocked_reason':device_block_reason(character.data or {},item,jammed_by=jammed_by),'burned':burned(item),
                 'binding':{'mount':'nvg','on':bool(nvg_on(item))},'uses_left':(item.get('lightPower') or {}).get('uses_left',10),
                 'mount_available':helmet_module_available(character.data,path)})
-        batteries=[{'path':path,'name':item.get('name')} for path,item in walk(character.data or {},True)
-            if 'батаре' in str(item.get('name') or '').casefold() and 'installedModules' not in path]
+        from app.services.power_cells import choices
+        batteries = choices(character.data or {}, flashlight=True)
         return jsonify({'lights':items,'batteries':batteries}),200
     character,actor,result=operate(character_id,user_id,request.get_json() or {})
     if result.get('operation')=='pda_wipe':
@@ -5796,6 +5871,8 @@ def perform_location_combat_action(lobby_id, location_id, lobby, participant):
                 'source': 'combat',
             },
         )
+        if (result.get('equipment_change') or {}).get('slot') == 'gasMask':
+            publish_character_appearance(actor)
     medical_retry_result = (result.get('must_do_it') or {}).get('medical_result')
     reduction=result.get('narrative_action') or {}
     if result.get('action') == 'artifact_special':

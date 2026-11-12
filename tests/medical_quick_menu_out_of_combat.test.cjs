@@ -18,6 +18,7 @@ function harness({ controlled = true, condition = 'active' } = {}) {
     const selected = [];
     const context = vm.createContext({
         combatState: null,
+        findCombatCharacterByCharacterId: () => null,
         window: {},
         canControlCharacter: () => controlled,
         getLocationCharacterCondition: () => ({ state: condition }),

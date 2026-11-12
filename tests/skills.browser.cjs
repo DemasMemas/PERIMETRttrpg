@@ -22,6 +22,20 @@ module.exports = async ({ page, request, token, lobby, base, connect, debugPort,
         await click('[data-tab="skills"]',client);
     };
     await open();
+    const reward = '#session-reward-modal';
+    const openReward = async () => {
+        await click(`${root} button[onclick="openSessionReward()"]`);
+        await page.until(`document.querySelector('${reward} form')`,'Окно награды открыто');
+    };
+    const training = async (skill = 'physical.will') => {
+        await openReward();
+        await page.evaluate(`(()=>{const input=document.querySelector('${reward} select');input.value=${JSON.stringify(skill)};
+            input.dispatchEvent(new Event('change',{bubbles:true}));return true})()`);
+        assert.equal(await page.evaluate(`Boolean(document.querySelector('${reward} [name=usedBackgroundWeapon]'))`),false);
+        await click(`${reward} button[type=submit]`);
+        await page.until(`!document.querySelector('${reward}')`,'Награда начислена');
+    };
+    assert.equal(await page.evaluate(`Boolean(document.querySelector(${JSON.stringify(button('will','addSkillXpFromUse'))}))`),false);
     const typeNumber=async(selector,value)=>{
         await click(selector);
         await page.call('Input.dispatchKeyEvent',{type:'rawKeyDown',key:'a',code:'KeyA',windowsVirtualKeyCode:65,nativeVirtualKeyCode:65,modifiers:2});
@@ -31,23 +45,23 @@ module.exports = async ({ page, request, token, lobby, base, connect, debugPort,
     };
     await typeNumber(input('will'),14);
     assert.ok(await page.evaluate(`document.querySelector(${JSON.stringify(input('will'))}).parentElement.textContent.includes('0/5')`),'Ручной ввод сразу обновляет цену следующего уровня');
-    await click(button('will','addSkillXpFromUse'));
+    await training();
     await saved('data.skills.physical.will.base===14 && data.skills.physical.will.xp===1');
     await typeNumber(input('will'),12);
     await page.call('Input.dispatchKeyEvent',{type:'keyDown',key:'Tab',code:'Tab'});
     await saved('data.skills.physical.will.base===12 && data.skills.physical.will.xp===0');
     assert.equal(await page.evaluate(`document.querySelector(${JSON.stringify(input('strength'))}).value`), '5');
     await click(button('strength', 'addSkillXpFromPoints'));
-    await saved('data.skills.physical.strength?.base===6 && data.skills.skillPoints===2');
+    await saved('data.skills.physical.strength?.base===6 && data.skills.skillPoints===3');
 
     for (let xp = 1; xp <= 2; xp++) {
-        await click(button('will', 'addSkillXpFromUse'));
+        await training();
         await saved(`data.skills.physical.will.base===12 && data.skills.physical.will.xp===${xp}`);
     }
-    await click(button('will', 'addSkillXpFromUse'));
-    await saved('data.skills.physical.will.base===13 && data.skills.physical.will.xp===0 && data.skills.skillPoints===2');
+    await training();
+    await saved('data.skills.physical.will.base===13 && data.skills.physical.will.xp===0 && data.skills.skillPoints===6');
     await click(button('will', 'addSkillXpFromPoints'));
-    await saved('data.skills.physical.will.base===13 && data.skills.physical.will.xp===1 && data.skills.skillPoints===1');
+    await saved('data.skills.physical.will.base===13 && data.skills.physical.will.xp===1 && data.skills.skillPoints===5');
 
     await click(`${root} [onclick="window.rollSkill('physical.will', 'Воля')"]`);
     await page.until(`[...document.querySelectorAll('#chat .message')].some(m=>m.textContent.includes('Воля: бросок'))`, 'бросок навыка выполнен');
@@ -60,7 +74,7 @@ module.exports = async ({ page, request, token, lobby, base, connect, debugPort,
     await open();
     assert.equal(await page.evaluate(`document.querySelector(${JSON.stringify(input('strength'))}).value`), '6');
     assert.equal(await page.evaluate(`document.querySelector(${JSON.stringify(input('will'))}).value`), '13');
-    await saved('data.skills.physical.will.xp===1 && data.skills.skillPoints===1');
+    await saved('data.skills.physical.will.xp===1 && data.skills.skillPoints===5');
     // Второй клиент получает настоящие обновления Socket.IO и также может редактировать лист.
     await request('/auth/register',{username:'skills-peer',email:'skills-peer@example.test',password:'skills-test-password'});
     const player=await request('/auth/login',{username:'skills-peer',password:'skills-test-password'});
@@ -86,8 +100,9 @@ module.exports = async ({ page, request, token, lobby, base, connect, debugPort,
         await typeNumber(input('will'),15);
         await page.until('Boolean(window.releaseSkillRequest)','первое сохранение задержано');
         await typeNumber(input('will'),14);
-        await click(button('will','addSkillXpFromUse'));
         await page.evaluate('releaseSkillRequest();restoreSkillFetch()');
+        await saved('data.skills.physical.will.base===14 && data.skills.physical.will.xp===0');
+        await training();
         await saved('data.skills.physical.will.base===14 && data.skills.physical.will.xp===1');
         await peer.until(`document.querySelector(${JSON.stringify(input('will'))}).value==='14'&&document.querySelector('[data-skill-progress="physical.will"]').textContent.includes('1/5')`,'второй клиент получил уровень и опыт');
         // Пустой ввод не превращается в ноль и не меняет сохранённый прогресс.
@@ -107,8 +122,45 @@ module.exports = async ({ page, request, token, lobby, base, connect, debugPort,
         const denied=await fetch(`${base}/lobbies/characters/${character.id}`,{method:'PUT',headers:{'Content-Type':'application/json',Authorization:`Bearer ${player.access_token}`},body:JSON.stringify({data:draft})});
         assert.equal(denied.status,403);
         const fs=require('node:fs'),path=require('node:path');
-        fs.writeFileSync(path.join(safeSession.artifacts,'skills.json'),JSON.stringify({manualLevel:true,xpReset:true,immediateXpButton:true,slowSavePreservesTyping:true,twoClients:true,invalidInput:true,viewerRejected:true,reload:true},null,2));
+        fs.writeFileSync(path.join(safeSession.artifacts,'skills.json'),JSON.stringify({manualLevel:true,xpReset:true,sessionTraining:true,slowSavePreservesTyping:true,twoClients:true,invalidInput:true,viewerRejected:true,reload:true},null,2));
     }finally{await peer.close();await protocol.call('Target.disposeBrowserContext',{browserContextId});await protocol.close();}
     await page.evaluate('window.closeCharacterSheet()');
+    const security = await request(`/lobbies/${lobby.id}/characters`, {
+        name: 'Проверка награды СБшника',
+        data: { basic: { background: { name: 'СБшник', ruleId: 'background-af', choices: { backgroundWeapon: 'pistols' } } } },
+    }, token);
+    await page.evaluate(`window.openCharacterSheet(${security.id}, 'skills')`);
+    await openReward();
+    const weapon = `${reward} [name=usedBackgroundWeapon]`;
+    assert.equal(await page.evaluate(`document.querySelector('${weapon}')?.getClientRects().length`),0);
+    await page.evaluate(`(()=>{const select=document.querySelector('${reward} select');
+        select.value='physical.shooting';select.dispatchEvent(new Event('change',{bubbles:true}));return true})()`);
+    assert.equal(await page.evaluate(`Boolean(document.querySelector('${reward} [name=weaponType]'))`),false);
+    await click(weapon);
+    const fs = require('node:fs'), path = require('node:path');
+    const shot = await page.call('Page.captureScreenshot',{format:'png'});
+    fs.writeFileSync(path.join(safeSession.artifacts,'session-reward.png'),Buffer.from(shot.data,'base64'));
+    await click(`${reward} button[type=submit]`);
+    await page.until(`!document.querySelector('${reward}')`,'Награда за стрельбу начислена');
+    const latest = await request(`/lobbies/characters/${security.id}`,null,token,'GET');
+    assert.equal(latest.data.characterRewards.at(-1).trainingPoints,2);
+    assert.deepEqual(latest.data.characterRewards.at(-1).rolls,[]);
+    await click(`${root} button[onclick="addSpecialTrait()"]`);
+    const traits = `${root} #special-traits-container`;
+    await page.until(`document.querySelectorAll('${traits} select option').length>1`,'Каталог особых черт открыт');
+    const selectedTrait = await page.evaluate(`(()=>{const select=document.querySelector('${traits} select');
+        const option=[...select.options].find(o=>o.textContent==='Подержи моё пиво')||select.options[1];
+        select.value=option.value;select.dispatchEvent(new Event('change',{bubbles:true}));return option.textContent;})()`);
+    await page.until(`document.querySelector('${traits} strong')?.textContent===${JSON.stringify(selectedTrait)}`,'Черта отображается в листе');
+    assert.equal(await page.evaluate(`document.querySelectorAll('${traits} input, ${traits} select, ${traits} textarea').length`),0);
+    assert.match(await page.evaluate(`document.querySelector('${traits} small').textContent`),/Стоимость: .*Не более/);
+    await page.until(`fetch('/lobbies/characters/${security.id}',{headers:{Authorization:'Bearer '+localStorage.getItem('access_token')}})
+        .then(response=>response.json()).then(sheet=>sheet.data?.features?.specialTraits?.[0]?.name===${JSON.stringify(selectedTrait)})`,
+    'Черта сохранена через автосохранение');
+    await page.evaluate(`document.querySelector('${traits}').scrollIntoView({block:'center',behavior:'instant'}); new Promise(requestAnimationFrame)`);
+    const traitShot = await page.call('Page.captureScreenshot',{format:'png'});
+    fs.writeFileSync(path.join(safeSession.artifacts,'special-traits.png'),Buffer.from(traitShot.data,'base64'));
+    await page.evaluate('window.closeCharacterSheet()');
     console.log('PASS: ручной ввод, сброс опыта, кнопки, отложенный ответ, два клиента, права и reload');
+    await require('./sheet_appearance.browser.cjs')({ page, request, token, lobby, base, safeSession });
 };

@@ -325,6 +325,8 @@ def test_artifact_module_prices_identity_and_periodic_radiation(kind, limit, wor
     assert (profile["radiation_per_movement"], profile["skill_other"]) == (radiation, skill)
     health["effects"] = advance_timed_effects(health, health["effects"], 599, character_data=data)
     assert (health["radiation"], health["current"]) == (0, 700)
+    if radiation or hp != 700:
+        assert health["effects"][0]["artifact_periodic"] == {"radiation": radiation, "health": hp - 700, "pain": 0}
     health["effects"] = advance_timed_effects(health, health["effects"], 1, character_data=data)
     assert (health["radiation"], health["current"]) == (radiation, hp)
     assert container["attributes"] == {"artifact_container_kind": kind, "radiation_limit": limit}
@@ -332,7 +334,26 @@ def test_artifact_module_prices_identity_and_periodic_radiation(kind, limit, wor
     assert uninstall["action_points"] == 8
     assert apply_module_action(data, uninstall)["removed"] == artifact
     assert data["inventory"]["backpack"][-1] == artifact
-    assert not health["effects"]
+    assert artifact_passive_profile(data)["radiation_per_movement"] == 5
+
+
+@pytest.mark.parametrize("limit,radiation", [(None, 0), (3, 2), (0, 5)])
+def test_carried_artifact_radiation_respects_container_contents_without_counting_twice(limit, radiation):
+    from app.services.artifact_effects import artifact_passive_profile
+    from app.services.effects import advance_timed_effects
+
+    container, artifact = artifact_fixture("storage", limit)
+    container["contents"] = [artifact]
+    loose = {**artifact, "id": "loose-artifact", "quantity": 2}
+    ordinary_bag = {"category": "container", "contents": [loose, container]}
+    health = {"current": 700, "max": 700, "radiation": 0, "effects": []}
+    data = {"health": health, "inventory": {"backpack": [ordinary_bag]}}
+    profile = artifact_passive_profile(data)
+    assert (profile["radiation_per_movement"], profile["skill_other"]) == (radiation + 10, 0)
+    health["effects"] = advance_timed_effects(health, health["effects"], 599, character_data=data)
+    assert health["radiation"] == 0
+    health["effects"] = advance_timed_effects(health, health["effects"], 1, character_data=data)
+    assert (health["radiation"], health["current"]) == (radiation + 10, 700)
 
 
 def test_storage_container_cannot_be_newly_mounted_but_legacy_can_be_removed():
@@ -363,7 +384,7 @@ def test_artifact_extraction_finishes_next_turn_without_double_charge(client, cr
     db.session.add(location)
     db.session.flush()
     actor = LocationCharacter(location_id=location.id, character_id=character['id'],
-                              controlled_by=user['id'], action_points_current=6, action_points_max=6)
+                              controlled_by=user['id'], action_points_current=5, action_points_max=5)
     db.session.add(actor)
     db.session.flush()
     db.session.add(LocationCombatState(location_id=location.id, status='active', round_number=1,
@@ -381,7 +402,11 @@ def test_artifact_extraction_finishes_next_turn_without_double_charge(client, cr
     stored = db.session.get(LobbyCharacter, character['id'])
     assert stored.data['inventory']['backpack'] == []
     after_payment = actor.action_points_current
-    assert after_payment == actor.action_points_max - 2
+    assert after_payment == 2
+    journal_url = f"/lobbies/{lobby['id']}/action-journal"
+    entry = next(entry for entry in client.get(journal_url, headers=headers).json['entries']
+                 if entry['id'] == 'extract-artifact')
+    assert (entry['total_action_points'], entry['action_points']) == (8, 8)
 
     resume = {**payload, 'resume_pending_action_id': 'extract-artifact'}
     result = client.post(base, headers=headers, json=resume)

@@ -312,6 +312,35 @@ def test_psi_defense_sums_will_armor_gas_mask_and_temporary_bonus(monkeypatch):
     assert profile['total'] == 70
 
 
+def test_psi_defense_follows_temporary_suppression_of_will():
+    from app.services.effects import apply_effect_to_health, tick_effects
+
+    data = {'skills': {'physical': {'will': {'base': 14, 'bonus': 0}}}, 'health': {}}
+    assert CombatService._psi_defense_profile(data)['will'] == 10
+    apply_effect_to_health(data['health'], {
+        'type': 'anomaly_will_penalty', 'source': 'ekho',
+        'will_modifier': -2, 'remaining': 2, 'tick': 'turn_end',
+    })
+    assert CombatService._skill_value(data, 'skills.physical.will') == 12
+    assert CombatService._psi_defense_profile(data)['will'] == 5
+    data['health']['effects'] = tick_effects(data['health']['effects'], 'turn_end')
+    assert CombatService._psi_defense_profile(data)['will'] == 5
+    data['health']['effects'] = tick_effects(data['health']['effects'], 'turn_end')
+    assert CombatService._psi_defense_profile(data)['will'] == 10
+    assert data['skills']['physical']['will'] == {'base': 14, 'bonus': 0}
+
+
+def test_psi_threshold_reduces_will_level_and_defense_without_double_penalty():
+    data = {'skills': {'physical': {'will': {'base': 14, 'bonus': 0}}}, 'health': {}}
+    will = 'skills.physical.will'
+    for psi, level, defense in [(9, 14, 10), (10, 13, 5), (25, 13, 5), (9, 14, 10)]:
+        data['health']['psyState'] = psi
+        assert CombatService._skill_value(data, will) == level
+        assert CombatService._psi_defense_profile(data)['will'] == defense
+        assert CombatService._health_roll_modifier(data, will) == 0
+    assert data['skills']['physical']['will']['base'] == 14
+
+
 def test_incoming_psi_state_is_reduced_by_total_defense(monkeypatch):
     monkeypatch.setattr(
         CombatService,

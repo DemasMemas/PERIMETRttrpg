@@ -419,9 +419,6 @@ def quote(character,data,payload):
         difficulty_modifier -= 40
     if output and output.category == 'ammo':
         difficulty_modifier += ammo_crafting_modifier(data, (output.attributes or {}).get('caliber'))
-    result=({'difficulty':0,'automatic_success':True,'failure_loss':{'random':0,'chosen':0,'all':False}}
-        if recipe.get('maintenance') else creation_quote(level,difficulty,base_automatic=recipe['automatic'],
-            difficulty_modifier=difficulty_modifier))
     if not output:missing.append('В каталоге нет шаблона результата: '+recipe['output_name'])
     if tool_output and output and (output.category!='tool' or type((output.attributes or {}).get('uses')) is not int
             or not tool_output[1]<output.attributes['uses']):
@@ -433,13 +430,18 @@ def quote(character,data,payload):
     if preferred_id is not None and (type(preferred_id) is not int or preferred_id<=0):
         raise ValidationError('Выберите самогонный аппарат')
     station=selected(character,recipe,option,preferred_id=preferred_id)
+    from app.services.generators import difficulty_bonus
+    power_bonus = difficulty_bonus(station) if not recipe.get('maintenance') else 0
+    result = ({'difficulty': 0, 'automatic_success': True, 'failure_loss': {'random': 0, 'chosen': 0, 'all': False}}
+        if recipe.get('maintenance') else creation_quote(level, difficulty, base_automatic=recipe['automatic'],
+            difficulty_modifier=difficulty_modifier - power_bonus))
     if distilling:
         if not station:missing.append('Подойдите к размещённому самогонному аппарату с зарядом инструмента')
         elif occupied(character.lobby_id,station.id):missing.append('Самогонный аппарат уже занят')
     elif missing_tools:missing.append('Нужны: '+', '.join(missing_tools))
     station_key=(station.properties or {}).get('portable_station') if station else None
     use_station=bool(station and (station_key or is_distillery(station)))
-    return {**result,'recipe':recipe,'allocations':allocations,'missing':missing,
+    return {**result,'recipe':recipe,'allocations':allocations,'missing':missing,'generator_difficulty_bonus':power_bonus,
         'component_status':component_status,'other_missing':missing[component_missing_count:],
         'constructor_materials':constructor_materials,'extra_component_status':extra_component_status,
         'primary_inputs':primary_inputs,'output_key':output_key,
@@ -449,7 +451,7 @@ def quote(character,data,payload):
         'approval_id':approval['id'] if approval else None,'duration_seconds':recipe.get('duration_seconds'),
         'preparation_seconds':recipe.get('active_seconds') if recipe['id'] in PREPARATION_RECIPES else None,
         'station_id':station.id if use_station else None,
-        'station_name':station.name if use_station else None,
+        'station_name':station.name if use_station or power_bonus else None,
         'spoil_chance':15 if station_key and station_key!='recipe-m34' and not station.properties.get('standard_distillery') else 0}
 
 
@@ -473,10 +475,10 @@ def _escrow(data,allocations):
             item.setdefault('uses',10)
         amount=allocation['amount'];piece=deepcopy(item)
         if allocation.get('liquid_liters'):
-            from app.services.liquid_containers import is_canister,liquid_kind
+            from app.services.liquid_containers import liquid_capacity,liquid_kind
             container=next((candidate for candidate_path,candidate in walk(data,True)
                 if candidate_path==path[:-2]),None) if len(path)>=2 and path[-2]=='contents' else None
-            container_id=container.setdefault('id',str(uuid4())) if is_canister(container) else None
+            container_id=container.setdefault('id',str(uuid4())) if liquid_capacity(container) else None
             if container_id and liquid_kind(item)=='fuel':container['fuelUsed']=True
             quantity=item.get('quantity',1)
             if (type(quantity) not in {int,float} or not isfinite(quantity) or not 0<quantity<=10000
@@ -531,12 +533,12 @@ def _return_materials(data,escrow,lost):
         item=deepcopy(entry['item']);maximum=entry['maximum']
         if entry.get('liquid_liters'):
             item['quantity']=round(amount,1)
-            from app.services.liquid_containers import is_canister,liquid_kind
+            from app.services.liquid_containers import liquid_capacity,liquid_kind
             container=next((candidate for _,candidate in walk(data,True)
-                if candidate.get('id')==entry.get('liquid_container_id') and is_canister(candidate)),None)
+                if candidate.get('id')==entry.get('liquid_container_id') and liquid_capacity(candidate)),None)
             contents=container.get('contents') or [] if container else []
             kind=liquid_kind(item)
-            can_return=(container and kind and sum(float(part.get('quantity',1)) for part in contents)+amount<=15
+            can_return=(container and kind and sum(float(part.get('quantity',1)) for part in contents)+amount<=liquid_capacity(container)+1e-7
                 and not (kind=='water' and (container.get('fuelUsed') or any(liquid_kind(part)=='fuel' for part in contents)))
                 and not (kind=='fuel' and any(liquid_kind(part)=='water' for part in contents)))
             if can_return:container.setdefault('contents',[]).append(item)
@@ -689,7 +691,9 @@ def modification_plan(character,data,payload):
         double_charges=not station and payload.get('double_charges') is True,workbench=workbench,material_value=material_value)
     if station:plan['tool_uses']=1
     from app.services.equipment_passives import craft_difficulty_modifier
-    plan['difficulty']+=craft_difficulty_modifier(data)
+    from app.services.generators import difficulty_bonus
+    power_bonus = difficulty_bonus(station)
+    plan['difficulty'] += craft_difficulty_modifier(data) - power_bonus
     if rule['kind']=='belt':plan['professional_price']=1000
     if not plan['skill_sufficient']:raise ValidationError(f"Нужна Инженерия {plan['required_engineering']}")
     grade={'simplified':1,'standard':2,'advanced':3}[plan['tool_grade']]
@@ -699,7 +703,7 @@ def modification_plan(character,data,payload):
     if type(uses) not in {int,float} or uses<plan['tool_uses']:raise ValidationError('Не хватает зарядов инструментов')
     return {**plan,'rule':rule,'target':target,'tool':tool,'target_id':target.get('id'),'slots':slot,'approval_id':None,
         'station_id':station.id if station else None,'station_name':station.name if station else None,
-        'spoil_chance':15 if station else 0,
+        'spoil_chance':15 if station else 0,'generator_difficulty_bonus':power_bonus,
         'material_value':material_value,'material_allocations':allocations}
 
 

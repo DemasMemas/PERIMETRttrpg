@@ -61,6 +61,42 @@ def test_outside_install_power_replaces_missing_leg_penalty_and_preserves_instan
     assert CombatService._disabled_limb_penalties(actor.character.data)['movement']==6
 
 
+@pytest.mark.parametrize('name', ['Навесная голень со стопой', 'Фиксированная голень со стопой'])
+def test_prosthesis_rechargeable_cells_keep_identity_after_depletion(client, grenade_game, auth_headers, name):
+    from app.services.power_cells import NAME, percentage
+
+    actor = setup(grenade_game, name=name)
+    outside(grenade_game)
+    data = deepcopy(actor.character.data)
+    item = data['inventory']['pockets'].pop()
+    data['health']['prostheses'] = {'leftLeg': {'base': item}}
+    count = PROFILES[name]['batteries']
+    data['inventory']['pockets'] = [{'id': f'cell-{index}', 'name': NAME, 'quantity': 1,
+        'attributes': {'rechargeable_battery': True, 'charge_percent': 50}} for index in range(count)]
+    actor.character.data = data
+    db.session.commit()
+    paths = [['inventory', 'pockets', index] for index in range(count)]
+    rejected = operation(client, grenade_game, auth_headers, operation='power', slot='base', battery_paths=paths[:-1])
+    assert rejected.status_code == 400
+    assert len(actor.character.data['inventory']['pockets']) == count
+    if count > 1:
+        duplicate = operation(client, grenade_game, auth_headers, operation='power', slot='base',
+            battery_paths=[paths[0]] * count)
+        assert duplicate.status_code == 400
+    response = operation(client, grenade_game, auth_headers, operation='power', slot='base', battery_paths=paths)
+    assert response.status_code == 200, response.json
+    data = deepcopy(actor.character.data)
+    item = data['health']['prostheses']['leftLeg']['base']
+    assert item['energy_seconds'] == 43200
+    assert data['inventory']['pockets'] == []
+    advance(data, 21600)
+    assert all(percentage(cell) == 25 for cell in item['rechargeableCells'])
+    advance(data, 21600)
+    assert 'rechargeableCells' not in item
+    assert [(cell['id'], percentage(cell)) for cell in data['inventory']['pockets']] == [
+        (f'cell-{index}', 0) for index in range(count)]
+
+
 @pytest.mark.parametrize('extent',['entire_limb','hand_or_foot',None])
 def test_wrong_extent_cannot_install_or_consume(client,grenade_game,auth_headers,extent):
     actor=setup(grenade_game,extent=extent);outside(grenade_game)

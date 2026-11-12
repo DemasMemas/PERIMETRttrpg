@@ -1,0 +1,24 @@
+{
+  "description": "Порядок слоёв local-relief.bin. Каждый слой — 64×64, одна яркость на пиксель, строки сверху вниз.",
+  "license": "CC0-1.0",
+  "sources": {
+    "muddy_tracks": "https://polyhaven.com/a/muddy_tracks",
+    "brown_mud_03": "https://polyhaven.com/a/brown_mud_03",
+    "brown_mud_02": "https://polyhaven.com/a/brown_mud_02",
+    "dry_mud_field_001": "https://polyhaven.com/a/dry_mud_field_001",
+    "brown_mud": "https://polyhaven.com/a/brown_mud",
+    "concrete005": "https://polyhaven.com/a/cracked_concrete",
+    "grass": "https://polyhaven.com/a/dirt",
+    "rock": "https://polyhaven.com/a/rock_face",
+    "sand": "https://polyhaven.com/a/dense_sand",
+    "swamp": "https://polyhaven.com/a/mud_forest",
+    "concrete": "https://polyhaven.com/a/concrete_floor_worn_001",
+    "gravel": "https://polyhaven.com/a/gravel_stones",
+    "snow": "https://ambientcg.com/view?id=Snow001",
+    "metal": "https://polyhaven.com/a/rusty_metal_sheet",
+    "bare_dirt": "https://polyhaven.com/a/sand_03",
+    "granite_tiles": "https://polyhaven.com/a/concrete_pavement_02",
+    "wood_floor": "https://polyhaven.com/a/wood_planks_dirt",
+    "ice": "https://ambientcg.com/view?id=Ice001"
+  }
+}

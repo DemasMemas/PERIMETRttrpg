@@ -11,6 +11,7 @@ from app.services.exceptions import ValidationError, PermissionDenied, ConflictE
 from app.services.held_items import items as held_items
 from app.services.transaction import atomic_operation
 from app.services.action_journal import journaled
+from app.services import power_cells
 
 BEAM_RANGE=20
 BEAM_END_WIDTH=5
@@ -19,7 +20,16 @@ def mount_height(mount,posture='standing'):
     values={'head':(1.65,1.15,.32),'belt':(1,.65,.22)}.get(mount,(1.2,.8,.28))
     return values[{'standing':0,'sitting':1,'prone':2}.get(posture,0)]
 
+
+def mount_forward(mount, posture='standing'):
+    if posture == 'prone':
+        return {'head': .80, 'belt': .42}.get(mount, .74)
+    return .35
+
 NAMES={'фонарик':'hand','улучшенный фонарик':'improved','налобный фонарик':'head','налобный фонарь':'head'}
+GLOW_COLORS = {'#dcf0aa', '#f9666b', '#68beff', '#ffd265'}
+DEFAULT_GLOW_COLOR = '#dcf0aa'
+GLOW_ARC_DEGREES = 150
 
 
 def glow(item):
@@ -32,6 +42,11 @@ def glow_range(item):
 
 def glow_duration(item):
     return 1800 if str((item or {}).get('name') or '').strip().casefold()=='хис' else 600
+
+
+def glow_color(item):
+    color = (item.get('glowState') or {}).get('color')
+    return color if isinstance(color, str) and color in GLOW_COLORS else DEFAULT_GLOW_COLOR
 
 
 def definition(item):
@@ -90,6 +105,7 @@ def power(item):
 def preserve(current,incoming):
     from app.services.electronics import preserve as preserve_electronics
     preserve_electronics(current,incoming)
+    power_cells.preserve(current,incoming)
     old=(((current or {}).get('health') or {}).get('combatMeta') or {})
     meta=incoming.setdefault('health',{}).setdefault('combatMeta',{})
     if 'pdaDynamo' in old:meta['pdaDynamo']=deepcopy(old['pdaDynamo'])
@@ -241,8 +257,10 @@ def advance_ground(location_id,seconds):
     for obj in LocationObject.query.filter_by(location_id=location_id).all():
         if not (obj.properties or {}).get('contents'):continue
         props=deepcopy(obj.properties or {})
-        changed=advance({'inventory':{'backpack':props['contents']}},seconds)
+        ground_inventory = {'backpack': props['contents'], 'pockets': []}
+        changed=advance({'inventory': ground_inventory},seconds)
         if changed:
+            props['contents'].extend(ground_inventory['pockets'])
             obj.properties=props;updated.append(obj)
             db.session.flush()
             socketio.emit('location_object_updated',{'location_id':location_id,
@@ -299,6 +317,16 @@ def advance(data,seconds=0,*,battle_end=False):
             if key in binding:state[key]=binding[key]
         if not state['uses_left']:item['active']=False
         changed=changed or before!=item
+    from app.services.electronics import items as electronic_items
+    for _, item in electronic_items(data):
+        if not item.get('rechargeableBattery'):
+            continue
+        state_key, charge_key = {
+            'pda': ('pdaState', 'charge_percent'),
+            'dosimeter': ('deviceState', 'remaining_seconds'),
+        }.get(definition(item), ('lightPower', 'uses_left'))
+        if (item.get(state_key) or {}).get(charge_key) == 0:
+            changed = power_cells.eject(data, item, 0) or changed
     return changed
 
 
@@ -338,6 +366,8 @@ def advance_lobby(lobby,seconds):
     from app.services.item_controllers import advance as advance_controllers,next_due
     from app.services.pda_access import advance as advance_access,next_due as next_access
     from app.services.pda_spam import advance as advance_spam,next_due as next_spam
+    from app.services.generators import advance_lobby as advance_generators
+    advance_generators(lobby, seconds)
     remaining=max(0,seconds);updated={}
     while remaining>0:
         step=min(next_due(lobby.id,remaining),next_access(lobby.id,remaining),next_spam(lobby.id,remaining))
@@ -385,10 +415,12 @@ def ready_sources(actor,*,objects=None,jammers=None):
                 and weapons[primary].get('id')==binding.get('weapon_id')):continue
         facing=math.hypot(actor.facing_x or 0,actor.facing_y or 0) or 1
         radial=glow(item)
+        forward = mount_forward(mount, actor.posture) if not radial else 0
         result.append({'id':binding['id'],'mount':mount,'improved':definition(item)=='improved' or radial,
             'radial':radial,'range':glow_range(item) if radial else BEAM_RANGE,'end_width':BEAM_END_WIDTH,'mount_height':mount_height(mount,actor.posture),
-            'x':actor.pos_x+.5+(.35*(actor.facing_x or 0)/facing if not radial else 0),
-            'z':actor.pos_y+.5+(.35*(actor.facing_y or 0)/facing if not radial else 0),
+            **({'color': glow_color(item), 'arc_degrees': GLOW_ARC_DEGREES} if radial else {}),
+            'x':actor.pos_x+.5+forward*(actor.facing_x or 0)/facing,
+            'z':actor.pos_y+.5+forward*(actor.facing_y or 0)/facing,
             'y':CombatService.physical_position(actor,objects=objects)['height']+
                 mount_height(mount,actor.posture),
             'facing_x':actor.facing_x,'facing_y':actor.facing_y,'floor_level':actor.floor_level or 0})
@@ -403,7 +435,7 @@ def ground_sources(location_id,objects=None):
         for item in (obj.properties or {}).get('contents') or []:
             if not glow(item) or (item.get('glowState') or {}).get('remaining_seconds',0)<=0:continue
             sources.append({'id':f'ground-glow-{obj.id}-{item.get("id")}', 'mount':'ground',
-                'radial':True,'improved':True,'range':glow_range(item),'x':obj.tile_x+.5,'z':obj.tile_y+.5,
+                'radial':True,'improved':True,'range':glow_range(item),'color':glow_color(item),'x':obj.tile_x+.5,'z':obj.tile_y+.5,
                 'y':.15,'floor_level':(obj.properties or {}).get('floor_level',0)})
     return sources
 
@@ -443,8 +475,12 @@ def covers(actor,target,*,wide=False,objects=None,jammers=None):
     dx=target.pos_x-actor.pos_x;dz=target.pos_y-actor.pos_y
     dy=CombatService.physical_position(target,objects=objects)['height']-CombatService.physical_position(actor,objects=objects)['height']
     length=math.sqrt(dx*dx+dz*dz+dy*dy)
-    facing=math.hypot(actor.facing_x or 0,actor.facing_y or 0)
-    dot=(dx*(actor.facing_x or 0)+dz*(actor.facing_y or 0))/(length*facing) if length>1e-9 and facing else 1
+    fx, fz = actor.facing_x or 0, actor.facing_y or 0
+    facing = math.hypot(fx, fz)
+    dot = (dx * fx + dz * fz) / (length * facing) if length > 1e-9 and facing else 1
+    horizontal = math.hypot(dx, dz)
+    glow_direction = dx * fx + dz * fz if facing else dz
+    glow_dot = glow_direction / (horizontal * (facing or 1)) if horizontal > 1e-9 else 1
     visible=[]
     for source in sources:
         if length>source['range']+1e-9:
@@ -452,9 +488,12 @@ def covers(actor,target,*,wide=False,objects=None,jammers=None):
         if source.get('ignition_aura'):
             if (actor.floor_level or 0)==(target.floor_level or 0):
                 visible.append(source)
+        elif source.get('radial'):
+            if glow_dot >= math.cos(math.radians(source['arc_degrees'] / 2)) - 1e-9:
+                visible.append(source)
         elif facing:
             angle=math.pi/4 if wide else math.atan(source['end_width']/2/source['range'])
-            if source.get('radial') or dot>=math.cos(angle)-1e-9:
+            if dot>=math.cos(angle)-1e-9:
                 visible.append(source)
     if not visible:return []
     if CombatService._cover_analysis(actor.location_id,actor,target,objects=objects).get('zones',{}).get('head'):
@@ -537,8 +576,11 @@ def operate(character_id,user_id,payload):
     from app.services.character import CharacterService
     from app.services.combat import CombatService
     from app.services.inventory_access import calculate_inventory_access
-    if not isinstance(payload,dict) or set(payload)-{'operation','path','mount','weapon_index','character_revision','battery_path','source_id','book_path','enabled','profile'}:
+    if not isinstance(payload,dict) or set(payload)-{'operation','path','mount','weapon_index','character_revision','battery_path','source_id','book_path','enabled','profile','color'}:
         raise ValidationError('Некорректные параметры фонаря')
+    color = payload.get('color')
+    if 'color' in payload and (payload.get('operation') != 'ignite' or not isinstance(color, str) or color not in GLOW_COLORS):
+        raise ValidationError('Выберите цвет до активации источника света')
     character=db.session.get(LobbyCharacter,character_id)
     if not character:raise NotFoundError('Персонаж не найден')
     CharacterService.check_access(character,user_id,edit=True)
@@ -581,11 +623,13 @@ def operate(character_id,user_id,payload):
             dose_power['on']=not dose_power['on'];cost=1 if actor else 0
         elif operation=='dosimeter_battery':
             battery=CombatService._inventory_item_at_path(data,payload.get('battery_path'))
-            if str(battery.get('name') or '').strip().casefold()!='батарейки':raise ValidationError('Выберите батарейки')
+            if not power_cells.usable(battery):raise ValidationError('Выберите заряженную батарейку')
             if actor:
                 if not CombatService._has_usable_free_hand(actor):raise ValidationError('Для замены батарейки нужна свободная рука')
                 cost=3+int(calculate_inventory_access(data,payload['battery_path'],battery)['retrieval_action_points'])
-            CombatService._take_inventory_item(data,payload['battery_path'],1);dose_power['remaining_seconds']=DOSIMETER_SECONDS
+            charge = power_cells.swap(data, selected, payload['battery_path'],
+                dose_power['remaining_seconds'] * 100 / DOSIMETER_SECONDS)
+            dose_power['remaining_seconds'] = DOSIMETER_SECONDS * charge / 100
         else:raise ValidationError('Выберите действие дозиметра')
         if actor and actor.action_points_current<cost:raise ValidationError('Недостаточно ОД для дозиметра')
         selected['deviceState']=dose_power
@@ -690,14 +734,13 @@ def operate(character_id,user_id,payload):
             if has_profiles(selected):assign_file(selected,moved['id'],active(selected))
         else:
             battery=CombatService._inventory_item_at_path(data,payload.get('battery_path'))
-            if str(battery.get('name') or '').strip().casefold()!='батарейки':
-                raise ValidationError('Выберите батарейки для КПК')
+            if not power_cells.usable(battery):
+                raise ValidationError('Выберите заряженную батарейку для КПК')
             if actor:
                 if not CombatService._has_usable_free_hand(actor):
                     raise ValidationError('Для замены батарейки нужна свободная действующая рука')
                 cost=3+int(calculate_inventory_access(data,payload['battery_path'],battery)['retrieval_action_points'])
-            CombatService._take_inventory_item(data,payload['battery_path'],1)
-            status['charge_percent']=100.0
+            status['charge_percent'] = power_cells.swap(data, selected, payload['battery_path'], status['charge_percent'])
         if actor and actor.action_points_current<cost:
             raise ValidationError('Недостаточно ОД для КПК')
         selected['pdaState']=status
@@ -736,6 +779,8 @@ def operate(character_id,user_id,payload):
             parent.insert(index+1,selected)
         selected.setdefault('id',str(uuid4()))
         selected['glowState']={'activated':True,'remaining_seconds':glow_duration(selected)}
+        if color is not None:
+            selected['glowState']['color'] = color
         binding={'id':selected['id'],'mount':'hand','on':True}
         states.append(binding)
         cost=(1+int(calculate_inventory_access(data,path,parent[index])['retrieval_action_points'])) if actor else 0
@@ -815,12 +860,15 @@ def operate(character_id,user_id,payload):
             states[:]=[item for item in states if item['id']!=selected['id']]
         else:
             battery=CombatService._inventory_item_at_path(data,payload.get('battery_path'))
-            if 'батаре' not in str(battery.get('name') or '').casefold():raise ValidationError('Выберите батарейку')
+            if not power_cells.usable(battery, flashlight=True):raise ValidationError('Выберите заряженную батарейку')
             if actor:
                 if not CombatService._has_usable_free_hand(actor):raise ValidationError('Для замены батарейки нужна свободная действующая рука')
                 cost+=int(calculate_inventory_access(data,payload['battery_path'],battery)['retrieval_action_points'])
-            CombatService._take_inventory_item(data,payload['battery_path'],1)
-            selected['lightPower']={'uses_left':10,'elapsed_seconds':0}
+            previous = power(selected)
+            charge = power_cells.swap(data, selected, payload['battery_path'],
+                max(0, (previous['uses_left'] * 600 - previous['elapsed_seconds']) / 60), flashlight=True)
+            uses = math.ceil(charge / 10)
+            selected['lightPower'] = {'uses_left': uses, 'elapsed_seconds': min(599.999, max(0, uses * 600 - charge * 60))}
     elif operation!='ignite':raise ValidationError('Неизвестное действие фонаря')
     if actor and actor.action_points_current<cost:raise ValidationError('Недостаточно ОД для фонаря')
     if nvg:

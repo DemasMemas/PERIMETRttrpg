@@ -12,7 +12,9 @@ from test_pda_access import access_game,connected,write
 
 def install(character):
     data=deepcopy(character.data);pda=data['inventory']['pockets'][0]
-    pda.setdefault('modifications',[]).extend([{'ruleId':'pda-b14'},{'ruleId':'pda-b15'}])
+    pda.setdefault('modifications',[]).extend([
+        {'ruleId':'pda-b14'}, {'ruleId':'pda-b15','profileOwnerId':character.id},
+    ])
     pda['pdaState']={'on':True,'charge_percent':37}
     pda['contents']=[{'id':'erase-book','name':'Книга','quantity':1,'attributes':{'book_kind':'skill'}}]
     character.data=data;db.session.commit()

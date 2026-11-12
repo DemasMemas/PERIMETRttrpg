@@ -16,7 +16,7 @@ export function createPo2Fence(THREE, onReady = () => {}) {
             resolve();
         }, undefined, error => { diagnostics.errors.push(String(error)); resolve(); })),
         new Promise(resolve => new THREE.TextureLoader().load('/static/models/art/po2_concrete.png', texture => {
-            texture.encoding = THREE.sRGBEncoding;
+            texture.colorSpace = THREE.SRGBColorSpace;
             texture.anisotropy = 4;
             material.map = texture;
             material.needsUpdate = true;

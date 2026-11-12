@@ -37,7 +37,7 @@ test('ground shader samples interpolated darkness at world positions', async () 
     assert.match(scene, /locationDarknessTexture\.magFilter = THREE\.LinearFilter/);
     assert.match(scene, /locationDarknessTexture\.minFilter = THREE\.LinearFilter/);
     assert.match(scene, /applySurfaceDarkness\(waterMaterial, locationDarknessTexture,/);
-    assert.match(scene, /applySurfaceDarkness\(material, locationDarknessTexture,\s*new THREE\.Vector2\(width, height\), null, ensureTerrainGrassDetail\(\)\)/);
+    assert.match(scene, /applySurfaceDarkness\(material, locationDarknessTexture,\s*new THREE\.Vector2\(currentLocationData\.grid_width, currentLocationData\.grid_height\),\s*null, ensureTerrainGrassDetail\(\)\)/);
     assert.match(scene, /new THREE\.Color\(terrainColors\[tile\.terrain\] \|\| 0x3a5f0b\)\s*\.multiplyScalar\(darknessFactorAt\(x, z\)\)/);
     assert.match(scene, /new THREE\.Color\(terrainColors\[terrain\] \|\| 0x3a5f0b\)\s*\.multiplyScalar\(darknessFactorAt\(x, z\)\)/);
 });
@@ -56,6 +56,8 @@ test('grass photo detail uses the editable blend mask without changing darkness'
     assert.equal(shader.uniforms.locationGrassBlend.value, photos.blend);
     assert.equal(shader.uniforms.locationGrassReady, photos.ready);
     assert.match(shader.fragmentShader, /grassWeights\.r \+ grassWeights\.g/);
+    assert.match(shader.fragmentShader, /mix\(diffuseColor\.rgb, grassPhoto, grassCoverage\)/);
+    assert.ok(shader.fragmentShader.indexOf('float grassCoverage') < shader.fragmentShader.indexOf('#include <color_fragment>'));
     assert.match(shader.fragmentShader, /diffuseColor\.rgb \*= texture2D\(locationDarknessMap/);
     assert.match(material.customProgramCacheKey(), /photo-grass/);
 });

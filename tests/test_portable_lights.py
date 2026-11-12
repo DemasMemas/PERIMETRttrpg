@@ -5,7 +5,7 @@ import pytest
 
 from sqlalchemy.orm.attributes import flag_modified
 
-from app.extensions import db
+from app.extensions import db, socketio
 from app.models import LocationCombatState,LocationObject
 from app.services.combat import CombatService
 from app.services.portable_lights import advance,advance_ground,bindings,covers,ergonomics,ground_sources,illumination,ready_sources,shooting,start_battle
@@ -243,18 +243,40 @@ def test_twenty_meter_beam_preserves_five_meter_end_width(grenade_game):
     target.pos_y=actor.pos_y+1.4;assert not covers(actor,target)
 
 
-@pytest.mark.parametrize('mount,posture,height',[('head','standing',1.65),('head','prone',.32),
-    ('hand','standing',1.2),('hand','sitting',.8),('belt','standing',1)])
-def test_emitter_uses_mount_height_instead_of_ground(grenade_game,mount,posture,height):
-    from app.services.portable_lights import mount_height
+@pytest.mark.parametrize('name, radius', [('ХИС', 8), ('Светящаяся палочка', 5)])
+def test_carried_glow_only_illuminates_forward_sector(client, grenade_game, auth_headers, name, radius):
+    actor = grenade_game['actor_location']
+    target = grenade_game['target_location']
+    data = deepcopy(actor.character.data)
+    data['inventory'] = {'pockets': [{'id': f'light-{actor.id}', 'name': name, 'category': 'misc', 'quantity': 1}]}
+    actor.character.data = data
+    actor.facing_x, actor.facing_y = 1, 0
+    db.session.commit()
+    assert operate(client, grenade_game, auth_headers, 'ignite').status_code == 200
+    source = ready_sources(actor)[0]
+    assert source['range'] == radius and source['arc_degrees'] == 150
+    for angle, lit in [(0, True), (74, True), (76, False), (-74, True), (-76, False), (180, False)]:
+        angle = math.radians(angle)
+        target.pos_x = actor.pos_x + 2 * math.cos(angle)
+        target.pos_y = actor.pos_y + 2 * math.sin(angle)
+        assert bool(covers(actor, target, objects=[])) is lit
+
+
+@pytest.mark.parametrize('mount,posture,height,forward',[('head','standing',1.65,.35),('head','prone',.32,.80),
+    ('hand','standing',1.2,.35),('hand','sitting',.8,.35),('hand','prone',.28,.74),('belt','standing',1,.35)])
+def test_emitter_uses_mount_height_instead_of_ground(grenade_game,mount,posture,height,forward):
+    from app.services.portable_lights import mount_forward, mount_height
     actor=install(grenade_game['actor_location'],on=True);actor.posture=posture
+    actor.facing_x,actor.facing_y=0,1
     # Наличие крепления на поясе проверяется отдельными сценариями.
     assert mount_height(mount,posture)==height
+    assert mount_forward(mount,posture)==forward
     if mount!='belt':
         bindings(actor.character.data)[0]['mount']=mount
         source=ready_sources(actor)[0]
         assert source['mount_height']==height
         assert abs(source['y']-CombatService.physical_position(actor)['height']-height)<1e-8
+        assert source['z'] == pytest.approx(actor.pos_y + .5 + forward)
 
 
 @pytest.mark.parametrize('name,previous',[('Фонарик','Зона действия фонарика - конус с высотой 35 и основанием 5.'),
@@ -389,16 +411,23 @@ def test_glow_stick_split_ignite_throw_and_expire(client,grenade_game,auth_heade
     actor.character.data=data;actor.drawn_weapon_index=0
     flag_modified(actor.character,'data');db.session.commit()
     before=actor.action_points_current
-    response=client.post(f'/lobbies/characters/{actor.character_id}/portable-lights',
-        headers=auth_headers(grenade_game['actor_user']),json={
-            'operation':'ignite','path':['inventory','pockets',0],
-            'source_id':'glow-stack','character_revision':actor.character.revision})
+    url = f'/lobbies/characters/{actor.character_id}/portable-lights'
+    headers = auth_headers(grenade_game['actor_user'])
+    payload = {'operation': 'ignite', 'path': ['inventory', 'pockets', 0],
+               'source_id': 'glow-stack', 'character_revision': actor.character.revision}
+    assert client.post(url, headers=headers, json={**payload, 'color': '#000000'}).status_code == 400
+    assert actor.action_points_current == before
+    assert 'glowState' not in actor.character.data['inventory']['pockets'][0]
+    # Запись об отклонённом действии в журнале меняет ревизию листа.
+    payload['character_revision'] = actor.character.revision
+    response = client.post(url, headers=headers, json={**payload, 'color': '#f9666b'})
     assert response.status_code==200,response.json
     sticks=actor.character.data['inventory']['pockets']
     assert len(sticks)==2 and sticks[0]['quantity']==1
-    assert sticks[1]['glowState']=={'activated':True,'remaining_seconds':600}
+    assert sticks[1]['glowState']=={'activated':True,'remaining_seconds':600,'color':'#f9666b'}
     assert actor.action_points_current==before-2
     assert ready_sources(actor)[0]['radial'] and ready_sources(actor)[0]['range']==5
+    assert ready_sources(actor)[0]['color'] == '#f9666b'
     assert not CombatService._has_usable_free_hand(actor)
     monkeypatch.setattr('app.services.brigadier_order.boost_roll',lambda data,rolls,**kwargs:([20],20,0))
     result=CombatService.perform_action(location.id,grenade_game['lobby'].gm_id,actor.id,
@@ -407,13 +436,14 @@ def test_glow_stick_split_ignite_throw_and_expire(client,grenade_game,auth_heade
     assert result['thrown_item']['success']
     assert not bindings(actor.character.data)
     assert len(ground_sources(location.id))==1
+    assert ground_sources(location.id)[0]['color'] == '#f9666b'
     advance_ground(location.id,599)
     assert ground_sources(location.id)[0]['range']==5
     advance_ground(location.id,1)
     assert not ground_sources(location.id)
 
 
-def test_glow_stick_can_be_placed_on_own_floor(client,grenade_game,auth_headers):
+def test_glow_stick_can_be_placed_on_own_floor(client,grenade_game,auth_headers,monkeypatch):
     actor=grenade_game['actor_location'];actor.floor_level=1
     stick={'id':'held-glow','name':'Светящаяся палочка','category':'misc','weight':.1,
         'quantity':1,'glowState':{'activated':True,'remaining_seconds':600}}
@@ -421,6 +451,15 @@ def test_glow_stick_can_be_placed_on_own_floor(client,grenade_game,auth_headers)
     data['inventory']['pockets']=[stick]
     data['health'].setdefault('combatMeta',{})['portableLights']=[{'id':'held-glow','mount':'hand','on':True}]
     actor.character.data=data;flag_modified(actor.character,'data');db.session.commit()
+    scene_updates = []
+    original_emit = socketio.emit
+
+    def capture_emit(event, payload, **kwargs):
+        if event == 'combat_state_updated':
+            scene_updates.append(payload)
+        return original_emit(event, payload, **kwargs)
+
+    monkeypatch.setattr(socketio, 'emit', capture_emit)
     response=client.post(f"/lobbies/{grenade_game['lobby'].id}/locations/{actor.location_id}/drop-item",
         headers=auth_headers(grenade_game['actor_user']),json={
             'character_id':actor.character_id,'character_revision':actor.character.revision,
@@ -429,6 +468,9 @@ def test_glow_stick_can_be_placed_on_own_floor(client,grenade_game,auth_headers)
     assert not bindings(actor.character.data)
     assert len(ground_sources(actor.location_id))==1
     assert ground_sources(actor.location_id)[0]['floor_level']==1
+    assert len(scene_updates) == 1
+    updated_actor = next(item for item in scene_updates[0]['characters'] if item['character_id'] == actor.character_id)
+    assert not updated_actor['portable_lights']
 
 
 def test_his_uses_eight_meter_light_for_thirty_minutes(client,grenade_game,auth_headers):

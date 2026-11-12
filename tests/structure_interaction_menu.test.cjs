@@ -10,7 +10,7 @@ test('interaction menu remains open until an outside click', () => {
     const start = source.indexOf('function ensureStructureActionMenu() {');
     const end = source.indexOf('\nfunction ensureStructureRotationMenu()', start);
     assert.ok(start >= 0 && end > start);
-    const menu = { style: { display: 'block' }, contains: target => target === menu };
+    const menu = { style: { display: 'block' }, addEventListener() {}, contains: target => target === menu };
     let click;
     let closes = 0;
     const context = vm.createContext({
@@ -54,6 +54,7 @@ test('hovering another valid target swaps the open interaction menu', () => {
         armedMoveCharacterId: null,
         pendingFacingSelection: null,
         pendingCharacterPlacement:null,
+        pendingStationPlacement:null,
         pendingCombatAction: null,
         pendingObjectMoveId: null,
         pendingStructureAction: { actorCharacterId: 1 },
@@ -65,6 +66,7 @@ test('hovering another valid target swaps the open interaction menu', () => {
         getCharacterAtScreen: x => [10, 20].includes(x)
             ? { userData: { characterId: x === 10 ? 2 : 3 } } : null,
         canInteractWithCharacter: () => true,
+        clearTerrainClimbTarget() {}, showTerrainClimbMenu() {},
         showCharacterInteractionMenu: (_x, _y, id) => {
             opened.push(`character:${id}`);
             context.structureActionMenuState = { objectId: `character:${id}` };

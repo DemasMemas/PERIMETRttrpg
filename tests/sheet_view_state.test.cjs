@@ -9,8 +9,12 @@ test('sheet refresh restores focus, caret, expanded panel and container', () => 
     const start = source.indexOf('function captureSheetViewState(');
     const end = source.indexOf('\nasync function refreshSavedSheet(', start);
     assert.ok(start >= 0 && end > start);
-    const oldTab = { id: 'sheet-tab-health', querySelectorAll() { return [oldDetail]; } };
-    const newTab = { id: 'sheet-tab-health', querySelectorAll() { return [newStressDetail, newDetail]; } };
+    const oldTab = {
+        id: 'sheet-tab-health', scrollTop: 320, scrollLeft: 12, isConnected: false,
+        getAttribute() { return null; }, classList: { contains() { return false; } },
+        querySelectorAll() { return [oldDetail]; },
+    };
+    const newTab = { id: 'sheet-tab-health', scrollTop: 0, scrollLeft: 0, querySelectorAll() { return [newStressDetail, newDetail]; } };
     const oldDetail = { id: '', dataset: { sheetPanel: 'organs' }, open: true, closest() { return oldTab; } };
     const newStressDetail = { dataset: { sheetPanel: 'stress-effects' }, open: true };
     const newDetail = { dataset: { sheetPanel: 'organs' }, open: false };
@@ -39,6 +43,7 @@ test('sheet refresh restores focus, caret, expanded panel and container', () => 
             if (selector === '[id="health.current"]') return [rerendered ? newControl : oldControl];
             if (selector === 'details') return rerendered ? [newStressDetail, newDetail] : [oldDetail];
             if (selector === '[data-container-path]') return [rerendered ? newContainer : oldContainer];
+            if (selector === '[id], .modal-content, [data-container-path]') return [oldTab];
             return [];
         },
     };
@@ -60,6 +65,8 @@ test('sheet refresh restores focus, caret, expanded panel and container', () => 
     assert.equal(toggle.textContent, '▼');
     assert.equal(newControl.focused, true);
     assert.deepEqual(newControl.selection, [2, 4, 'forward']);
+    assert.equal(newTab.scrollTop, 320);
+    assert.equal(newTab.scrollLeft, 12);
 
     rerendered = false;
     oldControl.isConnected = true;

@@ -1,6 +1,20 @@
 const {test}=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path');
 const load=()=>import(`data:text/javascript;base64,${Buffer.from(fs.readFileSync(path.join(__dirname,'../app/static/js/inventoryContainers.js'),'utf8')).toString('base64')}`);
 
+test('свободные карманы принимают целые предметы без рюкзака в исходном порядке', async () => {
+    const { moveUnpackedItemsToPockets } = await load();
+    const tooLarge = { id: 'large', volume: 8 }, small = { id: 'small', volume: 2 };
+    const stack = { id: 'stack', volume: 2, quantity: 3 };
+    const data = { inventory: { pockets: [{ id: 'present', volume: 3 }], backpack: [tooLarge, small, stack] } };
+    const volume = item => item.volume * (item.quantity ?? 1);
+    assert.equal(moveUnpackedItemsToPockets(data, 10, volume), true);
+    assert.equal(data.inventory.pockets[1], small);
+    assert.deepEqual(data.inventory.backpack, [tooLarge, stack]);
+    assert.equal(moveUnpackedItemsToPockets(data, 10, volume), false);
+    data.equipment = { backpack: { id: 'worn' } };
+    assert.equal(moveUnpackedItemsToPockets(data, 50, volume), false);
+});
+
 test('смена подсумка обновляет вместимость и ограничения, сохраняя вещи',async()=>{
     const {applyPouchTemplate}=await load();
     const contents=[{id:'medicine'}],pouch={internalVolume:20,capacity:20,contents,allowedCategories:['ammo']};

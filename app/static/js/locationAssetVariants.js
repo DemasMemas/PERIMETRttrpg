@@ -17,9 +17,23 @@ export function visualAssetForLocationObject(type, properties) {
     return variant?.baseType === type ? variant : findLocationAsset(type);
 }
 
+export function vegetationColorValues(asset, properties) {
+    const channels = asset?.colorChannels;
+    if (!channels) return {};
+    const color = typeof properties?.color === 'string' && /^#[0-9a-f]{6}$/i.test(properties.color)
+        && properties.color.toLowerCase() !== asset.color.toLowerCase() ? properties.color : '#ffffff';
+    return Object.fromEntries(Object.keys(channels).map(channel => {
+        const saved = properties?.[channel];
+        const legacy = asset.visual?.renderMode !== 'glb' || !channels.foliage_color || channel === 'foliage_color'
+            ? color : '#ffffff';
+        return [channel, typeof saved === 'string' && /^#[0-9a-f]{6}$/i.test(saved) ? saved.toLowerCase() : legacy.toLowerCase()];
+    }));
+}
+
 export function locationObjectLabel(object) {
     const asset = visualAssetForLocationObject(object?.type, object?.properties);
     const raw = String(object?.name || object?.properties?.anomalyName || '').trim();
+    if (object?.type === 'swamp_wheat_wild_1' && raw === 'Сухая трава') return asset.label;
     const technical = /\b(?:PBR|GLB|GLTF|Poly\s*Haven)\b|тест[,\s]|не финальный/i.test(raw);
     const generated = /^(?:Секция (?:ограды|забора)|Грунтовая площадка|Складской ящик|Бочка полигона)\s+\d+$/i.test(raw);
     if (asset && (technical || generated || !/[А-Яа-яЁё]/.test(raw))) return asset.label;

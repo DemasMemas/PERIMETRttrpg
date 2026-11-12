@@ -69,9 +69,11 @@ module.exports=async({page,request,token,lobby,offered,loc,safeSession})=>{
         await page.until("FG.scene.children.some(l=>l.isSpotLight&&Math.abs(l.position.x-2.5)<.1&&Math.abs(l.position.z-30.85)<.1)",'Настоящий луч включён');
         const on=await sample();const onMs=Date.now()-onStarted;const onGap=await page.evaluate('Math.max(0,...lampFrameGaps)');assert.ok(onGap<1000,item.name+': зависание кадра '+onGap);const programsAfter=await page.evaluate('FG.renderer.info.programs.length');await shot('lamp-'+index+'-on');
         if(index===0)await measure('on');
+        fs.writeFileSync(path.join(safeSession.artifacts,'beam-probes-'+index+'.json'),JSON.stringify({off,on},null,2));
         for(const distance of [1.5,3,6,12,15,18,19,19.7]){
             const delta=on.find(p=>p.distance===distance&&p.lateral===0).brightness-off.find(p=>p.distance===distance&&p.lateral===0).brightness;
-            assert.ok(delta>5,item.name+': нет света на '+distance+' м');
+            // На краю луч уже ослаблен, а рельеф дороги меняет яркость отдельных пикселей.
+            assert.ok(delta>(distance>=19?2:5),item.name+': нет света на '+distance+' м ('+delta.toFixed(2)+')');
         }
         for(const probe of on.filter(p=>p.lateral)){
             const original=off.find(p=>p.distance===probe.distance&&p.lateral===probe.lateral);
@@ -81,9 +83,10 @@ module.exports=async({page,request,token,lobby,offered,loc,safeSession})=>{
         assert.ok(on.find(p=>p.distance===22&&!p.lateral).brightness-off.find(p=>p.distance===22&&!p.lateral).brightness<2,'За 20 метрами света нет');
         const beams=await page.evaluate("FG.scene.children.filter(l=>l.isSpotLight&&Math.abs(l.position.x-2.5)<.1).map(l=>({angle:l.angle,range:l.distance,height:l.position.y,aspect:l.shadow.camera.aspect}))");
         assert.equal(beams.length,1);assert.equal(beams[0].range,20);
-        const emitterHeight=await page.evaluate(`(()=>{const lamp=FG.scene.children.find(node=>node.userData.portableEmitter&&node.visible);
+        const emitterHeight=await page.evaluate(`(()=>{const lamp=FG.scene.children.find(node=>node.isSpotLight&&node.intensity>0);
             return lamp.position.y-FG.characters.get(${owner.id}).model.position.y})()`);
-        assert.ok(Math.abs(emitterHeight-(index===0?1.65:1.2))<.001,'Высота видимого источника');
+        assert.ok(Math.abs(emitterHeight-(index===0?1.65:1.2))<.001,'Высота начала луча');
+        assert.ok(!await page.evaluate('FG.scene.children.some(node=>node.userData.portableEmitter)'), 'В воздухе нет маркера');
         if(index<2){
             await page.evaluate('locationControls.target.set(2.5,2.2,31);locationControls.object.position.set(-.5,4.5,30);locationControls.update();true');
             await shot(index===0?'emitter-close-head':'emitter-close-hand');

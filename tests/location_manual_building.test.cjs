@@ -29,7 +29,7 @@ test('manual covering panels follow roof cutaway and stay pickable while editing
         const child={isMesh:true,material:{}};
         const object={type,tile_x:4,tile_y:4,properties:{dimensions:{width:2,depth:2,height:.12},elevation:2.4}};
         const mesh={position:{y:3.4},userData:{locationObject:object},traverse:fn=>fn(child)};
-        const context=vm.createContext({...architecture,...roof,currentLocationData:{objects:[]},camera:{position:{x:4.5,y:4,z:4.5,distanceTo:()=>4}},
+        const context=vm.createContext({firstPersonView:null,...architecture,...roof,currentLocationData:{objects:[]},camera:{position:{x:4.5,y:4,z:4.5,distanceTo:()=>4}},
             controls:{target:{x:4.5,y:1,z:4.5}},locationObjectMeshes:[mesh],roofMeshes:[],locationObjectPickCache:{key:null},
             updateStoreyTerrainVisibility() {}, locationViewLevel:0, editMode:false,locationRoofsVisible:true,locationBuildingViewsDirty:false,getLocationBuildingViews:()=>new Map()});
         vm.runInContext(code,context);context.updateRoofVisibility();

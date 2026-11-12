@@ -4,6 +4,7 @@ from app.extensions import db, socketio
 from app.models import Lobby, LobbyCharacter, LocationCharacter
 from app.services.character import CharacterService
 from app.services.exceptions import ServiceError
+from app.services.character_appearance import public_character_appearance
 
 
 _subscriptions = {}
@@ -71,6 +72,25 @@ def emit_character_update(payload, *, skip_sid=None, snapshot_projector=None):
         socketio.emit('mutant_health_updated', health_update, room=f'user_{user_id}')
 
 
+def publish_character_appearance(character, placements=None):
+    if placements is None:
+        placements = LocationCharacter.query.filter_by(character_id=character.id).all()
+    appearance = public_character_appearance(character.data)
+    for model in placements:
+        if not model.gm_hidden:
+            socketio.emit('location_character_appearance_updated', {
+                'location_id': model.location_id,
+                'character_id': character.id,
+                'appearance': appearance,
+            }, room=f'location_{model.location_id}')
+    from app.models import WorldGroup
+    from app.lobbies import _serialize_world_group
+    for group in WorldGroup.query.filter_by(lobby_id=character.lobby_id).all():
+        if character.id in (group.member_character_ids or []):
+            socketio.emit('world_group_updated', _serialize_world_group(group),
+                          room=f'lobby_{character.lobby_id}')
+
+
 def publish_character_save(result, updates, user_id, *, skip_sid=None):
     character = result.character
     saved_updates = {key: value for key, value in updates.items() if key not in {'_manual_fields', '_save_id', '_base_data'}}
@@ -94,7 +114,10 @@ def publish_character_save(result, updates, user_id, *, skip_sid=None):
     for posture_update in result.posture_updates:
         socketio.emit('location_character_posture_updated', posture_update,
                       room=f"location_{posture_update['location_id']}")
-    for model in LocationCharacter.query.filter_by(character_id=character.id).all():
+    placements = LocationCharacter.query.filter_by(character_id=character.id).all()
+    if result.appearance_changed:
+        publish_character_appearance(character, placements)
+    for model in placements:
         socketio.emit('combat_state_updated',
                       CombatService.get_state(model.location_id, lobby.gm_id),
                       room=f'location_{model.location_id}')

@@ -56,6 +56,24 @@ module.exports=async({page,request,token,lobby,base,connect,debugPort,safeSessio
     const punctuationTrait=rules.traits.find(item=>item.limitText&&!/[.!?…]$/.test(item.effect.trim()));
     const punctuation=await page.evaluate(`(async()=>{const {traitDescription}=await import('/static/js/characterCreation.js');return traitDescription(${JSON.stringify(punctuationTrait)})})()`);
     assert.ok(punctuation.includes('. '+punctuationTrait.limitText));
+    await page.call('Emulation.setDeviceMetricsOverride',{width:1280,height:720,deviceScaleFactor:1,mobile:false});
+    try {
+        const bonusBackground=rules.backgrounds.find(item=>item.available&&item.entries.some(entry=>entry.type==='points'&&entry.amount>0));
+        const bonusPoints=30+bonusBackground.entries.filter(entry=>entry.type==='points').reduce((sum,entry)=>sum+entry.amount,0);
+        await set(`${root} [name=backgroundId]`,bonusBackground.id);
+        assert.equal(await page.evaluate(`document.querySelector('${root} [data-points-remaining]').textContent`),String(bonusPoints));
+        await set(`${root} [name=backgroundId]`,penaltyBackground.id);
+        assert.equal(await page.evaluate(`document.querySelector('${root} [data-points-remaining]').textContent`),String(penaltyPoints));
+        assert.ok(await page.evaluate(`document.querySelector('${root} [data-background-positive]').checkVisibility()`));
+        const penaltySkillBackground=rules.backgrounds.find(item=>item.available&&item.entries.some(entry=>entry.type==='skill'&&entry.amount<0));
+        const penalty=penaltySkillBackground.entries.find(entry=>entry.type==='skill'&&entry.amount<0);
+        const [group,key]=penalty.skill.split('.');
+        await set(`${root} [name=backgroundId]`,penaltySkillBackground.id);
+        const penalties=await page.evaluate(`document.querySelector('${root} [data-background-positive]').textContent.split('Штрафы предыстории').at(-1)`);
+        assert.ok(penalties.includes(rules.skills[group][key])&&penalties.includes(String(penalty.amount)));
+    } finally {
+        await page.call('Emulation.clearDeviceMetricsOverride');
+    }
     await set(`${root} [name=backgroundId]`,rules.backgrounds.find(b=>b.name==='Охотник').id);
     assert.equal(await page.evaluate(`document.querySelector('${root} [data-favored-mutant-field]').hidden`),false);
     assert.equal(await page.evaluate(`document.querySelectorAll('${root} [name=favoredMutant] option').length`),rules.mutants.length+1);

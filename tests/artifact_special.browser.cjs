@@ -597,9 +597,12 @@ module.exports=async({page,request,token,lobby,loc,locationId,rules,safeSession}
     await capture('artifact-crystal-cloud-side');
     await changeMinutes(1);
     await page.until(`!(${cloud})`,'Облако исчезло по игровому времени');
-    const equipSpecial=async(name,id)=>{
+    const equipSpecial=async(name,id,{inBarrier=false}={})=>{
         const special=rules.find(row=>row.name===name),fresh=await getSponge();assert.ok(special);
-        fresh.data.equipment.armor.containers=[{item:{id,name,category:'artifact',quantity:1,attributes:special}}];
+        const artifact={id,name,category:'artifact',quantity:1,attributes:special};
+        const item=inBarrier?{id:'amplifier-barrier',name:'Барьер',category:'container',
+            attributes:{artifact_container_kind:'equipped'},installedModules:[artifact]}:artifact;
+        fresh.data.equipment.armor.containers=[{item}];
         await request(spongeUrl,{data:fresh.data},token,'PUT');
         await request('/__testing/artifact-preparation/'+safeSession.runId,{character_id:spongeBearer.id},token);
         await changeMinutes(1);
@@ -815,7 +818,7 @@ module.exports=async({page,request,token,lobby,loc,locationId,rules,safeSession}
         ['Ядро мысли','native-thought-core',5,3,150,0],
         ['Сердце Эха','native-echo-heart',8,4,0,3],
     ]){
-        await equipSpecial(name,id);
+        await equipSpecial(name,id,{inBarrier:true});
         const prepared=await getSponge();
         prepared.data.health.current=700;
         prepared.data.skills.other.medicine={base:10,bonus:2,xp:0};
@@ -824,13 +827,15 @@ module.exports=async({page,request,token,lobby,loc,locationId,rules,safeSession}
         let savedMedicineBonus=2;
         const medicineInput="document.querySelector('input[name=\"skills.other.medicine.bonus\"]')";
         const agilityInput="document.querySelector('input[name=\"skills.physical.agility.bonus\"]')";
+        const charismaInput="document.querySelector('input[name=\"skills.social.charisma.bonus\"]')";
         const openSkills=()=>page.evaluate(`window.openCharacterSheet(${spongeBearer.id},'skills').then(()=>true)`);
         const expectSkillFields=multiplier=>page.until(`(()=>{
-            const medicine=${medicineInput},agility=${agilityInput};
+            const medicine=${medicineInput},agility=${agilityInput},charisma=${charismaInput};
             return Number(medicine?.dataset.transientBonus)===${other*multiplier}
                 &&Number(medicine?.value)===${savedMedicineBonus+other*multiplier}
                 &&Number(agility?.dataset.transientBonus)===${physical*multiplier}
-                &&Number(agility?.value)===${1+physical*multiplier};
+                &&Number(agility?.value)===${1+physical*multiplier}
+                &&Number(charisma?.dataset.transientBonus)===0;
         })()`,`${name}: бонусы навыков в листе, ×${multiplier}`);
         const assertPhase=async (multiplier,health,movement)=>{
             const data=(await getSponge()).data;
@@ -848,8 +853,21 @@ module.exports=async({page,request,token,lobby,loc,locationId,rules,safeSession}
         await openSkills();
         await expectSkillFields(1);
         await clickSpecial(id);
+        assert.equal(await page.evaluate(`(()=>{
+            const button=document.querySelector('[data-artifact-special="${id}"]');
+            const slot=button?.closest('.artifact-slot'),card=slot?.closest('.armor-container-card');
+            if(!card)return false;
+            const name=slot.querySelector('.artifact-slot-name').getBoundingClientRect();
+            const bounds=card.getBoundingClientRect();
+            const buttons=[...slot.querySelectorAll('button')].map(node=>node.getBoundingClientRect());
+            return name.height>0 && buttons.length===2 && buttons.every(rect=>rect.top>=name.bottom && rect.right<=bounds.right);
+        })()`),true,`${name}: обе кнопки под названием и в границах контейнера`);
         await assertPhase(2,700,0);
-        await openSkills();
+        const artifactEffects="[...document.querySelectorAll('[data-artifact-effect]')].map(card=>card.textContent).join(' ')";
+        await page.until(`(${artifactEffects}).includes('${name} · Положительные эффекты ×2 · осталось 1 мин')`,`${name}: усиление сразу видно в эффектах`);
+        const consequence = hpCost ? '−150 общих ОЗ через 1 мин' : 'через 1 мин штраф перемещения +3 на 10 мин';
+        await page.until(`(${artifactEffects}).includes('${name} · Последствия применения · ${consequence}')`,`${name}: последствие и срок видны в заголовке`);
+        await page.evaluate("document.querySelector('#sheet-tabs [data-tab=skills]').click();true");
         await expectSkillFields(2);
         savedMedicineBonus++;
         await page.evaluate(`(()=>{
@@ -864,12 +882,15 @@ module.exports=async({page,request,token,lobby,loc,locationId,rules,safeSession}
         await changeMinutes(1);
         await assertPhase(1,700-hpCost,movementCost);
         await expectSkillFields(1);
+        await page.until(`!(${artifactEffects}).includes('${name} · Положительные эффекты')`,`${name}: усиление исчезло из эффектов`);
         if(movementCost){
+            await page.until(`(${artifactEffects}).includes('Штраф после Сердца Эха · осталось 10 мин')`,'Штраф виден сразу после усиления');
             await changeMinutes(9);
             // На десятой минуте ношения отдельно срабатывает пассивная потеря 50 ОЗ.
             await assertPhase(1,650,movementCost);
             await changeMinutes(1);
             await assertPhase(1,650,0);
+            await page.until(`!(${artifactEffects}).includes('Штраф после Сердца Эха')`,'Штраф исчез через 10 минут');
         }else{
             await changeMinutes(1);
             await assertPhase(1,700-hpCost,0);

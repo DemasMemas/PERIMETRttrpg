@@ -68,26 +68,52 @@ module.exports=async({page,request,token,lobby,base,connect,debugPort,safeSessio
         await page.evaluate('L.setLocationEditMode(false);UI.collapseMapToolsPanel();true');
         const start=()=>request(loc+'/combat/start',{location_character_ids:[placed.location_character_id],
             initiator_location_character_id:placed.location_character_id,initiator_first:true},token);
+        const click=async selector=>{
+            await peer.until('(()=>{const button=document.querySelector('+JSON.stringify(selector)
+                +');return Boolean(button?.getClientRects().length&&!button.disabled);})()',selector);
+            const point=await peer.evaluate('(()=>{const r=document.querySelector('+JSON.stringify(selector)
+                +').getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2};})()');
+            for(const type of ['mouseMoved','mousePressed','mouseReleased'])await peer.call('Input.dispatchMouseEvent',{
+                type,...point,button:type==='mouseMoved'?'none':'left',buttons:type==='mousePressed'?1:0,clickCount:1});
+        };
+        const waitClosed=()=>peer.until("!document.getElementById('object-lock-modal')",'Окно закрыто');
+        const escape=async()=>{
+            await peer.call('Input.dispatchKeyEvent',{type:'keyDown',key:'Escape',code:'Escape',windowsVirtualKeyCode:27});
+            await peer.call('Input.dispatchKeyEvent',{type:'keyUp',key:'Escape',code:'Escape',windowsVirtualKeyCode:27});
+            await waitClosed();
+        };
         const open=async(object,mode='tools')=>{
             const fresh=await request(objectUrl(object.id),null,playerToken,'GET');
             await peer.call('Page.bringToFront');
-            await peer.evaluate(`(async()=>{const {showObjectLock}=await import('/static/js/objectLocks.js');await showObjectLock({lobbyId:${lobby.id},characterId:${owner.id},object:${JSON.stringify(fresh)},inCombat:true,onObject:L.updateLocationObject});return true})()`);
+            await peer.evaluate('(async()=>{const {showObjectLock}=await import("/static/js/objectLocks.js");'
+                +'await showObjectLock({lobbyId:'+lobby.id+',characterId:'+owner.id+',object:'+JSON.stringify(fresh)
+                +',inCombat:true,onObject:L.updateLocationObject});return true;})()');
             await peer.until("document.querySelector('#object-lock-modal [data-lock-attempt]')",'Окно вскрытия');
-            await peer.evaluate(`document.querySelector('[data-lock-mode]').value=${JSON.stringify(mode)};document.querySelector('[data-lock-mode]').dispatchEvent(new Event('change'));if(${JSON.stringify(mode)}==='tools')document.querySelector('[data-lock-tool]').value='0';true`);
+            await peer.evaluate('(()=>{const select=document.querySelector("[data-lock-mode]");if(select.disabled)return true;'
+                +'select.value='+JSON.stringify(mode)+';select.dispatchEvent(new Event("change"));'
+                +'if(select.value==="tools")document.querySelector("[data-lock-tool]").value="0";return true;})()');
         };
         const execute=async text=>{
-            await peer.evaluate("document.querySelector('[data-lock-attempt]').click();true");
+            await click('#object-lock-modal [data-lock-attempt]');
             await peer.until(`document.querySelector('[data-lock-result]')?.textContent.includes(${JSON.stringify(text)})`,'Исход попытки: '+text);
         };
-        await start();await open(chest);const before=await request(loc+'/combat',null,playerToken,'GET');await execute('Отмычка сломалась');
+        const assertJammed=async()=>{
+            await peer.until("document.querySelector('[data-lock-attempt].btn-danger:disabled')?.textContent==='Замок заклинило'",'Красный статус вместо попытки');
+            assert.equal(await peer.evaluate("document.querySelector('[data-lock-result]').textContent.includes('открыть объект больше нельзя')"),false);
+        };
+        await start();
+        const before=await request(loc+'/combat',null,playerToken,'GET');
+        await open(chest);await escape();
+        assert.equal((await request(loc+'/combat',null,playerToken,'GET')).current_character.action_points_current,before.current_character.action_points_current);
+        await open(chest);await execute('Отмычка сломалась');
         const failed=await request('/lobbies/characters/'+owner.id,null,playerToken,'GET');assert.equal(failed.data.inventory.pockets[0].quantity,1);
         assert.equal((await request(loc+'/combat',null,playerToken,'GET')).current_character.action_points_current,before.current_character.action_points_current-3);
         for(const [width,height]of [[1920,1080],[1600,900],[1366,768],[1280,720]]){
             await peer.call('Emulation.setDeviceMetricsOverride',{width,height,deviceScaleFactor:1,mobile:false});
-            await peer.until("(()=>{const r=document.querySelector('#object-lock-modal .modal-content').getBoundingClientRect();return r.x>=0&&r.y>=0&&r.bottom<=innerHeight&&r.right<=innerWidth})()",'Весь диалог на экране '+width);
+            await peer.until("(()=>{const r=document.querySelector('#object-lock-modal .modal-content').getBoundingClientRect();return r.x>=0&&r.y>=0&&r.bottom<=innerHeight&&r.right<=innerWidth&&Math.abs(r.x+r.width/2-innerWidth/2)<2&&Math.abs(r.y+r.height/2-innerHeight/2)<2})()",'Диалог целиком в центре экрана '+width);
             if(width===1280)fs.writeFileSync(path.join(safeSession.artifacts,'object-lock-failed-1280x720.png'),Buffer.from((await peer.call('Page.captureScreenshot',{format:'png'})).data,'base64'));
         }
-        await peer.evaluate("document.querySelector('#object-lock-modal .close').click();true");await request(loc+'/combat/end',{},token);
+        await click('#object-lock-modal .modal-icon-close');await waitClosed();await request(loc+'/combat/end',{},token);
         await page.until('lockReads.length>=3','ГМ получил закрытое содержимое отдельным разрешённым запросом');
         await select(chest);await setDifficulty(10);await setDifficulty(8);await page.evaluate('L.setLocationEditMode(false);UI.collapseMapToolsPanel();true');
         await start();await open(chest);await execute('Замок открыт.');
@@ -96,15 +122,21 @@ module.exports=async({page,request,token,lobby,base,connect,debugPort,safeSessio
         const packets=await peer.evaluate('lockEvents');
         const closed=packets.filter(event=>event.object?.properties?.locked||event.objects?.some(o=>o.properties?.locked));
         assert.ok(closed.length>=3);assert.ok(!JSON.stringify(closed).includes('Секретный запас'));
-        await peer.evaluate("document.querySelector('#object-lock-modal .close').click();true");await request(loc+'/combat/end',{},token);
-        await start();await open(door,'force');await execute('Замок заклинило');
-        assert.ok((await request(objectUrl(door.id),null,playerToken,'GET')).properties.lock_jammed);
-        await peer.evaluate("document.querySelector('#object-lock-modal .close').click();true");await request(loc+'/combat/end',{},token);
+        await click('#object-lock-modal .modal-icon-close');await waitClosed();await request(loc+'/combat/end',{},token);
+        await start();await open(door,'force');await execute('Попытка не удалась.');
+        await assertJammed();
+        const jammed=await request(objectUrl(door.id),null,playerToken,'GET');
+        assert.ok(jammed.properties.lock_jammed);
+        fs.writeFileSync(path.join(safeSession.artifacts,'object-lock-jammed-1280x720.png'),
+            Buffer.from((await peer.call('Page.captureScreenshot',{format:'png'})).data,'base64'));
+        await click('#object-lock-modal [data-lock-cancel]');await waitClosed();
+        await open(jammed);await assertJammed();await escape();
+        await request(loc+'/combat/end',{},token);
         await request(objectUrl(door.id),{properties:{lock_jammed:false}},token,'PATCH');
         await start();await open(door,'force');await execute('Замок открыт.');
         await request(objectUrl(door.id),{actor_character_id:owner.id,properties:{is_open:true}},playerToken,'PATCH');
         assert.ok((await request(objectUrl(door.id),null,playerToken,'GET')).properties.is_open);
         await request(loc+'/combat/end',{},token);
-        console.log('Замки: два клиента копии Припяти/GPU; реальная настройка ГМа в Выборе, пустой старый дощатый ящик запирается с СЛ 13, секретное содержимое скрыто в HTTP/сети, отмычка ломается из стопки, 3 ОД за попытку, успешный взлом, силовое заклинивание/сброс/открытие двери, четыре размера диалога.');
+        console.log('Окно замка в Припяти: Esc, крестик, взлом за 3 ОД, поломка отмычки, красный статус при заклинивании и повторном открытии, четыре размера окна.');
     }finally{peer?.close();if(context)await protocol.call('Target.disposeBrowserContext',{browserContextId:context.browserContextId});protocol?.close();}
 };

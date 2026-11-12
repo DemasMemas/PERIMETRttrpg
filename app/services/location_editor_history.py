@@ -146,8 +146,11 @@ def apply_object_edit(location_id, lobby_id, data):
     if 'environment' in data:
         env = data['environment']
         protected = {'local_lights', 'dark_tiles'}
-        current_env = {k: v for k, v in next_lighting.items() if k not in protected}
-        if not isinstance(env, dict) or current_env != env.get('before'):
+        optional = {'fog_density': 0, 'water_reflections': False, 'natural_detail': None}
+        current_env = {**optional, **{k: v for k, v in next_lighting.items() if k not in protected}}
+        if not isinstance(env, dict) or not isinstance(env.get('before'), dict):
+            conflict()
+        if current_env != {**optional, **env['before']}:
             conflict()
         if not isinstance(env.get('after'), dict) or protected.intersection(env['after']):
             raise ValidationError('Invalid environment edit')

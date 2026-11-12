@@ -17,7 +17,8 @@ test('terrain decorations and structures remain visible outside line of sight', 
     const item = { visible: true, userData: { locationObject: { type: 'ground_item', x: 5, y: 5 } } };
     const character = { model: { visible: true }, label: { visible: true } };
     for (const mesh of [tree, anomaly, wall, item, character.model]) mesh.position = {x:0,z:0};
-    const context = vm.createContext({pendingFacingSelection:null,pendingCharacterPlacement:null,scoutedCharacters:new Set(),
+    const context = vm.createContext({pendingFacingSelection:null,pendingCharacterPlacement:null,scoutedCharacters:new Set(),firstPersonView:null,window:{isGM:false},
+        updateFogOverlay(){},
         locationLevelVisible: () => true, decorDisplayLevel: () => 0,
         structureLevel: () => 0, structureBuildingId: () => null,
         scene: {}, currentLocationData: {}, locationProfiler: null,

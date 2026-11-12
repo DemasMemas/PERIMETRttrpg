@@ -2,6 +2,22 @@
 const fs=require('node:fs'),path=require('node:path'),assert=require('node:assert/strict');
 module.exports=async({page,safeSession,request,token,lobby,location,actor})=>{
     await page.evaluate(`Boolean(window.G=L.sceneGraphicsForTest())`);
+    const pointer = await page.evaluate(`(()=>{
+        const bounds=G.renderer.domElement.getBoundingClientRect();
+        return {x:Math.round(bounds.left+bounds.width*.54),y:Math.round(bounds.top+bounds.height*.54)};
+    })()`);
+    const distance = () => page.evaluate('G.controls.getDistance()');
+    const initialDistance = await distance();
+    await page.call('Input.dispatchMouseEvent',{...pointer,type:'mousePressed',button:'right',buttons:2,clickCount:1});
+    try {
+        await page.call('Input.dispatchMouseEvent',{...pointer,type:'mouseWheel',buttons:2,deltaX:0,deltaY:-150});
+        const nearDistance = await distance();
+        assert.ok(nearDistance < initialDistance, 'Колесо приближает при зажатой ПКМ');
+        await page.call('Input.dispatchMouseEvent',{...pointer,type:'mouseWheel',buttons:2,deltaX:0,deltaY:150});
+        assert.ok(await distance() > nearDistance, 'Колесо отдаляет при зажатой ПКМ');
+    } finally {
+        await page.call('Input.dispatchMouseEvent',{...pointer,type:'mouseReleased',button:'right',buttons:0,clickCount:1});
+    }
     const views=[
         {name:'overview',target:[36,1,36],offset:[30,37,35],level:0},
         {name:'roofs',target:[29,3,34],offset:[11,10,14],level:0},

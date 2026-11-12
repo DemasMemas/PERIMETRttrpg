@@ -167,11 +167,12 @@ def test_each_catalog_passive_column(name, positive, negative, column):
 
 
 @pytest.mark.parametrize('name,positive,negative', PASSIVES, ids=[row[0] for row in PASSIVES])
-def test_catalog_artifact_in_backpack_has_no_passive_influence(name, positive, negative):
+def test_catalog_artifact_in_backpack_only_emits_radiation(name, positive, negative):
     data = character_with_artifact(name)
     item = data['equipment']['armor']['containers'].pop()['item']
     data['inventory'] = {'backpack': [item]}
-    assert artifact_passive_profile(data) == artifact_passive_profile({})
+    radiation = max(0, positive.get('radiation_per_movement', 0) + negative.get('radiation_per_movement', 0))
+    assert artifact_passive_profile(data) == expected_profile(name, {'radiation_per_movement': radiation})
 
 
 @pytest.mark.parametrize('name,positive,negative', PASSIVES, ids=[row[0] for row in PASSIVES])
@@ -215,7 +216,7 @@ def test_catalog_skill_modifiers_reach_actual_skill_calculation(name, positive, 
     for path, specific in paths.items():
         group, skill = path.split('.')
         data['skills'][group][skill] = {'base': 10, 'bonus': 0}
-        field = 'skill_physical' if group == 'physical' else 'skill_other'
+        field = {'physical': 'skill_physical', 'other': 'skill_other'}.get(group)
         expected = 10+positive.get(field, 0)+negative.get(field, 0)
         expected += positive.get(specific, 0)+negative.get(specific, 0)
         assert CombatService._skill_value(data, 'skills.'+path) == max(0, expected)

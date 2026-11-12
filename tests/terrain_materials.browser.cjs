@@ -191,9 +191,9 @@ module.exports = async ({ page, request, token, lobby, profile, base, connect, d
             await page.evaluate(`document.querySelector('#panel-tools:not(.collapsed) .toggle-btn')?.click()`);
             await pause(600);
             await capture('terrain-local-20-neutral');
-            await page.until(`window.getLocationGrassDiagnostics?.().assets==='loaded' && window.getLocationGrassDiagnostics?.().kinds?.medium01?.added>0`, 'natural grass roots');
+            await page.until(`window.getLocationGrassDiagnostics?.().assets==='loaded' && window.getLocationGrassDiagnostics?.().kinds?.low?.added>0`, 'natural grass roots');
             console.log('Grass roots:',await page.evaluate(`JSON.stringify(window.getLocationGrassDiagnostics())`));
-            const clearance = await page.evaluate(`window.getLocationGrassDiagnostics().kinds.medium01.firstInstance.bottomAboveGround`);
+            const clearance = await page.evaluate(`window.getLocationGrassDiagnostics().kinds.low.firstInstance.bottomAboveGround`);
             assert.ok(clearance < -0.014 && clearance > -0.022, `grass root ${clearance}`);
             await page.evaluate(`window.locationControls.target.set(1,1.3,10);
                 window.locationControls.object.position.set(5,4,15);window.locationControls.update()`);

@@ -17,11 +17,11 @@ const builderStart = terrainSource.indexOf('export function buildTerrainSurfaceD
 const builder = terrainSource.slice(builderStart, terrainSource.indexOf('\n}', builderStart));
 const builderBody = builder.slice(builder.indexOf(') {') + 3)
     .replace('    const width = tiles[0].length, height = tiles.length;',
-        '    const bounds = { minX:0, minZ:0, maxX:width-1, maxZ:height-1 };')
+        '    const bounds = { minX:0, minZ:0, maxX:width-1, maxZ:height-1 }; const limitRelief = undefined;')
     .replace('tileHeight(tiles, x, z)', 'getTileHeight(x, z)')
     .replace('    return { positions, normals, uvs, indices };', '');
 const surfaceSource = functionSource('rebuildLocationTerrainSurface').replace(
-    '    const { positions, normals, uvs, indices } = buildTerrainSurfaceData(tiles, smoothData);', builderBody);
+    /    const \{ positions, normals, uvs, indices \} = buildTerrainSurfaceData\([^\n]+\);/, builderBody);
 
 // Previous flat-tile vertex loop. The rest of the real surface builder (including
 // slope copying, attributes, indices and geometry replacement) runs unchanged.
@@ -106,6 +106,7 @@ async function surfaceHarness(tiles, previous = false) {
     const run = new Function('THREE', 'terrain', 'createTerrainSurfaceHeightSampler',
         'currentLocationData', 'smoothTerrainMesh', 'initialSurface', `
         const { isSmoothTerrainTile } = terrain;
+        const localTerrainRelief = () => null;
         const updateRoofVisibility = {};
         let terrainSurfaceMesh = initialSurface;
         const terrainSurfaceTexture = {}, terrainGrassBlendTexture = {};

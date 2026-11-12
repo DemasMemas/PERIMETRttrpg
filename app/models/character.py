@@ -28,6 +28,8 @@ class LobbyCharacter(db.Model):
         normalize_character_weapons(data)
         from app.services.equipment_modifications import normalize_legacy_gear
         normalize_legacy_gear(data)
+        from app.services.combat import CombatService
+        CombatService.normalize_worn_armor(data)
         from app.services.prostheses import normalize_dimensions
         normalize_dimensions(data)
         from app.services.consumable_effects import remove_stale_movement_modifiers

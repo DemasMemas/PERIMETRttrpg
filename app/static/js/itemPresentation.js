@@ -6,7 +6,7 @@ const labels = {
     range:'Дальность', ergonomics:'Эргономика', caliber:'Калибр', capacity:'Вместимость',
     max_durability:'Максимальная прочность', movement_penalty:'Штраф перемещения',
     accuracy_penalty:'Штраф точности', ergonomics_penalty:'Штраф эргономики',
-    charisma_bonus:'Бонус Харизмы', charismaBonus:'Бонус Харизмы', uses:'Использований',
+    charisma_bonus:'Бонус Харизмы', uses:'Использований',
     noise:'Шум', required_strength:'Требуемая Сила', deafeningCoef:'Коэффициент оглушения',
     min_strength:'Требуемая Сила', magazine_size:'Ёмкость магазина',
     armor_class:'Класс брони', protection_class:'Класс защиты',
@@ -39,6 +39,19 @@ const concepts = {
     psy_delta:'пси', nutrition:'питани', hydration:'вод',
 };
 const subcategories={scope:'Прицел',barrel:'Ствол',handguard:'Цевьё',filter:'Фильтр',nvg:'ПНВ',battery:'Батарея'};
+
+export function itemPowerWarning(item) {
+    if (!item) return '';
+    if (item.electronicsState?.burned) return 'Сгорел';
+    const empty = value => value != null && value !== '' && Number(value) <= 0;
+    if (item.glowState?.activated && empty(item.glowState.remaining_seconds)) return 'Свечение погасло';
+    if (item.attributes?.rechargeable_battery && empty(item.attributes.charge_percent)) return 'Разряжена';
+    if ((item.slotType === 'exoskeleton_battery' || item.attributes?.slot_type === 'exoskeleton_battery')
+        && empty(item.attributes?.remaining_days)) return 'Разряжен';
+    if ([item.lightPower?.uses_left, item.pdaState?.charge_percent, item.deviceState?.remaining_seconds].some(empty)
+        || (['device', 'detector'].includes(item.category) && empty(item.attributes?.power))) return 'Разряжен';
+    return '';
+}
 function normalizedRuleText(description) {
     return description.toLowerCase().replace(/[−–—]/g, '-').replace(/(\d),(\d)/g, '$1.$2')
         .replace(/([+-]?\d+)\s*\/\s*(\d+)/g, (text,a,b) => Number(b) ? String(Number(a)/Number(b)) : text);
@@ -72,6 +85,11 @@ function repeatsDirectEffect(effect,direct) {
 
 export function itemTooltipModel(template = {}, item = {}) {
     const attrs = {...template.attributes, ...item.attributes};
+    const equippedStats = {
+        accuracy_penalty: item.accuracyPenalty,
+        ergonomics_penalty: item.ergonomicsPenalty,
+        charisma_bonus: item.charismaBonus,
+    };
     const currentProfile = template.attributes?.consumable;
     const oldImportedCopy = currentProfile?.catalog_rules_version && !item.attributes?.consumable?.editor_version
         && template.attributes?.catalog_name && template.attributes.catalog_name === item.attributes?.catalog_name
@@ -104,9 +122,13 @@ export function itemTooltipModel(template = {}, item = {}) {
         if (value != null) add(metrics, `${caption}: ${value}${unit}`);
     }
     for (const [field, caption] of Object.entries(labels)) {
-        const value = item[field] ?? attrs[field];
+        const value = equippedStats[field] ?? item[field] ?? attrs[field];
         if (value == null || value === '' || value === false || typeof value === 'object') continue;
         if (['uses','max_durability'].includes(field) && (field === 'uses' ? item.uses : item.durability) != null) continue;
+        if (field === 'charisma_bonus' && Number(value) < 0) {
+            add(metrics, `Штраф харизмы: ${-Number(value)}`);
+            continue;
+        }
         add(metrics, `${caption}: ${['penetration','armor_piercing'].includes(field) ? percent(value) : value}`);
     }
     if (item.durability != null) add(metrics, `Прочность: ${item.durability}${item.maxDurability != null ? ` / ${item.maxDurability}` : attrs.max_durability != null ? ` / ${attrs.max_durability}` : ''}`);

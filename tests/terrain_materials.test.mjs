@@ -3,8 +3,10 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import crypto from 'node:crypto';
 import { TERRAIN_MATERIALS, terrainMaterialIndex, adjustTerrainAlbedo,
-    addTerrainMaterialOptions } from '../app/static/js/terrainMaterialCatalog.js';
+    addTerrainMaterialOptions, TERRAIN_ATLAS_ROWS } from '../app/static/js/terrainMaterialCatalog.js';
 import { createTerrainMaterialLayer } from '../app/static/js/terrainMaterialLayer.js';
+
+const mudKinds = ['muddy_tracks', 'brown_mud_03', 'brown_mud_02', 'dry_mud_field_001', 'brown_mud'];
 
 test('catalog reuses metal and distinguishes stone tops, walls and new saved terrain strings', () => {
     assert.equal(terrainMaterialIndex('rock'), 1);
@@ -78,10 +80,13 @@ test('local editor gains distinct surface IDs without duplicating options', () =
         const select = { options: [{ value: 'concrete', textContent: 'Old label' }],
             appendChild(option) { this.options.push(option); } };
         addTerrainMaterialOptions(select); addTerrainMaterialOptions(select);
-        for (const value of ['concrete', 'granite_tiles', 'bare_dirt', 'wood_floor', 'ice']) {
+        for (const value of ['concrete', 'granite_tiles', 'bare_dirt', 'wood_floor', 'ice', 'concrete005', ...mudKinds]) {
             assert.equal(select.options.filter(option => option.value === value).length, 1);
         }
         assert.equal(select.options[0].textContent, 'Промышленный бетон');
+        const world = { ...select, options: [] };
+        addTerrainMaterialOptions(world, { world: true });
+        assert.ok([...mudKinds, 'concrete005'].every(kind => !world.options.some(option => option.value === kind)));
     } finally { globalThis.document = oldDocument; }
 });
 
@@ -124,6 +129,22 @@ function compile(layer, options) {
     return { material, ...result };
 }
 
+test('грязь и бетон используют разные ячейки без увеличения атласа', async () => {
+    const { THREE } = environment();
+    const layer = createTerrainMaterialLayer(THREE);
+    await layer.ready;
+    assert.equal(TERRAIN_ATLAS_ROWS, 4);
+    const indices = mudKinds.map(kind => terrainMaterialIndex(kind));
+    assert.deepEqual(indices, [13, 14, 15, 16, 17]);
+    const slots = indices.map(id => TERRAIN_MATERIALS[id - 1].atlasSlot ?? id - 1);
+    assert.deepEqual(slots, [12, 13, 14, 15, 11]);
+    assert.equal(TERRAIN_MATERIALS[terrainMaterialIndex('concrete005') - 1].atlasSlot, 5);
+    const { fragmentShader } = compile(layer);
+    assert.match(fragmentShader, /if \(id == 17\.0\) slot = 11\.0;/);
+    assert.match(fragmentShader, /if \(id == 18\.0\) slot = 5\.0;/);
+    layer.dispose();
+});
+
 test('летняя подлокация освобождает каналы текстур для фонарей, редактор возвращает снег и лёд', async()=>{
     const {THREE}=environment(),layer=createTerrainMaterialLayer(THREE);await layer.ready;
     layer.resize(2,1);layer.fill([[{terrain:'grass'},{terrain:'concrete'}]]);
@@ -150,8 +171,8 @@ test('only global shores and grass walls next to water use the existing earth si
     world.update(1,1,{terrain:'grass'});assert.equal(bank.uniforms.terrainKinds.value.image.data[(1*4+1)*4+2],0);
 });
 
-test('shore shoulders reuse existing grass resources and select UV projection from the geometric face',async()=>{
-    const {THREE,loaded}=environment(),layer=createTerrainMaterialLayer(THREE);
+test('world shore shoulders reuse existing grass resources and select UV projection from the geometric face',async()=>{
+    const {THREE,loaded}=environment(),layer=createTerrainMaterialLayer(THREE,{world:true});
     await layer.ready;const count=loaded.length,earth={},forest={},ready={value:1};
     layer.setShoreGrass({earth,forest,ready});
     const bank=compile(layer,{sides:true,smooth:true,shore:true}),ordinary=compile(layer,{sides:true});
@@ -168,11 +189,13 @@ test('world and local layers share atlas images and release local renderer textu
     const { THREE, loaded, contexts } = environment();
     const world = createTerrainMaterialLayer(THREE, {world:true}), local = createTerrainMaterialLayer(THREE);
     await world.ready;
-    assert.equal(loaded.length, 35, 'Snow001: два ресурса; остальные материалы, включая лёд: по три');
+    const imageCount = TERRAIN_MATERIALS.reduce((sum, entry) =>
+        sum + (entry.separateColor ? 0 : entry.roughnessInColorAlpha ? 2 : 3), 0);
+    assert.equal(loaded.length, imageCount, 'Отдельная текстура листьев загружается только для подлокации с этим покрытием');
     assert.equal(contexts.length, 7);
     assert.equal(world.diagnostics().atlasBytes, 64 * 1024 * 1024);
     assert.equal(world.diagnostics().iceBytes, Math.ceil(2 * 512 ** 2 * 4 * 4 / 3));
-    assert.equal(world.diagnostics().materials, 12);
+    assert.equal(world.diagnostics().materials, TERRAIN_MATERIALS.length);
     world.resize(64, 32); local.resize(20, 20);
     world.fill([[{ terrain: 'rock' }, { terrain: 'sand' }]], 31, 10);
     const a = compile(world), b = compile(local);
@@ -217,7 +240,7 @@ test('world and local layers share atlas images and release local renderer textu
     const c = compile(reopened);
     assert.equal(c.uniforms.terrainAtlasColor.value.image, a.uniforms.terrainAtlasColor.value.image);
     assert.notEqual(c.uniforms.terrainAtlasColor.value, b.uniforms.terrainAtlasColor.value);
-    assert.equal(loaded.length, 35, 'reopening reuses loaded images');
+    assert.equal(loaded.length, imageCount, 'reopening reuses loaded images');
     reopened.dispose();
 });
 
@@ -242,8 +265,13 @@ test('PBR shader retains scene callbacks and uses continuous gradients, geometri
     assert.match(sides.fragmentShader, /vTerrainMaterialPosition\.zy/);
     assert.match(sides.vertexShader, /instanceMatrix \* terrainPosition/);
     assert.equal(top.material.extensions.shaderTextureLOD, true);
-    assert.match(top.fragmentShader, /ids.x == ids.y/);
+    assert.match(top.fragmentShader, /all\(equal\(terrainSampleIds, vec4\(terrainSampleIds\.x\)\)\)/);
+    assert.equal(top.fragmentShader.match(/\bterrainAccumulate\(/g).length, 2,
+        'Одна реализация и один вызов смешивания материалов в цикле');
     assert.match(top.fragmentShader, /terrainCoverage/);
+    const grassEdge = compile(layer, { grassBlend: true });
+    assert.match(grassEdge.fragmentShader, /terrainCoverage \/ max\(1\.0 - grassCoverage, 0\.001\)/);
+    assert.doesNotMatch(top.fragmentShader, /1\.0 - grassCoverage/);
 });
 
 test('failed image loading keeps the original terrain shader path active', async () => {
@@ -279,7 +307,7 @@ test('temporary Base PBR retains source Normal ARM and leaves local swamp settin
     assert.equal(a.uniforms.terrainAtlasColor.value.image, b.uniforms.terrainAtlasColor.value.image);
     assert.doesNotMatch(a.fragmentShader, /float wet = smoothstep/);
     assert.match(a.fragmentShader, /if \(id == 3\.0\) return vec4\(4\.000,0\.550,0\.000,0\.000\)/);
-    assert.match(b.fragmentShader, /if \(id == 3\.0\) return vec4\(4\.000,0\.550,0\.000,0\.000\)/);
+    assert.match(b.fragmentShader, /if \(id == 3\.0\) return vec4\(2\.800,0\.550,0\.000,0\.000\)/);
     assert.doesNotMatch(b.fragmentShader, /float wet = smoothstep/);
     assert.notEqual(a.material.customProgramCacheKey(), b.material.customProgramCacheKey());
     const swamp = TERRAIN_MATERIALS.find(entry => entry.terrain === 'swamp');

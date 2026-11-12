@@ -319,6 +319,49 @@ def test_bury_ground_stash_requires_shovel_and_exposed_soil(client, trap_game, a
         assert stash.properties['contents']==[]
 
 
+@pytest.mark.parametrize('name, expected', [('Лопата', 200), ('Лопатка саперная', 200), ('Лопата складная', 400)])
+def test_ground_stash_uses_only_the_two_catalog_tools(client, trap_game, auth_headers, name, expected):
+    actor = trap_game['actor_location']
+    data = deepcopy(actor.character.data)
+    data['inventory']['pockets'] = [{'id': 'selected-tool', 'name': name, 'category': 'melee_weapon', 'quantity': 1}]
+    actor.character.data = data
+    db.session.commit()
+    url = f"/lobbies/{trap_game['lobby'].id}/locations/{actor.location_id}/traps"
+    response = client.post(url, headers=auth_headers(trap_game['actor_user']), json=request(
+        trap_game, 'bury_ground_stash', tool_path=['inventory', 'pockets', 0], tool_id='selected-tool',
+    ))
+    assert response.status_code == expected, response.json
+    assert LocationObject.query.filter_by(location_id=actor.location_id, type='ground_stash').count() == (expected == 200)
+
+
+def test_search_stash_only_reveals_the_selected_host(client, trap_game, auth_headers, monkeypatch):
+    owner, seeker = trap_game['actor_location'], trap_game['target_location']
+    seeker.facing_x, seeker.facing_y = -1, 0
+    mask = {'known_users': [owner.character.owner_id], 'dc': 8, 'contents': []}
+    selected, neighbor, ordinary = [
+        LocationObject(location_id=owner.location_id, type=kind, tile_x=5, tile_y=4,
+                       properties={'dimensions': {'width': .3, 'depth': .3, 'height': height},
+                                   'stash_compartment': deepcopy(mask)})
+        for kind, height in [('household_stump', .8), ('household_fallen_tree', .15), ('chair', .2)]
+    ]
+    db.session.add_all([selected, neighbor, ordinary])
+    db.session.commit()
+    monkeypatch.setattr('app.services.combat.random.randint', lambda *_: 20)
+    url = f"/lobbies/{trap_game['lobby'].id}/locations/{owner.location_id}/traps"
+    headers = auth_headers(trap_game['target_user'])
+    payload = {'operation': 'search_stash', 'character_id': seeker.character_id,
+               'character_revision': seeker.character.revision}
+    response = client.post(url, headers=headers, json={
+        **payload, 'operation_id': 'ordinary-object', 'search_object_id': ordinary.id,
+    })
+    assert response.status_code == 400, response.json
+    response = client.post(url, headers=headers, json={
+        **payload, 'operation_id': 'selected-host', 'search_object_id': selected.id,
+    })
+    assert response.status_code == 200 and response.json['result']['stash_ids'] == [selected.id], response.json
+    assert seeker.character.owner_id not in neighbor.properties['stash_compartment']['known_users']
+
+
 def test_host_has_separate_compartment_and_normal_container(client, trap_game, auth_headers, monkeypatch):
     pair=trap_game;actor,other=pair['actor_location'],pair['target_location']
     other.facing_x,other.facing_y=-1,0
@@ -351,6 +394,46 @@ def test_host_has_separate_compartment_and_normal_container(client, trap_game, a
     assert visible['contents'][0]['id']=='open' and visible['stash_contents'][0]['id']=='kept'
 
 
+@pytest.mark.parametrize('shared_login', ['owner', 'gm'])
+def test_stash_knowledge_is_per_character_even_with_shared_login(client, trap_game, auth_headers, monkeypatch, shared_login):
+    pair = trap_game
+    actor, seeker = pair['actor_location'], pair['target_location']
+    seeker.facing_x, seeker.facing_y = -1, 0
+    if shared_login == 'owner':
+        seeker.character.owner_id = actor.character.owner_id
+        pair['lobby'].gm_id = pair['target_user']['id']
+    headers = auth_headers(pair['actor_user'])
+    obj = LocationObject(location_id=actor.location_id, type='household_stump', name='Пень', tile_x=5, tile_y=4,
+        properties={'contents': [{'id': 'public', 'name': 'Обычные вещи', 'quantity': 1}]})
+    db.session.add(obj)
+    db.session.commit()
+    root = f"/lobbies/{pair['lobby'].id}/locations"
+    operation = root + f'/{actor.location_id}/traps'
+    object_url = root + f'/objects/{obj.id}'
+    rolls = iter([6, 17])
+    monkeypatch.setattr('app.services.combat.random.randint', lambda *_: next(rolls))
+    masked = client.post(operation, headers=headers, json=request(pair, 'mask_stash', stash_id=obj.id,
+                                                                   stash_revision=obj.revision))
+    assert masked.status_code == 200, masked.json
+    assert masked.json['result']['check']['roll'] == 6
+    assert obj.properties['stash_compartment']['known_characters'] == [actor.character_id]
+    creator_view = client.get(object_url, headers=headers, query_string={'character_id': actor.character_id})
+    seeker_view = client.get(object_url, headers=headers, query_string={'character_id': seeker.character_id})
+    assert creator_view.json['properties']['stash_contents'] == []
+    assert 'stash_contents' not in seeker_view.json['properties']
+    assert seeker_view.json['properties']['contents'][0]['id'] == 'public'
+    denied = client.post(object_url + '/transfer', headers=headers,
+        json={'stash_compartment': True, 'character_id': seeker.character_id})
+    assert denied.status_code == 404
+    found = client.post(operation, headers=headers, json={'operation': 'search_stash', 'operation_id': 'seeker-stash',
+        'character_id': seeker.character_id, 'character_revision': seeker.character.revision, 'search_object_id': obj.id})
+    assert found.status_code == 200, found.json
+    assert found.json['result']['check']['roll'] == 17 and found.json['result']['found'] == 1
+    assert obj.properties['stash_compartment']['known_characters'] == sorted([actor.character_id, seeker.character_id])
+    seeker_view = client.get(object_url, headers=headers, query_string={'character_id': seeker.character_id})
+    assert seeker_view.json['properties']['stash_contents'] == []
+
+
 def test_crate_can_be_moved_from_floor_to_soil_before_burial(client,trap_game,auth_headers):
     pair=trap_game;actor=pair['actor_location']
     data=deepcopy(actor.character.data)
@@ -374,11 +457,14 @@ def test_crate_can_be_moved_from_floor_to_soil_before_burial(client,trap_game,au
     assert crate.properties['contents'][0]['id']=='retained'
 
 
-def test_world_stash_visibility_transfer_and_position(client,trap_game,auth_headers,monkeypatch):
+@pytest.mark.parametrize('shared_login', [False, True])
+def test_world_stash_visibility_transfer_and_position(client,trap_game,auth_headers,monkeypatch,shared_login):
     from app.models import MapChunk, WorldGroup
 
     pair=trap_game;lobby=pair['lobby']
     actor,other=pair['actor_character'],pair['target_location'].character
+    if shared_login:
+        other.owner_id = actor.owner_id
     shovel={'id':'spade','name':'Саперная лопатка','category':'tool','quantity':1}
     item={'id':'saved','name':'Детали','category':'material','quantity':3}
     data=deepcopy(actor.data);data['inventory']['pockets']=[shovel,item];actor.data=data
@@ -386,11 +472,12 @@ def test_world_stash_visibility_transfer_and_position(client,trap_game,auth_head
     groups=[WorldGroup(lobby_id=lobby.id,name=character.name,tile_x=0,tile_y=0,
         member_character_ids=[character.id],created_by=lobby.gm_id) for character in (actor,other)]
     db.session.add_all(groups);db.session.commit()
-    owner,seeker=auth_headers(pair['actor_user']),auth_headers(pair['target_user'])
+    owner,seeker=auth_headers(pair['actor_user']),auth_headers(pair['actor_user'] if shared_login else pair['target_user'])
     def operate(index, operation, **payload):
         return client.post(f'/lobbies/{lobby.id}/world-groups/{groups[index].id}/stashes',
             headers=(owner,seeker)[index],json={'operation':operation,'character_id':(actor,other)[index].id,**payload})
     burial={'tool_path':['inventory','pockets',0],'operation_id':'same-dig','tile_x':0,'tile_y':0}
+    monkeypatch.setattr('app.services.combat.random.randint',lambda *_:6)
     stash,=operate(0,'bury',**burial).json['stashes']
     assert operate(0,'bury',**burial).json['stashes']==[stash]
     assert operate(1,'list').json['stashes']==[]
@@ -398,7 +485,7 @@ def test_world_stash_visibility_transfer_and_position(client,trap_game,auth_head
         character_revision=actor.revision, direction='to_container',item_path=['inventory','pockets',1],
         amount=3,expected_item=item)
     assert sent.status_code==200,sent.json
-    monkeypatch.setattr('app.services.combat.random.randint',lambda *_:20)
+    monkeypatch.setattr('app.services.combat.random.randint',lambda *_:17)
     result=operate(1,'search').json
     assert result['found']==1 and result['stashes'][0]['contents'][0]['id']=='saved'
     groups[1].tile_x=1;db.session.commit()

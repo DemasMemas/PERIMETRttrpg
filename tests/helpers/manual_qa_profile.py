@@ -24,6 +24,7 @@ PYTHON_MODULES = (
     'test_consumable_use.py',
     'test_crafted_covers.py',
     'test_crafting.py',
+    'test_crafting_traits.py',
     'test_crafting_rules.py',
     'test_darkness_rules.py',
     'test_deferred_actions.py',
@@ -94,6 +95,11 @@ PYTHON_MODULES = (
 
 NODE_MODULES = (
     'inventory_background_render.test.cjs',
+    'equipment_remote_refresh.test.cjs',
+    'sheet_autosave_refresh.test.cjs',
+    'sheet_view_state.test.cjs',
+    'crow_flight.test.cjs',
+    'skill_progression.test.cjs',
     'anomaly_render_cost.test.cjs',
     'backpack_equipment.test.cjs',
     'belt_attachments.test.cjs',
@@ -140,6 +146,7 @@ NODE_MODULES = (
 )
 
 PYTHON_ADDITIONS = (
+    'test_artifact_catalog_passives.py',
     'test_atomic_inventory.py',
     'test_belt_attachments.py',
     'test_pda_device_accounts.py',

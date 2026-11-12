@@ -93,7 +93,8 @@ module.exports=async({page,request,token,lobby,base,connect,debugPort,safeSessio
             if(drops){
                 const wet=await page.evaluate(`window.getLocationWeatherDiagnostics()`);
                 assert.ok(wet.puddles>0&&wet.puddles<=192,'Лужицы добавлены ограниченным общим мешем');
-                assert.ok(wet.puddleSamples.every(p=>p.flatness<=.025&&p.height-p.ground<=.04),'Лужицы прилегают к ровной поверхности');
+                assert.ok(wet.puddleJoins>0&&wet.puddles+wet.puddleJoins<=192,'Соседние дождевые лужи сливаются в пределах прежнего лимита');
+                assert.ok(wet.puddleSamples.every(p=>p.flatness<=.025&&p.height-p.ground<=(p.merged?.073:.04)),'Лужицы прилегают к ровной поверхности');
                 const floors=fixture.objects.filter(o=>o.type==='floor'&&o.properties?.building_id&&Number(o.properties?.level||0)>0);
                 assert.ok(floors.length>0);
                 const probes=await page.evaluate(`(${JSON.stringify(floors.slice(0,12).map(o=>({x:o.tile_x+.5,z:o.tile_y+.5})))}).map(p=>window.getLocationWeatherDiagnostics(p))`);
@@ -102,8 +103,14 @@ module.exports=async({page,request,token,lobby,base,connect,debugPort,safeSessio
             const shot=await page.call('Page.captureScreenshot',{format:'png'});
             fs.writeFileSync(path.join(safeSession.artifacts,'weather-'+name+'.png'),Buffer.from(shot.data,'base64'));
             if(name==='rain'){
-                const p=await page.evaluate(`window.getLocationWeatherDiagnostics().puddleSamples[0]`);
+                const p=await page.evaluate(`(()=>{const {x,z,height}=getLocationWeatherDiagnostics().puddleJoinSample;return {x,z,ground:height}})()`);
                 await page.evaluate(`locationControls.target.set(${p.x},${p.ground},${p.z});locationControls.object.position.set(${p.x+.3},${p.ground+5},${p.z+.3});locationControls.update();true`);
+                await page.until('getLocationWeatherDiagnostics().nearDrops>0&&getLocationWeatherDiagnostics().impactDrops>0',
+                    'При приближении видны близкие капли и падение капель в лужи');
+                const closeRain = await page.evaluate('getLocationWeatherDiagnostics()');
+                assert.equal(closeRain.rainDrawCalls,1);
+                assert.equal(closeRain.puddleDrawCalls,1);
+                assert.ok(closeRain.impactDrops<=48);
                 await page.evaluate(`new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(()=>resolve(true))))`);
                 const close=await page.call('Page.captureScreenshot',{format:'png'});
                 fs.writeFileSync(path.join(safeSession.artifacts,'rain-puddles-close.png'),Buffer.from(close.data,'base64'));

@@ -186,9 +186,28 @@ test('rotated face uses its world normal and non-integer dimensions use fixed ce
     material.onBeforeCompile(shader);
     assert.equal(shader.uniforms.directionalFieldSamplesPerMeter.value, 3);
     assert.match(shader.fragmentShader, /vec2 cell = clamp\(position \* directionalFieldSamplesPerMeter - vec2\(0\.5\),/);
-    assert.equal(material.customProgramCacheKey(), 'base:directional-field-v2');
+    assert.equal(material.customProgramCacheKey(), 'base:directional-field-v3');
     removeDirectionalLightFieldMaterial(material);
     assert.equal(material.customProgramCacheKey(), 'base');
+});
+
+test('материал пропускает пустое поле и получает изменения без повторной компиляции', async () => {
+    const { createDirectionalLightField, applyDirectionalLightFieldMaterial } = await prototype;
+    const field = createDirectionalLightField({ width: 8, height: 8, levels: [{ id: 0, y: 0 }] });
+    const material = { isMeshStandardMaterial: true, userData: {} };
+    applyDirectionalLightFieldMaterial(material, { id: 1 }, field);
+    const shader = { uniforms: {}, vertexShader: '#include <common>\n#include <project_vertex>',
+        fragmentShader: '#include <common>\n#include <lights_fragment_end>' };
+    material.onBeforeCompile(shader);
+    const active = shader.uniforms.directionalFieldActive;
+    assert.match(shader.fragmentShader, /if \(directionalFieldActive\)/);
+    assert.equal(active.value, false);
+    field.rebuild({ lamps: [lamp()] });
+    assert.equal(active.value, true);
+    assert.ok(field.pixels.some(Boolean));
+    field.rebuild({ lamps: [lamp({ intensity: 0 })] });
+    assert.equal(active.value, false);
+    assert.ok(field.pixels.every(value => value === 0));
 });
 
 test('many sources reuse atlas memory; all active lamps contribute without a dynamic routing mask', async () => {

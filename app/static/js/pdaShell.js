@@ -5,6 +5,7 @@ import { renderRemoteCharges } from './itemControllers.js';
 import {createPdaAccessView} from './pdaAccessView.js';
 import {bookTitle,createBookCard} from './pdaBookFile.js';
 import {createPdaWipeControl} from './pdaWipeControl.js';
+import { animatePanelEntry } from './panelMotion.js';
 
 const sections = [
     ['chat', 'Общий чат', 'Сообщения участников Зоны'],
@@ -55,6 +56,12 @@ export function openPdaShell({ item, findItem, getData, operate, canEdit, charac
     const content = modal.querySelector('[data-pda-content]');
     const heading = modal.querySelector('[data-pda-heading]');
     let selected = 'home';
+    function selectSection(id) {
+        const changed = selected !== id;
+        selected = id;
+        render();
+        if (changed) animatePanelEntry(content);
+    }
     let busy = false;
     let filesSnapshot = null;
     let filesLoading = false;
@@ -153,7 +160,7 @@ export function openPdaShell({ item, findItem, getData, operate, canEdit, charac
             ? `АККАУНТ: ${accountSnapshot.account.login}`
             : `АККАУНТ: ${guestName} (гость)${canEdit ? ' · Войти' : ''}`;
         accountButton.disabled = !state.on;
-        accountButton.onclick = () => { selected = 'home'; render(); };
+        accountButton.onclick = () => selectSection('home');
         modal.querySelector('[data-pda-status]').textContent = state.broken?'НЕИСПРАВЕН':state.on ? 'ВКЛЮЧЁН' : 'ВЫКЛЮЧЕН';
         modal.querySelector('[data-pda-charge]').textContent = `ЗАРЯД ${state.charge.toFixed(1)}%`;
         power.textContent = state.on ? 'Выключить' : 'Включить';
@@ -166,7 +173,10 @@ export function openPdaShell({ item, findItem, getData, operate, canEdit, charac
             button.textContent = label;
             button.className = id === selected ? 'active' : '';
             button.disabled = !state.on;
-            button.onclick = () => { selected = id; render(); if (id === 'files' || id === 'mods') void loadFiles(); };
+            button.onclick = () => {
+                selectSection(id);
+                if (id === 'files' || id === 'mods') void loadFiles();
+            };
             nav.append(button);
         }
         content.replaceChildren();
@@ -630,6 +640,11 @@ export function openPdaShell({ item, findItem, getData, operate, canEdit, charac
                 status.textContent = pdaQuote.missing?.length ? pdaQuote.missing.join('; ')
                     : `СЛ ${pdaQuote.difficulty}; время 1 час. При неудаче материалы могут быть потеряны.`;
                 content.append(status);
+                if (pdaQuote.generator_difficulty_bonus) {
+                    const power = document.createElement('p');
+                    power.textContent = `Питание от генератора · −${pdaQuote.generator_difficulty_bonus} к СЛ`;
+                    content.append(power);
+                }
                 if (!pdaQuote.missing?.length) {
                     const install = document.createElement('button');
                     install.type = 'button'; install.className = 'btn btn-primary'; install.textContent = 'Начать установку';

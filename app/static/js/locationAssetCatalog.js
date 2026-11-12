@@ -1,3 +1,10 @@
+const swampModel = (modelNode, groundClearance = -.032) => ({
+    renderMode: 'glb', modelPath: '/static/models/art/swamp-bank.glb?v=12',
+    modelNode, pivot: 'bottom-center', groundClearance, license: 'CC0',
+});
+const woodColor = { wood_color: 'Оттенок ствола и веток' };
+const leafColor = { foliage_color: 'Оттенок листвы' };
+
 export const LOCATION_ASSETS = Object.freeze([
     { id: 'floor_opening', group: 'Постройки', label: 'Межэтажный проём', icon: '□', kind: 'structure', color: '#58604d', passable: true, dimensions: [1, 1, 0.05] },
     { id: 'ladder', group: 'Постройки', label: 'Вертикальная лестница', icon: '☷', kind: 'structure', color: '#806347', passable: true, dimensions: [0.9, 0.9, 2.4] },
@@ -22,8 +29,10 @@ export const LOCATION_ASSETS = Object.freeze([
     { id: 'military_crate', container: true, group: 'Мебель', label: 'Военный ящик', icon: '▣', kind: 'structure', color: '#45543a', dimensions: [1.1, 0.8, 0.65] },
     { id: 'barrel', group: 'Мебель', label: 'Бочка', icon: '◉', kind: 'structure', color: '#8a6444', dimensions: [0.65, 0.65, 1] },
     { id: 'shelf', container: true, group: 'Мебель', label: 'Стеллаж', icon: '▥', kind: 'structure', color: '#78634c', dimensions: [1.2, 0.4, 2] },
-    { id: 'tree', group: 'Природа', label: 'Дерево', icon: '♠', kind: 'decor', color: '#2d5a27', dimensions: [0.92, 0.92, 1.72] },
-    { id: 'rock', group: 'Природа', label: 'Камень', icon: '◆', kind: 'decor', color: '#888888', dimensions: [0.6, 0.6, 0.6] },
+    { id: 'tree', group: 'Природа', label: 'Дерево', icon: '♠', kind: 'decor', color: '#2d5a27',
+        dimensions: [0.92, 0.92, 1.72], colorChannels: { ...woodColor, ...leafColor } },
+    { id: 'rock', group: 'Природа', label: 'Камень', icon: '◆', kind: 'decor', color: '#888888',
+        dimensions: [0.6, 0.6, 0.6], visual: { ...swampModel('rock_09_1'), visualDimensions: [.48, .62, .30] } },
     { id: 'tent', group: 'Природа', label: 'Палатка', icon: '△', kind: 'decor', color: '#9b9778', dimensions: [1.8, 1.2, 1.3] },
     { id: 'campfire', group: 'Огонь', label: 'Костёр', icon: '✦', kind: 'structure', color: '#74604b', dimensions: [0.9, 0.9, 0.7] },
     { id: 'torch', group: 'Огонь', label: 'Факел', icon: '♨', kind: 'structure', color: '#6b4a30', dimensions: [0.25, 0.25, 1.7] },
@@ -32,6 +41,7 @@ export const LOCATION_ASSETS = Object.freeze([
     { id: 'ceiling_bulb', group: 'Свет', label: 'Потолочная лампочка', icon: '✺', kind: 'structure', color: '#ffe2aa', elevation: 2.4, dimensions: [0.32, 0.32, 0.7] },
     { id: 'wall_bulb', group: 'Свет', label: 'Настенная лампочка', icon: '✺', kind: 'structure', color: '#ffe2aa', elevation: 1.8, offsetZ: 0.2, dimensions: [0.38, 0.4, 0.36] },
     { id: 'poster', group: 'Декор', label: 'Постер', icon: '▤', kind: 'decor', color: '#c9a96a', elevation: 1.6, offsetZ: 0.13, rotation: 90, dimensions: [0.8, 0.035, 1.1] },
+    { id: 'information_sign', baseType: 'poster', group: 'Декор', label: 'Табличка с текстом', icon: '▤', kind: 'structure', passable: true, color: '#d6c6a3', dimensions: [1.8, 0.1, 1.65] },
     { id: 'warm_lamp', group: 'Свет', label: 'Тёплая лампа', icon: '✺', kind: 'lamp', color: '#ffd090', intensity: 2.5, distance: 8, height: 2.2, dimensions: [0.36, 0.36, 0.36] },
     { id: 'cold_lamp', group: 'Свет', label: 'Холодная лампа', icon: '✺', kind: 'lamp', color: '#a9d9ff', intensity: 2.5, distance: 8, height: 2.2, dimensions: [0.36, 0.36, 0.36] },
     { id: 'emergency_lamp', group: 'Свет', label: 'Аварийный свет', icon: '✹', kind: 'lamp', color: '#ff674f', intensity: 2, distance: 6, height: 1.8, dimensions: [0.36, 0.36, 0.36] },
@@ -187,21 +197,32 @@ export const LOCATION_ASSETS = Object.freeze([
         ['m19','Деревянная баррикада','barricade_wood',[1,.25,1],1000,5],
         ['m20','Металлический лист','barricade_metal',[1,.25,1],5000,40],
         ['m21','Прочная металлическая баррикада','barricade_reinforced',[1.5,.5,1.5],8500,60],
-        ['m22','Мешок с песком','sandbag',[1,.25,1],2500,40],
+        ['m22','Мешок с песком','sandbag_wall',[1,.25,1],2500,40],
         ['m23','Кирпичная баррикада','barricade_brick',[1,.25,1.5],500,40],
     ].map(([id,label,modelId,dimensions,hp,protection])=>({id:'crafted_cover_'+id,baseType:'cover',label,group:'Укрепления',kind:'structure',
         icon:'▥',color:'#86735b',dimensions,properties:{cover_max_hp:hp,cover_hp:hp,cover_base_physical_protection:protection,cover_physical_protection:protection},
         visual:{renderMode:'procedural',family:'household',modelId,pivot:'bottom-center',orientation:0}})),
     ...[
         ['oak','Дуб',[5.5,5,8]],['birch','Берёза',[3.8,3.5,9]],['pine','Сосна',[4.5,4,10]],
-        ['bush','Куст',[1.6,1.4,1.3]],['tall_grass','Высокая трава',[1.2,1,.95]],
+        ['tall_grass','Высокая трава',[1.2,1,.95]],
     ].flatMap(([species,label,dimensions])=>[
         ['green','зелёный'],['dry','подсохший'],['dead','сухостой'],
     ].map(([state,title])=>({id:`nature_${species}_${state}`,label:`${label} · ${
         ['birch','pine','tall_grass'].includes(species)
             ? ({green:'зелёная',dry:'подсохшая',dead:'сухая'}[state]) : title}`,group:'Растительность',
-        kind:'structure',icon:'♠',dimensions,passable:['bush','tall_grass'].includes(species),color:'#788064',
+        kind:'structure',icon:'♠',dimensions,passable:species==='tall_grass',color:'#788064',
+        colorChannels: species === 'tall_grass' ? { foliage_color: 'Оттенок травы' }
+            : state === 'dead' ? woodColor : { ...woodColor, ...leafColor },
         visual:{renderMode:'procedural',family:'household',modelId:`${species}_${state}`,pivot:'bottom-center',orientation:0}}))),
+    ...[
+        ['green', 'Куст · зелёный', 'shrub_02_1', [1.12, 1.04, 1.0], { ...woodColor, ...leafColor }],
+        ['dry', 'Куст · подсохший', 'shrub_02_dry', [1.08, 1.0, 1.02], { ...woodColor, ...leafColor }],
+        ['dead', 'Куст · без листьев', 'shrub_02_leafless', [.93, .87, .95], woodColor],
+    ].map(([state, label, node, dimensions, colorChannels]) => ({
+        id: `nature_bush_${state}`, group: 'Растительность', label, icon: '♣',
+        kind: 'structure', passable: true, color: '#788064', dimensions, colorChannels,
+        visual: swampModel(node),
+    })),
     ...[
         ['ruin_wall_low','Остаток разрушенной стены','wall',[2,.2,.65],false,'#aaa18e',{structural_damage:{version:1,material:'masonry'}}],
         ['ruin_wall_high','Высокий обломок стены','wall',[2,.2,1.35],false,'#aaa18e',{structural_damage:{version:1,material:'masonry'}}],
@@ -223,8 +244,112 @@ export const LOCATION_ASSETS = Object.freeze([
     {"id":"art_worn_plaster","label":"Выцветшая штукатурка","baseType":"wall","kind":"structure","group":"Поверхности","icon":"▥","color":"#80786c","dimensions":[2,0.2,2.4],"visual":{"renderMode":"pbr","maps":{"color":"/static/materials/art/worn_plaster/color.jpg","normal":"/static/materials/art/worn_plaster/normal.jpg","arm":"/static/materials/art/worn_plaster/arm.jpg"},"source":"https://polyhaven.com/a/concrete_wall_003","license":"CC0"}},
     {"id":"art_dirty_earth","label":"Грязная земля","baseType":"floor","kind":"structure","group":"Поверхности","icon":"▦","color":"#776d5d","dimensions":[2,2,0.12],"visual":{"renderMode":"pbr","maps":{"color":"/static/materials/art/dirty_earth/color.jpg","normal":"/static/materials/art/dirty_earth/normal.jpg","arm":"/static/materials/art/dirty_earth/arm.jpg"},"source":"https://polyhaven.com/a/dirt","license":"CC0"}},
     // END IMPORTED ASSETS
+    ...[
+        ['swamp_fern_02_1', 'Папоротник 1', 'fern_02_1', [1.9245, 2.1388, 1], true],
+        ['swamp_fern_02_2', 'Папоротник 2', 'fern_02_2', [2.3141, 2.0896, 1], true],
+        ['swamp_fern_02_3', 'Папоротник 3', 'fern_02_3', [2.5044, 2.1903, 1], true],
+        ['swamp_fern_02_4', 'Папоротник 4', 'fern_02_4', [2.688, 2.7842, 1], true],
+        ['swamp_shrub_02_1', 'Болотный куст 1', 'shrub_02_1', [0.7768, 0.9716, 1], true],
+        ['swamp_shrub_02_2', 'Болотный куст 2', 'shrub_02_2', [0.7371, 0.8497, 1], true],
+        ['swamp_shrub_02_3', 'Болотный куст 3', 'shrub_02_3', [1.3438, 1.738, 1], true],
+        ['swamp_shrub_02_4', 'Болотный куст 4', 'shrub_02_4', [0.8788, 0.8932, 1], true],
+        ['swamp_dead_tree_trunk_02_1', 'Сломанный ствол', 'dead_tree_trunk_02_1', [1, 0.2583, 0.2608], false],
+        ['swamp_tree_stump_02_1', 'Трухлявый пень', 'tree_stump_02_1', [1, 0.9151, 0.3416], false],
+        ['swamp_dry_branches_medium_01_1', 'Сухие ветки 1', 'dry_branches_medium_01_1', [0.2477, 1, 0.2623], false],
+        ['swamp_dry_branches_medium_01_2', 'Сухие ветки 2', 'dry_branches_medium_01_2', [0.1435, 1, 0.1367], false],
+        ['swamp_dry_branches_medium_01_3', 'Сухие ветки 3', 'dry_branches_medium_01_3', [0.1631, 1, 0.1856], false],
+        ['swamp_pine_roots_1', 'Оголённые корни 1', 'pine_roots_1', [1, 0.4746, 0.0822], false],
+        ['swamp_pine_roots_2', 'Оголённые корни 2', 'pine_roots_2', [1, 0.6097, 0.0898], false],
+        ['swamp_rock_09_1', 'Камень', 'rock_09_1', [0.5126, 1, 0.2252], false],
+        ['swamp_rock_moss_set_02_1', 'Замшелый камень 1', 'rock_moss_set_02_1', [1, 0.7171, 0.4399], false],
+        ['swamp_rock_moss_set_02_2', 'Замшелый камень 2', 'rock_moss_set_02_2', [1, 0.8086, 0.4294], false],
+        ['swamp_rock_moss_set_02_3', 'Замшелый камень 3', 'rock_moss_set_02_3', [1, 0.6244, 0.3733], false],
+        ['swamp_rock_moss_set_02_4', 'Замшелый камень 4', 'rock_moss_set_02_4', [1, 0.7054, 0.3506], false],
+        ['swamp_rock_moss_set_02_5', 'Замшелый камень 5', 'rock_moss_set_02_5', [1, 0.7829, 0.6679], false],
+        ['swamp_rock_moss_set_02_6', 'Замшелый камень 6', 'rock_moss_set_02_6', [1, 0.9199, 0.4678], false],
+        ['swamp_rock_moss_set_02_7', 'Замшелый камень 7', 'rock_moss_set_02_7', [1, 0.5433, 0.5973], false],
+        ['swamp_wheat_wild_1', 'Дикий злак', 'wheat-wild_1', [0.5491, 0.6873, 1], true],
+        ['swamp_reeds_1', 'Рогоз', 'reeds_1', [0.8008, 0.6647, 1], true],
+        ['swamp_dead_tree_1', 'Сухое болотное дерево', 'dead-tree_1', [0.7785, 0.4545, 1], false],
+        ['swamp_dead_pine_1', 'Сухая сосна', 'dead-pine_1', [0.5271, 0.4983, 1], false],
+        ['swamp_water_snag', 'Торчащая коряга', 'swamp_water_snag', [1.28, .78, .97], false],
+        ['swamp_water_broken_tree', 'Обломок дерева в воде', 'swamp_water_broken_tree', [2.15, 1.18, 1.56], false],
+    ].map(([id, label, modelNode, dimensions, plant]) => ({
+        id, label, dimensions, kind: 'structure', group: 'Природа', icon: '♣',
+        hidden: id.startsWith('swamp_shrub_') || id === 'swamp_rock_09_1',
+        passable: plant, color: '#7b8169',
+        ...(plant ? { colorChannels: id.startsWith('swamp_shrub_') ? { ...woodColor, ...leafColor }
+            : id.startsWith('swamp_fern_') ? leafColor : { foliage_color: 'Оттенок растения' } }
+            : id.startsWith('swamp_rock_moss_') ? { colorChannels: { foliage_color: 'Оттенок мха' } }
+                : id === 'swamp_rock_09_1' ? {} : { colorChannels: woodColor }),
+        visual: { ...swampModel(modelNode, id.startsWith('swamp_water_') ? -.17
+            : id.startsWith('swamp_pine_roots_') ? .022 : -.032),
+            ...(id.startsWith('swamp_rock_moss_') ? {
+                modelPath: '/static/models/art/swamp-moss-rocks.glb',
+                source: 'https://polyhaven.com/a/rock_moss_set_02',
+            } : {}),
+            ...(id.startsWith('swamp_shrub_') ? { visualDimensions: [
+                Math.max(dimensions[0], 1.02), Math.max(dimensions[1], .98), dimensions[2] * .91,
+            ] } : {}),
+            ...(id === 'swamp_dead_tree_trunk_02_1' ? {
+                groundContactRatio: .12, groundClearance: -.006,
+                visualDimensions: [dimensions[0], dimensions[1], dimensions[2] * .69],
+            } : {}),
+        },
+    })),
+    { id: 'art_crow', label: 'Ворона', group: 'Природа', icon: '◆', kind: 'structure',
+        passable: true, color: '#303035', dimensions: [0.13, 0.48, 0.27],
+        visual: { renderMode: 'glb', modelPath: '/static/models/art/crow-perched.glb',
+            pivot: 'bottom-center', colorGain: 1.18,
+            source: 'https://sketchfab.com/3d-models/crow-d5a9b0df4da3493688b63ce42c8a83e2',
+            license: 'CC BY 4.0' } },
+    ...[
+        ['art_corrugated_iron_wall', 'Ржавый профнастил', 'wall', 'rusty_corrugated_iron', '#888781', 'https://polyhaven.com/a/rusty_corrugated_iron', null, null, 0.08],
+        ['art_concrete_wall', 'Бетонная стена', 'wall', 'concrete005', '#8c8a81', 'https://ambientcg.com/view?id=Concrete005', 'height.jpg', 0.012],
+        ['art_concrete_floor', 'Бетонный пол', 'floor', 'concrete005', '#8c8a81', 'https://ambientcg.com/view?id=Concrete005', 'height.jpg', 0.012],
+        ['art_cracked_concrete_wall', 'Бетонная стена с трещинами', 'wall', 'concrete005_cracked', '#8c8a81', 'https://polyhaven.com/a/cracked_concrete', 'height.png', 0.02],
+        ['art_cracked_concrete_floor', 'Бетонный пол с трещинами', 'floor', 'concrete005_cracked', '#8c8a81', 'https://polyhaven.com/a/cracked_concrete', 'height.png', 0.02],
+    ].map(([id, label, baseType, folder, color, source, heightMap, heightScale, thickness = 0.2]) => ({
+        id, label, baseType, color, kind: 'structure', group: 'Поверхности',
+        icon: baseType === 'wall' ? '▥' : '▦',
+        dimensions: baseType === 'wall' ? [2, thickness, 2.4] : [2, 2, 0.12],
+        visual: { renderMode: 'pbr', source, license: 'CC0', maps: {
+            color: `/static/materials/art/${folder}/color.jpg`,
+            ...(folder === 'concrete005_cracked'
+                ? { colorKtx2: `/static/materials/art/${folder}/color.ktx2` } : {}),
+            normal: `/static/materials/art/${folder}/normal.jpg`,
+            arm: `/static/materials/art/${folder}/arm.jpg`,
+            ...(heightMap ? {
+                height: `/static/materials/art/${folder}/${heightMap}`, heightScale,
+                // У карты трещин большая часть высот занимает узкую полосу около среднего серого.
+                heightRange: folder === 'concrete005_cracked' ? [.40, .56] : [.32, .79],
+            } : {}),
+        } },
+    })),
 ]);
 
 export function findLocationAsset(id) {
     return LOCATION_ASSETS.find(asset => asset.id === id) || null;
+}
+
+const assetGroupMap = {
+    'Поверхности': 'Постройки', 'Разрушения': 'Постройки', 'Укрепления': 'Постройки',
+    'Кухня и быт': 'Быт', 'Сантехника': 'Быт', 'Посуда': 'Быт', 'Декор': 'Быт',
+    'Техника': 'Оборудование', 'Станки': 'Оборудование', 'Медицина': 'Оборудование',
+    'Торговля': 'Оборудование', 'Склад и мастерская': 'Оборудование',
+    'Хозяйство': 'Улица', 'Транспорт': 'Улица', 'Мусор и обломки': 'Улица',
+    'Предметы и ограждения': 'Улица', 'Огонь': 'Свет',
+};
+
+export function locationAssetCategory(asset) {
+    if (asset.group === 'Растительность' || asset.group === 'Природа') {
+        if (asset.id === 'tent') return { group: 'Улица' };
+        if (asset.id === 'rock' || asset.id.startsWith('swamp_rock_')) return { group: 'Природа', subgroup: 'Камни' };
+        if (asset.id === 'tree' || /^(nature_(oak|birch|pine)_|swamp_(dead_|tree_stump|dry_branches|pine_roots|water_))/.test(asset.id)) {
+            return { group: 'Природа', subgroup: 'Деревья' };
+        }
+        return { group: 'Природа', ...(asset.id !== 'art_crow' ? { subgroup: 'Мелкая растительность' } : {}) };
+    }
+    if (asset.id.endsWith('_lamp') || asset.id.endsWith('_bulb')) return { group: 'Свет' };
+    return { group: assetGroupMap[asset.group] || asset.group };
 }

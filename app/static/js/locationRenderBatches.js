@@ -2,6 +2,8 @@
 // remain authoritative for picking, editing, floors, fog and physical shadows.
 import { isFireObject } from './locationFire.js';
 
+const BATCH_SIZE = 32;
+
 export function createLocationRenderBatches(THREE, scene, roots) {
     const batches = new Map(), hidden = [];
     const materials = new WeakMap();
@@ -76,13 +78,14 @@ export function createLocationRenderBatches(THREE, scene, roots) {
         geometries.set(geometry, state);
         return state;
     }
-    function prepare() {
-        scene.updateMatrixWorld();
+    function prepare(matricesCurrent = false) {
+        if (!matricesCurrent) scene.updateMatrixWorld();
         // Список нужен каждый кадр, но записи не меняют владельца геометрии.
         // Переиспользуем их, чтобы обход квартала не создавал тысячи объектов.
         let visibleCount = 0;
         for (const root of roots()) if (staticRoot(root)) root.traverseVisible(mesh => {
-            if (!mesh.isMesh) return;
+            if (!mesh.isMesh || mesh.isSkinnedMesh || mesh.isInstancedMesh || mesh.customDepthMaterial
+                || !mesh.material?.isMeshStandardMaterial || mesh.material.transparent || mesh.material.opacity !== 1) return;
             const entry = visible[visibleCount] || (visible[visibleCount] = {});
             entry.root = root; entry.mesh = mesh; entry.version = geometryVersion(mesh.geometry);
             visibleCount++;
@@ -143,7 +146,7 @@ export function createLocationRenderBatches(THREE, scene, roots) {
                 // Spatial chunks retain frustum culling without rebuilding on
                 // camera movement. A local edit invalidates only its own batches.
                 const e = root.matrixWorld.elements;
-                const key = [Math.floor(e[12] / 12), Math.floor(e[14] / 12), appearance,
+                const key = [Math.floor(e[12] / BATCH_SIZE), Math.floor(e[14] / BATCH_SIZE), appearance,
                     mesh.receiveShadow, mesh.layers.mask, mesh.renderOrder, root.renderOrder,
                     attributes.map(([name, a]) => `${name}:${a.itemSize}`).join('|')].join(':');
                 if (!groups.has(key)) groups.set(key, []);
