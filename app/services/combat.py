@@ -889,7 +889,10 @@ class CombatService:
             else 0
         )
         artifact = artifact_passive_profile(character_data)
-        artifact_bonus = artifact['skill_physical'] if skill_path.startswith('skills.physical.') else artifact['skill_other']
+        artifact_bonus = {
+            'physical': artifact['skill_physical'],
+            'other': artifact['skill_other'],
+        }.get(skill_path.split('.')[1], 0)
         artifact_bonus += {
             'strength': artifact['skill_strength'],
             'will': artifact['skill_will'],

@@ -340,7 +340,7 @@ export async function showCrafting({characterId,lobbyId,onSaved,recipeId='',stat
             const doubleLabel=el('label','20 зарядов вместо 10 · СЛ −25','modification-checkbox');doubleLabel.prepend(double);fields.append(doubleLabel);
             const replacement=select('Заменяемая модификация',[]);
             const replacementLabel=el('label','Замена');replacementLabel.append(replacement);fields.append(replacementLabel);
-            const materialSection=el('details');materialSection.append(el('summary','Дополнительные материалы · −1 СЛ за 150 ₽'));
+            const materialSection=el('details');materialSection.append(el('summary','Дополнительные материалы · −1 СЛ за 150\u00a0₽'));
             const materialInputs=[];
             for(const entry of snapshot.inventory.filter(e=>e.item.category==='crafting_material')){
                 const label=el('label',`${entry.item.name} · ${entry.item.price||0} ₽/шт.`),input=el('input',null,'form-control');

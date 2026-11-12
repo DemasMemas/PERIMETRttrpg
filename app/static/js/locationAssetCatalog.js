@@ -32,6 +32,7 @@ export const LOCATION_ASSETS = Object.freeze([
     { id: 'ceiling_bulb', group: 'Свет', label: 'Потолочная лампочка', icon: '✺', kind: 'structure', color: '#ffe2aa', elevation: 2.4, dimensions: [0.32, 0.32, 0.7] },
     { id: 'wall_bulb', group: 'Свет', label: 'Настенная лампочка', icon: '✺', kind: 'structure', color: '#ffe2aa', elevation: 1.8, offsetZ: 0.2, dimensions: [0.38, 0.4, 0.36] },
     { id: 'poster', group: 'Декор', label: 'Постер', icon: '▤', kind: 'decor', color: '#c9a96a', elevation: 1.6, offsetZ: 0.13, rotation: 90, dimensions: [0.8, 0.035, 1.1] },
+    { id: 'information_sign', baseType: 'poster', group: 'Декор', label: 'Табличка с текстом', icon: '▤', kind: 'structure', passable: true, color: '#d6c6a3', dimensions: [1.8, 0.1, 1.65] },
     { id: 'warm_lamp', group: 'Свет', label: 'Тёплая лампа', icon: '✺', kind: 'lamp', color: '#ffd090', intensity: 2.5, distance: 8, height: 2.2, dimensions: [0.36, 0.36, 0.36] },
     { id: 'cold_lamp', group: 'Свет', label: 'Холодная лампа', icon: '✺', kind: 'lamp', color: '#a9d9ff', intensity: 2.5, distance: 8, height: 2.2, dimensions: [0.36, 0.36, 0.36] },
     { id: 'emergency_lamp', group: 'Свет', label: 'Аварийный свет', icon: '✹', kind: 'lamp', color: '#ff674f', intensity: 2, distance: 6, height: 1.8, dimensions: [0.36, 0.36, 0.36] },

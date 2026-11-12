@@ -3846,6 +3846,28 @@ function renderHealthTab(data, container = null) {
     let effectsHtml = '';
     effects.forEach((effect, index) => {
         if (isStressManifestationEffect(effect)) return;
+        const clockSource = String(effect.source || '');
+        if (clockSource.startsWith('artifact-special:') && (
+            effect.artifact_stat === 'positive_multiplier'
+            || clockSource.endsWith(':delayed-cost')
+            || clockSource.endsWith(':echo-movement-cost')
+        )) {
+            let name = getEffectDisplayName(effect);
+            let description = effect.note;
+            if (effect.artifact_stat === 'positive_multiplier') {
+                name = `${name.replace(/: особое свойство$/, '')} · Положительные эффекты ×${effect.value}`;
+                description = '';
+            } else if (effect.artifact_stat === 'movement_penalty' && !description) {
+                description = `Штраф перемещения +${effect.value}.`;
+            }
+            const duration = effectDurationLabel(effect);
+            effectsHtml += `
+                <div data-widget-effect-index="${index}" class="health-effect-card" data-artifact-effect>
+                    <div class="health-effect-caption">${escapeHtml([name, duration].filter(Boolean).join(' · '))}</div>
+                    ${description ? `<div class="text-muted health-effect-description">${escapeHtml(description)}</div>` : ''}
+                </div>`;
+            return;
+        }
         const value = String(effect.type || '').startsWith('bleeding') ? getEffectImpact(effect).severity : effect.value || 0;
         const selectedType = effect.type || 'generic';
         const isBleedingEffect = String(effect.type || '').startsWith('bleeding');
@@ -4793,22 +4815,23 @@ async function renderEquipmentTab(data, { focusWeaponIndex = null } = {}) {
                 ${(armor.containers || []).length ? `
                 <div class="armor-containers-row" data-widget-block="armor-containers">
                     ${(armor.containers || []).map((slot, idx) => `
-                        <div style="border: 1px solid #666; border-radius: 4px; padding: 5px; width: 180px; background: rgba(0,0,0,0.2);">
-                            <div style="display: flex; align-items: center; gap: 5px;">
+                        <div class="armor-container-card">
+                            <div class="armor-container-header">
                                 <strong>${idx+1}:</strong>
                                 ${slot.item ? `
-                                    <span style="flex:1; font-size:0.9rem;">${escapeHtml(slot.item.name)}</span>
-                                    <button type="button" class="btn btn-sm btn-danger" onclick="removeArmorContainerItem(${idx})" title="Извлечь">✕</button>
+                                    <span>${escapeHtml(slot.item.name)}</span>
+                                    <button type="button" class="btn btn-sm btn-danger" onclick="removeArmorContainerItem(${idx})" aria-label="Снять контейнер" title="Снять контейнер">✕</button>
                                 ` : `
-                                    <button type="button" class="btn btn-sm btn-primary" onclick="addItemToArmorContainer(${idx})" style="width:100%;">Вставить</button>
+                                    <button type="button" class="btn btn-sm btn-primary" onclick="addItemToArmorContainer(${idx})">Вставить</button>
                                 `}
                             </div>
-                            ${slot.item ? [slot.item,...(slot.item.installedModules||[])].map(renderArtifactSpecial).join('') : ''}
+                            ${renderArtifactSpecial(slot.item)}
                             ${artifactContainerKind(slot.item) ? renderSlotsUniversal(slot.item, ['equipment','armor','containers',idx,'item']) : ''}
                             ${slot.item && !artifactContainerKind(slot.item) && slot.item.category === 'container' && slot.item.installedModules?.length ? `
                                 <div style="margin-top: 5px; font-size: 0.75rem; color: #aaa; word-break: break-all;">
                                     📦 ${slot.item.installedModules.map(m => m.name).join(', ')}
                                 </div>
+                                ${slot.item.installedModules.map(renderArtifactSpecial).join('')}
                             ` : ''}
                         </div>
                     `).join('')}
@@ -5495,6 +5518,15 @@ function renderSlotsUniversal(item, itemPath, depth = 0) {
             const uninstallBtn = `<button type="button" class="btn btn-sm btn-danger" onclick="window.uninstallModuleFromSlot('${JSON.stringify(itemPath).replace(/"/g, '&quot;')}', '${slot.type}')">${artifactSlot ? 'Извлечь · 8 ОД в бою' : 'Снять'}</button>`;
             const configBtn = (slot.type === 'visor') ? `<button type="button" class="btn btn-sm btn-secondary" onclick="openVisorModificationsModal('${JSON.stringify(itemPath).replace(/"/g, '&quot;')}', '${slot.type}')">⚙️</button>` : '';
 
+            if (artifactSlot) {
+                html += `
+                    <div class="artifact-slot">
+                        <div class="artifact-slot-name">${info}</div>
+                        ${renderArtifactSpecial(installed)}
+                        ${uninstallBtn}
+                    </div>`;
+                continue;
+            }
             html += `
                 <div style="margin-left:${indent}px; display:flex; align-items:center; gap:10px; margin-top:5px;">
                     <span style="width:100px;">${slot.label}:</span>
@@ -5504,14 +5536,16 @@ function renderSlotsUniversal(item, itemPath, depth = 0) {
                 </div>
             `;
 
-            if (!artifactSlot) {
-                const installedIndex = (item.installedModules || []).findIndex(m => m.slotType === slot.type);
-                const subPath = itemPath.concat(['installedModules', installedIndex]);
-                html += renderSlotsUniversal(installed, subPath, depth + 1);
-            }
+            const installedIndex = (item.installedModules || []).findIndex(m => m.slotType === slot.type);
+            const subPath = itemPath.concat(['installedModules', installedIndex]);
+            html += renderSlotsUniversal(installed, subPath, depth + 1);
         } else {
             if (artifactSlot === 'storage' && itemPath[0] === 'equipment' && itemPath[1] === 'armor') continue;
             const installBtn = `<button type="button" class="btn btn-sm btn-primary" onclick="window.installModuleFromSlot('${JSON.stringify(itemPath).replace(/"/g, '&quot;')}', '${slot.type}')">${artifactSlot ? 'Вложить · 4 ОД в бою' : 'Установить'}</button>`;
+            if (artifactSlot) {
+                html += `<div class="artifact-slot">${installBtn}</div>`;
+                continue;
+            }
             html += `
                 <div style="margin-left:${indent}px; display:flex; align-items:center; gap:10px; margin-top:5px;">
                     <span style="width:100px;">${slot.label}:</span>
@@ -5947,7 +5981,7 @@ function renderArtifactSpecial(item) {
     const powerOptions=state.power_cost?`<select data-artifact-power aria-label="Снижение штрафа перемещения" ${!currentCharacterCanEdit||!state.available?'disabled':''}>
         ${[1,2,3,4,5].map(value=>`<option value="${value}">−${value} к штрафу · ${value*state.power_cost} ОЗ</option>`).join('')}
         </select>`:'';
-    return `<div style="flex-basis:100%;font-size:.8rem;margin-top:5px;overflow-wrap:anywhere;">
+    return `<div class="artifact-special-controls">
         <span>${escapeHtml(hint)}</span>${powerOptions}
         ${state.supported?`<button type="button" class="btn btn-sm" data-artifact-special="${escapeHtml(String(state.item_id))}"
             onclick="window.activateArtifactSpecial(this.dataset.artifactSpecial,this.parentElement.querySelector('[data-artifact-power]')?.value)" ${!currentCharacterCanEdit||!state.available&&!state.armed?'disabled':''}>
@@ -5969,7 +6003,7 @@ window.activateArtifactSpecial = async function(itemId,power,singleForecast=fals
         if(state?.fall_reaction){
             const response=await Server.activateArtifactSpecial(characterId,{item_id:state.item_id,
                 arm_fall:!state.armed,character_revision:currentCharacterData._revision});
-            if(currentCharacterId===characterId)currentCharacterData=response.data;
+            await applyRemoteSheetData(response.data, characterId);
             return;
         }
         const {runController}=await import('./itemControllers.js');
@@ -6013,9 +6047,8 @@ window.activateArtifactSpecial = async function(itemId,power,singleForecast=fals
             if(!target||currentCharacterId!==characterId)return;
             payload.target_id=target.id;
         }
-        await runController(characterId,payload,data=>{
-            if(currentCharacterId===characterId)currentCharacterData=data;
-        },{actionKey:'artifact_special',send:Server.activateArtifactSpecial});
+        await runController(characterId,payload,data=>applyRemoteSheetData(data, characterId),
+            {actionKey:'artifact_special',send:Server.activateArtifactSpecial});
     }catch(error){showNotification(error.message||'Не удалось применить артефакт','system');}
     finally{if(locked){medicalOperationInProgress=false;medicalRemoteUpdate=null;await refreshSavedSheet(characterId);}}
 };

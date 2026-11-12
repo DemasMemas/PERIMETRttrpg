@@ -69,7 +69,7 @@ import {
     setLocationAssetResizeAxis, getLocationAssetResizeState,
     deleteSelectedLocationAsset, toggleSelectedLocationAssetsHidden, toggleSelectedLocationFire,
     updateSelectedLocationAssetDetails, previewSelectedLocationLamp, updateSelectedLocationRoof, generateSelectedLocationRoof,
-    setSelectedLocationTraversalCategory, setSelectedLocationCover, setSelectedLocationLock,
+    setSelectedLocationTraversalCategory, setSelectedLocationCover, setSelectedLocationLock, setSelectedLocationSignText,
     setLocationDarknessOverlayVisible,
 } from './locationScene.js';
 import { getUserColorHex, updateMyColor } from './colors.js';
@@ -1083,7 +1083,8 @@ window.enterLocation = async function(locationId, { scoutView = null } = {}) {
                     if (selection && pendingInspectorSaves.has(selection.selectionKey)) return;
                     // A socket echo must not discard a number still being typed.
                     const focused = document.activeElement;
-                    if (assetInspector.contains(focused) && focused?.dataset.numericDraft === 'true') return;
+                    if (assetInspector.contains(focused) && (focused?.dataset.numericDraft === 'true'
+                        || focused?.matches('[data-sign-text]') && focused.dataset.signSelection === selection?.selectionKey)) return;
                     if (selection?.kind === 'structure' && selection.selectedCount === 1) {
                         setActiveBuilding(selection.buildingId, selection.level);
                     }
@@ -1157,6 +1158,10 @@ window.enterLocation = async function(locationId, { scoutView = null } = {}) {
                             </div>
                             <button type="button" class="btn btn-secondary" data-cover-save>Сохранить укрытие</button>
                         </details>
+                        <div data-selected-sign-fields hidden>
+                            <label>Текст таблички <textarea class="form-control" data-sign-text rows="4" maxlength="280"></textarea></label>
+                            <button type="button" class="btn btn-secondary" data-sign-save>Сохранить текст</button>
+                        </div>
                         <details class="location-cover-settings" data-selected-lock-fields hidden>
                             <summary>Настройка замка</summary>
                             <div class="location-cover-fields">
@@ -1242,6 +1247,19 @@ window.enterLocation = async function(locationId, { scoutView = null } = {}) {
                                     hp: read('hp'), maxHp: read('maxHp'), protection: read('protection'),
                                 })) showNotification('Укрытие обновлено', 'success');
                             } finally { if (button.isConnected) button.disabled = false; }
+                        };
+                    }
+                    const signFields = assetInspector.querySelector('[data-selected-sign-fields]');
+                    signFields.hidden = selection.signText == null || selection.selectedCount !== 1;
+                    if (!signFields.hidden) {
+                        const signText = signFields.querySelector('[data-sign-text]');
+                        signText.value = selection.signText;
+                        signText.dataset.signSelection = selection.selectionKey;
+                        signFields.querySelector('[data-sign-save]').onclick = async event => {
+                            const button = event.currentTarget;
+                            button.disabled = true;
+                            try { await setSelectedLocationSignText(signText.value); }
+                            finally { if (button.isConnected) button.disabled = false; }
                         };
                     }
                     const lockFields=assetInspector.querySelector('[data-selected-lock-fields]');

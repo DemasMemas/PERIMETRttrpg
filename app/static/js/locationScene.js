@@ -11724,7 +11724,8 @@ function createLocationObjectMesh(obj, forPreview = false, relatedObjects = curr
     const household = asset?.visual?.family === 'household';
     const floorPose = obj.type === 'floor' ? floorVisualPose(obj, relatedObjects) : null;
     const dimensions = properties.dimensions || floorPose
-        || (household || isFireObject(obj) ? baseAssetDimensions(obj.type, 'structure') : getStructureDimensions(obj.type));
+        || (household || asset?.id === 'information_sign' || isFireObject(obj)
+            ? baseAssetDimensions(asset?.id || obj.type, 'structure') : getStructureDimensions(obj.type));
     const width = floorPose?.width || dimensions.width || 1;
     const depth = floorPose?.depth || dimensions.depth || 1;
     const height = dimensions.height || 1;
@@ -11757,6 +11758,8 @@ function createLocationObjectMesh(obj, forPreview = false, relatedObjects = curr
             properties.anomaly_key||properties.anomalyKey||'',obj.name||'');
         effect.scale.set(width,Math.min(height,1),depth);
         group.add(effect);
+    } else if (asset?.id === 'information_sign') {
+        group.add(createInformationSign(width, depth, height, properties.color || asset.color, properties.sign_text));
     } else if (obj.type==='poster') {
         const poster=createPosterMesh(properties.color);
         applyDecorSize(poster,{dimensions:{width,depth,height}},'poster');
@@ -13503,6 +13506,68 @@ async function restoreGeneratedLocationFloorImpl(buildingId, level = 0) {
     }
 }
 
+function createInformationSign(width, depth, height, color, text = '') {
+    const sign = new THREE.Group();
+    const boardHeight = height * 0.61;
+    const wood = new THREE.MeshStandardMaterial({ color: '#514338', roughness: 0.95 });
+    const board = new THREE.Mesh(new THREE.BoxGeometry(width, boardHeight, depth), wood);
+    board.position.y = height - boardHeight / 2;
+    sign.add(board);
+    const postHeight = height - boardHeight * 0.65;
+    for (const offset of [-0.35, 0.35]) {
+        const post = new THREE.Mesh(
+            new THREE.BoxGeometry(width * 0.048, postHeight, depth * 0.8), wood.clone());
+        post.position.set(width * offset, postHeight / 2, 0);
+        sign.add(post);
+    }
+
+    const canvas = document.createElement('canvas');
+    canvas.width = 1024;
+    canvas.height = 512;
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = color;
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.strokeStyle = '#63513c';
+    ctx.lineWidth = 6;
+    ctx.strokeRect(12, 12, 1000, 488);
+    ctx.fillStyle = '#242017';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    let lines;
+    let fontSize;
+    for (fontSize = 58; fontSize >= 26; fontSize -= 4) {
+        ctx.font = `bold ${fontSize}px sans-serif`;
+        lines = String(text).slice(0, 280).split('\n').flatMap(paragraph => {
+            const wrapped = [''];
+            for (const word of paragraph.trim().split(/\s+/)) {
+                const index = wrapped.length - 1;
+                const line = [wrapped[index], word].filter(Boolean).join(' ');
+                if (ctx.measureText(line).width <= 920) wrapped[index] = line;
+                else wrapped.push(word);
+            }
+            return wrapped;
+        });
+        if (lines.length * fontSize * 1.22 <= 440) break;
+    }
+    fontSize = Math.max(26, fontSize);
+    const lineHeight = fontSize * 1.22;
+    const maxLines = Math.floor(440 / lineHeight);
+    if (lines.length > maxLines) lines.splice(maxLines - 1, lines.length, '…');
+    lines.forEach((line, i) => ctx.fillText(line, 512, 256 + (i - (lines.length - 1) / 2) * lineHeight, 920));
+
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.colorSpace = THREE.SRGBColorSpace;
+    for (const side of [1, -1]) {
+        const panel = new THREE.Mesh(new THREE.PlaneGeometry(width * 0.98, boardHeight * 0.96),
+            new THREE.MeshStandardMaterial({ map: texture, roughness: 0.96 }));
+        panel.position.set(0, board.position.y, side * (depth / 2 + 0.001));
+        if (side < 0) panel.rotation.y = Math.PI;
+        else panel.texture = texture;
+        sign.add(panel);
+    }
+    return sign;
+}
+
 function createPosterMesh(color) {
     const group = new THREE.Group();
     const frame = new THREE.Mesh(
@@ -14824,6 +14889,7 @@ function getPrimaryLocationEditorAsset() {
         buildingId: structureBuildingId(source) || '',
         level: structureLevel(source),
         structureType: source.type,
+        signText: source.properties?.visual_asset === 'information_sign' ? source.properties.sign_text || '' : null,
         roofSection: source.properties?.roof_section ? {
             ...source.properties.roof_section.bodies[source.properties.roof_section.owner],
             owner:source.properties.roof_section.owner,
@@ -15918,6 +15984,25 @@ async function deleteSelectedLocationAssetImpl() {
 
 export async function toggleSelectedLocationFire(...args) {
     return runLocationObjectCommand(() => toggleSelectedLocationFireImpl(...args));
+}
+
+export async function setSelectedLocationSignText(text) {
+    return runLocationObjectCommand(async () => {
+        if (!window.isGM || editorSelections.length !== 1 || editorSelection?.kind !== 'structure') return false;
+        const source = getSelectedEditorSource();
+        if (source?.properties?.visual_asset !== 'information_sign') return false;
+        try {
+            const object = await editorUpdateObject(window.currentLobbyId, source.id, {
+                properties: { sign_text: String(text).trim().slice(0, 280) },
+            });
+            updateLocationObject(object);
+            notifyEditorSelection();
+            return true;
+        } catch (error) {
+            showNotification(error.message || 'Не удалось сохранить текст таблички', 'system');
+            return false;
+        }
+    });
 }
 async function toggleSelectedLocationFireImpl() {
     if (!window.isGM || editorSelections.length !== 1 || editorSelection?.kind !== 'structure') return false;

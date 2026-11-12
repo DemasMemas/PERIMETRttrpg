@@ -178,13 +178,18 @@ def test_radiation_amplifier_doubles_or_triples_only_its_ready_positive_bonuses(
 @pytest.mark.parametrize('name,other,physical', [('Ядро мысли', 5, 3), ('Сердце Эха', 8, 4)])
 def test_psi_amplifier_improves_skills_without_enhancing_passive_cost(name, other, physical):
     from app.services.artifact_effects import artifact_passive_profile
+    from app.services.combat import CombatService
+
     data = ready(name=name)
+    data.setdefault('skills', {}).setdefault('social', {})['charisma'] = {'base': 10, 'bonus': 2}
     health = data['health']
     health['current'] = 700
     baseline = artifact_passive_profile(data)
+    assert CombatService._skill_value(data, 'skills.social.charisma') == 12
     use(data)
     enhanced = artifact_passive_profile(data)
     assert enhanced['skill_other'] == other*2 and enhanced['skill_physical'] == physical*2
+    assert CombatService._skill_value(data, 'skills.social.charisma') == 12
     assert enhanced['pain_per_movement'] == baseline['pain_per_movement']
     assert enhanced['health_per_movement'] == baseline['health_per_movement']
     health['effects'] = advance_timed_effects(health, health['effects'], 59, character_data=data)
