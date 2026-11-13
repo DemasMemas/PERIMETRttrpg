@@ -760,6 +760,36 @@ def test_hunter_gets_credit_for_actual_fire_finisher_once(grenade_game,monkeypat
     assert actor.character.data['health']['stress']==0
 
 
+def test_hunter_gets_credit_when_a_catalog_grenade_detonates_on_later_turn(grenade_game):
+    from app.services.character_rules import advance_hunter_days
+    from app.services.equipment_catalog import load_catalog
+
+    actor, target = grenade_game['actor_location'], grenade_game['target_location']
+    actor.character.data = {**deepcopy(actor.character.data), 'basic': {'background': {'name': 'Охотник'}}}
+    target.character.data = {**deepcopy(target.character.data), 'is_mutant': True,
+                             'health': {'current': 1, 'max': 700, 'effects': []}}
+    grenade = next(row for row in load_catalog() if row['name'] == 'Граната РГД-5')
+    profile = CombatService._explosive_profile(grenade)
+    assert profile['blast_base'] > 0
+    state = LocationCombatState.query.filter_by(location_id=actor.location_id).one()
+    state.pending_explosives = [{
+        'id': 'hunter-grenade', 'actor_id': actor.id, 'item_name': grenade['name'],
+        'trigger': 'actor_turn_start', 'round': state.round_number + 1,
+        'x': target.pos_x, 'y': target.pos_y,
+        'profile': {**profile, 'source_character_id': actor.character_id},
+    }]
+    db.session.commit()
+
+    assert CombatService._process_pending_explosives(state, phase='actor_turn_start', actor_id=actor.id) == []
+    assert 'hunterActivityDay' not in actor.character.data['health'].get('combatMeta', {})
+    state.round_number += 1
+    assert CombatService._process_pending_explosives(state, phase='actor_turn_start', actor_id=actor.id)
+    assert CombatService._character_condition(target.character.data)['state'] == 'dead'
+    assert actor.character.data['health']['combatMeta']['hunterActivityDay'] == 1
+    advance_hunter_days(actor.character.data, 1, 2)
+    assert actor.character.data['health']['stress'] == 0
+
+
 def test_scout_cannot_reveal_territory_while_fully_blind(grenade_game,monkeypatch):
     from app.services.location_scout import inspect
     actor=grenade_game['actor_location']

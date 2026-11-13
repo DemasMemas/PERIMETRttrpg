@@ -6,6 +6,7 @@ from inspect import signature
 from uuid import uuid4
 
 from sqlalchemy.orm.attributes import flag_modified
+from sqlalchemy.orm.exc import StaleDataError
 
 from app.extensions import db, socketio
 from app.models import LobbyCharacter, LocationCharacter, DeferredCombatAction, ChatMessage
@@ -228,7 +229,12 @@ def journaled(operation=None,*,kind=None,actor_key=None):
             db.session.rollback()
             record(actor, values, before, error=error)
             raise
-        record(actor, values, before, result=result)
+        try:
+            record(actor, values, before, result=result)
+        except StaleDataError:
+            # Действие уже сохранено. Повторяем только запись журнала на свежей версии листа.
+            db.session.rollback()
+            record(actor, values, before, result=result)
         return result
     return run
 

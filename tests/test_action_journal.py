@@ -43,6 +43,29 @@ def test_instant_request_id_is_not_executed_twice_after_reload(client,grenade_ga
     assert receipt.status=='completed' and receipt.remaining_action_points==0
 
 
+def test_journal_revision_conflict_retries_only_journal_after_action(client, grenade_game, auth_headers, monkeypatch):
+    from sqlalchemy.orm.exc import StaleDataError
+    from app.services import action_journal
+
+    actor = grenade_game['actor_location']
+    points_before = actor.action_points_current
+    record = action_journal.record
+    attempts = []
+
+    def record_after_conflict(*args, **kwargs):
+        attempts.append(actor.action_points_current)
+        if len(attempts) == 1:
+            raise StaleDataError()
+        return record(*args, **kwargs)
+
+    monkeypatch.setattr(action_journal, 'record', record_after_conflict)
+    response = action(client, grenade_game, auth_headers, pending_action_id='journal-race')
+
+    assert response.status_code == 200, response.json
+    assert attempts == [points_before - 2, points_before - 2]
+    assert [(entry['id'], entry['action_points']) for entry in entries(actor.character)] == [('journal-race', 2)]
+
+
 def test_rejected_then_corrected_request_keeps_real_payment(client,grenade_game,auth_headers):
     assert action(client,grenade_game,auth_headers,pending_action_id='corrected-journal',action_key='unknown_action').status_code==400
     assert action(client,grenade_game,auth_headers,pending_action_id='corrected-journal').status_code==200

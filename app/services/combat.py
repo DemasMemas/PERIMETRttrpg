@@ -7391,7 +7391,8 @@ class CombatService:
         noise_volume=CombatService._coerce_float(profile.get('noise'),0)
         noise_context=noise.space(noise_location,noise_objects,epicenter_x,epicenter_y,floor_level) if noise_volume>0 else None
         source_actor=LocationCharacter.query.filter_by(location_id=location_id,character_id=profile.get('source_character_id')).first() if profile.get('source_character_id') and not scene_context else None
-        living={p.id for p in LocationCharacter.query.filter_by(location_id=location_id).all() if p.character and CombatService._character_condition(p.character.data)['state']!='dead'} if source_actor else set()
+        living_before_blast={p.id for p in LocationCharacter.query.filter_by(location_id=location_id).all()
+                            if p.character and CombatService._character_condition(p.character.data)['state']!='dead'} if source_actor else set()
         def finish(payload):
             from app.services.character_rules import explosion_occurred
             if not scene_context and (profile.get('blast_base',0)>0 or profile.get('fragment',0)>0 or profile.get('effect')=='flash'):explosion_occurred(location_id)
@@ -7403,7 +7404,7 @@ class CombatService:
             if source_actor:
                 from app.services.character_rules import after_kill
                 for victim in LocationCharacter.query.filter_by(location_id=location_id).all():
-                    if victim.character:after_kill(source_actor,victim,victim.id in living)
+                    if victim.character:after_kill(source_actor,victim,victim.id in living_before_blast)
             if not scene_context:
                 from app.services.improvised_explosives import resolve_pending
                 resolve_pending(payload,round_number)
