@@ -18917,6 +18917,8 @@ class CombatService:
                 meta.pop('reactionActive', None)
                 meta.pop('gunpoint', None)
                 meta.pop('gunpointFailedRound', None)
+                meta.pop('observerTargets', None)
+                meta.pop('harmAllowedTargets', None)
                 sync_health_derived_statuses(health)
                 data['health'] = health
                 character.data = data

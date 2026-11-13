@@ -99,13 +99,15 @@ def can_explode(actor):
             for item in value:yield from visit(item)
         elif isinstance(value,dict):
             yield value
-            for key in ('contents','pouches','storedItem'):yield from visit(value.get(key))
+            for key in ('contents', 'pouches', 'storedItem', 'extraStoredItem', 'savedAttributes'):
+                yield from visit(value.get(key))
     data=actor.character.data or {}
     roots=[data.get('inventory'),data.get('equipment')]
     for root in roots:
         for value in (root or {}).values():
             for item in visit(value):
-                if item.get('category')=='grenade' and float(item.get('quantity',1) or 0)>0 and C._explosive_key(item.get('name')):return True
+                if item.get('category') == 'grenade' and C._coerce_float(item.get('quantity', 1), 0) > 0 and C._explosive_key(item.get('name')):
+                    return True
     for weapon in carried_weapons(data):
         if C._weapon_class(weapon)=='grenade_launcher' and C._weapon_loaded_shots(weapon)>0:return True
         if any(m.get('loadedGrenade') for m in weapon.get('installedModules') or []):return True
@@ -118,18 +120,31 @@ def start_turn(actor):
     state=LocationCombatState.query.filter_by(location_id=actor.location_id).first()
     if not state or state.status!='active':return
     current=meta(actor)
-    if background_is(actor.character.data,'Гренадир') and not current.get('combatExplosionOccurred') and can_explode(actor):
-        check=C._narrative_skill_check(actor.character.data,'skills.physical.will')
-        check.update(difficulty=12,success=not check.get('automatic_failure') and check['total']>=12)
-        current['grenadirCheck']=check;current['grenadirMustExplode']=not check['success']
+    if background_is(actor.character.data,'Гренадир'):
+        if not current.get('combatExplosionOccurred') and can_explode(actor):
+            check=C._narrative_skill_check(actor.character.data,'skills.physical.will')
+            check.update(difficulty=12,success=not check.get('automatic_failure') and check['total']>=12)
+            current['grenadirCheck']=check;current['grenadirMustExplode']=not check['success']
+        else:
+            current.pop('grenadirCheck', None)
+            current.pop('grenadirMustExplode', None)
     flag_modified(actor.character,'data')
 
 
 def explosion_occurred(location_id):
-    for actor in LocationCharacter.query.filter_by(location_id=location_id).all():
+    state = LocationCombatState.query.filter_by(location_id=location_id, status='active').first()
+    if not state or not state.turn_order:
+        return
+    participants = LocationCharacter.query.filter_by(location_id=location_id).filter(
+        LocationCharacter.id.in_(state.turn_order),
+    )
+    for actor in participants:
         if actor.character:
-            meta(actor)['combatExplosionOccurred']=True;meta(actor).pop('grenadirMustExplode',None)
-            flag_modified(actor.character,'data')
+            current = meta(actor)
+            current['combatExplosionOccurred'] = True
+            current.pop('grenadirCheck', None)
+            current.pop('grenadirMustExplode', None)
+            flag_modified(actor.character, 'data')
 
 
 def harm_check(attacker,target,ranged):
@@ -269,7 +284,17 @@ def before_end_turn(actor,state):
     if C._character_condition(actor.character.data)['state']!='active':return
     current=meta(actor);mode=actor.movement_mode_this_turn
     if current.get('grenadirMustExplode') and not current.get('combatExplosionOccurred') and can_explode(actor):
-        raise ValidationError('Гренадир провалил Волю: сначала устройте взрыв')
+        armed_explosion = any(
+            event.get('actor_id') == actor.id
+            and (
+                (event.get('profile') or {}).get('blast_base', 0) > 0
+                or (event.get('profile') or {}).get('fragment', 0) > 0
+                or (event.get('profile') or {}).get('effect') == 'flash'
+            )
+            for event in state.pending_explosives or []
+        )
+        if not armed_explosion:
+            raise ValidationError('Гренадир провалил Волю: сначала устройте взрыв')
     if background_is(actor.character.data,'Спринтер') and mode=='sprint' and can_continue_moving(actor):
         raise ValidationError('Спринтер должен потратить все ОП либо достичь предела спринта')
     if background_is(actor.character.data,'Прорывник') and not current.get('breakthroughWillPassed'):

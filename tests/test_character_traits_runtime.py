@@ -319,6 +319,61 @@ def test_grenadir_rolls_only_when_can_explode_and_explosion_clears_obligation(gr
     actor.character.data['inventory']['pockets']=[]
     start_turn(actor)
     assert not actor.character.data['health']['combatMeta'].get('grenadirMustExplode')
+    assert 'grenadirCheck' not in actor.character.data['health']['combatMeta']
+
+
+@pytest.mark.parametrize('slot', ['storedItem', 'extraStoredItem'])
+def test_grenadir_checks_will_with_only_a_grenade_on_the_belt(grenade_game, monkeypatch, slot):
+    from app.services.character_rules import start_turn
+    from app.services.equipment_catalog import load_catalog
+
+    actor = grenade_game['actor_location']
+    item = {**next(row for row in load_catalog() if row['name'] == 'Граната РГН'), 'quantity': 1}
+    data = deepcopy(actor.character.data)
+    data.update(basic={'background': {'name': 'Гренадир'}}, inventory={'pockets': []},
+                equipment={'belt': {slot: {'type': 'grenade', 'savedAttributes': item} if slot == 'storedItem' else item}})
+    actor.character.data = data
+    monkeypatch.setattr(CombatService, '_narrative_skill_check', lambda *args, **kwargs: {'roll': 11, 'total': 11})
+    start_turn(actor)
+    check = actor.character.data['health']['combatMeta']['grenadirCheck']
+    assert check['difficulty'] == 12 and not check['success']
+
+
+def test_explosion_leaves_nonparticipant_in_same_location_unaffected(grenade_game):
+    from app.services.character_rules import explosion_occurred, meta
+
+    actor, spectator = grenade_game['actor_location'], grenade_game['target_location']
+    state = LocationCombatState.query.filter_by(location_id=actor.location_id).one()
+    state.turn_order = [actor.id]
+    for character in (actor, spectator):
+        meta(character).update(grenadirCheck={'difficulty': 12}, grenadirMustExplode=True)
+
+    explosion_occurred(actor.location_id)
+
+    assert meta(actor)['combatExplosionOccurred'] is True
+    assert 'grenadirMustExplode' not in meta(actor)
+    assert 'grenadirCheck' not in meta(actor)
+    assert meta(spectator)['grenadirMustExplode'] is True
+    assert 'combatExplosionOccurred' not in meta(spectator)
+
+
+def test_grenadier_can_end_turn_after_arming_delayed_grenade(grenade_game, monkeypatch):
+    from app.services.character_rules import before_end_turn, meta, start_turn
+
+    actor, other = grenade_game['actor_location'], grenade_game['target_location']
+    actor.character.data['basic'] = {'background': {'name': 'Гренадир'}}
+    state = LocationCombatState.query.filter_by(location_id=actor.location_id).one()
+    monkeypatch.setattr(CombatService, '_narrative_skill_check', lambda *args: {'total': 11})
+    start_turn(actor)
+    with pytest.raises(ValidationError, match='сначала устройте взрыв'):
+        before_end_turn(actor, state)
+    state.pending_explosives = [{'actor_id': other.id, 'profile': {'blast_base': 10}}]
+    with pytest.raises(ValidationError, match='сначала устройте взрыв'):
+        before_end_turn(actor, state)
+    state.pending_explosives = [{'actor_id': actor.id, 'profile': {'blast_base': 10}}]
+    before_end_turn(actor, state)
+    assert meta(actor)['grenadirMustExplode'] is True
+    assert 'combatExplosionOccurred' not in meta(actor)
 
 
 def test_sprinter_cannot_end_while_can_spend_op_but_can_at_limit(grenade_game):
