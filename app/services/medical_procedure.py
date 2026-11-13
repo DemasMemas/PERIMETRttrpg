@@ -1252,10 +1252,10 @@ class MedicalProcedureService:
         roll = (
             completion.payload.get('medicine_roll') if completion else random.randint(1, 20)
         ) if requires_roll else None
-        if order and order.get('advantage') and not completion:
-            roll=max(roll,random.randint(1,20))
         if requires_roll and (type(roll) is not int or not 1 <= roll <= 20):
             raise ConflictError('Не удалось восстановить медицинский бросок')
+        if order and order.get('advantage'):
+            roll=max(roll,random.randint(1,20))
         success = not requires_roll or roll >= difficulty
         if requires_roll and helper:actor_data['health']['combatMeta'].pop('helpAdvantage',None)
         if not direct.get('not_consumed'):

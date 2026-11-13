@@ -1211,7 +1211,8 @@ def test_splint_fix_and_restore_are_separate_procedures(client, pair, auth_heade
     assert fixed['remaining_seconds'] == 86400
 
 
-def test_deferred_treatment_uses_saved_roll_and_completes_once(client, pair, auth_headers, monkeypatch):
+@pytest.mark.parametrize('detailed_order', [False, True])
+def test_deferred_treatment_uses_saved_roll_and_completes_once(client, pair, auth_headers, monkeypatch, detailed_order):
     effect = {'id': 'bleed-1', 'type': 'bleeding_external_light', 'area': 'leftArm', 'source': 'cut'}
     _, profile, item = install_item(pair, 'Бинт', 'Останавливает Слабое кровотечение.', effects=[effect])
     pair['actor_location'].action_points_current = 1
@@ -1231,7 +1232,7 @@ def test_deferred_treatment_uses_saved_roll_and_completes_once(client, pair, aut
         },
     )
     assert start.status_code == 200, start.json
-    monkeypatch.setattr('app.services.deferred_consumable.random.randint', lambda *_: 20)
+    monkeypatch.setattr('app.services.deferred_consumable.random.randint', lambda *_: 4)
     other_end = client.post(
         f"/lobbies/{pair['lobby'].id}/locations/{pair['location'].id}/combat/end_turn",
         headers=auth_headers(pair['target_user']),
@@ -1240,14 +1241,26 @@ def test_deferred_treatment_uses_saved_roll_and_completes_once(client, pair, aut
     assert other_end.status_code == 200, other_end.json
     row = db.session.get(DeferredCombatAction, 'medical-deferred')
     assert row.status == 'ready'
-    assert row.payload['medicine_roll'] == 20
+    assert row.payload['medicine_roll'] == 4
+    if detailed_order:
+        from app.models import CharacterInteractionRequest
+        from app.services.brigadier_order import create, respond
+        issuer, recipient = pair['target_location'], pair['actor_location']
+        order = create(issuer, pair['target_user']['id'], recipient, {
+            'detailed': True, 'text': 'Останови кровотечение', 'advantage': True, 'roll_bonus': 3,
+        })
+        respond(db.session.get(CharacterInteractionRequest, order['id']), pair['actor_user']['id'], 'accept')
     body = payload(pair, item, application, operation='medical-deferred', combat=True)
     body['deferred_action_id'] = 'medical-deferred'
+    extra_rolls = []
+    monkeypatch.setattr('app.services.medical_procedure.random.randint', lambda low, high: extra_rolls.append((low, high)) or 20)
     response = apply(client, pair, auth_headers, body)
     assert response.status_code == 200, response.json
-    assert response.json['medical_result']['roll'] == 20
+    assert response.json['medical_result']['roll'] == (20 if detailed_order else 4)
+    assert 'brigadierOrder' not in response.json['actor_data']['health']['combatMeta']
     assert db.session.get(DeferredCombatAction, 'medical-deferred').status == 'completed'
     assert apply(client, pair, auth_headers, body).status_code == 409
+    assert extra_rolls.count((1, 20)) == int(detailed_order)
 
 
 def test_treating_conscious_other_character_requires_and_completes_consent(client, pair, auth_headers, monkeypatch):
