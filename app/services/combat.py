@@ -15942,8 +15942,8 @@ class CombatService:
             if not CombatService._is_in_facing_arc(character, target.pos_x, target.pos_y):
                 raise ValidationError("The target is outside the character's field of view")
             from app.services.portable_lights import shooting as portable_shooting
-            if portable_shooting(character,target,'aimed')['aimed_blocked']:
-                raise ValidationError('Нельзя прицельно стрелять через ПНВ в направленный на вас свет')
+            if portable_shooting(character,target,'aimed')['blinded']:
+                raise ValidationError('ПНВ ослеплён направленным на вас светом')
             aim_details = {
                 'weapon_index': weapon_index,
                 'target_character_id': target_character_id,
@@ -16380,15 +16380,15 @@ class CombatService:
             )
             movement_modifiers['difficulty_penalty'] += CombatService._target_evasion_trait_penalty(range_target)
             from app.services.portable_lights import shooting as portable_shooting
-            portable_profile=portable_shooting(character,range_target,fire_mode) if range_target else {'lit':False,'accuracy':0,'aimed_blocked':False}
+            portable_profile=portable_shooting(character,range_target,fire_mode) if range_target else {'lit':False,'accuracy':0,'blinded':False}
             if range_target:
                 jammed_by=portable_profile.get('jammed_by')
             else:
                 from app.services.artifact_jamming import for_actor
                 jammed_by=for_actor(character)
             nvg_active=uses_nvg(data,jammed_by=jammed_by)
-            if portable_profile['aimed_blocked']:
-                raise ValidationError('Нельзя прицельно стрелять через ПНВ в направленный на вас свет')
+            if portable_profile['blinded']:
+                raise ValidationError('ПНВ ослеплён направленным на вас светом')
             daylight_vision = has_daylight_vision(data)
             target_in_darkness = not daylight_vision and CombatService._is_dark_at_position(location, facing_target_x, facing_target_y)
             base_shooting_disadvantage = (
@@ -16539,15 +16539,17 @@ class CombatService:
                 attack_details['shooting_disadvantage']=attack_details['base_shooting_disadvantage']=True
             if not daylight_vision:
                 hit_difficulty-=portable_profile['accuracy']
-            if portable_profile['lit'] and target_in_darkness and not nvg_active:
-                hit_difficulty+=0 if portable_profile.get('improved') else 3
             attack_details['portable_light']=portable_profile
             hit_difficulty -= weapon_accuracy_bonus(data,weapon)
             hit_difficulty += CombatService._equipment_accuracy_penalty(data)
-            if not portable_profile['lit'] and target_in_darkness:
+            if target_in_darkness:
                 from app.services.equipment_passives import darkness_modifier
-                if not (fire_mode=='aimed' and not jammed_by and installed(weapon,'night_scope') and not nvg_active):
-                    hit_difficulty -= darkness_modifier(data, 'accuracy_penalty',jammed_by=jammed_by)
+                darkness_accuracy = darkness_modifier(data, 'accuracy_penalty',jammed_by=jammed_by)
+                if fire_mode=='aimed' and not jammed_by and installed(weapon,'night_scope') and not nvg_active:
+                    darkness_accuracy = 0
+                if portable_profile['lit']:
+                    darkness_accuracy = max(darkness_accuracy, 0 if portable_profile['improved'] else -3)
+                hit_difficulty -= darkness_accuracy
             hit_difficulty += strength_profile['accuracy_penalty']
             from app.services.weapon_grip import firearm_penalty
             pair_penalty=firearm_penalty(character,weapon)

@@ -12,7 +12,7 @@ from app.services.effects import apply_effect_to_health
 def preserve(current,incoming):
     previous=((current or {}).get('health') or {}).get('combatMeta') or {}
     meta=incoming.setdefault('health',{}).setdefault('combatMeta',{})
-    for key in ('socialCheckReceipts','socialMemory','diplomatRetry'):
+    for key in ('socialCheckReceipts','socialMemory','diplomatRetry','brigadierRefusals'):
         if key in previous:meta[key]=deepcopy(previous[key])
         else:meta.pop(key,None)
 
@@ -104,8 +104,10 @@ def run(character_id,user_id,payload):
     if bonus:roll_bonus+=bonus;modifiers['rules'].append('Избранный мутант Охотника: +3')
     if vegetation and trait_count(data,'Человек-куст'):
         roll_bonus+=4*trait_count(data,'Человек-куст');modifiers['rules'].append('Человек-куст: растительное укрытие +4')
-    refusal=((data.get('health') or {}).get('combatMeta') or {}).get('brigadierRefusals',{}).get(str(target.id)) if target else None
-    if refusal and background_is(data,'Бригадир') and path=='skills.social.intimidation':
+    refusal=meta.get('brigadierRefusals',{}).get(str(target.id)) if target else None
+    use_refusal_bonus = bool(refusal and not refusal.get('intimidation_used')
+                             and background_is(data,'Бригадир') and path=='skills.social.intimidation')
+    if use_refusal_bonus:
         roll_bonus+=((CombatService._skill_value(data,path)+15-10)//2)-CombatService._base_skill_modifier(data,path)
         modifiers['rules'].append('Отказ от указания: Устрашение +15 уровней на этот бросок')
     if target and social and background_is(data,'Балабол'):
@@ -125,6 +127,7 @@ def run(character_id,user_id,payload):
         weather=at_character(active.location,active) if active else weather_profile(actor.lobby.weather_settings)
         darkness=CombatService._is_dark_at_character(active.location,active) if active and path in {'skills.physical.awareness.visual','skills.physical.shooting','skills.other.stealth'} else world_is_dark(actor.lobby.game_time_minutes)
         light_modifier=0
+        blinded_by_light=False
         jammed_by=None
         if path in {'skills.physical.awareness.visual','skills.physical.shooting'}:
             from app.services.artifact_jamming import for_character
@@ -133,14 +136,21 @@ def run(character_id,user_id,payload):
             from app.services.portable_lights import illumination
             from app.services.weapon_modules import uses_nvg
             light=illumination(active)
-            if light['lit']:
+            blinded_by_light=light['base_dark'] and light['direct_beam'] and uses_nvg(data,jammed_by=jammed_by)
+            if light['lit'] and darkness:
+                from app.services.equipment_passives import darkness_modifier
+                stat='awareness_penalty' if path=='skills.physical.awareness.visual' else 'accuracy_penalty'
+                light_modifier=max(darkness_modifier(data,stat,jammed_by=jammed_by), -light['penalty'])
+                roll_bonus+=light_modifier
                 darkness=False
-                if light['base_dark'] and not uses_nvg(data,jammed_by=jammed_by):
-                    light_modifier=-(light['penalty'] or 0)
-                    roll_bonus+=light_modifier
-        if light_modifier:modifiers['rules'].append(f'Переносной свет: {light_modifier:+d}')
-        check=CombatService._narrative_skill_check(data,path,advantage=modifiers['advantage'],forced_disadvantage=modifiers['disadvantage'],
-            charisma_level_delta=modifiers['charisma_level'],roll_bonus=roll_bonus,darkness=darkness,weather=weather,jammed_by=jammed_by)
+        if light_modifier:modifiers['rules'].append(f'Штраф видимости с учётом переносного света: {light_modifier:+g}')
+        if blinded_by_light:
+            check={'skill_path':path,'skill_label':CombatService.NARRATIVE_SKILLS[path],
+                   'roll':None,'rolls':[],'total':None,'automatic_failure':True,'blocked':True,
+                   'failure_reason':'ПНВ ослеплён направленным на вас светом'}
+        else:
+            check=CombatService._narrative_skill_check(data,path,advantage=modifiers['advantage'],forced_disadvantage=modifiers['disadvantage'],
+                charisma_level_delta=modifiers['charisma_level'],roll_bonus=roll_bonus,darkness=darkness,weather=weather,jammed_by=jammed_by)
         check['illumination_modifier']=light_modifier
         if check.get('weather_modifier'):modifiers['rules'].append(f"Погода на улице: {check['weather_modifier']:+d}")
         if check.get('weather_disadvantage'):modifiers['rules'].append('Ливень: Помеха')
@@ -153,6 +163,8 @@ def run(character_id,user_id,payload):
                 check['ambient_noise_sources']=[{'kind':'conversation','continuous':True} for _ in ambient]
                 check['rules'].append('На этом этаже работает ХИС: непрерывный шум как разговор')
         if lie_check:check['will_check']=lie_check
+        if use_refusal_bonus and not check.get('automatic_failure'):
+            refusal['intimidation_used'] = True
         if path=='skills.social.deception':memory['firstLieUsed']=True
         if target and social and background_is(data,'Балабол'):memory['skills'][path]=max(-4,min(4,int(memory['skills'].get(path,0))+(1 if check['success'] else -1)))
         if not quick:CombatService._apply_stress_check_consequences(data,path,check['success'])

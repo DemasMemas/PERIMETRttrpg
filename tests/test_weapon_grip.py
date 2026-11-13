@@ -325,6 +325,44 @@ def test_ambidextrous_pair_does_not_cancel_downpour_disadvantage(client,grenade_
     assert all(item['weather']['accuracy_disadvantage'] for item in result['attack']['paired_attacks'])
 
 
+@pytest.mark.parametrize('device,penalty', [
+    (None, 5), ('Очки ПНВ-1п', 2), ('Монокуляр Сидр-1г', 1), ('ПНВ Supernova', 0),
+])
+@pytest.mark.parametrize('psy_state', [0, 30])
+def test_ambidextrous_pair_applies_darkness_as_accuracy_and_keeps_condition_disadvantage(
+    client, grenade_game, auth_headers, monkeypatch, device, penalty, psy_state,
+):
+    from app.services.equipment_catalog import load_catalog
+
+    actor=make_pair(client,grenade_game,auth_headers)
+    target=grenade_game['target_location']
+    data=deepcopy(actor.character.data)
+    data['features']={'specialTraits':[{'name':'Амбидекстр'}]}
+    data['health']['psyState']=psy_state
+    for weapon in data['weapons']:
+        weapon['attributes']['accuracy']=0
+    if device:
+        template=next(item for item in load_catalog() if item['name']==device)
+        data['equipment']={'helmet':{'installedModules':[{**template,'slotType':'nvg'}]}}
+    actor.character.data=data
+    actor.facing_x,actor.facing_y=1,0
+    target.pos_x,target.pos_y=actor.pos_x+1,actor.pos_y
+    monkeypatch.setattr('app.services.combat.random.randint',lambda a,b:min(b,max(a,10)))
+
+    def fire(dark):
+        monkeypatch.setattr(CombatService,'_is_dark_at_position',lambda *args,**kwargs:dark)
+        db.session.commit()
+        return CombatService.perform_action(actor.location_id,grenade_game['lobby'].gm_id,actor.id,'attack',
+            weapon_index=0,fire_mode='unaimed',shot_count=1,action_points=1,target_character_id=target.character_id,
+            attribute_choice='paired_fire')['attack']
+
+    light=fire(False)
+    dark=fire(True)
+    assert [hit['difficulty'] for hit in dark['results']]==[hit['difficulty']+penalty for hit in light['results']]
+    assert [len(hit['rolls']) for hit in dark['results']]==[2 if psy_state else 1]*2
+    assert all(not item['paired_weapon_accuracy_penalty'] for item in dark['paired_attacks'])
+
+
 @pytest.mark.parametrize('invalid',['aimed','empty_second','wrong_cost'])
 def test_simultaneous_fire_validates_both_before_payment(client,grenade_game,auth_headers,invalid):
     from app.services.exceptions import ValidationError

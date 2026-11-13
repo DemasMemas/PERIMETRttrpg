@@ -13,7 +13,7 @@ from app.services.transaction import atomic_operation
 from app.services.action_journal import journaled
 from app.services import power_cells
 
-BEAM_RANGE=20
+BEAM_RANGE=35
 BEAM_END_WIDTH=5
 
 def mount_height(mount,posture='standing'):
@@ -466,7 +466,7 @@ def active_his_sources(location_id):
     return result
 
 
-def covers(actor,target,*,wide=False,objects=None,jammers=None):
+def covers(actor,target,*,objects=None,jammers=None):
     from app.services.combat import CombatService
     sources=ready_sources(actor,objects=objects,jammers=jammers)
     if actor.id==target.id:return [source for source in sources if source.get('ignition_aura')]
@@ -492,7 +492,7 @@ def covers(actor,target,*,wide=False,objects=None,jammers=None):
             if glow_dot >= math.cos(math.radians(source['arc_degrees'] / 2)) - 1e-9:
                 visible.append(source)
         elif facing:
-            angle=math.pi/4 if wide else math.atan(source['end_width']/2/source['range'])
+            angle=math.atan(source['end_width']/2/source['range'])
             if dot>=math.cos(angle)-1e-9:
                 visible.append(source)
     if not visible:return []
@@ -504,21 +504,27 @@ def covers(actor,target,*,wide=False,objects=None,jammers=None):
 def illumination(target,*,actors=None,objects=None,jammers=None):
     from app.services.combat import CombatService
     if not getattr(target,'location_id',None) or not getattr(target,'location',None):
-        return {'lit':False,'penalty':None,'base_dark':False}
+        return {'lit':False,'penalty':None,'base_dark':False,'direct_beam':False}
     lights=[]
     if actors is None:
         from app.services.artifact_jamming import local_sources
         actors=LocationCharacter.query.filter_by(location_id=target.location_id).all()
         jammers=local_sources(target.location_id,actors) if jammers is None else jammers
-    for actor in actors:lights.extend(covers(actor,target,objects=objects,jammers=jammers))
-    from app.services.lighting_rules import _light_path_open
     scene_objects=objects if objects is not None else LocationObject.query.filter_by(location_id=target.location_id).all()
+    direct_beam = False
+    for actor in actors:
+        incoming = covers(actor,target,objects=scene_objects,jammers=jammers)
+        lights.extend(incoming)
+        if any(not source.get('radial') for source in incoming):
+            direct_beam |= CombatService._is_in_facing_arc(target, actor.pos_x, actor.pos_y)
+    from app.services.lighting_rules import _light_path_open
     for source in ground_sources(target.location_id,scene_objects):
         if source['floor_level']!=(target.floor_level or 0):continue
         if math.hypot(source['x']-target.pos_x-.5,source['z']-target.pos_y-.5)<=source['range'] and _light_path_open(
             (source['x'],source['z']),(target.pos_x+.5,target.pos_y+.5),scene_objects):lights.append(source)
     return {'lit':bool(lights),'penalty':0 if any(light['improved'] for light in lights) else 3 if lights else None,
-        'base_dark':CombatService._is_dark_at_character(target.location,target,objects=objects)}
+        'base_dark':CombatService._is_dark_at_character(target.location,target,objects=scene_objects),
+        'direct_beam':direct_beam}
 
 
 def shooting(actor,target,fire_mode):
@@ -529,26 +535,15 @@ def shooting(actor,target,fire_mode):
     jammers=local_sources(actor.location_id,people)
     scene_objects=LocationObject.query.filter_by(location_id=actor.location_id).all()
     jammed_by=for_actor(actor,sources=jammers,objects=scene_objects)
-    nvg=uses_nvg(actor.character.data or {},jammed_by=jammed_by);bonus=0;improved=False;aura_lit=False
-    for source in people:
-        lit=covers(source,target,objects=scene_objects,jammers=jammers)
-        aura_lit=aura_lit or any(item.get('ignition_aura') for item in lit)
-        if any(not item.get('ignition_aura') for item in lit):bonus=2
-        improved=improved or any(item['improved'] for item in lit)
-    from app.services.lighting_rules import _light_path_open
-    if any(source['floor_level']==(target.floor_level or 0)
-            and math.hypot(source['x']-target.pos_x-.5,source['z']-target.pos_y-.5)<=source['range']
-            and _light_path_open((source['x'],source['z']),
-                (target.pos_x+.5,target.pos_y+.5),scene_objects)
-            for source in ground_sources(actor.location_id,scene_objects)):
-        bonus=2;improved=True
-    facing=[source for source in covers(target,actor,wide=True,objects=scene_objects,jammers=jammers) if not source.get('radial')]
+    nvg=uses_nvg(actor.character.data or {},jammed_by=jammed_by)
+    light=illumination(target,actors=people,objects=scene_objects,jammers=jammers)
+    incoming=illumination(actor,actors=people,objects=scene_objects,jammers=jammers)
+    facing=incoming['direct_beam']
     penalty=(1 if fire_mode=='aimed' else 3) if facing else 0
     from app.services.lighting_rules import world_is_dark
-    dark=world_is_dark(actor.location.lobby.game_time_minutes) or CombatService._is_dark_at_character(actor.location,actor) or CombatService._is_dark_at_character(actor.location,target)
-    if not dark:bonus=penalty=0
-    return {'accuracy':(bonus-penalty)*(2 if nvg else 1), 'lit':bool(bonus or dark and aura_lit), 'improved':improved,
-        'aimed_blocked':bool(dark and nvg and facing and fire_mode=='aimed'), 'jammed_by':jammed_by}
+    dark=world_is_dark(actor.location.lobby.game_time_minutes) or CombatService._is_dark_at_character(actor.location,actor,objects=scene_objects) or light['base_dark']
+    return {'accuracy':-penalty if dark else 0, 'lit':light['lit'], 'improved':light['penalty']==0,
+        'blinded':bool(dark and nvg and facing), 'jammed_by':jammed_by}
 
 
 def ergonomics(actor,weapon):
@@ -564,7 +559,7 @@ def missing_templates(existing,subcategory=None):
     if subcategory:return []
     names={str(item.get('name') or '').strip().casefold() for item in existing if item.get('category')!='weapon_module'}
     return [{'id':-32001-index,'name':name,'category':'misc','subcategory':None,'price':price,'weight':.5,'volume':1,
-        'compatible_ids':[],'description':'Конус света: 20 м, ширина на конце 5 м. Батарейка: 10 использований. Включить или выключить — 1 ОД.',
+        'compatible_ids':[],'description':f'Конус света: {BEAM_RANGE} м, ширина на конце {BEAM_END_WIDTH} м. Батарейка: 10 использований. Включить или выключить — 1 ОД.',
         'attributes':{'portable_light':kind}}
         for index,(name,kind,price) in enumerate([('Фонарик','hand',400),('Улучшенный фонарик','improved',1500),('Налобный фонарик','head',1500)])
         if name.casefold() not in names]

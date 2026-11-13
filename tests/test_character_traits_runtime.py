@@ -42,15 +42,43 @@ def test_standalone_evasion_cost_expiry_and_no_unreserved_offturn(grenade_game,t
     from app.services.exceptions import PermissionDenied
     actor,target=grenade_game['actor_location'],grenade_game['target_location']
     data=deepcopy(actor.character.data);data['features']={'specialTraits':[{'name':'Уклонист'}] if trait_present else []}
+    data['skills']['physical']['agility']['base']=14
     actor.character.data=data;db.session.commit()
+    actor.action_points_current=cost-1
+    db.session.commit()
+    with pytest.raises(ValidationError,match='Not enough action points'):
+        CombatService.perform_action(actor.location_id,grenade_game['lobby'].gm_id,actor.id,'evade')
+    assert actor.action_points_current==cost-1
+    assert 'standaloneEvasion' not in actor.character.data['health'].get('combatMeta',{})
+    actor.action_points_current=5
+    db.session.commit()
     CombatService.perform_action(actor.location_id,grenade_game['lobby'].gm_id,actor.id,'evade')
-    assert actor.action_points_current==20-cost
-    assert actor.character.data['health']['combatMeta']['standaloneEvasion']==5
+    assert actor.action_points_current==5-cost
+    assert actor.character.data['health']['combatMeta']['standaloneEvasion']==7
     state=db.session.query(LocationCombatState).filter_by(location_id=actor.location_id).one();state.current_location_character_id=target.id;db.session.commit()
     with pytest.raises(PermissionDenied):CombatService.perform_action(actor.location_id,grenade_game['lobby'].gm_id,actor.id,'evade')
-    assert actor.character.data['health']['combatMeta']['standaloneEvasion']==5
+    assert actor.character.data['health']['combatMeta']['standaloneEvasion']==7
     CombatService._prepare_character_for_turn(actor)
     assert 'standaloneEvasion' not in actor.character.data['health']['combatMeta']
+
+
+def test_standalone_evasion_uses_approved_reaction_reserve(grenade_game):
+    actor, target = grenade_game['actor_location'], grenade_game['target_location']
+    location_id = actor.location_id
+    player = grenade_game['actor_user']['id']
+    gm = grenade_game['lobby'].gm_id
+    CombatService.reserve_reaction(location_id, player, actor.id, action_points=4, trigger='Уклонение')
+    CombatService.end_turn(location_id, player, actor.id)
+    CombatService.request_reaction(location_id, player, actor.id)
+    CombatService.resolve_reaction_request(location_id, gm, approve=True)
+
+    CombatService.perform_action(location_id, player, actor.id, 'evade')
+
+    assert actor.action_points_current == 0
+    assert actor.character.data['health']['combatMeta']['standaloneEvasion'] == 5
+    state = CombatService.end_turn(location_id, player, actor.id)
+    assert state['current_character']['character_id'] == target.character_id
+    assert actor.character.data['health']['combatMeta']['standaloneEvasion'] == 5
 
 
 def test_brigadier_order_is_paid_requires_response_and_consumed_once(grenade_game,monkeypatch):
@@ -82,6 +110,39 @@ def test_brigadier_refusal_is_not_forced_by_strength(grenade_game):
     assert response['status']=='rejected' and 'forced' not in response['result']
     assert refusal(actor,target.character_id,'provoke')['must_provoke']
     assert not refusal(actor,target.character_id,'provoked')['must_provoke']
+
+
+@pytest.mark.parametrize('choice', ['stress', 'provoke'])
+def test_brigadier_intimidation_bonus_is_spent_on_first_roll(grenade_game, monkeypatch, choice):
+    from app.services.brigadier_order import refusal
+    from app.services.character_interaction import CharacterInteractionService
+    from app.services.social_check import preserve
+
+    actor, target = social_case(grenade_game, 'Бригадир')
+    actor.team_name = target.team_name = 'Союз'
+    db.session.commit()
+    order = CombatService.perform_action(
+        actor.location_id, grenade_game['lobby'].gm_id, actor.id, 'brigadier_order',
+        target_character_id=target.character_id, attribute_choice={'detailed': False, 'text': 'Проверь проход'},
+    )['narrative_action']['order']
+    CharacterInteractionService.respond(order['id'], grenade_game['target_user']['id'], 'decline')
+    refusal(actor, target.character_id, choice)
+    db.session.commit()
+    old_sheet = deepcopy(actor.character.data)
+    monkeypatch.setattr('app.services.combat.random.randint', lambda a, b: 10)
+
+    first = social_roll(grenade_game, path='intimidation', difficulty=40)
+    assert not first['check']['success']
+    assert any('+15 уровней' in rule for rule in first['check']['rules'])
+    assert social_roll(grenade_game, path='intimidation', difficulty=40)['replayed']
+
+    preserve(actor.character.data, old_sheet)
+    actor.character.data = old_sheet
+    db.session.commit()
+    second = social_roll(grenade_game, path='intimidation', operation='second-intimidation')
+    assert not any('+15 уровней' in rule for rule in second['check']['rules'])
+    if choice == 'provoke':
+        assert not refusal(actor, target.character_id, 'provoked')['must_provoke']
 
 
 def test_order_cancels_disadvantage_on_next_opposed_roll_with_one_die(monkeypatch):
@@ -278,6 +339,42 @@ def test_heavy_load_respects_modification_category(grenade_game,monkeypatch,cate
     outcome=shotgun_effects(actor,target,{'subcategory':'Дробовики'},{'caliber':'12*70'},'chest',100,10)
     assert bool(outcome.get('heavy_load'))==falls
     assert (target.posture=='prone')==falls
+
+
+@pytest.mark.parametrize('name,falls', [
+    ('12x70 Пуля', True),
+    ('12x70 Картечь', True),
+    ('12x70 Газовый', False),
+    ('12x70 Светошумовой', False),
+])
+def test_heavy_load_uses_catalog_ammo_profile(grenade_game, monkeypatch, name, falls):
+    from app.models import LocationObject
+    from app.services.character_rules import shotgun_effects
+    from app.services.equipment_catalog import load_catalog
+
+    actor, target = grenade_game['actor_location'], grenade_game['target_location']
+    actor.character.data['features'] = {'specialTraits': [{'name': 'Тяжелая навеска'}]}
+    target.character.data['weapons'] = [{'id': 'sidearm', 'name': 'Пистолет Зосимова'}]
+    target.drawn_weapon_index = 0
+    round_item = next(item for item in load_catalog() if item['name'] == name)
+    weapon = {'fixedAmmo': [{**round_item, 'quantity': 1}]}
+    profile, _ = CombatService._ranged_damage_profile(weapon)
+    monkeypatch.setattr('app.services.combat.random.randint', lambda *args: 1)
+
+    result = shotgun_effects(actor, target, weapon, profile, 'chest', 100, 10)
+
+    if falls:
+        check = result['heavy_load']
+        assert check['difficulty'] == 12 and not check['success']
+        assert target.posture == 'prone'
+        assert target.character.data['weapons'] == []
+        drop = check['drop_weapon']
+        assert drop['ground_object_event'] == 'created'
+        assert db.session.get(LocationObject, drop['ground_object_id']).properties['contents'][0]['id'] == 'sidearm'
+    else:
+        assert 'heavy_load' not in result
+        assert target.posture != 'prone'
+        assert target.drawn_weapon_index == 0
 
 
 def test_torturer_scream_reaches_all_not_deaf_without_visibility(grenade_game,monkeypatch):
@@ -918,6 +1015,15 @@ def test_sniper_mercy_can_disable_head_without_damaging_skull_brain_or_organs(gr
     assert not health.get('lastTraumas') and not result['character']['sniper_trauma_choices']
     assert all(organ.get('current',1)>0 for organ in health.get('organs',{}).values())
     assert CombatService._character_condition(target.character.data)['state']!='dead'
+
+
+@pytest.mark.parametrize('damage,injury', [(300, 'mangled_limb'), (500, 'amputation')])
+def test_sniper_mercy_preserves_mandatory_limb_destruction(grenade_game, monkeypatch, damage, injury):
+    _, target, result, _ = sniper_case(grenade_game, monkeypatch, mode='mercy', damage=damage, zone='left_arm')
+    hit = result['attack']['results'][0]
+    assert hit['hit'] and hit['additional_traumas'] == []
+    assert hit['catastrophic_limb_injury']['type'] == injury
+    assert any(effect['type'] == injury for effect in target.character.data['health']['effects'])
 
 
 @pytest.mark.parametrize('original,rolls,index,selected',[(1,[20,1,2],0,20),(20,[19,20,1],2,1)])

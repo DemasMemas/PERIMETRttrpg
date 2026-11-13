@@ -65,12 +65,13 @@ def shotgun_effects(attacker,target,weapon,profile,zone,before,damage):
     from app.services.inventory import normalize_caliber
     caliber=normalize_caliber(profile.get('caliber'))
     physical=str(profile.get('damage_type') or 'physical') in {'physical','ballistic','bullet','buckshot'}
-    if trait_count(data,'Тяжелая навеска') and zone in {'chest','abdomen'} and caliber=='12x70' and physical and not is_heavy_armor(target_data):
+    shotgun_shell = caliber in {'12x70', '12x70пуля', '12x70картечь'}
+    if trait_count(data,'Тяжелая навеска') and zone in {'chest','abdomen'} and shotgun_shell and physical and not is_heavy_armor(target_data):
         check=C._narrative_skill_check(target_data,'skills.physical.strength')
         check.update(difficulty=12,success=not check.get('automatic_failure') and check['total']>=12)
         if not check['success']:
-            C._apply_fall_or_drop(target,target_data,'left_leg')
-            C._apply_fall_or_drop(target,target_data,'left_arm')
+            check['fall'] = C._apply_fall_or_drop(target,target_data,'left_leg')
+            check['drop_weapon'] = C._apply_fall_or_drop(target,target_data,'left_arm')
         results['heavy_load']=check
     key={'left_arm':'leftArm','right_arm':'rightArm','left_leg':'leftLeg','right_leg':'rightLeg'}.get(zone)
     current=((target_data.get('health') or {}).get('zones') or {}).get(key,{})

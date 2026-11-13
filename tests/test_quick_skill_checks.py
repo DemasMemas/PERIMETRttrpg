@@ -181,3 +181,28 @@ def test_illuminated_quick_roll_preserves_portable_light_rules(client,checks,aut
     assert check['equipment_modifier']==equipment
     assert not check['disadvantage']
     assert check['total']==10+equipment+expected+check['weather_modifier']
+
+
+def test_beam_in_face_blocks_visual_checks_with_nvg_but_not_hearing(client, checks, auth_headers):
+    source=checks['target_location']
+    observer=checks['actor_location']
+    source.facing_x,source.facing_y=-1,0
+    observer.facing_x,observer.facing_y=1,0
+    data=deepcopy(source.character.data)
+    data['inventory']['pockets']=[{'id':'check-light','name':'Фонарик'}]
+    data['health'].setdefault('combatMeta',{})['portableLights']=[{'id':'check-light','mount':'hand','on':True}]
+    source.character.data=data
+    db.session.commit()
+
+    for name in ['awareness.visual', 'shooting']:
+        response=run(client,checks,auth_headers,skill_path='skills.physical.'+name,operation_id=name)
+        assert response.status_code==200,response.json
+        assert response.json['check']['automatic_failure']
+        assert response.json['check']['rolls']==[]
+    hearing=run(client,checks,auth_headers,skill_path='skills.physical.awareness.hearing',operation_id='hearing')
+    assert not hearing.json['check']['automatic_failure']
+    observer.facing_x=-1
+    db.session.commit()
+    away=run(client,checks,auth_headers,operation_id='looking-away')
+    assert not away.json['check']['automatic_failure']
+    assert away.json['check']['illumination_modifier']==-2

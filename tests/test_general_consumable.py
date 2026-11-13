@@ -451,12 +451,19 @@ def test_tobacco_daily_counter_keeps_counting_after_one_at_zero_exhaustion(clien
     data['inventory']['pockets']=[{'id':'lighter','name':'Зажигалка','category':'misc','quantity':1}]
     pair['actor_character'].data=data;db.session.commit()
     for index in range(5):
-        response=apply_general(client,pair,auth_headers,item,operation=f'tobacco-counter-{index}')
+        source_before_use=deepcopy(item)
+        response=apply_general(client,pair,auth_headers,source_before_use,operation=f'tobacco-counter-{index}')
         assert response.status_code==200,response.json
         item=deepcopy(response.json['data']['inventory']['backpack'][0])
     health=response.json['data']['health']
     assert health['exhaustion']==0
     assert health['addictions']['records']['nicotine']['daily_progress']['exhaustion_relief']==1.25
+    replay=apply_general(client,pair,auth_headers,source_before_use,operation='tobacco-counter-4')
+    assert replay.status_code==409,replay.json
+    saved=client.get(f"/lobbies/characters/{pair['actor_character'].id}",
+                     headers=auth_headers(pair['actor_user'])).json['data']
+    assert saved['health']['addictions']['records']['nicotine']['daily_progress']['exhaustion_relief']==1.25
+    assert saved['inventory']['backpack'][0]['uses']==item['uses']
 
 
 def source(item):

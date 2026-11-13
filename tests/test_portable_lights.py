@@ -233,13 +233,13 @@ def test_beam_limits_sideways_target_and_real_wall(grenade_game):
     assert not covers(actor,target)
 
 
-def test_twenty_meter_beam_preserves_five_meter_end_width(grenade_game):
+def test_thirty_five_meter_beam_preserves_five_meter_end_width(grenade_game):
     actor=install(grenade_game['actor_location'],on=True);target=grenade_game['target_location']
     source=ready_sources(actor)[0]
-    assert source['range']==20 and source['end_width']==5
-    target.pos_x,target.pos_y=actor.pos_x+20,actor.pos_y;assert covers(actor,target)
-    target.pos_x=actor.pos_x+20.01;assert not covers(actor,target)
-    target.pos_x,target.pos_y=actor.pos_x+10,actor.pos_y+1.2;assert covers(actor,target)
+    assert source['range']==35 and source['end_width']==5
+    target.pos_x,target.pos_y=actor.pos_x+35,actor.pos_y;assert covers(actor,target)
+    target.pos_x=actor.pos_x+35.01;assert not covers(actor,target)
+    target.pos_x,target.pos_y=actor.pos_x+17.5,actor.pos_y+1.2;assert covers(actor,target)
     target.pos_y=actor.pos_y+1.4;assert not covers(actor,target)
 
 
@@ -285,21 +285,24 @@ def test_old_light_template_serializes_current_range_without_changing_storage(na
     from app.schemas.templates import ItemTemplateSchema
     source={'name':name,'category':'misc','description':previous,'attributes':{}}
     public=ItemTemplateSchema().dump(source)
-    assert '20 м' in public['description'] and '5 м' in public['description']
-    assert '35' not in public['description'] and '55' not in public['description']
+    assert '35 м' in public['description'] and '5 м' in public['description']
+    assert public['description'].count('35')==1 and '55' not in public['description']
     assert source['description']==previous
 
 
-def test_night_accuracy_glare_and_nvg_aim_ban(grenade_game):
+def test_night_accuracy_glare_and_nvg_blindness(grenade_game):
     actor=install(grenade_game['actor_location'],on=True);target=install(grenade_game['target_location'],on=True)
+    actor.facing_x,actor.facing_y=1,0
     target.pos_x,target.pos_y=actor.pos_x+10,actor.pos_y;target.facing_x,target.facing_y=-1,0
     grenade_game['lobby'].game_time_minutes=0;db.session.commit()
-    assert shooting(actor,target,'unaimed')['accuracy']==-1
-    assert shooting(actor,target,'aimed')['accuracy']==1
+    assert shooting(actor,target,'unaimed')['accuracy']==-3
+    assert shooting(actor,target,'aimed')['accuracy']==-1
     data=deepcopy(actor.character.data);data['equipment']={'helmet':{'installedModules':[{'slotType':'nvg','active':True}]}}
     actor.character.data=data;flag_modified(actor.character,'data');db.session.commit()
-    result=shooting(actor,target,'aimed')
-    assert result['aimed_blocked'] and result['accuracy']==2
+    assert shooting(actor,target,'aimed')['blinded']
+    assert shooting(actor,target,'unaimed')['blinded']
+    target.facing_x=1
+    assert not shooting(actor,target,'unaimed')['blinded']
 
 
 def test_improved_light_removes_residual_penalty(grenade_game):
