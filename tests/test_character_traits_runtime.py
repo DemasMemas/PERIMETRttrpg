@@ -166,6 +166,42 @@ def test_scout_records_actual_targets_and_observer_bonus_next_battle(grenade_gam
     CombatService.start_combat(actor.location_id,grenade_game['lobby'].gm_id,[actor.id,target.id])
     assert target.character_id in actor.character.data['health']['combatMeta']['observerTargets']
     assert 'locationScout' not in actor.character.data['health']['combatMeta']
+    CombatService.end_combat(actor.location_id,grenade_game['lobby'].gm_id)
+    assert 'observerTargets' not in actor.character.data['health']['combatMeta']
+    CombatService.start_combat(actor.location_id,grenade_game['lobby'].gm_id,[actor.id,target.id])
+    assert 'observerTargets' not in actor.character.data['health']['combatMeta']
+    assert actor.character.data['health']['stress']==2
+
+
+def test_observer_grants_accuracy_to_combat_teammate_only_for_scouted_targets(grenade_game, monkeypatch):
+    from app.models import LobbyCharacter, LocationCharacter
+    from app.services.location_scout import inspect
+
+    observer, enemy = grenade_game['actor_location'], grenade_game['target_location']
+    observer.character.data = {**observer.character.data, 'basic': {'background': {'name': 'Наблюдатель'}},
+                               'weapons': [{'range': 50}]}
+    observer.drawn_weapon_index = 0
+    observer.team_name = 'Разведчики'
+    enemy.pos_x, enemy.pos_y = 8, 5
+    teammate = LobbyCharacter(lobby_id=observer.character.lobby_id, owner_id=observer.character.owner_id,
+                              name='Союзник', data=deepcopy(enemy.character.data))
+    db.session.add(teammate)
+    db.session.flush()
+    ally = LocationCharacter(location_id=observer.location_id, character_id=teammate.id,
+                            pos_x=1, pos_y=5, team_name=observer.team_name)
+    db.session.add(ally)
+    state = LocationCombatState.query.filter_by(location_id=observer.location_id).one()
+    state.status = 'idle'
+    db.session.commit()
+    monkeypatch.setattr('app.services.combat.random.randint', lambda a, b: b)
+
+    assert [target['character_id'] for target in inspect(observer, {})['targets']] == [enemy.character_id]
+    gm = grenade_game['lobby'].gm_id
+    CombatService.start_combat(observer.location_id, gm, [observer.id, ally.id, enemy.id])
+    assert teammate.data['health']['combatMeta']['observerTargets'] == [enemy.character_id]
+    assert not enemy.character.data['health']['combatMeta'].get('observerTargets')
+    CombatService.end_combat(observer.location_id, gm)
+    assert not teammate.data['health']['combatMeta'].get('observerTargets')
 
 
 def test_remote_scout_gm_point_without_placing_or_moving_character(grenade_game,client,auth_headers,monkeypatch):
@@ -317,6 +353,44 @@ def test_breakthrough_half_received_op_is_enough_on_expensive_ground(grenade_gam
     record_approach(actor,{'path':[(2,5),(4.5,5)],'distance':2.5},spent_cost=5)
     monkeypatch.setattr('app.services.combat.random.randint',lambda *a:pytest.fail('Половина ОП уже потрачена на сближение'))
     before_end_turn(actor,LocationCombatState.query.filter_by(location_id=actor.location_id).one())
+
+
+@pytest.mark.parametrize('toward_cost,away_cost,satisfied', [(5, 1, True), (1, 5, False)])
+def test_breakthrough_counts_only_actual_approach_cost_on_mixed_route(
+    grenade_game, toward_cost, away_cost, satisfied,
+):
+    from app.services.character_rules import approach_satisfied, record_approach
+
+    actor, enemy = grenade_game['actor_location'], grenade_game['target_location']
+    actor.character.data['basic'] = {'background': {'name': 'Прорывник'}}
+    actor.movement_points_max = 10
+    enemy.pos_x, enemy.pos_y = 9, 5
+    route = {'path': [(2, 5), (3, 5), (2, 5)], 'distance': 2, 'movement_segments': [
+        {'start': {'x': 2, 'y': 5}, 'end': {'x': 3, 'y': 5}, 'distance': 1, 'cost': toward_cost},
+        {'start': {'x': 3, 'y': 5}, 'end': {'x': 2, 'y': 5}, 'distance': 1, 'cost': away_cost},
+    ]}
+    record_approach(actor, route, toward_cost + away_cost, mode='walk')
+
+    meta = actor.character.data['health']['combatMeta']
+    assert meta['breakthroughProgress'] == 1
+    assert meta['breakthroughProgressOP'] == toward_cost
+    assert approach_satisfied(actor, 'walk') is satisfied
+
+
+def test_breakthrough_can_end_when_no_approaching_route_exists(grenade_game, monkeypatch):
+    from app.services.character_rules import before_end_turn, before_move
+
+    actor = grenade_game['actor_location']
+    actor.character.data['basic'] = {'background': {'name': 'Прорывник'}}
+    actor.movement_points_current = actor.movement_points_max = 10
+    monkeypatch.setattr(CombatService, '_find_movement_path', lambda *args, **kwargs: None)
+    monkeypatch.setattr('app.services.combat.random.randint', lambda *args: pytest.fail('Доступного сближения нет'))
+    state = LocationCombatState.query.filter_by(location_id=actor.location_id).one()
+
+    before_move(actor, {'path': [(2, 5), (1, 5)], 'distance': 1}, 'walk')
+    before_end_turn(actor, state)
+
+    assert actor.character.data['health']['combatMeta']['breakthroughMovementImpossible']
 
 
 def test_breakthrough_cannot_spend_everything_away_before_rolling_will(grenade_game,monkeypatch):
@@ -563,6 +637,56 @@ def test_tolik_ignores_delayed_and_periodic_pain_too():
     assert data['health']['painLevel']==0
     advance_timed_effects(data['health'],[{'type':'delayed_adjustment','remaining':1,'tick':'time_elapsed','time_unit':'minute','adjustments':[{'field':'painLevel','delta':3}]}],60,character_data=data)
     assert data['health']['painLevel']==0
+
+
+@pytest.mark.parametrize('roll,accepted', [(20, True), (21, False)])
+@pytest.mark.parametrize('source,pain', [
+    ('damage', 4), ('trauma', 5), ('fire', 2), ('gas', 4), ('medicine', 2), ('artifact', 1),
+])
+def test_tolik_rolls_once_for_each_pain_source(grenade_game, monkeypatch, source, pain, roll, accepted):
+    from app.services.artifact_effects import apply_artifact_world_movement
+    from app.services.burning import ignite, tick
+    from app.services.equipment_catalog import load_catalog
+    from app.services.general_consumable import _apply_profile
+    from app.services.sniper_trauma import apply_trauma
+    from app.services.world_rules import artifact_catalog
+
+    target = grenade_game['actor_location']
+    data = deepcopy(target.character.data)
+    data['basic'] = {'background': {'name': 'Дядя Толик'}}
+    data['health'].update(intoxication=80, painLevel=0)
+    target.character.data = data
+    db.session.commit()
+    data = target.character.data
+    draws = []
+    monkeypatch.setattr('app.services.effects.random', SimpleNamespace(
+        randint=lambda low, high: draws.append((low, high)) or roll,
+    ))
+    if source == 'damage':
+        CombatService._apply_damage_pain(data, 150, 1, 'combat_damage')
+    elif source == 'trauma':
+        data['health']['organs'] = {'leftLung': {'current': 40, 'max': 40}}
+        rules = {'fracture': False, 'bleeding': None, 'pain': 0, 'shock': False,
+                 'organ': 'leftLung', 'fall_or_drop': False}
+        apply_trauma(target, data, {'area': 'chest'}, rules, 40, None, True)
+        assert data['health']['organs']['leftLung']['current'] == 0
+    elif source == 'fire':
+        ignite(target, 1, source='Огонь', damage=10)
+        tick(target, 1)
+    elif source == 'gas':
+        CombatService._apply_area_effect_to_character(
+            {'type': 'gas', 'x': target.pos_x, 'y': target.pos_y, 'radius': 3, 'pain': 4}, target, 1,
+        )
+    elif source == 'artifact':
+        artifact = next(row for row in artifact_catalog() if row['name'] == 'Отголосок')
+        apply_artifact_world_movement(data, artifact={'name': artifact['name'], 'attributes': artifact})
+    else:
+        item = next(row for row in load_catalog() if row['name'] == 'Стимулятор Бык')
+        profile = item['attributes']['consumable']
+        _apply_profile(data['health'], profile, profile['direct'], item, in_combat=False, character_data=data)
+
+    assert target.character.data['health']['painLevel'] == (pain if accepted else 0)
+    assert draws == [(1, 100)]
 
 
 def test_hunter_gets_credit_for_actual_fire_finisher_once(grenade_game,monkeypatch):

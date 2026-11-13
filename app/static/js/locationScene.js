@@ -15211,6 +15211,7 @@ export function applyLocationObjectsChange({ location_id, objects = [], deleted_
     locationBuildingViewsDirty = true;
     const changed = [...added, ...removedObjects];
     const architecture = changed.filter(o => ['floor','wall','door','window','stairs','ladder','hatch','floor_opening','roof','ceiling'].includes(o.type));
+    if (architecture.length) queueTrueSightRefresh();
     if (architecture.some(o => o.type === 'floor' || o.type === 'floor_opening')) refreshGroundReliefAtFloors();
     if (architecture.length) refreshArchitecturalMeshes(architecture, new Set(added.map(o => Number(o.id))));
     else { applyFogOfWar(); refreshLocationDarkness(); }
@@ -15257,6 +15258,7 @@ export function addLocationObject(object) {
     currentLocationData.objects = currentLocationData.objects || [];
     if (currentLocationData.objects.some(item => String(item.id) === String(object.id))) return;
     currentLocationData.objects.push(object);
+    if (['wall', 'door', 'window', 'floor', 'roof', 'ceiling'].includes(object.type)) queueTrueSightRefresh();
     if(object.type==='ground_item')syncPortableLights();
     if (objectEdit?.phase === 'preview') return;
     const fire = isObjectLightSource(object);
@@ -15282,6 +15284,7 @@ export function removeLocationObject(objectId) {
         return;
     }
     const removed = (currentLocationData.objects || []).find(object => Number(object.id) === Number(objectId));
+    if (['wall', 'door', 'window', 'floor', 'roof', 'ceiling'].includes(removed?.type)) queueTrueSightRefresh();
     if (Number(containerInteractionState?.objectId) === Number(objectId)) closeContainerInteractionMenu();
     removeLocationObjectMesh(objectId, false);
     currentLocationData.objects = (currentLocationData.objects || []).filter(object => Number(object.id) !== Number(objectId));
@@ -15311,6 +15314,8 @@ export function updateLocationObject(object) {
         && object.revision < previous.revision) return;
     if (index === -1) currentLocationData.objects.push(object);
     else currentLocationData.objects[index] = object;
+    if (['wall', 'door', 'window', 'floor', 'roof', 'ceiling'].includes(object.type)
+        || ['wall', 'door', 'window', 'floor', 'roof', 'ceiling'].includes(previous?.type)) queueTrueSightRefresh();
     if(object.type==='ground_item')syncPortableLights();
     if (objectEdit?.phase === 'preview') return;
     const fire = isObjectLightSource(object) || isObjectLightSource(previous);

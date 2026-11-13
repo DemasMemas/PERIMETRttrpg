@@ -81,6 +81,25 @@ def test_failure_continues_same_route_with_fractional_remaining_op(ice_game,monk
     assert drawn == [11]
 
 
+def test_breakthrough_counts_only_traversed_ice_after_failed_run(ice_game,monkeypatch):
+    actor = ice_game['actor_location']
+    data = deepcopy(actor.character.data)
+    data['basic'] = {'background': {'name': 'Прорывник'}}
+    actor.character.data = data
+    actor.movement_points_current = 4.25
+    actor.movement_points_max = 10
+    db.session.commit()
+    drawn = rolls(monkeypatch,[11])
+
+    actor,cost,_ = move(ice_game,6,'run')
+
+    meta = actor.character.data['health']['combatMeta']
+    assert actor.pos_x == pytest.approx(4.25)
+    assert meta['breakthroughProgress'] == pytest.approx(actor.pos_x-1)
+    assert meta['breakthroughProgressOP'] == pytest.approx(cost)
+    assert drawn == [11]
+
+
 def test_success_persists_across_reload_and_exiting_ice_clears_continuity(ice_game,monkeypatch):
     drawn = rolls(monkeypatch,[20])
     move(ice_game,5)

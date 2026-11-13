@@ -131,6 +131,7 @@ def resolve_route(location, actor, path, mode, posture, climb_payment, maximum_d
     checks, spent, distance, climb_ap, raw_cost, climbs = [], 0., 0., 0, 0., []
     point = dict(x=actor.pos_x, y=actor.pos_y, level=actor.floor_level or 0, height=CombatService.physical_position(actor)['height'])
     last_index, complete = 0, True
+    traversed = []
     remaining_distance = max(0, maximum_distance - (actor.movement_distance_this_turn or 0))
     start_cell = (math.floor(actor.pos_x + .5), math.floor(actor.pos_y + .5), actor.floor_level or 0)
     if start_cell not in ice and not any(tuple(part['cell']) in ice for part in parts):
@@ -179,11 +180,14 @@ def resolve_route(location, actor, path, mode, posture, climb_payment, maximum_d
         remaining_distance -= part['distance'] * take
         point = {**part['end'], **{key: part['start'][key] + (part['end'][key] - part['start'][key]) * take
                                   for key in ('x', 'y', 'height')}}
+        traversed.append({**part, 'end':point, 'distance':part['distance']*take,
+                          'spent_movement_points':fee+travel*take})
         last_index = part.get('edge_index', 0)
         if take < 1 - EPS:
             complete = False
             break
-    actual_path = path if complete else clip_route(path, point, last_index)
+    actual_path = dict(path) if complete else clip_route(path, point, last_index)
+    actual_path['movement_segments'] = traversed
     if not complete:
         actual_path.update(distance=distance, cost=raw_cost, climbs=climbs,
                            climb_cost=sum(e['base_cost'] for e in climbs))

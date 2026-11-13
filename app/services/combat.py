@@ -6186,7 +6186,7 @@ class CombatService:
         }
 
     @staticmethod
-    def _apply_organ_damage(health, organ_key, damage, area):
+    def _apply_organ_damage(health, organ_key, damage, area, *, character_data=None):
         toughness = max(1, CombatService._consumable_stat_value_bonus({'health':health}, 'organ_toughness_multiplier'))
         damage = max(0, damage) / toughness
         if organ_key == 'kidney':
@@ -6223,7 +6223,7 @@ class CombatService:
             apply_effect_to_health(health, {
                 'type': 'pain', 'value': pain,
                 'source': 'disabled_organ', 'area': organ_key,
-            })
+            }, character_data=character_data)
         bleeding = {
             'rightLung': 'severe', 'leftLung': 'severe',
             'rightKidney': 'extreme', 'leftKidney': 'extreme',
@@ -18711,7 +18711,8 @@ class CombatService:
             cost = movement_cost
 
         from app.services.character_rules import record_approach
-        if state and state.status=='active':record_approach(character,path,cost)
+        if state and state.status=='active':
+            record_approach(character,path,cost,mode=movement_mode,climb_payment=climb_payment)
         previous_x, previous_y = character.pos_x, character.pos_y
         transported_plan = move_plan(character, path)
         from app.services.pda_access import check_route as check_pda_route

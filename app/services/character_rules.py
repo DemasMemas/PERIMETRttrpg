@@ -189,7 +189,7 @@ def can_continue_moving(actor,mode=None,approach_only=False):
     return False
 
 
-def record_approach(actor,path,spent_cost=0):
+def record_approach(actor,path,spent_cost=0,*,mode=None,climb_payment=None):
     from app.services.combat import CombatService as C
     if not background_is(actor.character.data,'Прорывник'):return
     points=path.get('points') or path.get('path') or []
@@ -197,14 +197,38 @@ def record_approach(actor,path,spent_cost=0):
         return (value['x'],value['y']) if isinstance(value,dict) else (value[0],value[1])
     positions=[point(p) for p in points]
     enemies=[e for e in LocationCharacter.query.filter_by(location_id=actor.location_id).all() if e.character and C._are_opponents(actor,e) and C._character_condition(e.character.data)['state']!='dead']
-    gain=0;length=0
-    for start,end in zip(positions,positions[1:]):
-        segment=math.hypot(end[0]-start[0],end[1]-start[1]);length+=segment
-        approaching=any(math.hypot(end[0]-e.pos_x,end[1]-e.pos_y)<math.hypot(start[0]-e.pos_x,start[1]-e.pos_y)-1e-8 for e in enemies)
-        if approaching:gain+=segment
-    if length and path.get('distance') is not None:gain*=float(path['distance'])/length
+    def approaching(start, end):
+        return any(math.hypot(end[0]-enemy.pos_x,end[1]-enemy.pos_y)
+                   < math.hypot(start[0]-enemy.pos_x,start[1]-enemy.pos_y)-1e-8 for enemy in enemies)
+
+    gain = 0
+    approach_cost = 0
+    segments = path.get('movement_segments')
+    if segments:
+        for segment in segments:
+            if not approaching(point(segment['start']), point(segment['end'])):
+                continue
+            gain += segment['distance']
+            if 'spent_movement_points' in segment:
+                approach_cost += segment['spent_movement_points']
+            elif spent_cost and mode:
+                data = actor.character.data
+                approach_cost += C._movement_route_cost(segment, mode, actor.posture, data)['movement_points']
+                if climb_payment == 'movement':
+                    approach_cost += C._climb_payment_profile(data, segment.get('climbs', []))['movement_points']
+    else:
+        length = 0
+        for start,end in zip(positions,positions[1:]):
+            segment = math.hypot(end[0]-start[0],end[1]-start[1])
+            length += segment
+            if approaching(start,end):
+                gain += segment
+        if length:
+            approach_cost = spent_cost * gain / length
+            if path.get('distance') is not None:
+                gain *= float(path['distance']) / length
     meta(actor)['breakthroughProgress']=float(meta(actor).get('breakthroughProgress') or 0)+gain
-    if length:meta(actor)['breakthroughProgressOP']=float(meta(actor).get('breakthroughProgressOP') or 0)+float(spent_cost or 0)*gain/(float(path.get('distance') or length))
+    meta(actor)['breakthroughProgressOP']=float(meta(actor).get('breakthroughProgressOP') or 0)+min(spent_cost, approach_cost)
 
 
 def approach_satisfied(actor,mode=None):

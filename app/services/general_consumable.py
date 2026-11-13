@@ -424,7 +424,13 @@ def _apply_profile(health, profile, direct, item, *, in_combat,character_data=No
     if direct.get('infection_multiplier') is not None:
         health['infection'] = max(0, min(100, _number(health.get('infection')) * _number(direct['infection_multiplier'], 1)))
         changed = True
-    changed |= _adjust(health, "painLevel", direct.get("pain_delta"), 0, 10)
+    pain_delta = _number(direct.get("pain_delta"))
+    if pain_delta > 0:
+        apply_effect_to_health(health, {'type': 'pain', 'value': pain_delta, 'source': item_name},
+                               character_data=character_data)
+        changed = True
+    else:
+        changed |= _adjust(health, "painLevel", pain_delta, 0, 10)
     changed |= _adjust(health, "exhaustion", direct.get("exhaustion_delta"), 0, 10)
     stress_before = _number(health.get("stress"))
     changed |= _adjust(health, "stress", direct.get("stress_delta"), 0, 10)

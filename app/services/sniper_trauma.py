@@ -35,7 +35,7 @@ def apply_trauma(target,data,trauma,rules,damage,impact,armor_penetrated,allow_b
         organs.extend(impact.get('secondary_organs_if_penetrated') or [])
     damages=[]
     for organ in dict.fromkeys(organs):
-        result=CombatService._apply_organ_damage(health,organ,damage,area)
+        result=CombatService._apply_organ_damage(health,organ,damage,area,character_data=data)
         if result:
             damages.append(result)
             if result.get('bleeding'):bleedings.append(result['bleeding'])
