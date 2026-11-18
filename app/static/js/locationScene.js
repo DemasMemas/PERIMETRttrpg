@@ -21,6 +21,7 @@ import { damagedOpening, damagedWall, openingFracturePlan, createOpeningFracture
 import { createBasementCutaway, cutawayContains } from './locationBasementCutaway.js';
 import { applyVegetationTint, createHouseholdModel, releaseHouseholdRendererResources } from './locationHouseholdModels.js';
 import { createLocationShadowCache, createLocationShadowPass } from './locationShadowCache.js';
+import { createLocationStoreyFade } from './locationStoreyFade.js';
 import { createLocationRenderBatches } from './locationRenderBatches.js';
 import { createLocationContactShadows } from './locationContactShadows.js';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
@@ -33,7 +34,7 @@ import {
 import { showNotification } from './utils.js';
 import { getUserColor, getUserColorHex } from './colors.js';
 import { Server } from './api.js';
-import { createDeferredActionResumer } from './deferredCombatActions.js';
+import { createDeferredActionResumer, notifyCombatAttack, willFailureMessage } from './deferredCombatActions.js';
 import { createAnomalyEffect, animateAnomalyEffects, createAnomalyRenderBatches } from './anomalies.js';
 import { createCharacterLabelOcclusion, createLabelOcclusionIndex } from './locationLabelOcclusion.js';
 import { createMutantModel } from './mutantModels.js';
@@ -69,8 +70,7 @@ import { floorSlabParts, storeyPlan, stairStepPlan, doorOnWall, doorFrameStyle, 
     houseWallWear, nextStoreyFloors, STOREY_HEIGHT, structureBuildingId, structureLevel,
     structureLevelOffset, structurePose,
     wallVisualPlan } from './locationArchitecture.js';
-import { applyInteriorFloorShade, createRoofVisual, roofOpacityForCamera, roofPlans,
-    roofVisibleForCamera } from './locationRoof.js';
+import { applyInteriorFloorShade, createRoofVisual, roofOpacityForCamera, roofPlans } from './locationRoof.js';
 import { generatedFloorBlueprint, houseBuildingId, houseFootprint, planResidentialHouse, planBuildingShell, shellBodyRects,
     restorableGeneratedFloor } from './locationHouseGenerator.js';
 import { createSavedRoofGeometry, planEditableRoofs, rebuildRoofSection, roofBodiesFromRects,
@@ -106,6 +106,7 @@ import { createCrowIdle } from './crowIdle.js';
 import { createCrowFlight } from './crowFlight.js';
 import { animateFireObjectModels, createFireObjectModel, fireLightSource, getFireLightSources, isFireObject } from './locationFire.js';
 import { createElectricFixtureModel, electricFixtureLightSource, isElectricFixture } from './locationFixtures.js';
+import { createGroundItemVisual, isGroundItem } from './locationGroundItems.js';
 import { getAnomalyLightSources } from './locationAnomalyLight.js';
 import { MAX_ANOMALY_RENDER_LIGHTS, selectAnomalyRenderLights } from './locationAnomalyRenderLights.js';
 import { copySceneProfileReport, createPointerProfile, createSceneProfiler } from './sceneProfiler.js';
@@ -260,7 +261,6 @@ let trueSightRefreshTimer = null;
 let trueSightVersion = 0;
 let scoutedCharacters = new Set();
 let scoutObserverId = null;
-let sniperCoverMarks = [];
 let cancelScoutPointSelection = null;
 let locationLabelOcclusionCache = null;
 let anomalyRenderBatches = null;
@@ -269,6 +269,7 @@ let locationDirectionalLight = null;
 let locationShadowCache = null;
 let locationShadowPass = null;
 let locationRenderBatches = null;
+let locationStoreyFade = null;
 let locationLightingPreset = 'current';
 let artifactDaylightVision = false;
 let resolvedLightingProfile = null;
@@ -284,15 +285,16 @@ export function applyLocationWeather() { locationWeather?.apply(window.weatherSe
 function syncPortableLights() {
     if (!scene) return;
     if (!portableLightRenderer) portableLightRenderer=createPortableLightRenderer(THREE,scene);
-    const ground=(currentLocationData?.objects||[]).filter(object=>object.type==='ground_item').flatMap(object=>
-        (object.properties?.contents||[]).filter(item=>['Светящаяся палочка','ХИС'].includes(item.name)
-            && item.glowState?.remaining_seconds>0).map(item=>({
-                id:`ground-glow-${object.id}-${item.id}`,radial:true,range:item.name==='ХИС'?8:5,
-                color:item.glowState.color,
-                x:object.tile_x+.5,z:object.tile_y+.5,
-                y:getTileHeight(object.tile_x,object.tile_y)+(object.properties?.floor_level||0)*STOREY_HEIGHT+.15,
-            })));
-    portableLightRenderer.update(combatState?.characters || [],characterModels,ground,camera);
+    const ground = (currentLocationData?.objects || []).flatMap(object => {
+        if (!isGroundItem(object)) return [];
+        const marker = getLocationObjectMeshById(object.id);
+        if (!marker?.userData.groundLightEmitters?.size) return [];
+        return [...marker.userData.groundLightEmitters].map(([id, { mesh, range, color }]) => ({
+            id: `ground-glow-${object.id}-${id}`, mount: 'ground', radial: true,
+            range, color, x: marker.position.x, z: marker.position.z, groundEmitter: mesh,
+        }));
+    });
+    portableLightRenderer.update(combatState?.characters || [],characterModels,ground,camera,controls?.target);
 }
 
 export function getLocationPortableLightDiagnostics() {
@@ -599,7 +601,6 @@ let lastHighlightCoords = null;
 window.locationEditMode = false;
 let animationFrameId = null;
 let locationFpsCounter = null;
-const FOG_VIEW_RADIUS = 25;
 const FOG_VIEW_HALF_ANGLE = Math.PI / 3;
 let combatState = null;
 let combatHud = null;
@@ -927,12 +928,12 @@ const ANOMALY_VISUAL_BY_KEY = {
     ekho: 'psi', mirazh: 'psi', starshina: 'psi', tuman_poteryannykh: 'psi', tma: 'psi', piyavka: 'psi', kolodets: 'psi', mozgotrobilka: 'psi',
 };
 const COVER_CLASS_DEFAULTS = {
-    conditional: { label: 'Условное', maxHp: 25, protection: 0 },
-    flimsy: { label: 'Хлипкое', maxHp: 50, protection: 5 },
-    medium: { label: 'Средней прочности', maxHp: 100, protection: 20 },
-    strong: { label: 'Прочное', maxHp: 200, protection: 40 },
-    very_strong: { label: 'Очень прочное', maxHp: 400, protection: 60 },
-    titanium: { label: 'Титановое', maxHp: 800, protection: 90 },
+    conditional: { label: 'Условное', maxHp: 200, protection: 0 },
+    flimsy: { label: 'Хлипкое', maxHp: 1000, protection: 5 },
+    medium: { label: 'Средней прочности', maxHp: 1500, protection: 20 },
+    strong: { label: 'Прочное', maxHp: 2500, protection: 40 },
+    very_strong: { label: 'Очень прочное', maxHp: 8500, protection: 60 },
+    titanium: { label: 'Титановое', maxHp: 16000, protection: 90 },
     special: { label: 'Особое', maxHp: 200, protection: 0 },
 };
 
@@ -1015,7 +1016,8 @@ function disposeObject(obj) {
     releaseLocationModel(obj);
     if (obj.isLight) obj.shadow?.dispose?.();
     if (obj.isInstancedMesh) obj.dispose();
-    if (obj.geometry && !obj.geometry.userData?.householdShared && !isSharedLocationModelGeometry(obj.geometry)) obj.geometry.dispose();
+    if (obj.geometry && !obj.geometry.userData?.householdShared && !obj.geometry.userData?.characterEquipmentShared
+        && !isSharedLocationModelGeometry(obj.geometry)) obj.geometry.dispose();
     if (obj.material) {
         if (Array.isArray(obj.material)) {
             obj.material.forEach(mat => { releaseLocationPbrMaterial(mat); mat.dispose(); });
@@ -1321,6 +1323,7 @@ function syncCombatAreaVisuals(state) {
             }),
         );
         marker.rotation.x = -Math.PI / 2;
+        marker.userData.grenadeEventId = event.id;
         marker.position.set(
             Number(event.x) + 0.5,
             combatEffectSurfaceHeight(event) + 0.08,
@@ -1534,6 +1537,10 @@ function resolveMovementType(movementType, route) {
     return { mode: movementType, reason: '' };
 }
 
+function movementModeChoice(movementType) {
+    return movementType === 'backward_sideways' ? 'walk' : movementType;
+}
+
 function getClimbPaymentProfile(route) {
     const raw=Number(route?.climbCost ?? route?.climb_cost)||0;
     const climbs=route?.climbs?.length?route.climbs:raw>0?[{base_cost:raw,category:raw>=12?'high':'low'}]:[];
@@ -1585,7 +1592,7 @@ function getMovementModeAvailability(movementType, route = null, evasion = armed
     const goose=Boolean(current.movement_rules?.goose);
     const distanceLimit = (type) => {
         const ordinary=type==='correction'?3:type==='run'?2*base:type==='sprint'?3*base
-            :posture==='prone'?Math.ceil(base/(goose&&type==='walk'?2:3))
+            :posture==='prone'?Math.ceil(base/(goose?2:3))
             :(posture==='sitting'&&!goose)||type==='backward_sideways'?Math.floor(base/2):base;
         return sprinterWalkingMode(type,current)?2*(type==='run'?base:ordinary):ordinary;
     };
@@ -1620,7 +1627,7 @@ function getMovementModeAvailability(movementType, route = null, evasion = armed
         // Сначала ошибка направления, затем ограничения ресурсов.
     } else if (evading && !['walk', 'run', 'sprint'].includes(movementType)) {
         reason = 'Уклонение доступно при ходьбе, беге и спринте';
-    } else if (usedMode && usedMode !== movementType && movementType !== 'correction') {
+    } else if (usedMode && movementModeChoice(usedMode) !== movementModeChoice(movementType) && movementType !== 'correction') {
         reason = 'В этом ходу уже выбран другой вид движения';
     } else if (routeCost.climbCost > 0 && posture !== 'standing') {
         reason = 'Перед перелезанием нужно встать';
@@ -1792,9 +1799,10 @@ function updateMovementPreview(clientX, clientY) {
     const costLabel = availability.usesClimbAction
         ? `ОП ${formatMovementNumber(availability.travelMovementPoints)}/${formatMovementNumber(available)} + ${availability.climbActionPoints} ОД`
         : `ОП ${formatMovementNumber(cost)}/${formatMovementNumber(available)}`;
+    const warnsAboutIce = route?.slippery && ['run','sprint'].includes(armedMovementType) && !sprinterWalkingMode(armedMovementType);
     hint.textContent = calculating ? 'Расчёт маршрута…' : previewFailed ? 'Не удалось проверить маршрут. Выберите точку повторно.' : route
         ? isCombatActive
-            ? `${movementMode.label}: ${formatMovementNumber(availability.distance)} м · ${costLabel}${route.slippery && ['run','sprint'].includes(armedMovementType) ? ' · Лёд: Ловкость СЛ12 при входе' : ''}${availability.reason ? ` · ${availability.reason}` : ''}`
+            ? `${movementMode.label}: ${formatMovementNumber(availability.distance)} м · ${costLabel}${warnsAboutIce ? ' · Лёд: Ловкость СЛ12 при входе' : ''}${availability.reason ? ` · ${availability.reason}` : ''}`
             : `Движение: ${formatMovementNumber(route.distance)} м`
         : navigationPreviews.get(previewKey)?.blocked_reason || 'Путь заблокирован';
     hint.style.left = `${clientX + 14}px`;
@@ -1860,7 +1868,7 @@ function updateAttackPreview(clientX, clientY) {
             updateJumpPreview(clientX,clientY,actorEntry);
             return;
         }
-        const point = ['explosive_attack','flamethrower_fire','throw_item'].includes(pendingCombatAction.actionKey)?localMapToolPoint(clientX,clientY):getPointerWorldPoint(clientX, clientY, actorEntry.model.position.y);
+        const point = ['explosive_attack','flamethrower_fire','throw_item','redirect_grenade'].includes(pendingCombatAction.actionKey)?localMapToolPoint(clientX,clientY):getPointerWorldPoint(clientX, clientY, actorEntry.model.position.y);
         if (!point) {
             clearAttackPreview();
             return;
@@ -3272,10 +3280,11 @@ function showCombatActionMenu(clientX, clientY, characterId) {
     );
     const hasFullAccess = !combatState || combatState.status !== 'active' ? canControlCharacter(characterId) : (canAct && isCurrentTurn);
     const characterEntry = getCharacterModelEntry(characterId);
-    const groundItemsHere = (currentLocationData?.objects || []).find(object => {
+    const groundItemsHere = characterEntry && (currentLocationData?.objects || []).find(object => {
         if (object?.type !== 'ground_item' && !object?.properties?.is_ground_item) return false;
         const position = getObjectGridPosition(object);
-        return position.x === Number(characterEntry?.posX) && position.y === Number(characterEntry?.posY);
+        return position.x === Math.round(characterEntry.posX) && position.y === Math.round(characterEntry.posY)
+            && Number(object.properties?.floor_level ?? structureLevel(object)) === (characterEntry.floorLevel || 0);
     });
     let menuItems = [
         {
@@ -3491,6 +3500,7 @@ function showCombatActionMenu(clientX, clientY, characterId) {
                                 action_key: 'gunpoint_shot',
                             },
                         );
+                        if (notifyWillFailure(result)) return;
                         const hit = result?.attack?.results?.[0] || {};
                         showNotification(
                             `Выстрел в упор: d20 ${hit.roll ?? '—'}, урон ${Math.round(Number(hit.damage) || 0)}`,
@@ -3650,7 +3660,7 @@ function showCombatActionMenu(clientX, clientY, characterId) {
             angle: 248,
             ringRadius: 165,
             allowAlways: true,
-            action: () => showContainerInteractionMenu(groundItemsHere),
+            action: () => showContainerInteractionMenu(groundItemsHere, false, characterId),
         });
     }
     if (window.isGM) {
@@ -4382,7 +4392,7 @@ function closeAimedZoneMenu(result = null) {
     }
 }
 
-function selectAimedTargetZone(targetName) {
+function selectAimedTargetZone(targetName, firearmCost) {
     closeAimedZoneMenu();
     if (!aimedZoneMenu) {
         aimedZoneMenu = document.createElement('div');
@@ -4428,6 +4438,7 @@ function selectAimedTargetZone(targetName) {
                 <div>
                     <div style="font-size:19px; font-weight:800;">Куда прицелиться</div>
                     <div style="margin-top:3px; opacity:0.7; font-size:12px;">Цель: ${escapeHtml(targetName || 'персонаж')}</div>
+                    ${firearmCost ? `<div style="margin-top:3px; font-size:12px;">${firearmCost.points} ОД${firearmCost.includesAim ? ' с прицеливанием' : ''}</div>` : ''}
                 </div>
                 <button type="button" class="aimed-zone-close" style="
                     width:34px; height:34px; border:0; border-radius:50%;
@@ -4501,11 +4512,14 @@ function posturePaymentLabel(option) {
     return `${option.cost} ОП`;
 }
 
-function movementModeSummary(key, mode, posture) {
-    if (key !== 'walk') return mode.summary;
-    if (posture === 'sitting') return 'Присев: 1 м = 2 ОП, не более 5 м';
-    if (posture === 'prone') return 'Ползком: 1 м = 3 ОП, не более 3 м';
-    return mode.summary;
+function movementModeSummary(key, mode, current) {
+    const { posture } = current;
+    const seatedRun = key === 'run' && posture === 'sitting' && current.posture_modifiers?.can_run;
+    const fastWalk = sprinterWalkingMode(key, current);
+    if (!fastWalk && !seatedRun && !(key === 'walk' && ['sitting', 'prone'].includes(posture))) return mode.summary;
+    const cost = getMovementModeRouteCost({ cost: 1, distance: 1 }, key).travelMovementPoints;
+    const label = posture === 'prone' ? 'Ползком' : posture === 'sitting' ? 'Присев' : 'Удвоенная ходьба';
+    return `${label} · 1 м = ${formatMovementNumber(cost)} ОП`;
 }
 
 function showPostureMenu(characterId) {
@@ -4695,15 +4709,16 @@ function renderFacingPreview() {
     const dx=tile.x-sourceX,dy=tile.y-sourceY,length=Math.hypot(dx,dy);
     if (!length) { if(facingPreviewMesh) facingPreviewMesh.count=0; return; }
     const index=getVisionObjectIndex();
+    const viewRadius = currentLocationData.sight_range;
     const key=`${movementMapVersion}:${sourceX}:${sourceY}:${level}:${character.posture}:${visionEyeHeight(character)}`;
     if (facingPreviewState?.key!==key) {
         clearFacingPreview();
         facingPreviewPointer={clientX,clientY};
         const cells=[];
-        for(let y=Math.max(0,sourceY-FOG_VIEW_RADIUS);y<=Math.min(currentLocationData.grid_height-1,sourceY+FOG_VIEW_RADIUS);y++)
-            for(let x=Math.max(0,sourceX-FOG_VIEW_RADIUS);x<=Math.min(currentLocationData.grid_width-1,sourceX+FOG_VIEW_RADIUS);x++) {
+        for(let y=Math.max(0,sourceY-viewRadius);y<=Math.min(currentLocationData.grid_height-1,sourceY+viewRadius);y++)
+            for(let x=Math.max(0,sourceX-viewRadius);x<=Math.min(currentLocationData.grid_width-1,sourceX+viewRadius);x++) {
                 const distance=Math.hypot(x-sourceX,y-sourceY);
-                if(distance>FOG_VIEW_RADIUS) continue;
+                if(distance>viewRadius) continue;
                 const height=index.floors.get(level)?.get(`${x}:${y}`)??(level===0?getTileHeight(x,y):null);
                 if(height===null) continue;
                 const transform=new THREE.Object3D();
@@ -5056,12 +5071,9 @@ function showFacingMenu(characterId) {
     showNotification('\u0412\u044b\u0431\u0435\u0440\u0438\u0442\u0435 \u043a\u043b\u0435\u0442\u043a\u0443, \u0432 \u0441\u0442\u043e\u0440\u043e\u043d\u0443 \u043a\u043e\u0442\u043e\u0440\u043e\u0439 \u043f\u0435\u0440\u0441\u043e\u043d\u0430\u0436 \u0434\u043e\u043b\u0436\u0435\u043d \u0441\u043c\u043e\u0442\u0440\u0435\u0442\u044c. Esc \u2014 \u043e\u0442\u043c\u0435\u043d\u0430.', 'system');
 }
 
-function showBracePaymentMenu(characterId) {
+function showBracePaymentMenu(characterId, objectId) {
     const character = findCombatCharacterByCharacterId(characterId);
-    if (!character?.cover_object_id) {
-        showNotification('Сначала займите укрытие', 'system');
-        return;
-    }
+    if (!character || !objectId) return;
     if (character.drawn_weapon_index === null || character.drawn_weapon_index === undefined) {
         showNotification('Сначала возьмите оружие в руки', 'system');
         return;
@@ -5095,6 +5107,7 @@ function showBracePaymentMenu(characterId) {
                 await Server.performLocationCombatAction(window.currentLobbyId, getCurrentLocationId(), {
                     location_character_id: character.location_character_id,
                     action_key: 'brace_weapon',
+                    target_object_id: objectId,
                     payment: option.payment,
                 });
                 closePostureMenu();
@@ -5177,11 +5190,12 @@ function showMovementTypeMenu(characterId, evasion = false) {
 
     const options = menu.querySelector('.movement-type-options');
     Object.entries(COMBAT_MOVEMENT_TYPES).forEach(([key, mode]) => {
+        if (key === 'backward_sideways') return;
         const availability = getMovementModeAvailability(key, null, evasion);
-        const movementSummary = movementModeSummary(key, mode, current.posture || 'standing');
+        const movementSummary = movementModeSummary(key, mode, current);
         const resourceCost = [
-            mode.actionPoints ? `${mode.actionPoints} ОД` : null,
-            mode.freeActions ? `${mode.freeActions} СД` : null,
+            availability.modeActionPoints ? `${availability.modeActionPoints} ОД` : null,
+            availability.modeFreeActions ? `${availability.modeFreeActions} СД` : null,
         ].filter(Boolean).join(' · ') || 'Без ОД и СД';
         const button = document.createElement('button');
         button.type = 'button';
@@ -5214,7 +5228,7 @@ function showMovementTypeMenu(characterId, evasion = false) {
         `;
         button.onclick = async () => {
             const gainOpIfNeeded = Boolean(menu.querySelector('#movement-gain-op-if-needed')?.checked);
-            if (gainOpIfNeeded && (Number(current.movement_points_current) || 0) <= 0) {
+            if (key !== 'correction' && gainOpIfNeeded && (Number(current.movement_points_current) || 0) <= 0) {
                 const combatCharacter = findCombatCharacterByCharacterId(characterId);
                 if (combatCharacter?.location_character_id) {
                     try {
@@ -5260,6 +5274,7 @@ function beginCharacterMoveMode(characterId, movementType = 'walk', evasion = fa
     pendingCombatAction = null;
     clearAttackPreview();
     initializeMovementPreview(characterId);
+    movementType = movementModeChoice(movementType);
     armedMovementType = movementType;
     armedMovementEvasion = combatState?.current_character?.movement_mode_this_turn
         ? Boolean(combatState.current_character.movement_evasion) : evasion;
@@ -5366,6 +5381,7 @@ export function beginPendingCombatAction(action) {
         : (action.actionKey === 'explosive_attack'
             ? 'Выбор точки взрыва'
             : action.actionKey === 'throw_item' ? 'Метание предмета'
+            : action.actionKey === 'redirect_grenade' ? 'Перемещение гранаты'
             : (action.actionKey === 'aim' ? 'Прицеливание' : 'Атака'));
     const targetHint = action.targetType === 'structure'
         ? 'выберите укрытие'
@@ -5532,6 +5548,14 @@ function isAttackerBehindTarget(attacker, target) {
     return facingX * relativeX + facingY * relativeY < 0;
 }
 
+function notifyWillFailure(result) {
+    const failure = willFailureMessage(result);
+    if (!failure) return false;
+    if (result.state) setCombatState(result.state);
+    showNotification(failure, 'error');
+    return true;
+}
+
 async function resolveCombatTargetSelection(targetCharacterId) {
     if (!pendingCombatAction) return false;
     const action = pendingCombatAction;
@@ -5630,7 +5654,13 @@ async function resolveCombatTargetSelection(targetCharacterId) {
         pending_action_id: `combat-${action.actorLocationCharacterId}-${Date.now()}-${Math.random().toString(36).slice(2)}`,
     };
     if (action.fireMode === 'aimed' || action.meleeAimed || action.selectTargetZone) {
-        const zone = await selectAimedTargetZone(target.name);
+        let firearmCost;
+        if (action.fireMode === 'aimed') {
+            const includesAim = actor.aimed_target_character_id !== targetCharacterId
+                || actor.aimed_weapon_index !== action.weaponIndex;
+            firearmCost = { points: Number(action.actionPoints) + Number(includesAim), includesAim };
+        }
+        const zone = await selectAimedTargetZone(target.name, firearmCost);
         if (!zone) return false;
         payload.target_zone = zone;
     }
@@ -5654,6 +5684,10 @@ async function resolveCombatTargetSelection(targetCharacterId) {
             }
         } else {
             const result = await Server.performLocationCombatAction(window.currentLobbyId, getCurrentLocationId(), payload);
+            if (notifyWillFailure(result)) {
+                clearPendingCombatAction();
+                return true;
+            }
             if (result?.state) setCombatState(result.state);
             if (result?.pending_action) {
                 deferredCombatActions.set(result.pending_action_id, { ...payload });
@@ -5674,28 +5708,7 @@ async function resolveCombatTargetSelection(targetCharacterId) {
                     gunpoint.success ? 'success' : 'system',
                 );
             }
-            if (attack?.results?.length) {
-                const hits = attack.results.filter(item => item.hit);
-                const damage = attack.damage_total || 0;
-                const rolls = attack.results.map((item, index) => {
-                    if (item.automatic_hit) {
-                        return `${index + 1}: автоматическое попадание`;
-                    }
-                    const dice = Array.isArray(item.rolls) && item.rolls.length > 1
-                        ? `[${item.rolls.join(', ')}] → ${item.roll}`
-                        : String(item.roll);
-                    const outcome = item.hit ? 'попадание' : 'промах';
-                    return `${index + 1}: d20 ${dice}, СЛ ${item.difficulty} — ${outcome}`;
-                }).join('; ');
-                const strength = attack.results[0]?.strength_requirement;
-                const strengthText = strength?.accuracy_penalty
-                    ? ` Требование Силы ${strength.effective_required}, Сила ${strength.strength}: точность −${strength.accuracy_penalty}.`
-                    : '';
-                showNotification(
-                    `${rolls}. Итоговый урон: ${damage}.${strengthText}`,
-                    hits.length ? 'success' : 'system'
-                );
-            }
+            notifyCombatAttack(attack, showNotification);
             const cover = result?.attack?.cover;
             if (cover && cover.grade !== 'none') {
                 const labels = {
@@ -5784,11 +5797,15 @@ async function finalizeAreaFire() {
             payload.area_center_x = action.areaAnchor.x;
             payload.area_center_y = action.areaAnchor.y;
         }
-        await Server.performLocationCombatAction(
+        const result = await Server.performLocationCombatAction(
             window.currentLobbyId,
             getCurrentLocationId(),
             payload,
         );
+        if (notifyWillFailure(result)) {
+            clearPendingCombatAction();
+            return true;
+        }
         if (typeof action.onResolve === 'function') {
             await action.onResolve({ targetCharacterIds: targetIds });
         }
@@ -5827,6 +5844,10 @@ async function resolveCombatStructureSelection(clientX, clientY) {
             target_object_id: locationObject.id,
             attribute_choice:action.attributeChoice,
         });
+        if (notifyWillFailure(result)) {
+            clearPendingCombatAction();
+            return true;
+        }
         if (typeof action.onResolve === 'function') {
             await action.onResolve({ targetObject: locationObject });
         }
@@ -5839,8 +5860,6 @@ async function resolveCombatStructureSelection(clientX, clientY) {
             directCoverAttack
                 ? coverState?.fragile_detonated ? `Корпус бомбы разрушен: ${locationObject.name || 'объект'}`
                 : `Атака укрытия: ${locationObject.name || 'объект'}${coverDetails}${result?.attack?.damage_total ? ` · урон за ним ${result.attack.damage_total}` : ''}`
-                : action.actionKey === 'take_cover'
-                ? `Укрытие занято: ${locationObject.name || 'объект'}`
                 : `Огонь на подавление: ${locationObject.name || 'укрытие'}`,
             'success'
         );
@@ -5862,7 +5881,7 @@ async function resolveCombatPointSelection(clientX, clientY) {
         clearPendingCombatAction();
         return false;
     }
-    const point = ['explosive_attack','flamethrower_fire','throw_item'].includes(action.actionKey)
+    const point = ['explosive_attack','flamethrower_fire','throw_item','redirect_grenade'].includes(action.actionKey)
         ? localMapToolPoint(clientX,clientY) : getPointerWorldPoint(clientX, clientY, actorEntry.model.position.y);
     if (!point) return false;
     const targetX = action.actionKey==='jump'?Math.max(0,Math.min(currentLocationData.grid_width-1,Math.round((point.x-.5)*10)/10)):Math.floor(point.x);
@@ -5895,7 +5914,7 @@ async function resolveCombatPointSelection(clientX, clientY) {
             attribute_choice: action.attributeChoice,
             target_x: targetX,
             target_y: targetY,
-            target_floor_level: ['explosive_attack','flamethrower_fire','throw_item'].includes(action.actionKey)?point.floor_level:undefined,
+            target_floor_level: ['explosive_attack','flamethrower_fire','throw_item','redirect_grenade'].includes(action.actionKey)?point.floor_level:undefined,
             pending_action_id: `combat-point-${action.actorLocationCharacterId}-${Date.now()}-${Math.random().toString(36).slice(2)}`,
         };
         const result = await Server.performLocationCombatAction(
@@ -5903,6 +5922,20 @@ async function resolveCombatPointSelection(clientX, clientY) {
             getCurrentLocationId(),
             payload,
         );
+        if (notifyWillFailure(result)) {
+            clearPendingCombatAction();
+            return true;
+        }
+        if (action.actionKey === 'redirect_grenade') {
+            const details = result.narrative_action;
+            const checks = details.checks.map(check => `${check.label} ${check.total} против СЛ ${check.difficulty}`).join(' · ');
+            const outcome = details.stopped_at_wall ? 'Граната остановилась у препятствия.'
+                : details.moved ? 'Граната перемещена.' : 'Граната осталась на месте.';
+            showNotification(`${checks}. ${outcome} Потрачено ${details.action_points} ОД.`, details.moved ? 'success' : 'error');
+            clearPendingCombatAction();
+            if (result.state) setCombatState(result.state);
+            return true;
+        }
         if (result?.pending_action) {
             deferredCombatActions.set(result.pending_action_id, payload);
             showNotification(
@@ -5944,7 +5977,7 @@ async function resolveCombatPointSelection(clientX, clientY) {
             return true;
         }
         const pointMessage=action.actionKey==='throw_item' && result.thrown_item
-            ? `${result.thrown_item.item_name}: ${result.thrown_item.success?'успешный бросок':'промах'}, клетка ${result.thrown_item.landing.x}, ${result.thrown_item.landing.y}`
+            ? `${result.thrown_item.item_name}: ${result.thrown_item.success?'успешный бросок':'промах'}, клетка ${result.thrown_item.landing.x}, ${result.thrown_item.landing.y}${result.thrown_item.weapon_throw_bonus ? ` · ${result.thrown_item.total} против СЛ ${result.thrown_item.difficulty} (Метатель оружия +${result.thrown_item.weapon_throw_bonus})` : ''}`
             : `${action.actionKey === 'explosive_attack'
                 ? 'Точка взрыва выбрана'
                 : (action.fireMode === 'suppression' ? 'Подавление' : 'Стрельба по площади')}: ${targetX}, ${targetY}`;
@@ -5970,7 +6003,7 @@ function showHumanLocationPose(model, posture, immediate = false) {
         }
     }
     applyCharacterAppearanceModel(appearance, model.userData.characterAppearance,
-        model.userData.humanPose || posture, { immediate });
+        model.userData.humanPose || posture, { immediate, devices: model.userData.characterDevices });
 }
 
 function mountHumanLocationAppearance(model, posture) {
@@ -6913,7 +6946,7 @@ function isPointVisibleToPlayer(x, y, targetHeight, sources, visibleGlow = false
         if (auraLit) return hasLineOfSight(sourceX, sourceY, x, y, eyeHeight, targetHeight);
         const nvg = firstPersonView?.nvgProfile && Number(source.characterId) === firstPersonView.characterId;
         if (!visibleGlow && !nvg && !sourceHasArtifactDaylightVision(source) && darknessFactorAt(x, y, false) < 0.12) return false;
-        if (distance > FOG_VIEW_RADIUS) return false;
+        if (distance > currentLocationData.sight_range) return false;
         const facingX = Number(source.facingX) || 0;
         const facingY = Number(source.facingY ?? 1);
         const facingLength = Math.hypot(facingX, facingY);
@@ -7054,6 +7087,31 @@ function updateFogOverlay(active, sources) {
     }
 }
 
+function applyLocationFloorVisibility() {
+    locationLabelOcclusionCache = null;
+    for (const entry of characterModels.values()) {
+        const level = entry.renderFloorLevel ?? entry.floorLevel ?? 0;
+        entry.label.visible = entry.model.visible = Boolean(entry.fogVisible && locationLevelVisible(
+            level, null, entry.model.position.x, entry.model.position.z));
+    }
+    for (const mesh of objectMeshes) {
+        mesh.visible = Boolean(mesh.userData.fogVisible && locationLevelVisible(
+            decorDisplayLevel(mesh.userData.sourceObject), null, mesh.position.x, mesh.position.z));
+    }
+    for (const mesh of locationObjectMeshes) {
+        const object = mesh.userData.locationObject || {};
+        const level = structureLevel(object);
+        const buildingId = structureBuildingId(object);
+        const {x, z} = mesh.position;
+        const displayLevel = object.type === 'hatch' && level - 1 === locationViewLevel
+            ? locationViewLevel : level;
+        mesh.visible = Boolean(mesh.userData.fogVisible && locationLevelVisible(displayLevel, buildingId, x, z, object));
+        for (const child of mesh.userData.floorAttachedMeshes || []) {
+            child.visible = locationLevelVisible(level, buildingId, x, z, object);
+        }
+    }
+}
+
 function applyFogOfWar() {
     if (!scene || !currentLocationData) return;
     locationLabelOcclusionCache = null;
@@ -7092,29 +7150,22 @@ function applyFogOfWar() {
         const hidden = entry.gmHidden || entry.camouflaged;
         const visible = (gmCanSeeHidden && hidden)
             || (!hidden && (!active || isCharacterVisibleToPlayer(entry, sources)));
-        const onViewedFloor = locationLevelVisible(entry.renderFloorLevel ?? entry.floorLevel ?? 0, null, entry.model.position.x, entry.model.position.z);
-        entry.model.visible = visible && onViewedFloor;
+        entry.fogVisible = visible;
         (entry.model.userData ||= {}).physicalShadowVisible = visible && !hidden;
-        entry.label.visible = visible && onViewedFloor;
     });
     objectMeshes.forEach((mesh) => {
         mesh.userData.physicalShadowVisible = mesh.userData?.objType==='anomaly' ? undefined : !mesh.userData?.sourceObject?.gm_hidden;
-        if (!locationLevelVisible(decorDisplayLevel(mesh.userData?.sourceObject), null,
-            mesh.position.x, mesh.position.z)) {
-            mesh.visible = false;
-            return;
-        }
         if (mesh.userData?.sourceObject?.gm_hidden) {
-            mesh.visible = gmCanSeeHidden;
+            mesh.userData.fogVisible = gmCanSeeHidden;
             return;
         }
         if (mesh.userData?.objType !== 'anomaly') {
-            mesh.visible = true;
+            mesh.userData.fogVisible = true;
             return;
         }
         const { tileX, tileZ } = mesh.userData || {};
         const sourceObject = mesh.userData?.sourceObject || { type: mesh.userData?.objType };
-        mesh.visible = !active || isPointVisibleToPlayer(
+        mesh.userData.fogVisible = !active || isPointVisibleToPlayer(
             tileX,
             tileZ,
             getTileHeight(tileX, tileZ) + getFogObjectHeight(sourceObject),
@@ -7129,17 +7180,9 @@ function applyFogOfWar() {
                 position.x ?? 0, position.y ?? 0,
                 getTileHeight(position.x ?? 0, position.y ?? 0) + getFogObjectHeight(object), sources);
         mesh.userData.physicalShadowVisible = physicalVisible && !object.properties?.gm_hidden;
-        const displayLevel = object.type==='hatch' && structureLevel(object)-1 === locationViewLevel
-            ? locationViewLevel : structureLevel(object);
-        mesh.visible = physicalVisible && locationLevelVisible(displayLevel, structureBuildingId(object),
-            mesh.position.x, mesh.position.z, object);
-        // Камера скрывает остатки вместе с этажом. Физический силуэт для
-        // солнца независимо восстанавливает locationShadowPass.
-        for(const child of mesh.userData.floorAttachedMeshes||[]){
-            child.visible=locationLevelVisible(structureLevel(object),structureBuildingId(object),
-                mesh.position.x,mesh.position.z,object);
-        }
+        mesh.userData.fogVisible = physicalVisible;
     });
+    applyLocationFloorVisibility();
     syncFogMemoryGhosts(active && !firstPersonView, sources);
     visionBlockerHeightCache = null;
 }
@@ -7516,23 +7559,33 @@ function stairSurfaceHeight(pose, bottom, x, z) {
 }
 
 let characterFootSurfaces;
+function affectsFootSurface(object) {
+    return ['floor', 'wall', 'stairs', 'ladder', 'hatch', 'floor_opening'].includes(object?.type);
+}
+
 function characterFootSurface(level) {
     if (!currentLocationData) return null;
     const groundGeometry = terrainSurfaceMesh?.geometry;
-    if (characterFootSurfaces?.location !== currentLocationData || characterFootSurfaces.version !== movementMapVersion
-        || characterFootSurfaces.groundGeometry !== groundGeometry) {
-        const objects = currentLocationData.objects || [];
+    if (characterFootSurfaces?.location !== currentLocationData || characterFootSurfaces.groundGeometry !== groundGeometry) {
+        const objects = (currentLocationData.objects || []).filter(affectsFootSurface);
+        const byBuilding = new Map();
+        for (const object of objects) {
+            const building = structureBuildingId(object);
+            if (!byBuilding.has(building)) byBuilding.set(building, []);
+            byBuilding.get(building).push(object);
+        }
         const structures = objects.filter(object => object.type === 'floor' || object.type === 'stairs').map(object => {
+            const building = byBuilding.get(structureBuildingId(object));
             const floor = object.type === 'floor';
-            const pose = floor ? floorVisualPose(object, objects) : structurePose(object);
+            const pose = floor ? floorVisualPose(object, building) : structurePose(object);
             const height = getTileHeight(object.tile_x, object.tile_y) + structureLevelOffset(object)
                 + Number(object.properties?.elevation || 0) + (floor ? FLOOR_SURFACE_OFFSET : 0);
             return { level: structureLevel(object), pose, height, floor,
-                parts: floor ? floorSlabParts(object, objects) : [{ x: 0, z: 0, width: pose.width, depth: pose.depth }] };
+                parts: floor ? floorSlabParts(object, building, pose) : [{ x: 0, z: 0, width: pose.width, depth: pose.depth }] };
         });
         const terrain = createTerrainSurfaceHeightSampler(currentLocationData.tiles_data,
             { rendered: true, limitRelief: locationGroundReliefLimit() });
-        characterFootSurfaces = { location: currentLocationData, version: movementMapVersion, groundGeometry,
+        characterFootSurfaces = { location: currentLocationData, groundGeometry,
             levels: new Map(), terrain, structures };
     }
     const index = characterFootSurfaces;
@@ -7618,7 +7671,8 @@ export function updateCharacterPosition(characterId, posX, posY, options = {}) {
         entry.positionAnimation = marker;
         entry.renderFloorLevel = first.level ?? previousFloor;
         const nodes = path;
-        const mode = options.movement_mode === 'backward_sideways' ? 'walk' : options.movement_mode ?? 'walk';
+        const mode = ['correction', 'backward_sideways'].includes(options.movement_mode)
+            ? 'walk' : options.movement_mode ?? 'walk';
         const canStride = !marker.airborne && entry.humanAppearanceModel
             && !entry.collapsed && humanStrideTileMs.has(mode);
         const strideTileMs = (freeRun ? {standing: 240, sitting: 400, prone: 520}
@@ -7826,7 +7880,6 @@ function onViewCharacter(characterId) {
 // ========== Очистка персонажей ==========
 function clearAllCharacters() {
     cancelScoutPointSelection?.();
-    clearSniperCoverMarks();
     scoutedCharacters.clear();scoutObserverId=null;
     trueSightObserverCharacterId=null;trueSightVersion++;clearTimeout(trueSightRefreshTimer);trueSightRefreshTimer=null;
     characterVisibilityOverrides.clear();
@@ -8031,7 +8084,8 @@ async function showCombatParticipantSelection(initiatorLocationCharacterId = nul
     }
 
     closeCombatParticipantMenu();
-    combatParticipantMenu = document.createElement('div');
+    const menu = document.createElement('div');
+    combatParticipantMenu = menu;
     combatParticipantMenu.className = 'modal combat-participant-menu';
     combatParticipantMenu.style.cssText = `
         position:fixed;
@@ -8104,9 +8158,10 @@ async function showCombatParticipantSelection(initiatorLocationCharacterId = nul
             <strong class="combat-participant-name" style="overflow:hidden; text-overflow:ellipsis;"></strong>
             <span style="font-size:12px; opacity:.75;">Инициатива ${bonus >= 0 ? '+' : ''}${bonus}</span>
         `;
-        row.querySelector('.combat-participant-name').textContent = (
-            character.name || `#${character.character_id}`
-        );
+        const name = character.name || `#${character.character_id}`;
+        const condition = character.condition;
+        row.querySelector('.combat-participant-name').textContent = condition?.state !== 'active' && condition?.label
+            ? `${name} · ${condition.label}` : name;
         list.appendChild(row);
     });
     combatParticipantMenu.querySelector('.combat-participant-clear').onclick = () => {
@@ -8123,7 +8178,7 @@ async function showCombatParticipantSelection(initiatorLocationCharacterId = nul
     combatParticipantMenu.querySelector('.combat-participant-close').onclick = close;
     combatParticipantMenu.querySelector('.combat-participant-cancel').onclick = close;
     combatParticipantMenu.addEventListener('pointerdown', (event) => {
-        if (event.target === combatParticipantMenu) close();
+        if (event.target === menu) close();
     });
     combatParticipantMenu.querySelector('.combat-participant-start').onclick = async (event) => {
         const selectedIds = Array.from(
@@ -8140,23 +8195,34 @@ async function showCombatParticipantSelection(initiatorLocationCharacterId = nul
             showNotification('Выберите хотя бы одного участника боя', 'system');
             return;
         }
-        event.currentTarget.disabled = true;
+        const hasActionableParticipant = selectableCharacters.some(({ location_character_id: id, condition }) =>
+            selectedIds.includes(Number(id)) && (condition?.can_act || (condition?.state === 'pain_shock' && condition.can_recover))
+        );
+        if (!hasActionableParticipant) {
+            showNotification('Ни один из выбранных участников не может сделать ход', 'system');
+            return;
+        }
+        const startButton = event.currentTarget;
+        startButton.disabled = true;
         try {
-            const initiatorFirst = combatParticipantMenu.querySelector('.combat-initiator-first')?.checked ?? false;
-            const state = startRequestId
-                ? await Server.respondLocationCombatStartRequest(
+            const initiatorFirst = menu.querySelector('.combat-initiator-first')?.checked ?? false;
+            if (startRequestId) {
+                await Server.respondLocationCombatStartRequest(
                     window.currentLobbyId, getCurrentLocationId(), startRequestId, 'approve', selectedIds,
                     initiatorFirst,
-                )
-                : await Server.startLocationCombat(
+                );
+                pendingCombatStartRequests.delete(startRequestId);
+            } else {
+                await Server.startLocationCombat(
                     window.currentLobbyId, getCurrentLocationId(), selectedIds,
                     initiatorLocationCharacterId, initiatorFirst,
                 );
-            if (startRequestId) pendingCombatStartRequests.delete(startRequestId);
-            close();
+            }
+            if (combatParticipantMenu === menu) close();
         } catch (error) {
-            event.currentTarget.disabled = false;
             showNotification(error.message || 'Не удалось начать бой');
+        } finally {
+            if (startButton.isConnected) startButton.disabled = false;
         }
     };
     document.body.appendChild(combatParticipantMenu);
@@ -8364,7 +8430,7 @@ function renderCombatHud() {
             </div>`).join('')}
             ${combatState.current_character?.trait_state?.standaloneEvasion?`<div>Уклонение: штраф атакующему <strong>${Number(combatState.current_character.trait_state.standaloneEvasion)}</strong> до следующего хода</div>`:''}
             ${combatState.current_character?.trait_state?.grenadirCheck?`<div>Гренадир · Воля: ${Number(combatState.current_character.trait_state.grenadirCheck.total)} против 12${combatState.current_character.trait_state.grenadirMustExplode?' · нужно устроить взрыв':''}</div>`:''}
-            ${combatState.current_character?.sniper_position?.blocked?`<div>Снайпер: новое укрытие · до конца раунда ${Number(combatState.current_character.sniper_position.expires_after_round)}</div>`:''}
+            ${combatState.current_character?.sniper_position?.blocked?`<div>Снайпер: все ОП хода в одном направлении · до конца раунда ${Number(combatState.current_character.sniper_position.expires_after_round)}</div>`:''}
             ${combatState.current_character?.movement_evasion ? '<div>Уклонение на ходу: <strong>СЛ стрельбы по вам +2</strong></div>' : ''}
             ${aimedTarget ? `<div>Прицел: <strong>${aimedTarget.name || 'цель'}</strong> · Точность +${combatState.current_character?.aim_accuracy_bonus || 0}</div>` : ''}
             <div>Боль: ${combatState.current_character?.pain_level ?? 0} | Истощение: ${combatState.current_character?.exhaustion ?? 0}</div>
@@ -8560,6 +8626,14 @@ function renderCombatHud() {
         const phase=document.createElement('div');phase.style.cssText='color:#ffc76b;margin:6px 0';
         phase.textContent='Граната: до взрыва доступны 2 ОД из имеющихся и половина получаемых ОП. Остаток сохраняется.';
         endTurnBtn.before(phase);
+        const actor = combatState.current_character;
+        for (const event of combatState.pending_explosives || []) {
+            if (event.trigger !== 'short_fuse' || !canSelectGrenadeRedirect(actor, event)) continue;
+            const options = document.createElement('div');
+            options.textContent = `${event.item_name} · `;
+            appendGrenadeRedirectButtons(options, actor, event, explosionChoices.length > 0);
+            endTurnBtn.before(options);
+        }
     }
     if (endTurnBtn) {
         endTurnBtn.onclick = async () => {
@@ -8621,7 +8695,6 @@ export function setCombatState(state) {
     if (state?.location_id != null && Number(state.location_id) !== Number(currentLocationId)) return;
     queueTrueSightRefresh();
     combatState = state || null;
-    refreshSniperCoverMarks();
     window.locationCombatState = combatState;
     window.updateCharacterTraitContext?.(combatState?.characters||[]);
     if (combatState?.current_character?.slippery_movement?.forced_from && armedMovementType && armedMovementType !== 'correction') {
@@ -8649,6 +8722,12 @@ export function setCombatState(state) {
             entry.effects = character.effects;
             entry.artifactDaylightVision = character.artifact_daylight_vision === true;
             entry.ignitionAuraRange = character.portable_lights?.find(source => source.ignition_aura)?.range || 0;
+            entry.model.userData.characterDevices = character.equipped_devices;
+            if (character.belt_visual !== undefined) {
+                entry.model.userData.characterAppearance = {
+                    ...entry.model.userData.characterAppearance, belt: character.belt_visual,
+                };
+            }
         }
         updateCharacterPosition(character.character_id, character.x, character.y, { ...character, deferRefresh: true });
         updateCharacterTeamVisual(character.character_id, character.team_name, character.team_color);
@@ -8778,17 +8857,22 @@ window.addEventListener('must-do-retry-registered', event => {
 
 const resumeSavedCombatAction = createDeferredActionResumer({
     send: payload => Server.performLocationCombatAction(window.currentLobbyId, getCurrentLocationId(), payload),
-    cancel: payload => Server.cancelDeferredCombatAction(window.currentLobbyId, getCurrentLocationId(), payload),
+    cancel: (payload, locationId) => Server.cancelDeferredCombatAction(window.currentLobbyId, locationId, payload),
     applyState: state => setCombatState(state),
-    resumeConsumable: async actionId => {
+    resumeConsumable: async (actionId, locationId) => {
+        const lobbyId = window.currentLobbyId;
         const module = await import('./characterSheet.js');
-        return module.resumeDeferredConsumable(window.currentLobbyId, getCurrentLocationId(), actionId);
+        return module.resumeDeferredConsumable(lobbyId, locationId, actionId);
     },
     canResume: actor => !actor.grenade_reaction&&canActWithCombatCharacter(actor),
     notify: showNotification,
 });
 
-window.addEventListener('character-item-operation-finished', () => {
+window.addEventListener('character-item-operation-finished', event => {
+    const paidState = event.detail;
+    if (paidState && Number(paidState.location_id) === Number(getCurrentLocationId())) {
+        resumeSavedCombatAction(paidState);
+    }
     resumeSavedCombatAction(combatState);
 });
 
@@ -8813,6 +8897,8 @@ async function resumeCompletedCombatAction(state) {
                 resume_pending_action_id: actionId,
             },
         );
+        if (notifyWillFailure(result)) return;
+        if (notifyCombatAttack(result?.attack, showNotification)) return;
         if (result?.attack) {
             showNotification('Длительная атака завершена', 'success');
         } else {
@@ -8825,29 +8911,6 @@ async function resumeCompletedCombatAction(state) {
 
 export function getCombatState() {
     return combatState;
-}
-
-function clearSniperCoverMarks(){
-    for(const mark of sniperCoverMarks)mark.removeFromParent();
-    sniperCoverMarks=[];
-}
-
-function refreshSniperCoverMarks(){
-    clearSniperCoverMarks();
-    if(!labelScene)return;
-    const userId=Number(localStorage.getItem('user_id'));
-    for(const actor of combatState?.characters||[]){
-        const hint=actor.sniper_position;
-        if(window.locationScoutView||!hint?.blocked||!hint.cover||!window.isGM&&Number(actor.controlled_by)!==userId&&Number(actor.owner_id)!==userId)continue;
-        const cover=hint.cover;
-        if(Number(cover.floor_level||0)!==locationViewLevel)continue;
-        const element=document.createElement('div');element.className='location-character-label sniper-cover-mark';
-        element.style.cssText='border-left-color:#a4ad94;pointer-events:none;max-width:220px';
-        element.textContent=`⌖ Укрытие · ${actor.name} · ${formatMovementNumber(cover.distance)} м`;
-        const mark=new CSS2DObject(element);
-        mark.position.set(cover.x+.5,getTileHeight(cover.x,cover.y)+(cover.floor_level||0)*STOREY_HEIGHT+.3,cover.y+.5);
-        labelScene.add(mark);sniperCoverMarks.push(mark);
-    }
 }
 
 export function registerTraitDeferredAction(id,payload){registerDeferredCombatAction(id,payload);}
@@ -9193,8 +9256,7 @@ export function initLocationScene(containerId) {
             }
             return weatherSurfaceSampler(x, z);
         },
-        blockers: () => [...roofMeshes, ...locationObjectMeshes.filter(root =>
-            ['floor', 'roof', 'ceiling'].includes(root.userData.locationObject?.type))],
+        blockers: () => [...roofMeshes, ...locationObjectMeshes.filter(root => isRainBlocker(root.userData.locationObject))],
     });
     applyLocationWeather();
     window.getLocationWeatherDiagnostics = point => locationWeather?.diagnostics(point) || null;
@@ -9234,7 +9296,10 @@ export function initLocationScene(containerId) {
     scene.add(locationDirectionalLight.target);
     locationShadowCache = createLocationShadowCache(locationDirectionalLight);
     locationRenderBatches = createLocationRenderBatches(THREE, scene, () => locationObjectMeshes);
-    locationShadowPass = createLocationShadowPass(renderer,()=>[...locationObjectMeshes,...roofMeshes,...objectMeshes,...[...characterModels.values()].map(entry=>entry.model)], draw => locationRenderBatches.withOriginals(draw));
+    locationStoreyFade = createLocationStoreyFade();
+    locationShadowPass = createLocationShadowPass(renderer,()=>[...locationObjectMeshes,...roofMeshes,...objectMeshes,...[...characterModels.values()].map(entry=>entry.model)],
+        draw => locationRenderBatches.withOriginals(() => locationStoreyFade.withOriginals(draw)),
+        () => [locationTileMesh, smoothTerrainMesh]);
 
     setLocalMapSceneContext({
         scene, camera, canvas: renderer.domElement, controls,
@@ -9298,8 +9363,7 @@ export function initLocationScene(containerId) {
             if (controls) controls.update();
         }
         refreshGmRelocationPreview();
-        portableLightRenderer?.updatePositions(camera);
-        locationWeather?.update(deltaSeconds, `${movementMapVersion}:${terrainSurfaceMesh?.geometry.id ?? ''}`);
+        locationWeather?.update(deltaSeconds, terrainSurfaceMesh?.geometry);
         updateAnomalyRenderLights(frameTime);
         updateLampPreviewLights();
         const roofStartedAt = profiling ? performance.now() : 0;
@@ -9336,6 +9400,7 @@ export function initLocationScene(containerId) {
         if (locationCrowFlight && currentLocationData) {
             locationCrowFlight.update(deltaSeconds, currentLocationData.grid_width, currentLocationData.grid_height);
         }
+        portableLightRenderer?.updatePositions(camera, controls?.target);
         const rippleX = (frameTime * 0.000002) % 1, rippleZ = (frameTime * 0.000001) % 1;
         waterSurfaceMesh?.material.map?.offset.set(rippleX, rippleZ);
         const renderStartedAt = profiling || lampTrace || loadFrame
@@ -9359,6 +9424,7 @@ export function initLocationScene(containerId) {
                         const gain = { pnv1p: .48, sidr: .52, supernova: .64 }[firstPersonView.nvgProfile];
                         locationAmbientLight.intensity = Math.max(ambient, gain);
                     }
+                    prepareLocationStoreyFade();
                     locationRenderBatches?.prepare(true);
                     anomalyRenderBatches?.prepare(anomalyRoots);
                     if (locationWaterReflection && waterSurfaceMesh?.visible) {
@@ -9368,6 +9434,7 @@ export function initLocationScene(containerId) {
                 } finally {
                     anomalyRenderBatches?.restore();
                     locationRenderBatches?.restore();
+                    locationStoreyFade?.restore();
                     if (firstPersonObserver) firstPersonObserver.model.visible = observerVisible;
                     if (locationAmbientLight) locationAmbientLight.intensity = ambient;
                 }
@@ -9640,17 +9707,11 @@ function getStructureActions(object) {
     if (getMovementObjectProfile(object).climbCost>0 && !actions.includes('climb')) {
         actions.push('climb');
     }
-    if (combatState?.status === 'active' && isStructureCoverObject(object)) {
-        const actorId = pendingStructureAction?.actorCharacterId;
-        const combatCharacter = findCombatCharacterByCharacterId(actorId);
-        const occupiesThisCover = Number(combatCharacter?.cover_object_id) === Number(object.id);
-        actions.push(occupiesThisCover ? 'leave_cover' : 'take_cover');
-        if (
-            occupiesThisCover
-            && combatCharacter?.drawn_weapon_index !== null
-            && combatCharacter?.drawn_weapon_index !== undefined
-            && !combatCharacter?.weapon_braced
-        ) {
+    if (combatState?.status === 'active') {
+        const actor = findCombatCharacterByCharacterId(pendingStructureAction?.actorCharacterId);
+        if (actor?.weapon_braced && Number(actor.cover_object_id) === Number(object.id)) {
+            actions.push('leave_cover');
+        } else if (object.weapon_support && actor?.drawn_weapon_index != null) {
             actions.push('brace_weapon');
         }
     }
@@ -9694,8 +9755,7 @@ function getStructureActionLabel(object, actionKey) {
     if (actionKey === 'move') return 'Переставить';
     if (actionKey === 'rotate') return 'Повернуть';
     if (actionKey === 'climb') return 'Перелезть';
-    if (actionKey === 'take_cover') return 'Занять укрытие';
-    if (actionKey === 'leave_cover') return 'Покинуть укрытие';
+    if (actionKey === 'leave_cover') return 'Снять оружие с упора';
     if (actionKey === 'brace_weapon') return 'Поставить оружие на упор';
     return actionKey;
 }
@@ -9719,7 +9779,6 @@ function getStructureActionIcon(actionKey) {
     if (actionKey === 'move') return '↔';
     if (actionKey === 'rotate') return '↻';
     if (actionKey === 'climb') return '↕';
-    if (actionKey === 'take_cover') return '▣';
     if (actionKey === 'leave_cover') return '◯';
     if (actionKey === 'brace_weapon') return '⊥';
     return '•';
@@ -10524,9 +10583,62 @@ function beginStructureInteractionMode(characterId) {
     clearStructureActionMenu();
     clearStructureMovePreview();
     const actor = getCharacterModelEntry(characterId);
-    showNotification(`${actor?.name || 'Персонаж'} · Наведи на клетку, объект или персонажа для взаимодействия`, 'system');
+    showNotification(`${actor?.name || 'Персонаж'} · Наведи на клетку, объект, гранату или персонажа`, 'system');
     renderCombatHud();
     return true;
+}
+
+function canSelectGrenadeRedirect(actor, event) {
+    return Boolean(actor && ['short_fuse', 'actor_turn_start', 'round_start'].includes(event.trigger)
+        && (event.trigger !== 'short_fuse' || actor.grenade_reaction?.event_ids?.includes(event.id))
+        && !event.redirect_refused_actor_ids?.includes(actor.location_character_id)
+        && Number(event.floor_level || 0) === Number(actor.floor_level || 0)
+        && Math.hypot(event.x - actor.x, event.y - actor.y) <= 1.5 + 1e-7);
+}
+
+function appendGrenadeRedirectButtons(container, actor, event, disabled = false) {
+    for (const [mode, label] of [['kick', 'Пнуть'], ['throw', 'Откинуть']]) {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'btn btn-sm btn-secondary';
+        button.dataset.grenadeRedirect = mode;
+        button.textContent = `${label} · 2 ОД`;
+        button.disabled = disabled || actor.action_points_current < 2;
+        button.onclick = () => beginPendingCombatAction({actionKey: 'redirect_grenade', actorCharacterId: actor.character_id,
+            targetType: 'point', attributeChoice: {event_id: event.id, mode}});
+        container.append(button);
+    }
+}
+
+function showGrenadeInteractionAtPointer(clientX, clientY) {
+    const actor = combatState?.current_character;
+    if (actor?.character_id !== pendingStructureAction?.actorCharacterId) return false;
+    const events = (combatState.pending_explosives || []).filter(event => canSelectGrenadeRedirect(actor, event)
+        && Number(event.floor_level || 0) === Number(locationViewLevel));
+    if (!events.length) return false;
+    const rect = renderer.domElement.getBoundingClientRect();
+    const point = new THREE.Vector3();
+    for (const event of events) {
+        const marker = combatAreaMeshes.find(mesh => mesh.userData.grenadeEventId === event.id);
+        if (!marker) continue;
+        point.copy(marker.position).project(camera);
+        const x = rect.left + (point.x + 1) * rect.width / 2;
+        const y = rect.top + (1 - point.y) * rect.height / 2;
+        if (point.z < -1 || point.z > 1 || Math.hypot(x - clientX, y - clientY) > 14) continue;
+        const objectId = `grenade:${event.id}`;
+        if (structureActionMenuState?.objectId !== objectId) {
+            clearTerrainClimbTarget();
+            ensureStructureActionMenu();
+            structureActionMenuState = {objectId};
+            const title = document.createElement('div');
+            title.textContent = event.item_name;
+            structureActionMenu.replaceChildren(title);
+            appendGrenadeRedirectButtons(structureActionMenu, actor, event, (combatState.pending_explosives || []).some(item => item.gm_choices?.length));
+            positionStructureActionMenu(x, y);
+        }
+        return true;
+    }
+    return false;
 }
 
 function clearTerrainClimbTarget() {
@@ -10707,9 +10819,10 @@ function renderTradeOfferList(container, title, offer, direction, onRemove = nul
 }
 
 export async function showCharacterTradeMenu(actorLocationCharacterId, actorCharacterId, targetCharacterId) {
+    const locationId = getCurrentLocationId();
     const [actorCharacter, snapshot] = await Promise.all([
         Server.getCharacter(actorCharacterId),
-        Server.inspectLocationCharacter(window.currentLobbyId, getCurrentLocationId(), targetCharacterId, actorLocationCharacterId),
+        Server.inspectLocationCharacter(window.currentLobbyId, locationId, targetCharacterId, actorLocationCharacterId),
     ]);
     const modal = ensureCharacterTradeModal();
     delete modal.dataset.interactionRequestId;
@@ -10724,6 +10837,11 @@ export async function showCharacterTradeMenu(actorLocationCharacterId, actorChar
         quantity:getTransferItemQuantity,
         merchant:npc && targetData.merchant?.enabled ? targetData.merchant : null,
         merchantPurchasePrices:snapshot.merchant_purchase_prices,
+        merchantSalePrices:snapshot.merchant_sale_prices,
+        onHaggle:(offer, skill, expectedRound) => Server.negotiateMerchantPrice(window.currentLobbyId, locationId, {
+            actor_location_character_id: actorLocationCharacterId, target_character_id: targetCharacterId,
+            offer, skill, expected_round: expectedRound,
+        }),
         onConfigure:window.isGM && npc ? async () => {
             try {
                 const templates = await Server.getLobbyTemplates(window.currentLobbyId, '');
@@ -10805,7 +10923,7 @@ export async function showCharacterTradeMenu(actorLocationCharacterId, actorChar
         } : null,
         onClose:() => { modal.style.display = 'none'; },
         onSubmit:async payload => {
-            const result = await Server.createCharacterInteraction(window.currentLobbyId, getCurrentLocationId(), {
+            const result = await Server.createCharacterInteraction(window.currentLobbyId, locationId, {
                 actor_location_character_id:actorLocationCharacterId, target_character_id:targetCharacterId,
                 kind:'trade', payload,
             });
@@ -10977,11 +11095,38 @@ async function showCharacterLootMenu(actorLocationCharacterId, targetCharacterId
 }
 
 async function showMutantButcheringMenu(actorLocationCharacterId, targetCharacterId) {
+    const lobbyId = window.currentLobbyId;
+    const locationId = getCurrentLocationId();
+    const selection = { actor_location_character_id: actorLocationCharacterId };
+    const preview = await Server.butcherLocationMutant(lobbyId, locationId, targetCharacterId, {
+        ...selection, preview: true,
+    });
+    let skipToolkits = false;
+    if (preview.toolkit && !preview.roll_already_made) {
+        const { chooseConsumableApplication } = await import('./characterSheet.js');
+        const weaponBonus = preview.weapon_bonus_without_toolkit;
+        const displayedBonus = weaponBonus >= 0 ? `+${weaponBonus}` : String(weaponBonus);
+        const confirmed = await chooseConsumableApplication('Бросок разделки', [
+            { label: 'Бросить к20 с набором' },
+            { label: `Продолжить без набора · бонус ${displayedBonus}`, skipToolkits: true },
+        ], {
+            alwaysShow: true,
+            details: [
+                `${preview.toolkit.name}: бонус к разделке ${displayedBonus} → +${preview.weapon_bonus}.`,
+                'При завершении разделки будет потрачен 1 заряд набора.',
+            ],
+        });
+        if (!confirmed) return;
+        skipToolkits = confirmed.skipToolkits === true;
+    }
+    const confirmedPreview = skipToolkits
+        ? { ...preview, weapon_bonus: preview.weapon_bonus_without_toolkit, toolkit: null }
+        : preview;
     const profile = await Server.butcherLocationMutant(
-        window.currentLobbyId,
-        getCurrentLocationId(),
+        lobbyId,
+        locationId,
         targetCharacterId,
-        { actor_location_character_id: actorLocationCharacterId },
+        { ...selection, confirmed_preview: confirmedPreview, skip_toolkits: skipToolkits },
     );
     const modal = document.createElement('div');
     modal.className = 'modal';
@@ -10991,9 +11136,11 @@ async function showMutantButcheringMenu(actorLocationCharacterId, targetCharacte
             <button type="button" class="close mutant-card-close" aria-label="Закрыть">&times;</button>
             <h3 style="margin-bottom:5px;">Разделка: ${escapeHtml(profile.target_name || profile.species)}</h3>
             <div style="font-size:13px;opacity:.78;margin-bottom:12px;">
-                d20 ${profile.roll.roll} ${Number(profile.roll.mutant_modifier) >= 0 ? '+' : ''}${profile.roll.mutant_modifier} вид
-                ${Number(profile.roll.weapon_bonus) >= 0 ? '+' : ''}${profile.roll.weapon_bonus} оружие
+                к20 ${profile.roll.roll} ${Number(profile.roll.mutant_modifier) >= 0 ? '+' : ''}${profile.roll.mutant_modifier} вид
+                ${Number(profile.roll.weapon_bonus) >= 0 ? '+' : ''}${profile.roll.weapon_bonus}
+                ${profile.roll.toolkit ? escapeHtml(profile.roll.toolkit.name) : 'оружие'}
                 ${Number(profile.roll.survival_bonus) >= 0 ? '+' : ''}${profile.roll.survival_bonus} Выживание − 5
+                ${profile.roll.toolkit ? '<div>При завершении разделки будет потрачен 1 заряд набора.</div>' : ''}
             </div>
             <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 12px;border:1px solid rgba(211,182,106,.3);border-radius:10px;background:rgba(211,182,106,.08);">
                 <strong>Очки разделки</strong><strong class="butchering-points" style="font-size:20px;"></strong>
@@ -11060,8 +11207,8 @@ async function showMutantButcheringMenu(actorLocationCharacterId, targetCharacte
         event.currentTarget.disabled = true;
         try {
             const result = await Server.butcherLocationMutant(
-                window.currentLobbyId,
-                getCurrentLocationId(),
+                lobbyId,
+                locationId,
                 targetCharacterId,
                 {
                     actor_location_character_id: actorLocationCharacterId,
@@ -11071,7 +11218,9 @@ async function showMutantButcheringMenu(actorLocationCharacterId, targetCharacte
             );
             close();
             const loot = (result.loot || []).map(item => `${item.name} ×${item.quantity}`).join(', ');
-            showNotification(loot ? `Получено: ${loot}` : 'Разделка завершена без добычи', 'success');
+            const toolkit = result.roll?.toolkit;
+            const charges = toolkit ? `. ${toolkit.name}: −1 заряд, осталось ${toolkit.charges_remaining}` : '';
+            showNotification((loot ? `Получено: ${loot}` : 'Разделка завершена без добычи') + charges, 'success');
         } catch (error) {
             event.currentTarget.disabled = false;
             showNotification(error.message || 'Не удалось завершить разделку', 'system');
@@ -11131,6 +11280,16 @@ function showCharacterInteractionMenu(clientX, clientY, targetCharacterId) {
                 run: () => showMedicalConsumableMenu(actorCharacterId, targetCharacterId, actorLocationCharacterId),
             },
         ];
+    if (targetCombat?.is_exoskeleton) {
+        actions.push({
+            icon: '🔋',
+            label: 'Заменить аккумулятор экзоскелета',
+            run: async () => {
+                const sheet = await import('./characterSheet.js');
+                await sheet.openExoskeletonBatteryPicker(actorCharacterId, Number(targetCharacterId), getCurrentLocationId());
+            },
+        });
+    }
     const actorCombat = findCombatCharacterByCharacterId(actorCharacterId);
     const transport = actorCombat?.body_transport;
     const transportAction = mode => async () => {
@@ -11297,38 +11456,24 @@ async function executeStructureAction(object, actionKey, actorCharacterId = pend
         return performClimbAction(object, actorCharacterId);
     }
 
-    if (actionKey === 'take_cover' || actionKey === 'leave_cover') {
-        const combatCharacter = findCombatCharacterByCharacterId(actorCharacterId);
-        if (!combatCharacter?.location_character_id) {
-            showNotification('Не удалось найти персонажа в бою', 'system');
-            return false;
-        }
+    if (actionKey === 'leave_cover') {
+        const actor = findCombatCharacterByCharacterId(actorCharacterId);
+        if (!actor) return false;
         try {
             await Server.performLocationCombatAction(window.currentLobbyId, getCurrentLocationId(), {
-                location_character_id: combatCharacter.location_character_id,
-                action_key: actionKey,
-                target_object_id: actionKey === 'take_cover' ? object.id : undefined,
+                location_character_id: actor.location_character_id, action_key: 'leave_cover',
             });
             hideStructureInteraction();
-            showNotification(
-                actionKey === 'take_cover' ? 'Укрытие занято' : 'Персонаж покинул укрытие',
-                'success'
-            );
             return true;
         } catch (error) {
-            showNotification(
-                error.message || (actionKey === 'take_cover'
-                    ? 'Не удалось занять укрытие'
-                    : 'Не удалось покинуть укрытие'),
-                'system'
-            );
+            showNotification(error.message || 'Не удалось снять оружие с упора', 'system');
             return false;
         }
     }
 
     if (actionKey === 'brace_weapon') {
         hideStructureInteraction();
-        showBracePaymentMenu(actorCharacterId);
+        showBracePaymentMenu(actorCharacterId, object.id);
         return true;
     }
 
@@ -12732,21 +12877,16 @@ function createLocationObjectMesh(obj, forPreview = false, relatedObjects = curr
     } else if (isElectricFixture(obj)) {
         group.add(createElectricFixtureModel(THREE, obj, { width, depth, height }));
     } else if (obj.type === 'ground_item' || properties.is_ground_item) {
-        const itemColor = properties.color || '#c9b27a';
-        const itemMaterial = new THREE.MeshStandardMaterial({
-            color: itemColor,
-            roughness: 0.9,
-            metalness: 0.02,
+        const groundItem = createGroundItemVisual(obj, model => {
+            if (!group.parent || forPreview) return;
+            if (properties.gm_hidden && window.isGM) makeGmHiddenGhost(model);
+            else tintLocationMesh(model, darknessFactorAt(group.position.x, group.position.z));
+            if (usesStaticLightField(obj)) attachStaticLightFieldToRoot(model, structureLevel(obj));
+            locationWaterReflection?.invalidate();
+            syncPortableLights();
         });
-        main = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.08, 0.42), itemMaterial);
-        main.position.y = 0.06;
-        group.add(main);
-        const accent = new THREE.Mesh(
-            new THREE.BoxGeometry(0.18, 0.12, 0.18),
-            new THREE.MeshStandardMaterial({ color: 0xf4e4b5, roughness: 1, metalness: 0 })
-        );
-        accent.position.set(0, 0.11, 0);
-        group.add(accent);
+        group.userData.groundLightEmitters = groundItem.userData.groundLightEmitters;
+        group.add(groundItem);
     } else if (obj.type === 'chair') {
         main = new THREE.Mesh(new THREE.BoxGeometry(width, 0.12, depth), material);
         main.position.y = 0.48;
@@ -12813,7 +12953,10 @@ function createLocationObjectMesh(obj, forPreview = false, relatedObjects = curr
         floorPose?.z ?? tileY + 0.5 + Number(properties.offset_z || 0));
     alignFloorRugToSurface(group, obj);
     if (obj.type === 'ground_item' || properties.is_ground_item) {
-        group.position.y += 0.04;
+        const { x, y, z } = group.position;
+        const surface = !forPreview && currentLocationData
+            ? characterFootSurface(structureLevel(obj))(x, z, y) : null;
+        group.position.y = (surface ?? y) + .006;
     }
     group.rotation.y = properties.rotation || 0;
     if (obj.type === 'floor' && usePbrMaterial) {
@@ -12829,7 +12972,8 @@ function createLocationObjectMesh(obj, forPreview = false, relatedObjects = curr
         // every frame across the entire quarter.
         // Уцелевшее перекрытие физически закрывает солнце даже при разрезе
         // камерой. Иначе остаются отдельные тени досок над освещённым полом.
-        child.castShadow = !['floor_opening', 'household_floor_rug', 'anomaly'].includes(obj.type) && !child.userData.fireFlame;
+        child.castShadow = !['floor_opening', 'household_floor_rug', 'anomaly'].includes(obj.type)
+            && !child.userData.fireFlame && !child.userData.groundLightPart;
         child.receiveShadow = !['floor_opening', 'anomaly'].includes(obj.type);
         if(child.userData.openingFracture||child.material.userData?.openingFracture){
             child.castShadow=child.receiveShadow=true;
@@ -13288,13 +13432,19 @@ function refreshLocationDarkness(profile = activeLightingProfile, lightOnly = fa
     if (!lightOnly || fogIsActive()) applyFogOfWar();
 }
 
+function isRainBlocker(object) {
+    return object?.type === 'floor' || object?.type === 'roof' || object?.type === 'ceiling';
+}
+
 function addLocationObjectMesh(obj, refreshFog = true, refreshMenu = true) {
     if (locationObjectMeshes.some(mesh => mesh.userData.locationObjectId === obj.id)) return;
     locationBuildingViewsDirty = true;
+    if (affectsFootSurface(obj)) characterFootSurfaces = null;
     const mesh = createLocationObjectMesh(obj);
     tintLocationMesh(mesh, darknessFactorAt(mesh.position.x, mesh.position.z));
     scene.add(mesh);
     locationObjectMeshes.push(mesh);
+    if (isRainBlocker(obj)) locationWeather?.invalidateBlockers();
     mesh.visible = locationLevelVisible(structureLevel(obj), structureBuildingId(obj),
         mesh.position.x, mesh.position.z, obj);
     if (refreshMenu) refreshLocationFloorMenu();
@@ -13304,9 +13454,11 @@ function addLocationObjectMesh(obj, refreshFog = true, refreshMenu = true) {
 function removeLocationObjectMesh(objectId, refreshFog = true) {
     const mesh = locationObjectMeshes.find(item => Number(item.userData.locationObjectId) === Number(objectId));
     if (!mesh) return;
+    if (affectsFootSurface(mesh.userData.locationObject)) characterFootSurfaces = null;
     scene.remove(mesh);
     disposeLocationObject(mesh);
     locationObjectMeshes = locationObjectMeshes.filter(item => item !== mesh);
+    if (isRainBlocker(mesh.userData.locationObject)) locationWeather?.invalidateBlockers();
     locationBuildingViewsDirty = true;
     if (refreshFog) applyFogOfWar();
 }
@@ -13332,7 +13484,7 @@ function getLocationBuildingViews() {
         if (!id || !['floor', 'wall', 'door', 'window'].includes(object.type)) continue;
         const level = structureLevel(object);
         const view = views.get(id) || { minLevel: level, maxLevel: level, plan: null, planLevel: -Infinity,
-            distant: true };
+            distant: true, opacity: 1 };
         view.minLevel = Math.min(view.minLevel, level);
         view.maxLevel = Math.max(view.maxLevel, level);
         if (object.type === 'floor' && level >= view.planLevel) {
@@ -13369,8 +13521,9 @@ function getLocationBuildingViews() {
     if (camera && controls) {
         const distance = camera.position.distanceTo(controls.target);
         for (const view of views.values()) {
-            if (view.plan) view.distant = roofVisibleForCamera(view.plan, controls.target,
-                distance, true, false, camera.position);
+            if (!view.plan) continue;
+            view.opacity = roofOpacityForCamera(view.plan, controls.target, distance, true, false, camera.position);
+            view.distant = view.opacity > 0;
         }
     }
     locationBuildingViews = views;
@@ -13412,6 +13565,27 @@ function locationLevelVisible(level, buildingId, x, z, object = null) {
     if (locationViewLevel < 0) return level <= locationViewLevel
         || object?.type === 'wall' && level < 0 && (object.properties?.exterior_wall === true || object.properties?.building_generation?.version === 1);
     return !view || view.maxLevel === view.minLevel || view.distant || level <= locationViewLevel;
+}
+
+function prepareLocationStoreyFade() {
+    if (!locationStoreyFade || firstPersonView || locationViewLevel < 0) return;
+    const views = getLocationBuildingViews();
+    if (![...views.values()].some(view => view.maxLevel > locationViewLevel && view.maxLevel > view.minLevel
+        && view.opacity > 0 && view.opacity < 1)) return;
+    function prepare(mesh, level, buildingId, covering = false) {
+        if (!mesh.visible || level <= locationViewLevel) return;
+        const view = views.get(buildingId) || locationBuildingAt(mesh.position.x, mesh.position.z);
+        if (view && view.maxLevel > view.minLevel) locationStoreyFade.prepare(mesh, view.opacity, covering);
+    }
+    for (const mesh of locationObjectMeshes) {
+        const object = mesh.userData.locationObject;
+        if (!object) continue;
+        const level = structureLevel(object);
+        prepare(mesh, object.type === 'hatch' && level - 1 === locationViewLevel ? locationViewLevel : level,
+            structureBuildingId(object), object.type === 'roof' || object.type === 'ceiling');
+    }
+    for (const mesh of objectMeshes) prepare(mesh, decorDisplayLevel(mesh.userData.sourceObject), null);
+    for (const entry of characterModels.values()) prepare(entry.model, entry.renderFloorLevel ?? entry.floorLevel ?? 0, null);
 }
 
 function lampDisplayLevel(source) {
@@ -13510,7 +13684,6 @@ export function setLocationViewLevel(level) {
     const next = Math.min(locationFloorCount() - 1, Math.max(locationMinimumLevel(), Math.trunc(Number(level) || 0)));
     if (next === locationViewLevel) return;
     locationViewLevel = next;
-    refreshSniperCoverMarks();
     locationObjectPickCache.key=null;
     hideHighlight();
     if (editorSelection) clearEditorSelection();
@@ -13529,15 +13702,17 @@ export function setLocationViewLevel(level) {
 }
 
 let basementCutaway = null;
+let terrainFlashlightCutaway = null;
+let terrainFlashlightDepth = null;
 let basementContour = null;
 let basementContourSignature = '';
 
-function locationTerrainCutawayFootprints() {
+function locationTerrainCutawayFootprints(level = locationViewLevel) {
     const objects = currentLocationData?.objects || [];
     // The ordinary surface also needs an open mouth above stairs from -1.
-    const floors = objects.filter(o => o.type === 'floor' && structureLevel(o) === locationViewLevel);
+    const floors = objects.filter(o => o.type === 'floor' && structureLevel(o) === level);
     const basementFloors = objects.filter(o => o.type === 'floor' && structureLevel(o) < 0).map(structurePose);
-    return locationViewLevel < 0 ? floors.map(structurePose)
+    return level < 0 ? floors.map(structurePose)
         : objects.filter(o => ['stairs','ladder'].includes(o.type) && structureLevel(o) === -1
             || ['hatch','floor_opening'].includes(o.type) && structureLevel(o) === 0).map(structurePose)
             .filter(p => cutawayContains(basementFloors,p.x,p.z));
@@ -13554,6 +13729,16 @@ function updateStoreyTerrainVisibility() {
     const floors = (currentLocationData.objects || []).filter(o => o.type === 'floor' && structureLevel(o) === locationViewLevel);
     const footprints = locationTerrainCutawayFootprints();
     const changed = basementCutaway.update(footprints);
+    terrainFlashlightCutaway ||= createBasementCutaway(THREE);
+    terrainFlashlightDepth ||= new THREE.MeshDepthMaterial({depthPacking:THREE.RGBADepthPacking, side:THREE.DoubleSide});
+    terrainFlashlightCutaway.attachMaterial(terrainFlashlightDepth);
+    // Фонарю доступны реальные входы в подвал при любом положении камеры.
+    if (terrainFlashlightCutaway.update(locationViewLevel < 0 ? locationTerrainCutawayFootprints(0) : footprints)) {
+        portableLightRenderer?.dirty();
+    }
+    for (const mesh of [locationTileMesh, smoothTerrainMesh]) {
+        if (mesh) mesh.customDepthMaterial = terrainFlashlightDepth;
+    }
     for (const mesh of [groundPlaneMesh, locationTileMesh, waterTileMesh, smoothTerrainMesh,
         terrainSurfaceMesh, waterSurfaceMesh, waterBankMesh, sandBankMesh, waterDetailGroup,
         grassDetailGroup, locationGridMesh, darknessEditorOverlay, ...fogOverlayMeshes.values()]) {
@@ -13636,7 +13821,11 @@ function updateRoofVisibility() {
         mesh.userData.pickRoofOpacity=opacity;
         mesh.traverse(child => {
             if (!child.isMesh) return;
-            child.material.transparent = opacity < 1;
+            const transparent = opacity < 1;
+            if (child.material.transparent !== transparent) {
+                child.material.transparent = transparent;
+                child.material.needsUpdate = true;
+            }
             child.material.opacity = opacity;
             child.visible = opacity > 0;
             child.castShadow = opacity === 1;
@@ -13645,8 +13834,8 @@ function updateRoofVisibility() {
     let floorVisibilityChanged = wasDirty;
     for (const view of views.values()) {
         if (view.maxLevel === view.minLevel || !view.plan) continue;
-        const distant = roofVisibleForCamera(view.plan, controls.target,
-            distance, true, false, camera.position);
+        view.opacity = roofOpacityForCamera(view.plan, controls.target, distance, true, false, camera.position);
+        const distant = view.opacity > 0;
         if (distant !== view.distant) {
             view.distant = distant;
             floorVisibilityChanged = true;
@@ -13660,25 +13849,32 @@ function updateRoofVisibility() {
         roof.userData.roofOpacity = opacity;
         const translucent = opacity > 0 && opacity < 1;
         for (const child of roof.userData.visualMeshes) {
+            const material = child.material;
+            const side = child === roof.userData.visualMeshes[0]
+                ? (translucent ? THREE.FrontSide : THREE.DoubleSide) : material.side;
             child.visible = opacity > 0;
-            child.material.opacity = opacity;
-            child.material.transparent = translucent;
+            material.opacity = opacity;
             // The roof has an inner shell; keep the outer face in depth while fading.
-            child.material.depthWrite = true;
-            if (child === roof.userData.visualMeshes[0]) {
-                child.material.side = translucent ? THREE.FrontSide : THREE.DoubleSide;
+            material.depthWrite = true;
+            if (material.transparent !== translucent || material.side !== side) {
+                material.transparent = translucent;
+                material.side = side;
+                // Непрозрачный вариант шейдера принудительно выводит альфу 1.
+                material.needsUpdate = true;
             }
         }
         for (const child of roof.children) if (child.castShadow) child.visible = opacity === 1;
     }
     if (floorVisibilityChanged) {
-        applyFogOfWar();
+        if (geometryChanged) applyFogOfWar();
+        else applyLocationFloorVisibility();
         updateLocationLampFixtureFloors(lampRenderSources);
     }
 }
 
 
 function rebuildLocationRoofs() {
+    if (roofMeshes.length) locationWeather?.invalidateBlockers();
     for (const roof of roofMeshes) {
         scene?.remove(roof);
         disposeLocationObject(roof);
@@ -13724,6 +13920,7 @@ function rebuildLocationRoofs() {
         scene.add(roof);
         roofMeshes.push(roof);
     }
+    if (roofMeshes.length) locationWeather?.invalidateBlockers();
     locationBuildingViewsDirty = true;
     updateRoofVisibility();
 }
@@ -13745,6 +13942,7 @@ function refreshArchitecturalMeshes(affected = null, alreadyBuilt = new Set()) {
         tintLocationMesh(newMesh, darknessFactorAt(newMesh.position.x, newMesh.position.z));
         scene.add(newMesh);
         locationObjectMeshes[index] = newMesh;
+        if (isRainBlocker(source)) locationWeather?.invalidateBlockers();
     }
     refreshFloorRugHeights();
     rebuildLocationRoofs();
@@ -13766,6 +13964,7 @@ function updateLocationObjectHeight(tileX, tileZ) {
         const ownTile=position.x === tileX && position.y === tileZ,anchorTile=anchor?.x===tileX&&anchor?.z===tileZ;
         if(object.properties?.roof_wall&&(ownTile||anchorTile))roofWallChanged=true;
         if (ownTile || object.properties?.roof_section&&anchorTile) {
+            if (isRainBlocker(object)) locationWeather?.invalidateBlockers();
             mesh.position.y = (object.properties?.roof_section&&anchor?getTileHeight(anchor.x,anchor.z):height)
                 + structureLevelOffset(object) + (object.properties?.roof_section?Number(object.properties.elevation)||0:clampAssetElevation(object.properties?.elevation))
                 - (object.type === 'floor'
@@ -14943,8 +15142,10 @@ async function placeStructureAtTileImpl(x, z, client = null) {
     const roofType = ['assets','building'].includes(window.locationEditorTool)
         ? document.querySelector('[data-placement-roof-type]')?.value
         : document.getElementById('loc-structure-roof-type')?.value;
-    const selectedCoverClass = document.getElementById('loc-structure-cover-class')?.value || 'medium';
+    const manualCoverClass = document.getElementById('loc-structure-cover-class')?.value;
+    const selectedCoverClass = manualCoverClass || placement.properties?.cover_class || 'medium';
     const coverProfile = COVER_CLASS_DEFAULTS[selectedCoverClass] || COVER_CLASS_DEFAULTS.medium;
+    const assetCover = manualCoverClass ? {} : placement.properties || {};
     try {
         const object = await editorCreateObject(window.currentLobbyId, currentLocationId, {
             name: selectedLocationAsset?.label || locationObjectLabel({type:placedType}),
@@ -14967,10 +15168,10 @@ async function placeStructureAtTileImpl(x, z, client = null) {
                 elevation: ['assets','building'].includes(window.locationEditorTool)
                     ? surface?.elevation ?? clampAssetElevation(selectedLocationAsset?.elevation) : 0,
                 cover_class: selectedCoverClass,
-                cover_max_hp: coverProfile.maxHp,
-                cover_hp: coverProfile.maxHp,
-                cover_base_physical_protection: coverProfile.protection,
-                cover_physical_protection: coverProfile.protection,
+                cover_max_hp: assetCover.cover_max_hp ?? coverProfile.maxHp,
+                cover_hp: assetCover.cover_hp ?? assetCover.cover_max_hp ?? coverProfile.maxHp,
+                cover_base_physical_protection: assetCover.cover_base_physical_protection ?? coverProfile.protection,
+                cover_physical_protection: assetCover.cover_physical_protection ?? assetCover.cover_base_physical_protection ?? coverProfile.protection,
                 weight_kg: THROWABLE_OBJECT_WEIGHTS[placedType],
                 interactions: placement.visualAsset === 'opening' ? [] : objectInteractions[placedType] || [],
                 interaction_requirements: (objectInteractions[placedType] || []).reduce((rules, action) => {
@@ -14984,7 +15185,7 @@ async function placeStructureAtTileImpl(x, z, client = null) {
                 ...(isFireObject({ type: placedType }) ? { is_lit: true } : {}),
                 ...(isElectricFixture({ type: placedType }) ? { is_on: true } : {}),
                 passable: selectedLocationAsset?.passable === true || isObjectLightSource({ type: placedType }),
-                cover_enabled: !selectedLocationAsset?.passable && placement.visualAsset !== 'opening'
+                cover_enabled: (!selectedLocationAsset?.passable || /bush|shrub/.test(selectedLocationAsset?.id || '')) && placement.visualAsset !== 'opening'
                     && !isObjectLightSource({ type: placedType }),
             }
         });
@@ -15210,6 +15411,7 @@ export function applyLocationObjectsChange({ location_id, objects = [], deleted_
     if (removed.size && editorSelections.some(s => s.kind === 'structure' && removed.has(Number(s.id)))) clearEditorSelection();
     locationBuildingViewsDirty = true;
     const changed = [...added, ...removedObjects];
+    if (changed.some(isGroundItem)) syncPortableLights();
     const architecture = changed.filter(o => ['floor','wall','door','window','stairs','ladder','hatch','floor_opening','roof','ceiling'].includes(o.type));
     if (architecture.length) queueTrueSightRefresh();
     if (architecture.some(o => o.type === 'floor' || o.type === 'floor_opening')) refreshGroundReliefAtFloors();
@@ -15259,10 +15461,10 @@ export function addLocationObject(object) {
     if (currentLocationData.objects.some(item => String(item.id) === String(object.id))) return;
     currentLocationData.objects.push(object);
     if (['wall', 'door', 'window', 'floor', 'roof', 'ceiling'].includes(object.type)) queueTrueSightRefresh();
-    if(object.type==='ground_item')syncPortableLights();
     if (objectEdit?.phase === 'preview') return;
     const fire = isObjectLightSource(object);
     addLocationObjectMesh(object, !fire);
+    if (isGroundItem(object)) syncPortableLights();
     if (object.type === 'floor' || object.type === 'floor_opening') refreshGroundReliefAtFloors();
     if (object.type === 'floor') { refreshFloorRugHeights(); rebuildLocationGrid(); rebuildGrassDetailMesh(); rebuildLocationRoofs(); }
     if (['wall', 'door', 'window', 'stairs', 'ladder', 'hatch', 'floor_opening'].includes(object.type)) refreshArchitecturalMeshes([object]);
@@ -15288,7 +15490,7 @@ export function removeLocationObject(objectId) {
     if (Number(containerInteractionState?.objectId) === Number(objectId)) closeContainerInteractionMenu();
     removeLocationObjectMesh(objectId, false);
     currentLocationData.objects = (currentLocationData.objects || []).filter(object => Number(object.id) !== Number(objectId));
-    if(removed?.type==='ground_item')syncPortableLights();
+    if (isGroundItem(removed)) syncPortableLights();
     locationBuildingViewsDirty = true;
     refreshLocationFloorMenu();
     if (removed?.type === 'floor' || removed?.type === 'floor_opening') refreshGroundReliefAtFloors();
@@ -15316,10 +15518,10 @@ export function updateLocationObject(object) {
     else currentLocationData.objects[index] = object;
     if (['wall', 'door', 'window', 'floor', 'roof', 'ceiling'].includes(object.type)
         || ['wall', 'door', 'window', 'floor', 'roof', 'ceiling'].includes(previous?.type)) queueTrueSightRefresh();
-    if(object.type==='ground_item')syncPortableLights();
     if (objectEdit?.phase === 'preview') return;
     const fire = isObjectLightSource(object) || isObjectLightSource(previous);
     replaceLocationObjectMesh(object, !fire);
+    if (isGroundItem(object) || isGroundItem(previous)) syncPortableLights();
     if (object.type === 'floor' || previous?.type === 'floor') {
         refreshGroundReliefAtFloors();
         refreshFloorRugHeights();
@@ -17734,6 +17936,8 @@ function* buildLocationStages(data) {
     locationCrowFlight = null;
     portableLightRenderer?.dispose();portableLightRenderer=null;
     basementCutaway?.dispose(); basementCutaway = null;
+    terrainFlashlightCutaway?.dispose(); terrainFlashlightCutaway = null;
+    terrainFlashlightDepth?.dispose(); terrainFlashlightDepth = null;
     basementContour = null; basementContourSignature = '';
     disposeLocationLightField();
     let loadStageAt = performance.now();
@@ -17851,10 +18055,10 @@ function* buildLocationStages(data) {
     // Тайлы
     const tileCount = gridWidth * gridHeight;
     const geometry = new THREE.BoxGeometry(1, 1, 1);
-    const material = new THREE.MeshStandardMaterial();
+    const material = new THREE.MeshStandardMaterial({ shadowSide: THREE.DoubleSide });
     locationTerrainMaterials.apply(material, { sides: true, waterSides: true });
     // The textured terrain cap owns land tops; keep box tops pickable without drawing into depth.
-    const landTopMaterial = new THREE.MeshBasicMaterial({ colorWrite: false, depthWrite: false });
+    const landTopMaterial = new THREE.MeshBasicMaterial({ colorWrite: false, depthWrite: false, shadowSide: THREE.DoubleSide });
     locationTileMesh = new THREE.InstancedMesh(geometry, [
         material, material, landTopMaterial, material, material, material,
     ], tileCount);
@@ -18108,6 +18312,10 @@ function flushPendingTerrainRefresh() {
     pendingTerrainRefresh = null;
     if (!work || !scene || !currentLocationData) return;
     const changed = [...work.changed.values()];
+    if (work.height || work.surface || work.terrainColor) {
+        characterFootSurfaces = null;
+        locationWeather?.invalidateGround();
+    }
     const indices = new Set(changed.map(({ x, z }) => z * currentLocationData.grid_width + x));
     const localSculpt = objectEdit?.phase === 'stroke' && objectEdit.sculpt && work.height;
     if (localSculpt && work.surface) {
@@ -18123,7 +18331,10 @@ function flushPendingTerrainRefresh() {
     if (work.smooth && !localSculpt) rebuildSmoothTerrainMesh(true);
     else if (work.terrainColor) updateSmoothTerrainColors(indices);
     if (work.texture) updateLocationTerrainSurfaceTexture(changed);
-    if (work.surface && !localSculpt) rebuildLocationTerrainSurface(true, true);
+    if (work.surface && !localSculpt) {
+        rebuildLocationTerrainSurface(true, true);
+        portableLightRenderer?.dirty();
+    }
     if (work.water) {
         if (localSculpt) objectEdit.sculpt.water = true;
         else rebuildWaterSurfaceMesh();
@@ -18288,6 +18499,7 @@ function rebuildSmoothTerrainMesh(reuseMaterial = false) {
                 '#include <clipping_planes_fragment>\nif (vTerrainTop > 0.5) discard;');
     };
     smoothTerrainMesh = new THREE.Mesh(geometry, material);
+    smoothTerrainMesh.customDepthMaterial = terrainFlashlightDepth;
     smoothTerrainMesh.frustumCulled = data.positions.length > 0;
     locationTerrainMaterials?.apply(material, { sides: true, smooth: true, waterSides: true });
     smoothTerrainMesh.userData.tileByFace = data.tileByFace;
@@ -19406,6 +19618,10 @@ function setupCharacterDragging() {
             updateStructureMovePreview(e.clientX, e.clientY);
         }
         if (pendingStructureAction && !pendingObjectMoveId) {
+            if (showGrenadeInteractionAtPointer(e.clientX, e.clientY)) {
+                canvas.style.cursor = 'pointer';
+                return;
+            }
             const menuOpen = structureActionMenu?.style.display === 'block';
             const targetCharacterObject = getCharacterAtScreen(e.clientX, e.clientY);
             const targetCharacterId = targetCharacterObject?.userData?.characterId;
@@ -19719,6 +19935,7 @@ function setupCharacterDragging() {
             return;
         }
         clearTerrainClimbTarget();
+        if (pendingStructureAction && showGrenadeInteractionAtPointer(e.clientX, e.clientY)) return;
         const obj = getCharacterAtScreen(e.clientX, e.clientY);
         const locationObject = getLocationObjectAtScreen(e.clientX, e.clientY);
         let charId = obj?.userData?.characterId;
@@ -21222,6 +21439,8 @@ export function destroyLocationScene() {
     locationSceneLoading = false;
     locationRenderBatches?.dispose();
     locationRenderBatches = null;
+    locationStoreyFade?.dispose();
+    locationStoreyFade = null;
     locationShadowPass?.dispose();
     locationShadowPass = null;
     updateRoofVisibility.lastState = null;
@@ -21231,6 +21450,8 @@ export function destroyLocationScene() {
     lampLightingEchoes.reset();
     lampEditTrace = null;
     basementCutaway?.dispose(); basementCutaway = null;
+    terrainFlashlightCutaway?.dispose(); terrainFlashlightCutaway = null;
+    terrainFlashlightDepth?.dispose(); terrainFlashlightDepth = null;
     basementContour = null; basementContourSignature = '';
     disposeLocationLightField();
     houseSceneEpoch++;

@@ -56,8 +56,8 @@ def configure(pair, kind):
     elif kind == 'ampoule':
         effect = None
         name, description = 'Тестовая ампула', 'Ампула. +5 ХП.'
-        application = {'kind': 'self', 'actionPoints': 1}
-        quantity, cost, dc, maximum = 2, 3, 4, 1
+        application = {'kind': 'self', 'actionPoints': 2}
+        quantity, cost, dc, maximum = 2, 4, 4, 1
     else:
         assert kind == 'surgery'
         effect = {'id': 'retry-mangled', 'type': 'mangled_limb', 'area': 'leftLeg', 'source': 'damage'}

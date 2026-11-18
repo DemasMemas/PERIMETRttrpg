@@ -3,16 +3,26 @@ from marshmallow import Schema, fields, post_dump
 class ItemTemplateSchema(Schema):
     @post_dump
     def weapon_compatibility(self, data, **kwargs):
-        from app.services.catalog_descriptions import glove_description
+        from app.services.catalog_descriptions import glove_description, glove_name
         from app.services.weapon_catalog import normalize_template
+        if data.get('category') == 'gloves':
+            data['name'] = glove_name(data['name'])
         gloves = glove_description(data)
         if gloves:
             data['description'] = gloves
         if data.get('category') == 'consumable':
             from app.services.consumable_effects import enrich_imported_consumable
             attributes = data.get('attributes') or {}
-            profile = enrich_imported_consumable(attributes, data.get('description') or '')
+            profile = enrich_imported_consumable(
+                attributes, data.get('description') or '',
+                name=data.get('name'), subcategory=data.get('subcategory'),
+            )
             if profile is not None:
+                if 'addiction' in profile:
+                    from app.services.addictions import resolve_addiction_profile
+                    profile = {**profile, 'addiction': resolve_addiction_profile(
+                        profile, attributes.get('catalog_name') or data.get('name'), data.get('price'),
+                    )}
                 data['attributes'] = {**attributes, 'consumable': profile}
         if data.get('name','').casefold() in {'фонарик','улучшенный фонарик','налобный фонарик','налобный фонарь'} and data.get('category')!='weapon_module':
             from app.services.catalog_descriptions import describe_template

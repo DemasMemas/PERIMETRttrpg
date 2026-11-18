@@ -145,6 +145,7 @@ test('socket echo and POST response add one fire only once', () => {
     const calls = { mesh: 0, light: 0, fog: 0 };
     const context = createSceneContext({
         currentLocationData: { objects: [] }, activeLightingProfile: { dark_tiles: [] },
+        isGroundItem: object => object?.type === 'ground_item',
         isFireObject: object => object.type === 'campfire',
         isObjectLightSource: object => object.type === 'campfire',
         addLocationObjectMesh: () => { calls.mesh++; },

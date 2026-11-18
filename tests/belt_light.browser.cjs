@@ -54,9 +54,15 @@ module.exports=async({page,request,token,lobby,offered,loc,npc,safeSession})=>{
     evidence?.step('Оружие после крепления фонаря', {occupiedHand:'Фонарь'},
         {weapon:saved.data.weapons[0].name,gripHands:armed.current_character.weapon_grip_hands});
     await page.evaluate('window.closeCharacterSheet();true');
-    await page.until("mapAudit.scene.children.some(light=>light.isSpotLight&&Math.abs(light.position.x-49.5)<.1&&Math.abs(light.position.z-50.85)<.1)",'Настоящий луч у персонажа');
-    const visualHeight=await page.evaluate("mapAudit.scene.children.find(light=>light.isSpotLight&&Math.abs(light.position.x-49.5)<.1&&Math.abs(light.position.z-50.85)<.1).position.y");
-    assert.ok(Math.abs(visualHeight-after.current_character.portable_lights.find(s=>s.id===lamp.id).y)<.1,'Высота игрового и видимого света совпадает');
+    const visualBeam = `(()=>{const actor=mapAudit.scene.children.find(o=>o.userData.characterId===${owner.id});
+        const part=actor?.getObjectByName('belt_gear_device_flashlight_belt')?.children.find(mesh=>
+            mesh.material.name==='device_flashlight_belt_emitter');
+        if(!part)return false;
+        part.geometry.computeBoundingBox();
+        const origin=part.localToWorld(part.geometry.boundingBox.getCenter(new T.Vector3()));
+        return mapAudit.scene.children.some(light=>light.isSpotLight&&light.intensity>0&&light.position.distanceTo(origin)<.01);})()`;
+    await page.until(visualBeam,'Начало луча у линзы фонаря на поясе');
+    assert.equal(await page.evaluate(visualBeam),true);
     await shot('belt-light-after-belt.png');
     await page.evaluate('locationControls.object.position.set(46,6,49);locationControls.update();true');
     await shot('belt-light-other-angle.png');

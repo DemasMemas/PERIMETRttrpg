@@ -1,3 +1,4 @@
+import math
 import re
 import uuid
 from copy import deepcopy
@@ -21,6 +22,40 @@ AMMO_SLOT_LIMITS = {
     "9x39": 25,
     "sp4": 25,
 }
+
+
+def inventory_item_volume(item):
+    if not isinstance(item, dict):
+        return math.inf
+    try:
+        volume = float(item.get('volume') or 0)
+        quantity = float(item.get('quantity') if item.get('quantity') is not None else 1)
+    except (TypeError, ValueError):
+        return math.inf
+    if not math.isfinite(volume) or volume < 0 or not math.isfinite(quantity) or quantity < 0:
+        return math.inf
+    total = volume * quantity
+    contents = item.get('contents')
+    if isinstance(contents, list):
+        total += sum(inventory_item_volume(child) for child in contents)
+    return total
+
+
+def store_removed_equipment(data, item):
+    from app.services.character_traits import passive_profile
+
+    inventory = data.setdefault('inventory', {})
+    if not isinstance(inventory.get('pockets'), list):
+        inventory['pockets'] = []
+    pockets = inventory['pockets']
+    if not (data.get('equipment') or {}).get('backpack'):
+        capacity = max(0, 10 + passive_profile(data)['pocket_cells'])
+        if sum(inventory_item_volume(existing) for existing in pockets) + inventory_item_volume(item) <= capacity + 1e-7:
+            pockets.append(item)
+            return
+    if not isinstance(inventory.get('backpack'), list):
+        inventory['backpack'] = []
+    inventory['backpack'].append(item)
 
 
 def normalize_caliber(value):

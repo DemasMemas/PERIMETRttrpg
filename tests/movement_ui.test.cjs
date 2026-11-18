@@ -260,13 +260,42 @@ function movementContext(current = {}) {
         vm.runInContext(source.slice(start, source.indexOf('\n};', start) + 3), context);
     }
     vm.runInContext(functionSource('resolveMovementType'), context);
+    vm.runInContext(functionSource('movementModeChoice'), context);
     vm.runInContext(functionSource('sprinterWalkingMode'), context);
     vm.runInContext(functionSource('getClimbPaymentProfile'), context);
     vm.runInContext(functionSource('getSpecialMovementAvailability'), context);
     vm.runInContext(functionSource('getMovementModeRouteCost'), context);
     vm.runInContext(functionSource('getMovementModeAvailability'), context);
+    vm.runInContext(functionSource('movementModeSummary'), context);
     return context;
 }
+
+test('меню движения показывает фактическую стоимость для Гуся и гусенички', () => {
+    const sitting = movementContext({posture: 'sitting', movement_rules: {goose: true},
+        posture_modifiers: {movement_multiplier: 1, can_run: true}});
+    assert.equal(sitting.movementModeSummary('walk', {}, {posture: 'sitting'}), 'Присев · 1 м = 1 ОП');
+    assert.equal(sitting.movementModeSummary('run', {}, {posture: 'sitting', posture_modifiers: {can_run: true}}), 'Присев · 1 м = 0.5 ОП');
+    assert.equal(sitting.getMovementModeAvailability('run').allowed, true);
+    const prone = movementContext({posture: 'prone', movement_rules: {goose: true},
+        posture_modifiers: {movement_multiplier: 2}});
+    assert.equal(prone.movementModeSummary('walk', {}, {posture: 'prone'}), 'Ползком · 1 м = 2 ОП');
+    assert.equal(prone.getMovementModeAvailability('backward_sideways').remainingDistance, 5);
+});
+
+test('меню Спринтера показывает цену удвоенной ходьбы и обычную цену в экзоскелете', () => {
+    const fast = {posture: 'standing', movement_rules: {sprinter: true}};
+    const ordinary = {summary: '1 м = 1 ОП'};
+    const context = movementContext(fast);
+    for (const mode of ['walk', 'run']) {
+        assert.equal(context.movementModeSummary(mode, ordinary, fast), 'Удвоенная ходьба · 1 м = 0.5 ОП');
+        assert.equal(context.getMovementModeAvailability(mode).remainingDistance, 20);
+        assert.equal(context.getMovementModeAvailability(mode).modeActionPoints, 0);
+    }
+    const exo = {...fast, is_exoskeleton: true};
+    assert.equal(movementContext(exo).movementModeSummary('walk', ordinary, exo), ordinary.summary);
+    assert.equal(movementContext(exo).getMovementModeAvailability('walk').remainingDistance, 10);
+    assert.equal(movementContext(exo).getMovementModeAvailability('run').allowed, false);
+});
 
 test('после срыва бега ходьба использует оставшиеся ОП и исходный лимит без повторной платы ОД',()=>{
     const context=movementContext({movement_mode_this_turn:'walk',movement_distance_this_turn:16,
@@ -299,6 +328,26 @@ test('шаг за спину автоматически получает цен�
     assert.equal(result.movementPoints,2);
     assert.equal(result.remainingDistance,5);
     assert.equal(context.getMovementModeAvailability('run',{path:[[1,1],[1,0]],cost:1,distance:1}).allowed,false);
+});
+
+test('выбранная ходьба принимает смену направления, а боковая корректировка сохраняет свою цену', () => {
+    const context = movementContext({ facing_x: 0, facing_y: 1, movement_mode_this_turn: 'walk',
+        movement_distance_this_turn: 1 });
+    context.combatState.status = 'active';
+    const back = { path: [[1, 1], [1, 0]], cost: 1, distance: 1 };
+    const result = context.getMovementModeAvailability('walk', back);
+    assert.equal(result.allowed, true);
+    assert.equal(result.movementPoints, 2);
+    assert.equal(result.remainingDistance, 4);
+    context.combatState.current_character.movement_mode_this_turn = 'backward_sideways';
+    assert.equal(context.movementModeChoice('backward_sideways'), 'walk');
+    const forward = { ...back, path: [...back.path].reverse() };
+    assert.equal(context.getMovementModeAvailability('walk', forward).allowed, true);
+    assert.equal(context.getMovementModeAvailability('run', forward).allowed, false);
+    const correction = context.getMovementModeAvailability('correction', back);
+    assert.equal(correction.allowed, true);
+    assert.equal(correction.modeFreeActions, 1);
+    assert.equal(correction.movementPoints, 0);
 });
 
 test('диагональ до 45° включительно оплачивается вперёд; за границей — спиной/боком',()=>{
@@ -444,7 +493,7 @@ test('actual sight ray sees a standing head but not a crouching head behind low 
     const lineSource = fs.readFileSync(path.join(__dirname, '../app/static/js/terrainLineOfSight.js'), 'utf8').replace("'./locationTerrain.js'", JSON.stringify(geometryUrl));
     const terrain = await import('data:text/javascript;base64,' + Buffer.from(lineSource).toString('base64'));
     const context = vm.createContext({scoutedCharacters:new Set(), firstPersonView:null,
-        FOG_VIEW_RADIUS: 25, FOG_VIEW_HALF_ANGLE: Math.PI / 3,
+        FOG_VIEW_HALF_ANGLE: Math.PI / 3,
         getTileHeight: () => 1,
         getVisionBlockerHeight: (x, y) => x === 1 && y === 0 ? 2.5 : -Infinity,
         darknessFactorAt: () => 1,
@@ -452,7 +501,7 @@ test('actual sight ray sees a standing head but not a crouching head behind low 
         lightPathOpen: () => true,
         terrainLineHit: terrain.terrainLineHit, terrainOpeningAt: terrain.terrainOpeningAt,
         getVisionObjectIndex: () => ({walls:[],terrainCache:new Map()}),
-        currentLocationData: { objects: [], tiles_data: [[{height:1},{height:1},{height:1}]] },
+        currentLocationData: { sight_range: 25, objects: [], tiles_data: [[{height:1},{height:1},{height:1}]] },
     });
     for (const name of ['visionEyeHeight', 'hasLineOfSight', 'isPointVisibleToPlayer', 'isCharacterVisibleToPlayer']) {
         vm.runInContext(functionSource(name), context);
@@ -491,11 +540,48 @@ test('evasion is an unchecked independent checkbox next to automatic MP conversi
     const input = menu.innerHTML.match(/<input[^>]*id="movement-evasion"[^>]*>/)[0];
     assert.ok(!input.includes('checked'));
     assert.ok(menu.innerHTML.includes('id="movement-gain-op-if-needed"'));
-    assert.equal(buttons.length, 5);
+    assert.deepEqual(buttons.map(button => button.innerHTML.match(/<strong[^>]*>([^<]*)<\/strong>/)[1]),
+        ['Ходьба', 'Корректировка', 'Бег', 'Спринт']);
     buttons.length = 0;
     context.showMovementTypeMenu(1, true);
     assert.match(menu.innerHTML, /id="movement-evasion" checked/);
-    assert.equal(buttons.length, 5);
+    assert.equal(buttons.length, 4);
+});
+
+test('correction keeps the free action until moving even when automatic MP conversion is enabled', async () => {
+    const context = movementContext({ movement_points_current: 0, free_actions_current: 1 });
+    const buttons = [];
+    const options = { appendChild(button) { buttons.push(button); } };
+    const checkbox = { checked: true };
+    const menu = {
+        style: {}, innerHTML: '',
+        querySelector(selector) { return selector === '.movement-type-options' ? options : checkbox; },
+    };
+    const actions = [];
+    const modes = [];
+    Object.assign(context, {
+        ensureMovementTypeMenu: () => menu,
+        movementModeSummary: () => '',
+        closeMovementTypeMenu() {},
+        document: { createElement: () => ({ style: {} }) },
+        findCombatCharacterByCharacterId: () => ({ location_character_id: 9 }),
+        Server: { async performLocationCombatAction(lobbyId, locationId, action) {
+            actions.push(action.action_key);
+            return {};
+        } },
+        window: { currentLobbyId: 1 },
+        getCurrentLocationId: () => 2,
+        beginCharacterMoveMode: (_characterId, mode) => modes.push(mode),
+    });
+    vm.runInContext(functionSource('showMovementTypeMenu'), context);
+    context.showMovementTypeMenu(1);
+    assert.equal(buttons[1].disabled, false);
+    await buttons[1].onclick();
+    assert.deepEqual(actions, []);
+    assert.deepEqual(modes, ['correction']);
+    await buttons[0].onclick();
+    assert.deepEqual(actions, ['convert_free_action_to_movement']);
+    assert.deepEqual(modes, ['correction', 'walk']);
 });
 
 

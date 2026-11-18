@@ -643,7 +643,9 @@ def test_deferred_trap_is_not_created_before_payment_and_replays_once(trap_game,
         'attribute_choice':payload,'item_path':payload['item_path'],'item_id':payload['item_id']})
     assert response.status_code==200 and response.json['pending_action'],response.json
     assert LocationTrap.query.count()==0 and character.data['inventory']['pockets']==before
-    row=db.session.get(DeferredCombatAction,'trap-deferred');assert row.status=='ready'
+    row=db.session.get(DeferredCombatAction,'trap-deferred');assert row.status=='paying'
+    CombatService.end_turn(actor.location_id,pair['actor_user']['id'],actor.id)
+    assert row.status=='ready'
     paid=actor.action_points_current
     resumed=client.post(url,headers=auth_headers(pair['actor_user']),json={
         'location_character_id':actor.id,'action_key':'trap','resume_pending_action_id':row.id,'attribute_choice':{'x':29}})

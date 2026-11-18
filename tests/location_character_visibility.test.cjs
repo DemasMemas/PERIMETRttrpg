@@ -35,7 +35,7 @@ test('осмотр ГМа тоже включает туман и не изме�
 test('Огненная слеза обходит темноту только для своего наблюдателя и сохраняет преграды', () => {
     let open = true;
     const context = vm.createContext({ firstPersonView: null, window: { isGM: false }, gmVisionCharacterId: null, getCurrentUserId: () => 1,
-        FOG_VIEW_RADIUS: 25, FOG_VIEW_HALF_ANGLE: Math.PI / 3, darknessFactorAt: () => .07,
+        currentLocationData: { sight_range: 25 }, FOG_VIEW_HALF_ANGLE: Math.PI / 3, darknessFactorAt: () => .07,
         visionEyeHeight: () => 1.7, hasLineOfSight: () => open });
     vm.runInContext(section('function sourceHasArtifactDaylightVision(', 'function syncArtifactDaylightVision('), context);
     vm.runInContext(section('function isPointVisibleToPlayer(', 'function isTileVisibleToPlayer('), context);
@@ -44,6 +44,8 @@ test('Огненная слеза обходит темноту только д�
     assert.equal(context.isPointVisibleToPlayer(2, 0, 1.7, [own]), true);
     assert.equal(context.isPointVisibleToPlayer(2, 0, 1.7, [ally]), false);
     assert.equal(context.isPointVisibleToPlayer(-2, 0, 1.7, [own]), false);
+    assert.equal(context.isPointVisibleToPlayer(25, 0, 1.7, [own]), true);
+    assert.equal(context.isPointVisibleToPlayer(25.01, 0, 1.7, [own]), false);
     open = false;
     assert.equal(context.isPointVisibleToPlayer(2, 0, 1.7, [own]), false);
 });

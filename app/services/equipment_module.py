@@ -1,6 +1,7 @@
 """Server-authoritative installation of equipment modules."""
 
 from copy import deepcopy
+from itertools import chain
 import re
 from uuid import uuid4
 
@@ -13,10 +14,11 @@ from app.services.character import CharacterService
 from app.services.exceptions import ConflictError, NotFoundError, ValidationError
 from app.services.gas_mask_filters import filter_charges, is_gas_mask_filter
 from app.services.magazine import inventory_slot
+from app.services import power_cells
 from app.services.transaction import atomic_operation
 
 
-SUPPORTED_SLOTS = {"filter", "artifact"}
+SUPPORTED_SLOTS = {"filter", "artifact", "exoskeleton_battery"}
 IDENTITY_FIELDS = ("id", "templateId", "name", "category")
 
 
@@ -63,6 +65,12 @@ def _validate_target(target, slot_type):
         if (target.get("category") != "container" or target.get("quantity", 1) != 1
                 or attrs.get("artifact_container_kind") not in {"storage", "equipped"}):
             raise ValidationError("Выберите отдельный контейнер для артефактов")
+        return
+    if slot_type == 'exoskeleton_battery':
+        from app.services.combat import CombatService
+
+        if target.get('quantity', 1) != 1 or not CombatService._is_exoskeleton_item(target, _template(target)):
+            raise ValidationError('Выберите отдельный экзоскелет')
         return
     installed = target.get("installedModules") or []
     has_installed_slot = any(
@@ -133,11 +141,12 @@ def _artifact_action_details(data, target, details, selection, in_combat):
     return details
 
 
-def _validate_source_path(path):
+def _validate_source_path(path, *, allow_held=False):
     direct_inventory = (
         isinstance(path, list)
         and len(path) >= 3
-        and path[:2] in (["inventory", "pockets"], ["inventory", "backpack"])
+        and path[0] == 'inventory'
+        and (path[1] in ('pockets', 'backpack') or allow_held and path[1] == 'held')
     )
     equipped_pouch = (
         isinstance(path, list)
@@ -160,6 +169,74 @@ def _validate_identity(item, expected, *, label):
         raise ConflictError(f"{label.capitalize()} изменился. Выберите его заново.")
 
 
+def _battery_index(target):
+    return next((index for index, module in enumerate(target.get('installedModules') or [])
+                 if isinstance(module, dict) and power_cells.kind(module) == 'exoskeleton'), None)
+
+
+def battery_replacement_recipient(actor, target_character_id):
+    from app.services.combat import CombatService
+
+    if type(target_character_id) is not int or target_character_id == actor.character_id:
+        raise ValidationError('Выберите другого персонажа в экзоскелете')
+    target = LocationCharacter.query.filter_by(
+        location_id=actor.location_id, character_id=target_character_id,
+    ).first()
+    if not target or not CombatService._is_adjacent(actor, target):
+        raise ValidationError('Для замены батареи нужно находиться рядом с персонажем')
+    if not CombatService._exoskeleton_power_profile(target.character.data)['is_exoskeleton']:
+        raise ValidationError('Персонаж должен быть в экзоскелете')
+    if CombatService.active_combat_placements([target_character_id], exclude_location_id=actor.location_id):
+        raise ValidationError('Персонаж участвует в бою на другой подлокации')
+    return target.character
+
+
+def battery_operation_binding(data, target_path, *, recipient_data=None):
+    from app.services.combat import CombatService
+
+    target = _value_at_path(data if recipient_data is None else recipient_data, target_path, label='экзоскелет')
+    index = _battery_index(target)
+    battery = target['installedModules'][index] if index is not None else {}
+    return {
+        'target': {key: target.get(key) for key in IDENTITY_FIELDS},
+        'battery': battery.get('id') or battery.get('templateId'),
+        'occupied': index is not None,
+        'wearing_exoskeleton': CombatService._exoskeleton_power_profile(data)['is_exoskeleton'],
+    }
+
+
+def _exoskeleton_battery_details(data, target, details, selection, in_combat):
+    from app.services.combat import CombatService
+
+    target_path = details['target_path']
+    if target_path != ['equipment', 'armor']:
+        _validate_source_path(target_path, allow_held=True)
+        inventory_slot(data, target_path)
+    tools = (item for item, _ in CombatService._iter_inventory_items_with_paths(data, include_held=True))
+    belt = (data.get('equipment') or {}).get('belt') or {}
+    tools_on_belt = (item for item in belt.get('installedModules') or []
+                     if isinstance(item, dict) and item.get('slotType') == 'belt_tool')
+    if not any(item.get('category') in {'misc', 'tool'} and item.get('quantity', 1) > 0
+               and str(item.get('name') or '').strip().casefold().replace('ё', 'е') in {'отвертка', 'отвертка саперная'}
+               for item in chain(tools, tools_on_belt)):
+        raise ValidationError('Нужна отвёртка для аккумулятора экзоскелета')
+    if details['operation'] == 'uninstall':
+        if _battery_index(target) is None:
+            raise ValidationError('В экзоскелете нет аккумулятора')
+        return details
+    path = details['item_path']
+    _validate_source_path(path, allow_held=True)
+    parent, index = inventory_slot(data, path)
+    battery = parent[index]
+    _validate_identity(battery, selection.get('source'), label='аккумулятор')
+    if (battery.get('category') != 'exoskeleton_module' or power_cells.kind(battery) != 'exoskeleton'
+            or power_cells.percentage(battery) <= 0 or battery.get('quantity', 1) < 1):
+        raise ValidationError('Выберите заряженный аккумулятор экзоскелета')
+    if in_combat:
+        details['action_points'] = 24 if CombatService._exoskeleton_power_profile(data)['is_exoskeleton'] else 12
+    return details
+
+
 def module_action_details(
     data,
     operation,
@@ -169,15 +246,20 @@ def module_action_details(
     item_path=None,
     selection=None,
     in_combat=False,
+    recipient_data=None,
 ):
     operation = str(operation or "").strip().lower()
     slot_type = str(slot_type or "").strip().lower()
     if operation not in {"install", "uninstall"}:
         raise ValidationError("Неизвестная операция с модулем")
-    target = _value_at_path(data, target_path, label="экипировку")
+    if recipient_data is not None and (slot_type != 'exoskeleton_battery' or operation != 'install'
+                                       or target_path != ['equipment', 'armor']):
+        raise ValidationError('На другом персонаже можно только заменить батарею надетого экзоскелета')
+    target = _value_at_path(data if recipient_data is None else recipient_data, target_path, label="экипировку")
     _validate_target(target, slot_type)
     selection = selection if isinstance(selection, dict) else {}
-    _validate_identity(target, selection.get("target"), label="целевая экипировка")
+    if recipient_data is None:
+        _validate_identity(target, selection.get("target"), label="целевая экипировка")
     details = {
         "operation": operation,
         "slot_type": slot_type,
@@ -188,6 +270,8 @@ def module_action_details(
     }
     if slot_type == "artifact":
         return _artifact_action_details(data, target, details, selection, in_combat)
+    if slot_type == 'exoskeleton_battery':
+        return _exoskeleton_battery_details(data, target, details, selection, in_combat)
     if operation == "uninstall":
         if not any(
             isinstance(module, dict) and module.get("slotType") == slot_type
@@ -246,13 +330,35 @@ def _normalized_filter(source):
     return installed
 
 
-def apply_module_action(data, details):
-    target = _value_at_path(data, details["target_path"], label="экипировку")
+def apply_module_action(data, details, *, recipient_data=None):
+    target_data = data if recipient_data is None else recipient_data
+    target = _value_at_path(target_data, details["target_path"], label="экипировку")
     slot_type = details["slot_type"]
     _validate_target(target, slot_type)
     if slot_type == "artifact":
         return _apply_artifact_action(data, target, details)
     modules = target.setdefault("installedModules", [])
+    if slot_type == 'exoskeleton_battery':
+        from app.services.combat import CombatService
+
+        existing = _battery_index(target)
+        installed = None
+        if details['operation'] == 'install':
+            parent, index = inventory_slot(data, details['item_path'])
+            split = parent[index].get('quantity', 1) > 1
+            installed = CombatService._take_inventory_item(data, details['item_path'], 1)
+            if split or not installed.get('id'):
+                installed['id'] = str(uuid4())
+            installed['slotType'] = slot_type
+            installed.pop('sourcePath', None)
+        removed = modules.pop(existing) if existing is not None else None
+        if removed is not None:
+            target_data.setdefault('inventory', {}).setdefault('backpack', []).append(removed)
+        if installed is not None:
+            modules.append(installed)
+        target['powered'] = installed is not None
+        return {**details, 'installed': deepcopy(installed),
+                ('replaced' if installed is not None else 'removed'): deepcopy(removed)}
     existing_index = next((
         index for index, module in enumerate(modules)
         if isinstance(module, dict) and module.get("slotType") == slot_type
@@ -341,6 +447,21 @@ def change_outside_combat(character_id, user_id, payload):
         raise ValidationError("В бою используйте действие установки модуля с оплатой ОД")
     if type(payload.get("character_revision")) is not int or payload["character_revision"] != character.revision:
         raise ConflictError()
+    recipient = None
+    recipient_data = None
+    if payload.get('target_character_id') is not None:
+        from app.services.combat import CombatService
+
+        if type(payload.get('location_id')) is not int:
+            raise ValidationError('Выберите подлокацию для замены батареи')
+        location = CombatService._get_location(payload['location_id'])
+        is_gm = CombatService._ensure_access(location, user_id)
+        actor = LocationCharacter.query.filter_by(location_id=location.id, character_id=character_id).first()
+        if not actor or not CombatService._can_end_turn_for_character(actor, user_id, is_gm=is_gm):
+            raise ValidationError('Нужен управляемый персонаж на этой подлокации')
+        CombatService.ensure_character_can_act(actor, 'change_equipment_module')
+        recipient = battery_replacement_recipient(actor, payload['target_character_id'])
+        recipient_data = deepcopy(recipient.data)
     data = deepcopy(character.data or {})
     details = module_action_details(
         data,
@@ -349,8 +470,13 @@ def change_outside_combat(character_id, user_id, payload):
         payload.get("slot_type"),
         item_path=payload.get("item_path"),
         selection=payload.get("module_selection"),
+        recipient_data=recipient_data,
     )
-    result = apply_module_action(data, details)
+    result = apply_module_action(data, details, recipient_data=recipient_data)
+    if recipient:
+        recipient.data = recipient_data
+        flag_modified(recipient, 'data')
+        result['target_character_id'] = recipient.id
     character.data = data
     flag_modified(character, "data")
     return character, result

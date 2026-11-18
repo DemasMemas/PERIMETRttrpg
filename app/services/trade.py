@@ -52,7 +52,7 @@ def prepare_offer(data, offer):
     return normalized
 
 
-def prepare_payload(actor, target, payload):
+def prepare_payload(actor, target, payload, *, quote_only=False):
     if not isinstance(payload, dict) or set(payload) - {'actor_offer', 'target_offer', 'actor_money', 'target_money',
                                                        'actor_revision', 'target_revision', 'merchant_mode'}:
         raise ValidationError('Некорректное предложение обмена')
@@ -74,9 +74,10 @@ def prepare_payload(actor, target, payload):
             raise ValidationError('Для торговли обновите листы покупателя и торговца')
         result.update(totals(actor.data or {}, target.data or {}, result['actor_offer'], result['target_offer']))
         result['_merchant'] = True
-    for key, character in (('actor', actor), ('target', target)):
-        if result[f'{key}_money'] > balance(character.data or {}):
-            raise ValidationError('У персонажа недостаточно денег для предложения')
+    if not quote_only:
+        for key, character in (('actor', actor), ('target', target)):
+            if result[f'{key}_money'] > balance(character.data or {}):
+                raise ValidationError('У персонажа недостаточно денег для предложения')
     if not result['actor_offer'] and not result['target_offer'] and not result['actor_money'] and not result['target_money']:
         raise ValidationError('Выберите предметы или сумму для передачи')
     result['_expected_revisions'] = {'actor': actor.revision, 'target': target.revision}

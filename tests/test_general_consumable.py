@@ -178,6 +178,51 @@ def test_hematogen_reduces_actual_severity_once_and_never_below_zero(stage,raw,e
     assert state['difficulty']==5+expected
 
 
+@pytest.mark.parametrize('has_water', [True, False])
+def test_catalog_hematogen_water_penalty_and_bleeding_after_combat_payment(client, pair, auth_headers, has_water):
+    from app.services.character_starting_purchase import item_from_template
+    from app.services.effects import get_bleeding_state
+    from app.services.equipment_catalog import load_catalog
+
+    names = {'Плитка Гематогена', 'Вода'}
+    templates = {entry['name']: ItemTemplate(**entry) for entry in load_catalog() if entry['name'] in names}
+    db.session.add_all(templates.values())
+    db.session.flush()
+    item = item_from_template(templates['Плитка Гематогена'])
+    water = item_from_template(templates['Вода'])
+    actor = pair['actor_character']
+    data = deepcopy(actor.data)
+    data['inventory']['backpack'] = [item, water] if has_water else [item]
+    exhaustion = data['health'].get('exhaustion', 0)
+    data['health']['effects'] = [{'type': 'bleeding_external_severe', 'area': 'leftArm'}]
+    actor.data = data
+    flag_modified(actor, 'data')
+    pair['actor_location'].action_points_current = 20
+    db.session.commit()
+
+    selection = {
+        'source': source(item), 'application': application(), 'target_character_id': actor.id,
+        'server_authoritative': True, 'server_operation': 'general',
+    }
+    cost = minimum_consumable_payment(data, data, selection, actor.lobby_id)['total_action_points']
+    operation = 'combat-hematogen'
+    paid = client.post(f"/lobbies/{actor.lobby_id}/locations/{pair['location'].id}/combat/spend",
+                       headers=auth_headers(pair['actor_user']), json={
+        'location_character_id': pair['actor_location'].id, 'action_points': cost,
+        'allow_deferred': True, 'pending_action_id': operation, 'consumable_selection': selection,
+    })
+    assert paid.status_code == 200, paid.json
+    response = apply_general(client, pair, auth_headers, item, operation=operation, deferred=operation, combat=True)
+    assert response.status_code == 200, response.json
+    data = response.json['data']
+    state = get_bleeding_state(data['health'])
+    assert (state['rawSeverity'], state['totalSeverity']) == (5, 3)
+    assert data['health'].get('exhaustion', 0) == exhaustion + (0 if has_water else 1)
+    assert len(data['inventory']['backpack']) == int(has_water)
+    if has_water:
+        assert data['inventory']['backpack'][0]['uses'] == 2
+
+
 @pytest.mark.parametrize('initial,expected',[(80,30),(20,0)])
 def test_halfblood_removes_half_maximum_infection_not_half_current(initial,expected):
     profile=parse_consumable_effects('Стимулятор "Полукровка". Ампула. Останавливает заражение крови на 3 дня. Снимает 50% Прогресса заражения крови')
@@ -424,6 +469,27 @@ def test_legacy_imported_stimulant_is_enriched_without_writing_catalog(client,pa
     assert view.id==template.id
 
 
+def test_legacy_morphine_uses_current_rules_with_published_catalog_description():
+    from app.services.catalog_descriptions import describe_template
+    from app.services.consumable_effects import enrich_imported_consumable
+
+    raw = 'Ампула. Снижает боль на 3 уровня.'
+    legacy = {'direct': {'application_form': 'injectable'}, 'effects': [
+        {'type': 'delayed_treatment', 'name': 'Морфин: ожидание действия', 'remaining': 1},
+    ]}
+    attributes = {'catalog_name': 'Морфин', 'raw_description': raw, 'consumable': legacy}
+    published = describe_template({'name': 'Морфин', 'category': 'consumable', 'description': raw})
+    profile = enrich_imported_consumable(attributes, published)
+    delays = [effect for effect in profile['effects'] if effect['type'] == 'delayed_treatment']
+    assert len(delays) == 1
+    recurring = next(effect for effect in delays[0]['activate_effects'] if effect['type'] == 'periodic_adjustment')
+    assert recurring['remaining'] == 2
+    assert recurring['adjustments'][0]['delta'] == -3
+    customized = enrich_imported_consumable(attributes, 'Настройки ведущего.')
+    edited = enrich_imported_consumable({**attributes, 'consumable': {**legacy, 'editor_version': 1}}, published)
+    assert customized['effects'] == edited['effects'] == legacy['effects']
+
+
 @pytest.mark.parametrize('name',['Сигареты Тест','Самокрутка','Сигары'])
 @pytest.mark.parametrize('exhaustion',[0,.1,2])
 def test_tobacco_counts_nominal_relief_even_at_zero_exhaustion(client,pair,auth_headers,monkeypatch,name,exhaustion):
@@ -489,7 +555,7 @@ def apply_general(client, pair, auth_headers, item, *, operation="general-1", de
 
 
 @pytest.mark.parametrize('name,radiation,exhaustion', [
-    ('Болотная вода', 10, 2), ('Дождевая вода', 5, 1), ('Радиоактивная вода', 3, 0.5),
+    ('Вода', -1, -0.5), ('Болотная вода', 10, 2), ('Дождевая вода', 5, 1), ('Радиоактивная вода', 3, 0.5),
 ])
 def test_new_water_can_be_drunk_through_game_action(client, pair, auth_headers, name, radiation, exhaustion):
     from app.services.equipment_catalog import load_catalog
@@ -502,24 +568,24 @@ def test_new_water_can_be_drunk_through_game_action(client, pair, auth_headers, 
     item = item_from_template(template)
     data = deepcopy(pair['actor_character'].data)
     data['inventory']['backpack'] = [item]
-    data['health']['radiation'] = 0
-    data['health']['exhaustion'] = 0
+    data['health']['radiation'] = 2
+    data['health']['exhaustion'] = 1
     pair['actor_character'].data = data
     flag_modified(pair['actor_character'], 'data')
     LocationCombatState.query.one().status = 'idle'
     db.session.commit()
     response = apply_general(client, pair, auth_headers, item)
     assert response.status_code == 200, response.json
-    assert response.json['data']['health']['radiation'] == radiation
-    assert response.json['data']['health']['exhaustion'] == exhaustion
+    assert response.json['data']['health']['radiation'] == 2 + radiation
+    assert response.json['data']['health']['exhaustion'] == 1 + exhaustion
     assert response.json['data']['inventory']['backpack'][0]['uses'] == 2
 
 
 @pytest.mark.parametrize('source_radiation,cook_bonus,expected_radiation,expected_exhaustion', [
-    (25, 0, 6.25 / 3, 2.5), (0, 0, 0, 1),
-    (25, 1, 6.25 / 3, 1.5), (0, 1, 0, 0),
+    (25, 0, 6.25, 2.5), (0, 0, 0, 1),
+    (25, 1, 6.25, 1.5), (0, 1, 0, 0), (60, 0, 15, 2.5),
 ])
-def test_cooked_meat_applies_one_third_radiation_and_one_meal(
+def test_cooked_meat_applies_remaining_radiation_per_portion_and_one_meal(
         client, pair, auth_headers, source_radiation, cook_bonus, expected_radiation, expected_exhaustion):
     from app.services.cooked_meat import templates, cooked_output
     from app.services.character_starting_purchase import item_from_template
@@ -856,16 +922,27 @@ def test_delayed_tablet_effect_is_saved_by_server(client, pair, auth_headers):
     assert response.json["data"]["inventory"]["backpack"] == []
 
 
-def test_smoking_consumes_match_and_keeps_lighter(client, pair, auth_headers):
+@pytest.mark.parametrize("name, charges, expected, extra_lighter", [
+    ("Спички", {}, None, False),
+    ("Спички (10 штук)", {}, 9, False),
+    ("Спички (10 штук)", {"maxUses": 10, "uses": 3}, 2, False),
+    ("Спички (10 штук)", {"maxUses": 10, "uses": 1}, None, False),
+    ("Спички (10 штук)", {"maxUses": 10, "uses": 3}, 3, True),
+])
+def test_smoking_consumes_match_and_keeps_lighter(client, pair, auth_headers, name, charges, expected, extra_lighter):
     LocationCombatState.query.one().status = "idle"
     cigarette, _ = install_consumable(
         pair, "Сигареты дешёвые", "Снижение стресса через 5 минут. 20 использований.", quantity=1,
     )
     data = deepcopy(pair["actor_character"].data)
     data["inventory"]["backpack"] = [
-        {"id": "matches", "name": "Спички", "category": "misc", "quantity": 1},
+        {"id": "matches", "name": name, "category": "misc", "quantity": 1, **charges},
         cigarette,
     ]
+    if extra_lighter:
+        data["inventory"]["backpack"].append(
+            {"id": "lighter", "name": "Зажигалка", "category": "misc", "quantity": 1},
+        )
     pair["actor_character"].data = data
     flag_modified(pair["actor_character"], "data")
     db.session.commit()
@@ -882,10 +959,18 @@ def test_smoking_consumes_match_and_keeps_lighter(client, pair, auth_headers):
 
     assert response.status_code == 200, response.json
     inventory = response.json["data"]["inventory"]["backpack"]
-    assert len(inventory) == 1
-    assert inventory[0]["name"] == "Сигареты дешёвые"
-    assert inventory[0]["uses"] == 19
-    assert response.json["consumable_result"]["requirements"]["fire_source"] == "Спички"
+    by_id = {entry["id"]: entry for entry in inventory}
+    assert by_id[cigarette["id"]]["uses"] == 19
+    if expected is None:
+        assert "matches" not in by_id
+    else:
+        assert by_id["matches"]["quantity"] == 1
+        assert by_id["matches"]["maxUses"] == 10
+        assert by_id["matches"]["uses"] == expected
+    if extra_lighter:
+        assert by_id["lighter"]["quantity"] == 1
+    fire_source = response.json["consumable_result"]["requirements"]["fire_source"]
+    assert fire_source == ("Зажигалка" if extra_lighter else name)
 
 
 def test_water_requirement_is_spent_atomically(client, pair, auth_headers):
@@ -1009,8 +1094,40 @@ def test_injectable_cannot_bypass_medicine_route(client, pair, auth_headers):
     assert ConsumableUse.query.count() == 0
 
 
+@pytest.mark.parametrize('storage,retrieval', [('held', 0), ('pockets', 1), ('backpack', 2)])
+@pytest.mark.parametrize(('name', 'description', 'cost'), [
+    ('Вода', '-1 Уровень истощения.', 4),
+    ('Хлеб', 'Закрывает потребность в еде.', 4),
+    ('Анальгин (Таблетка)', 'Снижает боль на 1 уровень.', 2),
+    ('Самокрутка', 'Для использования нужен источник огня.', 50),
+    ('Спирт', 'Не предназначен для внутреннего использования. Используется за 1 ОД.', 1),
+])
+def test_consumption_cost_matches_catalog_and_server(pair, name, description, cost, storage, retrieval):
+    from app.schemas.templates import ItemTemplateSchema
+
+    item, original = install_consumable(pair, name, description, quantity=1)
+    template = db.session.get(ItemTemplate, item['templateId'])
+    public = ItemTemplateSchema().dump(template)
+    assert public['attributes']['consumable']['direct']['action_points_cost'] == cost
+    data = deepcopy(pair['actor_character'].data)
+    data['inventory']['backpack'] = []
+    data['inventory'][storage] = [item]
+    selected = source(item)
+    selected['path'] = ['inventory', storage, 0]
+    payment = minimum_consumable_payment(data, data, {
+        'source': selected, 'application': application(),
+        'server_authoritative': True, 'server_operation': 'general',
+    }, pair['lobby'].id)
+    assert payment['treatment_action_points'] == cost
+    assert payment['retrieval_action_points'] == retrieval
+    assert payment['total_action_points'] == cost + retrieval
+    assert template.attributes['consumable'] == original
+
+
 def test_general_consumable_is_paid_with_backpack_access_in_combat(client, pair, auth_headers):
     item, _ = install_consumable(pair, "Хлеб", "Закрывает потребность в еде.", quantity=1)
+    pair['actor_location'].free_actions_current = 0
+    db.session.commit()
     selection = {
         "source": source(item),
         "application": application(),
@@ -1019,12 +1136,13 @@ def test_general_consumable_is_paid_with_backpack_access_in_combat(client, pair,
         "server_authoritative": True,
         "server_operation": "general",
     }
+    combat_url = f"/lobbies/{pair['lobby'].id}/locations/{pair['location'].id}/combat"
     response = client.post(
-        f"/lobbies/{pair['lobby'].id}/locations/{pair['location'].id}/combat/spend",
+        combat_url + '/spend',
         headers=auth_headers(pair["actor_user"]),
         json={
             "location_character_id": pair["actor_location"].id,
-            "action_points": 2,
+            "action_points": 6,
             "allow_deferred": True,
             "pending_action_id": "general-combat-1",
             "pending_action_label": "Хлеб",
@@ -1033,9 +1151,15 @@ def test_general_consumable_is_paid_with_backpack_access_in_combat(client, pair,
     )
     assert response.status_code == 200, response.json
     row = db.session.get(DeferredCombatAction, "general-combat-1")
-    assert row.status == "ready"
-    assert row.payload["required_action_points"] == 2
+    assert row.status == 'paying' and row.remaining_action_points == 1
+    assert row.payload["required_action_points"] == 6
     assert "medicine_roll" not in row.payload
+    assert pair['actor_character'].data['inventory']['backpack'] == [item]
+    ended = client.post(combat_url + '/end_turn', headers=auth_headers(pair['target_user']), json={
+        'location_character_id': pair['target_location'].id,
+    })
+    assert ended.status_code == 200, ended.get_json()
+    assert db.session.get(DeferredCombatAction, row.id).status == 'ready'
 
     response = apply_general(
         client, pair, auth_headers, item,
@@ -1045,7 +1169,7 @@ def test_general_consumable_is_paid_with_backpack_access_in_combat(client, pair,
     assert response.status_code == 200, response.json
     assert response.json["data"]["inventory"]["backpack"] == []
     assert response.json["data"]["health"]["needs"]["mealsToday"] == 1
-    assert pair["actor_location"].action_points_current == 3
+    assert pair["actor_location"].action_points_current == 4
     assert db.session.get(DeferredCombatAction, row.id).status == "completed"
 
 
@@ -1081,6 +1205,47 @@ def test_general_consumable_rejects_client_underpayment(client, pair, auth_heade
     assert pair["actor_location"].action_points_current == before_ap
     assert db.session.get(DeferredCombatAction, "underpaid-general") is None
     assert pair["actor_character"].data["inventory"]["backpack"][0]["quantity"] == 1
+
+
+@pytest.mark.parametrize('requirements,message', [
+    ({'requires_items': [{'name': 'Реагент', 'quantity': 1}]}, 'Реагент'),
+    ({'requires_water_fraction': 1 / 3}, 'не хватает воды'),
+    ({'requires_fire': True}, 'нужна зажигалка или спичка'),
+])
+def test_general_consumable_missing_prerequisite_is_rejected_before_payment(client, pair, auth_headers, requirements, message):
+    item, profile = install_consumable(pair, 'Проверочный препарат', '-1 Радиации.', quantity=1)
+    template = db.session.get(ItemTemplate, item['templateId'])
+    template.attributes = {**template.attributes, 'consumable': {
+        **profile, 'direct': {**profile['direct'], 'action_points_cost': 2, **requirements},
+    }}
+    actor = pair['actor_location']
+    actor.action_points_current = 2
+    db.session.commit()
+    before = deepcopy(pair['actor_character'].data)
+
+    response = client.post(
+        f"/lobbies/{pair['lobby'].id}/locations/{pair['location'].id}/combat/spend",
+        headers=auth_headers(pair['actor_user']),
+        json={
+            'location_character_id': actor.id,
+            'action_points': 60,
+            'allow_deferred': True,
+            'pending_action_id': 'missing-prerequisite',
+            'consumable_selection': {
+                'source': source(item), 'application': application(),
+                'target_character_id': actor.character_id, 'treatment_request_id': None,
+                'server_authoritative': True, 'server_operation': 'general',
+            },
+        },
+    )
+
+    assert response.status_code == 400, response.json
+    assert message in str(response.json)
+    assert actor.action_points_current == 2
+    after = pair['actor_character'].data
+    assert after['inventory'] == before['inventory']
+    assert not after['health']['combatMeta'].get('pendingAction')
+    assert db.session.get(DeferredCombatAction, 'missing-prerequisite') is None
 
 
 def test_repeated_operation_does_not_apply_or_consume_twice(client, pair, auth_headers):
@@ -1265,6 +1430,19 @@ def test_radiation_ceiling_does_not_apply_to_cigars():
     _apply_profile(health, profile, profile["direct"], {"name": "Переименованные сигары"}, in_combat=False)
 
     assert health["radiation"] == 59
+
+
+def test_painkiller_addiction_rules_apply_to_saved_profiles():
+    from app.services.addictions import addiction_profile, resolve_addiction_profile
+
+    for name in ('Анальгин (Таблетка)', 'Аспирин (Таблетка)', 'Ибупрофен (Таблетка)', 'Бутылёк нашатыря'):
+        assert addiction_profile(name) is None
+        assert resolve_addiction_profile({'addiction': {'key': 'painkiller_stimulants'}}, name) is None
+    for name in ('Миколий', 'Препарат 02'):
+        assert addiction_profile(name)['key'] == 'painkiller_stimulants'
+        saved = {'addiction': {'key': 'regenerative_stimulants', 'chance': 10}}
+        assert resolve_addiction_profile(saved, name)['key'] == 'painkiller_stimulants'
+    assert addiction_profile('Настойка боярышника')['key'] == 'hawthorn'
 
 
 def test_template_addiction_profile_is_used_after_item_rename(client, pair, auth_headers, monkeypatch):

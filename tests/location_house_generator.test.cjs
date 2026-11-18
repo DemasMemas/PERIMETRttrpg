@@ -148,7 +148,8 @@ test('shell roof sections use the saved editable building extent for camera cuta
     context.controls={target:{x:7,y:5,z:8}};
     context.locationObjectMeshes=[{position:{y:8.2},userData:{locationObject:object},traverse:fn=>fn(child)}];
     Object.assign(context,{locationViewLevel:2,locationRoofsVisible:true,editMode:false,locationObjectPickCache:{key:null},
-        updateStoreyTerrainVisibility(){},applyFogOfWar(){},updateLocationLampFixtureFloors(){},lampRenderSources:[]});
+        updateStoreyTerrainVisibility(){},applyFogOfWar(){},applyLocationFloorVisibility(){},
+        updateLocationLampFixtureFloors(){},lampRenderSources:[]});
     const start=scene.indexOf('function updateRoofVisibility(');
     vm.runInContext(scene.slice(start,scene.indexOf('\n}',start)+2),context);
     context.updateRoofVisibility();assert.equal(child.visible,false);

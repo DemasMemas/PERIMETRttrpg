@@ -261,8 +261,16 @@ def test_long_ordinary_consumable_recovers_selection_and_completes_once_after_re
         'location_character_id': pair['actor_location'].id, 'action_points': 10, 'allow_deferred': True,
         'pending_action_id': 's-long', 'pending_action_label': 'Состав', 'consumable_selection': selection})
     assert started.status_code == 200, started.get_json()
+    assert started.json['free_actions_current'] == 1
+    current = client.get(url, headers=auth_headers(pair['actor_user'])).get_json()
+    assert current['current_location_character_id'] == pair['actor_location'].id
     preparation_url = url + '/deferred-consumable/s-long'
     assert client.get(preparation_url, headers=auth_headers(pair['actor_user'])).status_code == 409
+    assert client.get(preparation_url + '?background=1',
+                      headers=auth_headers(pair['actor_user'])).json == {'status': 'waiting'}
+    ended = client.post(url + '/end_turn', headers=auth_headers(pair['actor_user']),
+                        json={'location_character_id': pair['actor_location'].id})
+    assert ended.status_code == 200, ended.get_json()
     for remaining in (8, 3):
         db.session.expire_all()
         row = db.session.get(DeferredCombatAction, 's-long')
@@ -278,6 +286,13 @@ def test_long_ordinary_consumable_recovers_selection_and_completes_once_after_re
         assert actor['deferred_action']['id'] == 's-long'
         assert actor['deferred_action']['status'] == 'paying'
         assert 'selection' not in actor['deferred_action']
+        if remaining == 3:
+            assert recovered.json['current_location_character_id'] == pair['actor_location'].id
+            assert actor['action_points_current'] == 0
+            assert actor['free_actions_current'] > 0 or actor['movement_points_current'] > 0
+            ended = client.post(url + '/end_turn', headers=auth_headers(pair['actor_user']),
+                                json={'location_character_id': pair['actor_location'].id})
+            assert ended.status_code == 200, ended.get_json()
         ended = client.post(url + '/end_turn', headers=auth_headers(pair['target_user']),
                             json={'location_character_id': pair['target_location'].id})
         assert ended.status_code == 200, ended.get_json()

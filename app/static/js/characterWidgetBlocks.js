@@ -58,7 +58,7 @@ export function characterWidgetBlocks(root, data) {
         add(`filters:${key}`, `${title}: автозамена фильтров`, field(`${path}.autoReplaceFilters`)?.closest('label'), extra);
         if (key === 'armor') add('armor-containers', 'Контейнеры брони', group?.querySelector('[data-widget-block="armor-containers"]'), extra);
     });
-    const cosmetics = { headphones: 'Наушники', glasses: 'Очки', gloves: 'Перчатки', jewelry: 'Бижутерия' };
+    const cosmetics = { headphones: 'Наушники', glasses: 'Очки', gloves: 'Перчатки', mask: 'Маски', jewelry: 'Бижутерия' };
     Object.entries(cosmetics).forEach(([key, title]) => {
         const heading = [...(q('[data-equipment-group="cosmetic"]')?.querySelectorAll('h5') || [])].find(element => element.textContent.trim() === title);
         add(`cosmetic:${key}`, title, key === 'jewelry' ? heading?.parentElement : heading?.parentElement.parentElement,
@@ -78,7 +78,6 @@ export function characterWidgetBlocks(root, data) {
         add('inventory-item', item.name || 'Предмет', element, extra);
     });
     add('money', 'Деньги', field('inventory.money')?.parentElement);
-    add('notes', 'Заметки', q('#sheet-tab-notes'));
     return result;
 }
 

@@ -109,6 +109,8 @@ async function harness(tiles, objects = [], kinds = ['low']) {
         scene: new Object3D(),
         grassDetailGroup: null, naturalGrassBuild: null, naturalGrassAssets: assets,
         locationWaterProfiles: null,
+        locationWeather: null,
+        portableLightRenderer: null,
         normalizeWaterProfile: water.normalizeWaterProfile,
         resolvedLightingProfile: null,
         addNaturalSwampModels() {},

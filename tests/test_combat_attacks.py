@@ -1801,6 +1801,24 @@ def test_prone_target_grants_melee_advantage():
     assert profile["advantage"] is True
 
 
+@pytest.mark.parametrize(('charge_days', 'advantage'), [(0, True), (1, False)])
+def test_exoskeleton_grants_melee_advantage_only_without_power(charge_days, advantage):
+    attacker = SimpleNamespace(pos_x=5, pos_y=6)
+    target = SimpleNamespace(
+        pos_x=5, pos_y=5, facing_x=0, facing_y=1, posture='standing',
+        character=SimpleNamespace(data={'equipment': {'armor': {
+            'isExoskeleton': True,
+            'installedModules': [{'slotType': 'exoskeleton_battery',
+                                  'attributes': {'remaining_days': charge_days}}],
+        }}}),
+    )
+
+    profile = CombatService._melee_target_profile(attacker, target, melee_bonus=0)
+
+    assert profile['advantage'] is advantage
+    assert profile['automatic_hit'] is False
+
+
 def test_melee_attack_automatically_hits_unconscious_target(monkeypatch):
     monkeypatch.setattr(
         CombatService,
@@ -2094,7 +2112,7 @@ def test_penetrated_cover_hits_nearest_target_without_another_accuracy_check(mon
     assert resolved["details"]["shooting_disadvantage"] is False
     assert resolved["details"]["automatic_firearm_hit"] is True
     assert resolved["kwargs"]["forced_roll"] == 20
-    assert resolved["kwargs"]["profile_override"]["armor_piercing"] == 20
+    assert resolved["kwargs"]["profile_override"]["armor_piercing"] == pytest.approx(30)
     assert "aimed_zone" not in resolved["kwargs"]
     assert result["automatic_cover_hit"] is True
     assert result["roll"] == 20
@@ -3497,6 +3515,25 @@ def test_damage_adds_stress_once_per_round_and_pain_from_round_total(monkeypatch
     assert health["painLevel"] == 1
 
 
+def test_hit_does_not_add_stress_to_character_already_in_pain_shock(monkeypatch):
+    monkeypatch.setattr(combat_module, "flag_modified", lambda *args, **kwargs: None)
+    monkeypatch.setattr(combat_module.random, "randint", lambda start, end: 1)
+    character = SimpleNamespace(data={"health": {
+        "current": 700,
+        "max": 700,
+        "painLevel": 10,
+        "stress": 2,
+        "zones": {"chest": {"current": 150, "max": 150}},
+        "effects": [{"type": "shock"}, {"type": "pain", "value": 10}],
+    }})
+    target = SimpleNamespace(character=character, hp_zones={})
+
+    CombatService._apply_attack_damage(target, 25, "chest", {"bleeding": ""}, round_number=3)
+
+    assert character.data["health"]["zones"]["chest"]["current"] == 125
+    assert character.data["health"]["stress"] == 2
+
+
 def test_disabling_arm_adds_zone_pain_only_once(monkeypatch):
     monkeypatch.setattr(combat_module, "flag_modified", lambda *args, **kwargs: None)
     monkeypatch.setattr(combat_module.random, "randint", lambda start, end: 1)
@@ -3807,7 +3844,7 @@ def test_non_blocking_jam_penalty_applies_to_next_attack_roll(monkeypatch):
     assert attack_details["shot_count"] == 2
 
 
-def test_machine_gun_burst_difficulty_increases_every_two_shots(monkeypatch):
+def test_machine_gun_burst_difficulty_increases_by_half_per_shot(monkeypatch):
     observed_difficulties = []
 
     def resolve_attack(_target, _attacker, details, **_kwargs):
@@ -3833,12 +3870,12 @@ def test_machine_gun_burst_difficulty_increases_every_two_shots(monkeypatch):
         [SimpleNamespace()], attacker, attack_details,
     )
 
-    assert observed_difficulties == [10, 10, 11, 11, 12, 12]
+    assert observed_difficulties == [10, 10.5, 11, 11.5, 12, 12.5]
 
 
 @pytest.mark.parametrize('machine_gun,shots,expected',[
     (False,3,[10,12,12]),
-    (True,8,[10,10,10,10,10,10,11,11]),
+    (True,8,[10,10,10,10,10,10.5,11,11.5]),
 ])
 def test_iron_grip_reduces_real_burst_penalty(monkeypatch,machine_gun,shots,expected):
     from app.services.equipment_modifications import make_record

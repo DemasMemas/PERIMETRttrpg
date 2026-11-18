@@ -15,10 +15,11 @@ def eligible(template):
     if retired_catalog_template(template):return False
     category=template.category
     attrs=template.attributes or {}
-    if attrs.get('craft_only') or 'price' in (attrs.get('unspecified_fields') or []):return False
+    if attrs.get('not_for_sale') or attrs.get('craft_only') or 'price' in (attrs.get('unspecified_fields') or []):
+        return False
     if category=='gas_mask_module':
         from app.services.gas_mask_filters import is_gas_mask_filter
-        return not attrs.get('not_for_sale') and is_gas_mask_filter({
+        return is_gas_mask_filter({
             'category':category, 'subcategory':template.subcategory, 'attributes':attrs})
     if category.endswith('_module') or category in {'modification','artifact','background','special_trait'}:
         return False
@@ -29,7 +30,7 @@ def eligible(template):
         return variant in {'','base','standard','обычный','обычная','базовый','базовая'}
     if category=='melee_weapon':
         return True  # У оружия ближнего боя в авторском каталоге нет класса предмета.
-    if category in {'headphones','glasses','gloves','jewelry','backpack','vest','belt','pouch','magazine','food','other','misc'}:
+    if category in {'headphones','glasses','gloves','mask','jewelry','backpack','vest','belt','pouch','magazine','food','other','misc'}:
         return True
     section=_text(attrs.get('section') or template.subcategory)
     if category=='consumable' and section in {'еда','продукты','продукты питания','пища','прочее'}:
@@ -60,9 +61,10 @@ def catalog():
 
 
 def item_from_template(template,quantity=1):
-    from app.services.catalog_descriptions import glove_description
+    from app.services.catalog_descriptions import glove_description, glove_name
     attrs=deepcopy(template.attributes or {})
-    item={**attrs,'id':uuid.uuid4().hex,'templateId':template.id,'name':template.name,
+    name=glove_name(template.name) if template.category=='gloves' else template.name
+    item={**attrs,'id':uuid.uuid4().hex,'templateId':template.id,'name':name,
           'category':template.category,'subcategory':template.subcategory,'itemClass':template.item_class,
           'description':template.description,'price':template.price or 0,'weight':template.weight or 0,
           'volume':0 if attrs.get('book_kind') else template.volume or 0,'quantity':quantity,'attributes':attrs,
@@ -76,7 +78,7 @@ def item_from_template(template,quantity=1):
         item['pouches'] = deepcopy(attrs['pouches'])
     if attrs.get('uses') is not None:item.update(uses=attrs['uses'],maxUses=attrs['uses'])
     if attrs.get('flamethrower_tank'):item['uses']=attrs.get('uses_remaining',attrs['uses'])
-    if template.category in {'weapon','melee_weapon','armor','helmet','gas_mask'}:
+    if template.category in {'weapon','melee_weapon','armor','helmet','gas_mask','mask'}:
         maximum=attrs.get('max_durability',100)
         item.update(durability=maximum,maxDurability=maximum)
     if template.category in {'weapon','melee_weapon'}:

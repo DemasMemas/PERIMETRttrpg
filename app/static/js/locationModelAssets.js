@@ -109,10 +109,17 @@ export function cloneSkeletons(source, model) {
 }
 
 function makeInstance(source, asset, dimensions, mount) {
-    const nodeName = asset.visual.modelNode;
+    const visual = asset.visual;
+    const nodeName = visual.modelNode;
     const root = nodeName ? source.getObjectByName(nodeName) : source;
     if (!root) throw new Error(`GLB has no node ${nodeName}: ${asset.visual.modelPath}`);
-    const model = root.clone(true);
+    const model = visual.bindPose ? new THREE.Group() : root.clone(true);
+    if (visual.bindPose) {
+        // Детали снаряжения уже записаны в координатах позы привязки.
+        root.traverse(child => {
+            if (child.isSkinnedMesh) model.add(new THREE.Mesh(child.geometry, child.material));
+        });
+    }
     if (asset.visual.authoredHeight) mount.skeletons = cloneSkeletons(root, model);
     const instanceMaterials = new Map();
     model.traverse(child => {
@@ -129,8 +136,8 @@ function makeInstance(source, asset, dimensions, mount) {
                 asset.visual.shadowExcludedMaterials.includes(material.name)) };
         }
     });
-    const visual = asset.visual;
     model.rotation.y = Number(visual.orientation || 0);
+    if (visual.bindPose) model.rotation.x = visual.restTilt || 0;
     const oriented = new THREE.Group();
     oriented.add(model);
     const container = new THREE.Group();
@@ -145,6 +152,11 @@ function makeInstance(source, asset, dimensions, mount) {
     const bounds = new THREE.Box3().setFromObject(boundsRoot, Boolean(visual.groundContactRatio));
     const size = bounds.getSize(new THREE.Vector3());
     if (size.x <= 0 || size.y <= 0 || size.z <= 0) throw new Error(`GLB has empty bounds: ${visual.modelPath}`);
+    if (visual.bindPose) {
+        const center = bounds.getCenter(new THREE.Vector3());
+        oriented.position.set(-center.x, -bounds.min.y, -center.z);
+        return container;
+    }
     const base = asset.dimensions || [1, 1, 1];
     const display = visual.visualDimensions || base;
     const width = dimensions.width * display[0] / base[0];

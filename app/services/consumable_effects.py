@@ -187,14 +187,84 @@ def normalize_owl_modifiers(character_data):
             modifiers.append({**example,'stat':stat,'value':value,'note':{'darkness_awareness':'Внимательность в темноте без ПНВ','darkness_accuracy':'Точность в темноте без ПНВ','light_awareness':'Внимательность на свету'}[stat]})
 
 
-def enrich_imported_consumable(attributes, description):
-    """Дополнить старый импорт без записи каталога и без замены настроенных значений."""
+def _with_consumption_cost(profile, name, section, description):
+    direct = profile.get('direct') if isinstance(profile, dict) else None
+    if not isinstance(direct, dict):
+        return profile
+    name = str(name or '').strip().casefold()
+    if (name == 'плитка гематогена' and not profile.get('editor_version')
+            and direct.get('exhaustion_if_no_water')):
+        direct = dict(direct)
+        direct.pop('exhaustion_delta', None)
+        profile = {**profile, 'direct': direct, 'effects': [
+            effect for effect in profile.get('effects') or []
+            if effect.get('type') != 'exhaustion'
+            and not (effect.get('source') == 'direct'
+                     and str(effect.get('name') or '').startswith('Истощение '))
+        ]}
+    section = str(section or '').strip().casefold()
+    injectable = direct.get('application_form') == 'injectable'
+    ampoule = injectable and not direct.get('requires_infusion_tool') and name != 'капельница'
+    if ampoule or direct.get('fracture_splint'):
+        base_cost = direct.get('treatment_action_points')
+        if base_cost is None:
+            base_cost = direct.get('action_points_cost')
+        if base_cost is None:
+            base_cost = 2 if ampoule else 6
+        return {**profile, 'direct': {**direct, 'treatment_action_points': base_cost}}
+    if injectable:
+        return profile
+    if direct.get('requires_fire'):
+        cost = 50
+    elif re.search(r'\bтаблетк[аи]\b', name):
+        cost = 2
+    elif not direct.get('wound_treatment') and (
+        section in {'продукты', 'еда', 'напитки'}
+        or direct.get('water_source') or direct.get('satisfy_water')
+        or direct.get('is_alcohol') or direct.get('satisfy_food')
+        or direct.get('nutrition') is not None or 'настойка' in name
+        or 'действием попить' in description.casefold()
+    ):
+        cost = 4
+    else:
+        return profile
+    return {**profile, 'direct': {**direct, 'action_points_cost': cost}}
+
+
+def enrich_imported_consumable(attributes, description, *, name=None, subcategory=None):
+    """Дополнить старый импорт и применить общие цены действий без записи каталога."""
     from copy import deepcopy
+    from app.services.catalog_descriptions import describe_template
+
     current = attributes.get('consumable')
-    if (not isinstance(current, dict) or current.get('editor_version') or not attributes.get('catalog_name')
-            or attributes.get('raw_description') != description):
-        return current
-    parsed = parse_consumable_effects(str(attributes['catalog_name']) + '. ' + str(description or ''))
+    imported_name = attributes.get('catalog_name')
+    catalog_name = imported_name or name
+    section = attributes.get('section') or subcategory
+    raw_description = attributes.get('raw_description')
+    official_description = raw_description == description
+    if imported_name and raw_description and not official_description:
+        official_description = description == describe_template({
+            'name': imported_name, 'category': 'consumable',
+            'description': raw_description, 'attributes': attributes,
+        })
+    if not isinstance(current, dict) or current.get('editor_version') or not imported_name or not official_description:
+        direct = current.get('direct') if isinstance(current, dict) else None
+        if (str(attributes.get('catalog_name') or '').strip().casefold() in {
+                'бинт', 'стерильный бинт', 'жгут', 'жгут турникет', 'жгут альфа', 'антисептический тампон',
+        }
+                and isinstance(direct, dict) and not current.get('editor_version') and direct.get('applications')
+                and direct.get('treatment_action_points') is None and direct.get('action_points_cost') is None):
+            # Старые шаблоны могут хранить цену только в варианте лечения.
+            # Берём только актуальную цену, сохраняя правила самого шаблона.
+            parsed = parse_consumable_effects(f'{catalog_name}.')['direct']
+            current = {**current, 'direct': {
+                **direct,
+                'treatment_action_points': parsed['treatment_action_points'],
+                'treatment_time_uses_medicine': parsed['treatment_time_uses_medicine'],
+            }}
+        return _with_consumption_cost(current, catalog_name, section, description)
+    description = raw_description or description or ''
+    parsed = parse_consumable_effects(f'{imported_name}. {description}')
     result = deepcopy(current)
     old_direct = result.get('direct') or {}
     structural = {'duration','duration_phase','medical_difficulty','application_form','uses'}
@@ -228,6 +298,8 @@ def enrich_imported_consumable(attributes, description):
         result['direct']['infection_delta']=-50
     if name=='морфин':
         result['effects']=[effect for effect in result.get('effects') or [] if effect.get('type')!='delayed_treatment']
+    if name == 'регенеративный стимулятор звезда':
+        result['direct']['exhaustion_delta'] = parsed['direct']['exhaustion_delta']
     # Уточнения автора к официальному каталогу; пользовательские профили выше исключены.
     periodic_corrections = {
         'борщевик': ('intoxication_delta', {'intoxication', 'periodic_adjustment'}),
@@ -267,7 +339,7 @@ def enrich_imported_consumable(attributes, description):
                 result[field].append(deepcopy(entry))
     result, _ = correct_owl_profile(result, result['direct'], attributes['catalog_name'])
     result['catalog_rules_version'] = '2026-11-04-duration'
-    return result
+    return _with_consumption_cost(result, catalog_name, section, description)
 
 
 def _effect(effect_type: str, value: Any = 0, *, remaining: Optional[int] = None, tick: str = "manual", **extra: Any) -> Dict[str, Any]:
@@ -399,6 +471,8 @@ def parse_consumable_effects(description: str) -> Dict[str, Any]:
         profile["direct"]["bleeding_modifier_scope"] = "combat"
         profile["direct"]["requires_water_fraction"] = 1 / 3
         profile["direct"]["exhaustion_if_no_water"] = 1
+        profile["direct"].pop("exhaustion_delta", None)
+        profile["effects"] = [effect for effect in profile["effects"] if effect.get("type") != "exhaustion"]
         profile["notes"].append("hematogen_bleeding_reduction")
     if re.search(r"выход\w* из болевого шока", lower) and "не тратится" in lower:
         profile["direct"]["will_shock_bonus"] = 2

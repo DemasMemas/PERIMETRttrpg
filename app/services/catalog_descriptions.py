@@ -28,6 +28,22 @@ def _name(value):
     return re.sub(r'["«»]', '', str(value or '')).strip().casefold()
 
 
+_GLOVE_NAMES = {
+    'медицинские': 'Медицинские перчатки',
+    'рабочие': 'Рабочие перчатки',
+    'кожаные': 'Кожаные перчатки',
+    'без пальцев': 'Перчатки без пальцев',
+    'военные': 'Военные перчатки',
+    'военные м2': 'Военные перчатки М2',
+}
+
+
+def glove_name(name):
+    key = _name(name)
+    key = re.sub(r'^перчатки\s+|\s+перчатки(?=\s+м2$|$)', ' ', key).strip()
+    return _GLOVE_NAMES.get(' '.join(key.split()), name)
+
+
 def clean_description(value):
     value = re.sub(r'\s+', ' ', str(value or '')).strip()
     if value.casefold() in {'нет', '-', '---'}:
@@ -50,10 +66,14 @@ def clean_description(value):
 def glove_description(item):
     if item.get('category') != 'gloves':
         return None
-    name = _name(item.get('name'))
+    name = _name(glove_name(item.get('name')))
+    if name == 'медицинские перчатки':
+        return ('Пока вы носите стерильные перчатки, шанс заражения крови пациента при лечении уменьшается вдвое. '
+                'Стерильности хватает на час ношения. Для обработки нужна одна порция спирта или водки. '
+                'Обработка в бою стоит 3 ОД.')
     if name == 'обвязки на руки':
         return 'Обвязки усиливают удары руками. Урон удара равен 15 × бонус Силы, минимум 25.'
-    if name in {'военные м2', 'военные перчатки м2', 'перчатки военные м2'}:
+    if name == 'военные перчатки м2':
         return 'Пока перчатки надеты, дают +5% к аномальной защите и +1 к броскам Харизмы.'
     return None
 
@@ -126,7 +146,7 @@ def describe_template(item):
         clauses.append('Разгрузка с креплением для подавача.')
     elif category == 'glasses' and not original:
         clauses.append('Снижает получаемое ослепление.')
-    elif category in {'armor', 'helmet'}:
+    elif category in {'armor', 'helmet', 'mask'}:
         names = {'face': 'лицо', 'eyes': 'глаза', 'ears': 'уши', 'head': 'голова', 'crown': 'темя',
                  'forehead': 'лоб', 'back': 'затылок', 'back_head': 'затылок', 'nape': 'затылок',
                  'torso': 'торс', 'arms': 'руки', 'legs': 'ноги'}

@@ -20,11 +20,15 @@ from app.services.character_interaction import CharacterInteractionService
 from app.services.consumable_use import apply_consumable_use, validate_consumable_use
 from app.services.consumable_effects import with_darkness_modifiers
 from app.services.deferred_consumable import claim_completion, finish_completion
-from app.services.effects import apply_effect_to_health, normalize_effect_list, sync_health_derived_statuses
+from app.services.effects import (
+    active_tourniquet_areas, apply_effect_to_health, bleeding_is_suppressed,
+    normalize_effect_list, sync_health_derived_statuses,
+)
 from app.services.exceptions import ConflictError, NotFoundError, PermissionDenied, ValidationError
 from app.services.inventory_access import calculate_inventory_access
 from app.services.item_template_lookup import resolve_item_template
 from app.services.magazine import inventory_slot
+from app.services.tool_charges import remaining_tool_charges, spend_tool_charge
 from app.services.transaction import atomic_operation
 
 
@@ -49,40 +53,31 @@ def _scissors_medicine_bonus(actor_data, lobby_id, profile):
     return 0
 
 
-def _doctor_tools_medicine_bonus(actor_data, lobby_id, direct):
-    if direct.get('application_form') == 'injectable' or direct.get('medical_difficulty') is not None:
-        return 0
+def _find_medical_tools(actor_data, lobby_id, name):
+    from app.services.belt_attachments import accessible
     from app.services.portable_lights import walk
     for path, item in walk(actor_data, True):
-        from app.services.belt_attachments import accessible
+        if item.get('name') != name or item.get('category') != 'tool':
+            continue
         if path[:2] not in (['inventory', 'pockets'], ['inventory', 'backpack']) and not accessible(actor_data,path,item):
             continue
         template = resolve_item_template(item, lobby_id)
-        if not (template and template.name == 'Набор инструментов Врача 50/50'
-                and template.category == 'tool' and item.get('name') == template.name
-                and item.get('category') == template.category):
+        if not template or template.name != name or template.category != 'tool':
             continue
-        uses = item.get('uses', item.get('maxUses', (template.attributes or {}).get('uses', 0)))
-        if isinstance(uses, (int, float)) and uses > 0:
-            return 2
-    return 0
+        charges = remaining_tool_charges(item, (template.attributes or {}).get('uses', 0))
+        if charges:
+            return item, charges
+    return None
 
 
-def _surgeon_tools_available(actor_data, lobby_id):
-    from app.services.portable_lights import walk
-    for path, item in walk(actor_data, True):
-        from app.services.belt_attachments import accessible
-        if path[:2] not in (['inventory', 'pockets'], ['inventory', 'backpack']) and not accessible(actor_data,path,item):
-            continue
-        template = resolve_item_template(item, lobby_id)
-        if not (template and template.name == 'Набор инструментов Хирурга 30/30'
-                and template.category == 'tool' and item.get('name') == template.name
-                and item.get('category') == template.category):
-            continue
-        uses = item.get('uses', item.get('maxUses', (template.attributes or {}).get('uses', 0)))
-        if isinstance(uses, (int, float)) and uses > 0:
-            return True
-    return False
+def _doctor_tools(actor_data, lobby_id, direct):
+    if direct.get('application_form') == 'injectable' and not direct.get('requires_infusion_tool'):
+        return None
+    return _find_medical_tools(actor_data, lobby_id, 'Набор инструментов Врача 50/50')
+
+
+def _surgeon_tools(actor_data, lobby_id):
+    return _find_medical_tools(actor_data, lobby_id, 'Набор инструментов Хирурга 30/30')
 MINOR_RESTORABLE_PARTS = {'nose', 'jaw', 'leftEar', 'rightEar', 'ear'}
 GENERIC_MEDICAL_BLOCKED_FIELDS = {
     'applications', 'requires_injury', 'target_body_part', 'target_required',
@@ -111,7 +106,10 @@ def _profile(item, lobby_id=None):
     attributes = template.attributes if isinstance(template.attributes, dict) else {}
     consumable = attributes.get('consumable')
     from app.services.consumable_effects import enrich_imported_consumable
-    enriched = enrich_imported_consumable(attributes, template.description or '')
+    enriched = enrich_imported_consumable(
+        attributes, template.description or '',
+        name=template.name, subcategory=template.subcategory,
+    )
     if enriched != consumable:
         class TemplateView:
             def __init__(self, original, profile):
@@ -148,7 +146,8 @@ def _selected_effect(health, selected):
     effect = next((entry for entry in health.get('effects', []) if _same_effect(entry, selected)), None)
     if not effect:
         raise ConflictError('Выбранная травма изменилась или уже вылечена')
-    if effect.get('closed') or effect.get('suppressed') or effect.get('active') is False:
+    if (effect.get('closed') or effect.get('active') is False
+            or bleeding_is_suppressed(effect, active_tourniquet_areas(health.get('effects')))):
         raise ConflictError('Выбранная травма уже не активна')
     return effect
 
@@ -806,7 +805,8 @@ def _apply_temporary_limb_effects(health, direct, item):
 
 def _apply_success(
         health, direct, application, item, *, profile=None, in_combat=False,
-        infusion_bonus=0, actor_data=None, procedure_context=None,recipient_data=None):
+        infusion_bonus=0, actor_data=None, procedure_context=None, recipient_data=None,
+        extra_bleeding_rank=0):
     if application.get('kind') == 'blood_type_test':
         if application.get('target') == 'packet':
             packet = (procedure_context or {}).get('blood_packet')
@@ -897,10 +897,10 @@ def _apply_success(
     selected = application.get('effect')
     if application.get('kind') == 'bleeding':
         effect = _selected_effect(health, selected)
-        treatment, result_stage, bleeding = _bleeding_outcome(
-            effect, _canonical_bleeding_application(direct, application),direct.get('bleeding_rank_bonus',0),
-        )
         canonical = _canonical_bleeding_application(direct, application)
+        treatment, result_stage, bleeding = _bleeding_outcome(
+            effect, canonical, direct.get('bleeding_rank_bonus', 0) + extra_bleeding_rank,
+        )
         if treatment == 'weaken':
             effect['type'] = f"bleeding_{bleeding['kind']}_{result_stage}"
             effect['name'] = f"Кровотечение {result_stage}"
@@ -908,18 +908,15 @@ def _apply_success(
             effect['suppressed'] = False
         else:
             health['effects'] = [entry for entry in health.get('effects', []) if entry is not effect]
-            if not canonical.get('treated'):
+            if bleeding['kind'] == 'external' and not canonical.get('treated'):
                 apply_effect_to_health(health, {
                     'type': 'untreated_wound', 'name': 'Необработанная рана',
                     'area': effect.get('area'), 'source': effect.get('id') or effect.get('source') or item.get('name'),
                     'tick': 'manual',
                 })
         if direct.get('tourniquet'):
-            for entry in health.get('effects', []):
-                if _bleeding(entry) and entry.get('area') == effect.get('area'):
-                    entry['suppressed'] = True
             apply_effect_to_health(health, {
-                'type': 'tourniquet', 'name': f"Жгут: {effect.get('area')}",
+                'type': 'tourniquet', 'name': 'Наложен жгут',
                 'area': effect.get('area'), 'source': _consumable_effect_source(item), 'tick': 'manual',
             })
         return {'kind': 'bleeding', 'mode': treatment, 'result_stage': result_stage,
@@ -1100,19 +1097,114 @@ def _apply_success(
             'remaining_turns': turns}
 
 
+def _medical_characters(user_id, actor_id, payload):
+    if not isinstance(payload, dict):
+        raise ValidationError('Некорректные параметры процедуры')
+    actor = db.session.get(LobbyCharacter, actor_id)
+    target_id = payload.get('target_character_id', actor_id)
+    target = db.session.get(LobbyCharacter, target_id) if type(target_id) is int else None
+    if not actor or not target or actor.lobby_id != target.lobby_id:
+        raise NotFoundError('Врач или пациент не найден')
+    CharacterService.check_access(actor, user_id, edit=True)
+    return actor, target
+
+
+def _prepared_medical_item(actor_data, lobby_id, source):
+    if not isinstance(source, dict) or not isinstance(source.get('snapshot'), dict):
+        raise ValidationError('Не указан выбранный расходник')
+    parent, index = inventory_slot(actor_data, source.get('path'))
+    item = parent[index]
+    if item != source['snapshot']:
+        raise ConflictError('Расходник изменился. Выберите его заново.')
+    template, direct = _profile(item, lobby_id)
+    profile = with_darkness_modifiers(
+        (template.attributes or {}).get('consumable') or {}, template.description or '',
+    )
+    from app.services.character_medicine import prepare_profile
+    profile, direct = prepare_profile(profile, direct, item, actor_data, template)
+    return parent, index, template, profile, direct
+
+
+def _medical_check(actor, target, actor_data, profile, direct, application, requirements, *,
+                   requires_roll, skip_toolkits=False):
+    from app.services.character_traits import background_is, trait_count
+
+    canonical = requirements['canonical_application']
+    base = requirements['base_difficulty']
+    if application.get('fineWork'):
+        _minimum_treatment_cost(actor_data, direct, canonical, application)
+        if not requires_roll:
+            raise ValidationError('Для этой процедуры не требуется медицинская проверка')
+        base -= 6 if trait_count(actor_data, 'Тонкая работа') >= 2 else 4
+    meta = ((actor_data.get('health') or {}).get('combatMeta') or {})
+    helper = meta.get('helpAdvantage')
+    if helper and helper.get('skill_path') not in {'', 'skills.other.medicine'}:
+        helper = None
+    skill_bonus = _medicine_skill(actor_data) + _scissors_medicine_bonus(actor_data, actor.lobby_id, profile)
+    if helper:
+        skill_bonus += _numeric(helper.get('roll_bonus'))
+    if trait_count(actor_data, 'Личный врач') and _numeric((meta.get('patientTreatments') or {}).get(str(target.id))) > 10:
+        skill_bonus += 3
+    try:
+        medication_bonus = float(direct.get('med_bonus') or 0) + float((canonical or {}).get('medicine_bonus') or 0)
+    except (TypeError, ValueError):
+        medication_bonus = 0
+
+    tools = []
+    if requires_roll:
+        if helper:
+            base -= _numeric(helper.get('medical_dc_reduction'))
+        if background_is(actor_data, 'Врач по бумагам') and not helper:
+            base += 4
+        if background_is(actor_data, 'Акушер') and actor.id == target.id:
+            base += 3
+        if meta.get('brigadierOrder'):
+            skill_bonus += 3
+    if requires_roll and not skip_toolkits:
+        doctor = _doctor_tools(actor_data, actor.lobby_id, direct)
+        surgeon = _surgeon_tools(actor_data, actor.lobby_id) if direct.get('surgical_kit') else None
+        for selection, bonus in ((doctor, 2), (surgeon, 5)):
+            if selection:
+                tool, charges = selection
+                tools.append((tool, charges, bonus))
+
+    toolkit_bonus = sum(bonus for _, _, bonus in tools)
+    without_tools = max(1, base - skill_bonus - medication_bonus) if requires_roll else None
+    difficulty = max(1, base - skill_bonus - toolkit_bonus - medication_bonus) if requires_roll else None
+    preview = {
+        'difficulty_without_toolkits': without_tools, 'difficulty': difficulty,
+        'toolkits': [{'name': tool['name'], 'bonus': bonus, 'charges_spent': 1} for tool, _, bonus in tools],
+    }
+    return {
+        'preview': preview, 'tools': tools, 'helper': helper, 'base_difficulty': base,
+        'medicine_bonus': skill_bonus + toolkit_bonus, 'medication_bonus': medication_bonus,
+    }
+
+
 class MedicalProcedureService:
+    @staticmethod
+    def preview(user_id, actor_id, payload):
+        actor, target = _medical_characters(user_id, actor_id, payload)
+        _combat_context(actor, target, user_id, payload)
+        actor_data = actor.data or {}
+        parent, index, template, profile, direct = _prepared_medical_item(actor_data, actor.lobby_id, payload.get('source'))
+        application = payload.get('application')
+        if not isinstance(application, dict):
+            raise ValidationError('Не выбрана медицинская процедура')
+        requirements = _procedure_requirements((target.data or {}).get('health') or {}, direct, application)
+        if not direct.get('not_consumed'):
+            _validated_uses(parent[index], requirements['required_uses'], template, actor_data=actor_data)
+        return _medical_check(
+            actor, target, actor_data, profile, direct, application, requirements,
+            requires_roll=requirements['requires_roll'],
+            skip_toolkits=payload.get('skip_toolkits') is True,
+        )['preview']
+
     @staticmethod
     @journaled(kind='medical_procedure')
     @atomic_operation
     def apply(user_id, actor_id, payload):
-        if not isinstance(payload, dict):
-            raise ValidationError('Некорректные параметры процедуры')
-        actor = db.session.get(LobbyCharacter, actor_id)
-        target_id = payload.get('target_character_id', actor_id)
-        target = db.session.get(LobbyCharacter, target_id) if type(target_id) is int else None
-        if not actor or not target or actor.lobby_id != target.lobby_id:
-            raise NotFoundError('Врач или пациент не найден')
-        CharacterService.check_access(actor, user_id, edit=True)
+        actor, target = _medical_characters(user_id, actor_id, payload)
         injector_payment=payload.get('auto_injector_payment')
         if injector_payment is not None:
             from app.services.auto_injector import combat_actor,validate_source
@@ -1145,16 +1237,8 @@ class MedicalProcedureService:
 
         actor_data = deepcopy(actor.data or {})
         target_data = actor_data if actor.id == target.id else deepcopy(target.data or {})
-        parent, index = inventory_slot(actor_data, source.get('path'))
+        parent, index, template, profile, direct = _prepared_medical_item(actor_data, actor.lobby_id, source)
         item = parent[index]
-        if item != source['snapshot']:
-            raise ConflictError('Расходник изменился. Выберите его заново.')
-        template, direct = _profile(item, actor.lobby_id)
-        profile = with_darkness_modifiers(
-            (template.attributes or {}).get('consumable') or {}, template.description or '',
-        )
-        from app.services.character_medicine import prepare_profile
-        profile,direct=prepare_profile(profile,direct,item,actor_data,template)
         application = payload.get('application')
         if not isinstance(application, dict):
             raise ValidationError('Не выбрана медицинская процедура')
@@ -1168,27 +1252,13 @@ class MedicalProcedureService:
             raise ValidationError('Боязнь крови не позволяет оказать эту медицинскую помощь')
         if trait_count(actor_data,'Аккуратные пальчики') and direct.get('surgical_kit') and _numeric(direct.get('pain_delta'))>0:
             direct=deepcopy(direct);direct['pain_delta']=_numeric(direct['pain_delta'])/2
-        surgeon_tools = bool(direct.get('surgical_kit') and _surgeon_tools_available(actor_data,actor.lobby_id))
-        if surgeon_tools and _numeric(direct.get('pain_delta'))>0:
-            direct=deepcopy(direct);direct['pain_delta']=math.floor(_numeric(direct['pain_delta'])/2)
         requirements = _procedure_requirements(health, direct, application)
         canonical_application = requirements['canonical_application']
         required_uses = requirements['required_uses']
-        base_difficulty = requirements['base_difficulty']
         requires_roll = requirements['requires_roll']
         if injector_payment is not None:
             requires_roll=False
             if application.get('fineWork'):raise ValidationError('Автоинъектор не требует Тонкой работы')
-        if application.get('fineWork'):
-            from app.services.character_traits import trait_count
-            _minimum_treatment_cost(actor_data,direct,canonical_application,application)
-            if not requires_roll:raise ValidationError('Для этой процедуры не требуется медицинская проверка')
-            base_difficulty-=6 if trait_count(actor_data,'Тонкая работа')>=2 else 4
-        helper=((actor_data.get('health') or {}).get('combatMeta') or {}).get('helpAdvantage')
-        if helper and helper.get('skill_path') not in {'','skills.other.medicine'}:helper=None
-        if requires_roll and helper:base_difficulty-=_numeric(helper.get('medical_dc_reduction'))
-        if requires_roll and background_is(actor_data,'Врач по бумагам') and not helper:base_difficulty+=4
-        if requires_roll and background_is(actor_data,'Акушер') and actor.id==target.id:base_difficulty+=3
         if not direct.get('not_consumed'):
             _validated_uses(item, required_uses, template,actor_data=actor_data)
         generic_self = application.get('kind') == 'self'
@@ -1232,31 +1302,51 @@ class MedicalProcedureService:
                     'Сохранённая процедура оплачена неверно. Отмените её и начните заново.'
                 )
 
-        try:
-            medication_bonus = float(direct.get('med_bonus') or 0) + float(
-                (canonical_application or {}).get('medicine_bonus') or 0
-            )
-        except (TypeError, ValueError):
-            medication_bonus = 0
-        skill_bonus = (_medicine_skill(actor_data)
-                       + _scissors_medicine_bonus(actor_data,actor.lobby_id,profile)
-                       + _doctor_tools_medicine_bonus(actor_data,actor.lobby_id,direct)
-                       + (5 if surgeon_tools else 0))
-        if helper:skill_bonus+=_numeric(helper.get('roll_bonus'))
-        patient_counts=((actor_data.get('health') or {}).get('combatMeta') or {}).get('patientTreatments') or {}
-        if trait_count(actor_data,'Личный врач') and _numeric(patient_counts.get(str(target.id)))>10:skill_bonus+=3
+        saved_selection = completion.payload['selection'] if completion else {}
+        skip_toolkits = payload.get('skip_toolkits') is True or saved_selection.get('skip_toolkits') is True
+        check = _medical_check(
+            actor, target, actor_data, profile, direct, application, requirements,
+            requires_roll=requires_roll, skip_toolkits=skip_toolkits,
+        )
+        preview = check['preview']
+        deferred_preview = isinstance(saved_selection.get('confirmed_preview'), dict)
+        if (deferred_preview or 'confirmed_preview' in payload) and payload.get('confirmed_preview') != preview:
+            raise ConflictError('Условия броска изменились. Проверьте СЛ и наборы инструментов заново.')
+        base_difficulty = check['base_difficulty']
+        skill_bonus = check['medicine_bonus']
+        medication_bonus = check['medication_bonus']
+        helper = check['helper']
+        difficulty = preview['difficulty']
+        used_toolkits = []
+        for entry, (tool, charges, bonus) in zip(preview['toolkits'], check['tools']):
+            used_toolkits.append({**entry, 'charges_remaining': spend_tool_charge(tool, charges)})
+            if bonus == 5 and _numeric(direct.get('pain_delta')) > 0:
+                direct['pain_delta'] = math.floor(_numeric(direct['pain_delta']) / 2)
         from app.services.brigadier_order import consume
         order=consume(actor_data) if requires_roll else None
-        if order:skill_bonus+=3
-        difficulty = max(1, base_difficulty - skill_bonus - medication_bonus) if requires_roll else None
-        roll = (
-            completion.payload.get('medicine_roll') if completion else random.randint(1, 20)
-        ) if requires_roll else None
+        roll = None
+        if requires_roll:
+            if completion and (not deferred_preview or 'medicine_roll' in completion.payload):
+                roll = completion.payload.get('medicine_roll')
+            else:
+                roll = random.randint(1, 20)
         if requires_roll and (type(roll) is not int or not 1 <= roll <= 20):
             raise ConflictError('Не удалось восстановить медицинский бросок')
         if order and order.get('advantage'):
             roll=max(roll,random.randint(1,20))
         success = not requires_roll or roll >= difficulty
+        bleeding_grade = None
+        if requires_roll and application.get('kind') == 'bleeding' and direct.get('application_form') != 'injectable':
+            margin = roll - difficulty
+            if margin >= 5:
+                bleeding_grade = 'improved'
+            elif margin >= 0:
+                bleeding_grade = 'normal'
+            elif margin > -4:
+                bleeding_grade = 'chance'
+                success = random.random() < 0.5
+            else:
+                bleeding_grade = 'failure'
         if requires_roll and helper:actor_data['health']['combatMeta'].pop('helpAdvantage',None)
         if not direct.get('not_consumed'):
             _consume_uses(parent, index, required_uses, template,actor_data=actor_data)
@@ -1265,6 +1355,7 @@ class MedicalProcedureService:
         intoxication_before=_numeric(health.get('intoxication'))
         if success:
             if requires_roll:
+                patient_counts = actor_data.setdefault('health', {}).setdefault('combatMeta', {}).get('patientTreatments') or {}
                 patient_counts[str(target.id)]=int(_numeric(patient_counts.get(str(target.id))))+1
                 actor_data.setdefault('health',{}).setdefault('combatMeta',{})['patientTreatments']=patient_counts
             outcome = _apply_success(
@@ -1272,6 +1363,7 @@ class MedicalProcedureService:
                 profile=profile, in_combat=actor_model is not None,
                 infusion_bonus=infusion_bonus,
                 actor_data=actor_data, procedure_context=procedure_context,recipient_data=target_data,
+                extra_bleeding_rank=int(bleeding_grade == 'improved'),
             )
             related_characters = _synchronize_blood_knowledge(
                 actor, target, actor_data, target_data, application, procedure_context, outcome,
@@ -1334,6 +1426,7 @@ class MedicalProcedureService:
 
         result = {
             'roll': roll, 'difficulty': difficulty, 'base_difficulty': base_difficulty,
+            'difficulty_without_toolkits': preview['difficulty_without_toolkits'], 'toolkits': used_toolkits,
             'medicine_bonus': skill_bonus, 'medication_bonus': medication_bonus,
             'success': success, 'outcome': outcome,
             'minimum_action_points': payment_details['total_action_points'],
@@ -1341,6 +1434,8 @@ class MedicalProcedureService:
             'consumable': use_result,
             'interaction': interaction,
         }
+        if bleeding_grade is not None:
+            result['bleeding_grade'] = bleeding_grade
         return MedicalProcedureResult(actor, target, result, posture_updates, related_characters)
 
     @staticmethod

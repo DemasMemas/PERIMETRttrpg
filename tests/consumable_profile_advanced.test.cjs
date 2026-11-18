@@ -73,3 +73,70 @@ test('renamed water and blood packets are identified by profile, not display nam
     assert.equal(isAlcoholConsumable({ name: 'Непохожее имя', attributes: { consumable: { direct: { is_alcohol: true } } } }), true);
     assert.equal(isAlcoholConsumable({ name: 'Пиво', attributes: { consumable: { direct: { nutrition: 1 } } } }), false);
 });
+
+test('bandage choices show different quantities and the medicine bonus', async () => {
+    const { activeTourniquetAreas, bleedingIsSuppressed } = await import('../app/static/js/effects.js');
+    const source = readFileSync(join(__dirname, '..', 'app', 'static', 'js', 'characterSheet.js'), 'utf8');
+    const start = source.indexOf('async function resolveMedicalApplication(');
+    const end = source.indexOf('\nasync function confirmMedicalRoll(', start);
+    let options;
+    const context = vm.createContext({
+        activeTourniquetAreas, bleedingIsSuppressed,
+        getBleedingInfo: () => ({ stage: 'medium' }),
+        getBleedingTreatmentOutcome: (_, application) => application.max_stage === 'light'
+            ? { mode: 'weaken', resultStage: 'light' }
+            : { mode: 'close', resultStage: null },
+        getMedicalTreatmentActionPoints: () => 4,
+        getMedicalApplicationCostLabel: () => '5 ОД всего',
+        getEffectAreaLabel: () => 'рука',
+        getBleedingEffectLabel: () => 'внешнее среднее',
+        BLEEDING_STAGE_LABEL: { light: 'лёгкого' },
+        async chooseConsumableApplication(_, choices) { options = choices; return choices[0]; },
+    });
+    vm.runInContext(source.slice(start, end), context);
+    const direct = { applications: [
+        { max_stage: 'light' },
+        { max_stage: 'medium', item_uses: 2, medicine_bonus: 2 },
+    ] };
+    const health = { effects: [{ type: 'bleeding_external_medium', area: 'leftArm' }] };
+    await context.resolveMedicalApplication(direct, health, 'Стерильный Бинт', {});
+    assert.match(options[0].label, /ослабить.*5 ОД всего.*1 бинт/);
+    assert.match(options[1].label, /остановить.*2 бинта.*\+2 к проверке/);
+});
+
+test('the delayed Analgin tooltip shows only changes that will take effect', async () => {
+    const catalog = JSON.parse(readFileSync(join(__dirname, '..', 'app', 'data', 'equipment_catalog.json'), 'utf8'));
+    const analgin = catalog.templates.find(item => item.name === 'Анальгин (Таблетка)');
+    const pending = analgin.attributes.consumable.effects.find(effect => effect.type === 'delayed_treatment');
+    const { effectConsequences } = await import(pathToFileURL(join(__dirname, '..', 'app', 'static', 'js', 'effects.js')).href);
+    const lines = effectConsequences(pending);
+    assert.ok(lines.includes('После задержки: Боль -1 · обезболивание на 8 ходов'));
+    assert.ok(lines.includes('После задержки: Изменение температуры +0,5 °C'));
+    assert.equal(lines.filter(line => /Боль|обезболивание/i.test(line)).length, 1);
+    assert.ok(lines.every(line => !/Стресс|Заражение/.test(line)));
+});
+
+test('morphine shows pain prevention and periodic relief as separate direct lines', async () => {
+    const { effectConsequenceEntries, effectSummary } = await import(pathToFileURL(join(__dirname, '..', 'app', 'static', 'js', 'effects.js')).href);
+    const block = { type:'analgesia', name:'Морфин: блок боли', value:3, blocks_new_pain:true, remaining:3, tick:'turn_end' };
+    const relief = { type:'periodic_adjustment', name:'Морфин: облегчение боли', remaining:2,
+        tick:'turn_end', adjustments:[{field:'painLevel', delta:-3}] };
+    assert.equal(effectSummary(block), 'Морфин: блок боли · осталось 3 хода');
+    assert.deepEqual(effectConsequenceEntries({ activate_effects:[block, relief] }), [
+        { caption:'После задержки', text:'Новые уровни боли не начисляются · 3 хода' },
+        { caption:'После задержки', text:'Снижение боли на 3 уровня в конце каждого хода · 2 хода' },
+    ]);
+});
+
+test('hematogen exposes its severity adjustment even when bleeding severity reaches zero', async () => {
+    const { syncHealthDerivedStatuses } = await import(pathToFileURL(join(__dirname, '..', 'app', 'static', 'js', 'effects.js')).href);
+    const health = {
+        effects: [{ type: 'bleeding_external_light' }],
+        combatMeta: { bleedingModifiers: [{ note: 'hematogen', value: -2, affects_severity: true }] },
+    };
+    syncHealthDerivedStatuses(health);
+    assert.equal(health.bleeding.rawSeverity, 1);
+    assert.equal(health.bleeding.totalSeverity, 0);
+    assert.equal(health.bleeding.modifierTotal, 0);
+    assert.deepEqual(health.bleeding.severityModifiers, [{ label: 'Гематоген', value: -2 }]);
+});

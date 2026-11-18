@@ -7,13 +7,15 @@ from app.services.character_traits import background_is,skill_learning_multiplie
 from app.services.exceptions import ValidationError
 
 
-def add_skill_experience(data,path,amount,*,apply_multiplier=True,maximum_level=None):
+def add_skill_experience(data,path,amount,*,apply_multiplier=True,maximum_level=20):
     group,key=path.split('.')
     skill=data.setdefault('skills',{}).setdefault(group,{}).setdefault(key,{'base':5,'bonus':0,'xp':0})
+    if int(skill.get('base', 5)) >= maximum_level:
+        return skill
     gained=amount*(skill_learning_multiplier(data,path) if apply_multiplier else 1)+float(skill.get('learningRemainder',0))
     skill['learningRemainder']=gained-math.floor(gained)
     skill['xp']=int(skill.get('xp',0))+math.floor(gained)
-    while skill['xp']>=max(1,int(skill.get('base',5))+1-10) and (maximum_level is None or skill['base']<maximum_level):
+    while skill['xp']>=max(1,int(skill.get('base',5))+1-10) and int(skill.get('base',5))<maximum_level:
         skill['xp']-=max(1,int(skill.get('base',5))+1-10)
         skill['base']=int(skill.get('base',5))+1
     return skill

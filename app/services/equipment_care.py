@@ -11,8 +11,9 @@ from app.services.action_journal import journaled
 
 
 def medical_gloves(item):
+    from app.services.catalog_descriptions import glove_name
     return isinstance(item,dict) and bool((item.get('attributes') or {}).get('sterile_duration_seconds')
-        or item.get('category')=='gloves' and str(item.get('name','')).casefold()=='медицинские')
+        or item.get('category')=='gloves' and glove_name(item.get('name'))=='Медицинские перчатки')
 
 
 def regenerating_armor(item):

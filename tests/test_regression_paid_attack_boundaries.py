@@ -53,6 +53,7 @@ def paid_case(client, create_user, auth_headers):
     actor.facing_x, actor.facing_y = 1, 0
     actor.drawn_weapon_index = 0
     actor.action_points_current = 2
+    actor.free_actions_current = 0
     pair['target_location'].pos_x, pair['target_location'].pos_y = 5, 1
     pair['location'].grid_width = pair['location'].grid_height = 12
     other = LobbyCharacter(lobby_id=pair['lobby'].id,
@@ -147,6 +148,152 @@ def replay_unchanged(client, case, auth_headers, identity, key):
     assert snapshot(case, identity) == before
 
 
+@pytest.mark.parametrize(('worn', 'assisting', 'cost'), [(False, False, 12), (True, False, 24), (False, True, 12)])
+def test_exoskeleton_battery_replacement_applies_only_after_all_turns_are_paid(
+        client, paid_case, auth_headers, worn, assisting, cost):
+    case = paid_case
+    identity = 'paid-exoskeleton-battery'
+    actor = case['actor_character']
+    wearer = case['target_character'] if assisting else actor
+    data = deepcopy(actor.data)
+    battery = {'id': 'new-cell', 'name': 'Аккумуляторы Экзоскелета', 'category': 'exoskeleton_module',
+               'subcategory': 'battery', 'quantity': 2,
+               'attributes': {'slot_type': 'exoskeleton_battery', 'charge_days': 1, 'remaining_days': 1}}
+    old_cell = deepcopy(battery)
+    old_cell.update(id='old-cell', quantity=1, slotType='exoskeleton_battery')
+    old_cell['attributes']['remaining_days'] = 0
+    exoskeleton = {'id': 'suit', 'name': 'Экзоскелет', 'category': 'armor', 'installedModules': [old_cell]}
+    data['inventory']['backpack'] = [battery]
+    if assisting:
+        case['target_location'].pos_x = 2
+        wearer_data = deepcopy(wearer.data)
+        wearer_data.setdefault('equipment', {})['armor'] = exoskeleton
+        wearer.data = wearer_data
+    elif worn:
+        data.setdefault('equipment', {})['armor'] = exoskeleton
+    else:
+        data['inventory']['backpack'].append(exoskeleton)
+    target_path = ['equipment', 'armor'] if worn or assisting else ['inventory', 'backpack', 1]
+    actor.data = data
+    db.session.commit()
+    payload = {'action_key': 'change_equipment_module', 'module_operation': 'install',
+               'module_slot_type': 'exoskeleton_battery', 'module_target_path': target_path,
+               'item_path': ['inventory', 'backpack', 0], 'pending_action_id': identity,
+               'module_selection': {'target': {'id': 'suit'}, 'source': {'id': 'new-cell'}}}
+    if assisting:
+        payload['target_character_id'] = wearer.id
+
+    rejected = action(client, case, auth_headers, **payload)
+    assert rejected.status_code == 400, rejected.get_json()
+    assert case['actor_location'].action_points_current == 2
+    data = deepcopy(actor.data)
+    data['inventory']['backpack'].append({'id': 'driver', 'name': 'Отвертка', 'category': 'misc'})
+    actor.data = data
+    db.session.commit()
+
+    started = action(client, case, auth_headers, **payload)
+    assert started.status_code == 200, started.get_json()
+    assert started.get_json()['pending_action'] is True
+    row = db.session.get(DeferredCombatAction, identity)
+    assert row.remaining_action_points == cost - 2
+    assert case['actor_location'].action_points_current == 0
+    for _ in range(35):
+        pay_turn(client, case, auth_headers)
+        backpack = actor.data['inventory']['backpack']
+        armor = wearer.data['equipment']['armor'] if worn or assisting else backpack[1]
+        assert armor['installedModules'] == [old_cell]
+        assert backpack[0]['quantity'] == 2
+        if row.status == 'ready':
+            break
+        passed = client.post(url(case) + '/end_turn', headers=auth_headers(case['actor_user']),
+                             json={'location_character_id': case['actor_location'].id})
+        assert passed.status_code == 200, passed.get_json()
+    assert row.status == 'ready'
+
+    completed = action(client, case, auth_headers, action_key='change_equipment_module',
+                       resume_pending_action_id=identity)
+    assert completed.status_code == 200, completed.get_json()
+    assert completed.get_json()['module_change']['action_points'] == cost
+    assert row.status == 'completed'
+    backpack = actor.data['inventory']['backpack']
+    armor = wearer.data['equipment']['armor'] if worn or assisting else backpack[1]
+    assert backpack[0]['quantity'] == 1
+    assert wearer.data['inventory']['backpack'][-1] == old_cell
+    assert armor['installedModules'][0]['id'] != battery['id']
+    assert armor['installedModules'][0]['quantity'] == 1
+    assert armor['powered'] is True
+    replay_unchanged(client, case, auth_headers, identity, 'change_equipment_module')
+
+
+def test_new_combat_clears_weapon_shot_count_from_reused_round(
+        client, paid_case, auth_headers):
+    case = paid_case
+    location_id = case['location'].id
+    gm_id = case['actor_user']['id']
+    actor_id = case['actor_location'].id
+    CombatService.end_combat(location_id, gm_id)
+
+    # Сохранение прежней версии со счётчиком второго раунда завершённого боя.
+    data = deepcopy(case['actor_character'].data)
+    data['weapons'][0]['fireRate'] = 1
+    data['health']['combatMeta']['weaponShots'] = {'round': 2, 'shots': {'0': 1}}
+    case['actor_character'].data = data
+    db.session.commit()
+
+    started = client.post(url(case) + '/start', headers=auth_headers(case['actor_user']), json={
+        'location_character_ids': [actor_id, case['target_location'].id],
+        'initiator_location_character_id': actor_id,
+    })
+    assert started.status_code == 200, started.get_json()
+    db.session.expire_all()
+    data = deepcopy(case['actor_character'].data)
+    meta = data['health']['combatMeta']
+    assert CombatService._validate_weapon_fire_rate(meta, 2, 0, data['weapons'][0], 1)['fired'] == 0
+
+    CombatService._record_weapon_shots(meta, 2, 0, 1)
+    case['actor_character'].data = data
+    db.session.commit()
+    CombatService.end_combat(location_id, gm_id)
+    assert 'weaponShots' not in case['actor_character'].data['health']['combatMeta']
+
+
+@pytest.mark.parametrize('deferred', [False, True], ids=['immediate', 'deferred'])
+def test_aimed_shot_pays_for_automatic_aim_only_once(client, paid_case, auth_headers, deferred):
+    case = paid_case
+    actor = case['actor_location']
+    target_id = case['target_character'].id
+    CombatService._prepare_character_for_turn(case['target_location'])
+    CombatService._sync_location_effects_from_character(case['target_location'])
+    actor.action_points_current = 2 if deferred else 14
+    db.session.commit()
+
+    shot = {'action_key': 'attack', 'weapon_index': 0, 'target_character_id': target_id,
+            'target_zone': 'chest', 'fire_mode': 'aimed', 'shot_count': 1, 'action_points': 6}
+    identity = 'aim-on-attack'
+    started = action(client, case, auth_headers, **shot, pending_action_id=identity)
+    assert started.status_code == 200, started.get_json()
+    result = started.get_json()
+    if deferred:
+        assert result['pending_action_total_points'] == 7
+        assert actor.aimed_target_character_id is None
+        recover(client, case, auth_headers, identity, status='paying', remaining=5, key='attack')
+        pay_turn(client, case, auth_headers)
+        recover(client, case, auth_headers, identity, status='ready', remaining=0, key='attack')
+        resumed = action(client, case, auth_headers, action_key='attack', resume_pending_action_id=identity)
+        assert resumed.status_code == 200, resumed.get_json()
+        result = resumed.get_json()
+
+    assert result['attack']['action_points'] == 7
+    assert result['attack']['aim_accuracy_bonus'] == 1
+    assert result['character']['aimed_target_character_id'] == target_id
+    assert result['character']['aimed_weapon_index'] == 0
+    assert result['character']['action_points_current'] == (0 if deferred else 7)
+    if not deferred:
+        next_shot = action(client, case, auth_headers, **shot, pending_action_id='reuse-aim')
+        assert next_shot.status_code == 200, next_shot.get_json()
+        assert next_shot.get_json()['attack']['action_points'] == 6
+
+
 @pytest.mark.parametrize('blocked', [False, True], ids=['complete-once', 'cancel-hidden'])
 def test_paid_aimed_shot_completes_once_or_cancels_permanently_when_hidden(
         client, paid_case, auth_headers, monkeypatch, blocked):
@@ -164,6 +311,10 @@ def test_paid_aimed_shot_completes_once_or_cancels_permanently_when_hidden(
                    target_character_id=case['target_character'].id)
     assert aimed.status_code == 200, aimed.get_json()
     assert case['actor_location'].action_points_current == 2
+    data = deepcopy(case['actor_character'].data)
+    data['weapons'][0]['installedMagazine']['ammo'][0]['attributes']['damage'] = 12
+    case['actor_character'].data = data
+    db.session.commit()
     original_ammo = deepcopy(case['actor_character'].data['weapons'])
     original_target = deepcopy(case['target_character'].data)
     started = action(client, case, auth_headers, action_key='attack', weapon_index=0,
@@ -219,9 +370,10 @@ def test_paid_aimed_shot_completes_once_or_cancels_permanently_when_hidden(
         case['actor_location'], case['target_location'])['targetable'] is True
     replacement_before = deepcopy(db.session.get(LobbyCharacter, case['replacement_id']).data)
     message_ids = {m.id for m in ChatMessage.query.filter_by(lobby_id=case['lobby'].id)}
-    # Попадание, выбор зоны (даже при aimed), отсутствие кровотечения, успешная Воля.
+    # Попадание, выбор зоны (даже при aimed), сильное кровотечение, успешная Воля.
     draws = deque([('_resolve_attack', 1, 20, 19), ('_resolve_attack', 1, 20, 10),
-                   ('_roll_firearm_bleeding', 1, 6, 1), ('apply_stress_trigger', 1, 20, 20)])
+                   ('_roll_firearm_bleeding', 1, 6, 6), ('_apply_attack_damage', 1, 100, 100),
+                   ('_apply_attack_damage', 1, 20, 13), ('apply_stress_trigger', 1, 20, 20)])
     def draw(low, high):
         assert draws, (low, high)
         caller, expected_low, expected_high, result = draws.popleft()
@@ -240,22 +392,36 @@ def test_paid_aimed_shot_completes_once_or_cancels_permanently_when_hidden(
     assert attack['fire_mode'] == 'aimed'
     assert attack['action_points'] == 6
     assert attack['shot_count'] == 1
-    assert attack['damage_total'] == 10
+    assert attack['damage_total'] == 12
     assert len(attack['results']) == 1
     assert attack['results'][0]['hit'] is True
     assert attack['results'][0]['rolls'] == [19]
     assert attack['results'][0]['zone'] == 'chest'
+    assert any(bleeding['stage'] == 'severe' for bleeding in attack['results'][0]['bleedings'])
+    assert attack['results'][0]['additional_traumas'][0]['roll'] == 13
     db.session.expire_all()
     assert case['actor_location'].action_points_current == 1
     weapons = case['actor_character'].data['weapons']
     assert weapons[0]['installedMagazine']['ammo'][0]['quantity'] == 2
     assert weapons[0]['ammo'] == 2
     assert weapons[1] == original_ammo[1]
-    assert case['target_character'].data['health']['current'] == 690
+    assert case['target_character'].data['health']['current'] == 688
+    assert any(effect['type'] == 'bleeding_external_severe'
+               for effect in case['target_character'].data['health']['effects'])
+    assert any(effect['type'] == 'bleeding_internal_medium'
+               for effect in case['target_character'].data['health']['effects'])
     assert db.session.get(LobbyCharacter, case['replacement_id']).data == replacement_before
     assert db.session.get(DeferredCombatAction, identity).status == 'completed'
-    assert len([m for m in ChatMessage.query.filter_by(lobby_id=case['lobby'].id)
-                if m.id not in message_ids]) == 1
+    messages = [m.message for m in ChatMessage.query.filter_by(lobby_id=case['lobby'].id)
+                if m.id not in message_ids]
+    assert len(messages) == 1
+    assert 'Кровотечение:' in messages[0] and 'сильное' in messages[0]
+    assert 'Доп. травма: d20 13' in messages[0]
+    journal = case['actor_character'].data['health']['combatMeta']['actionJournal']
+    entries = [entry for entry in journal if entry.get('deferred_id') == identity]
+    assert len(entries) == 1
+    assert entries[0]['status'] == 'completed'
+    assert 'Доп. травма: d20 13' in entries[0]['outcome']
     no_draws(monkeypatch)
     replay_unchanged(client, case, auth_headers, identity, 'attack')
 
@@ -294,8 +460,8 @@ def test_paid_clear_jam_recovers_selected_weapon_and_finishes_once(
     assert early.status_code == 409, early.get_json()
     assert snapshot(case, identity) == before
     first_turn = pay_turn(client, case, auth_headers)
-    # Оплата5ОД заканчивает первый ход автоматически, остаётся1ОД долга.
-    assert first_turn['current_location_character_id'] == case['target_location'].id
+    # После оплаты 5 ОД у персонажа остался 1 ОД долга и ход продолжается за остаток СД или ОП.
+    assert first_turn['current_location_character_id'] == case['actor_location'].id
     recover(client, case, auth_headers, identity,
             status='paying', remaining=1, key='clear_weapon_jam')
     assert case['actor_location'].action_points_current == 0
@@ -305,6 +471,9 @@ def test_paid_clear_jam_recovers_selected_weapon_and_finishes_once(
                    resume_pending_action_id=identity)
     assert early.status_code == 409, early.get_json()
     assert snapshot(case, identity) == before
+    passed = client.post(url(case) + '/end_turn', headers=auth_headers(case['actor_user']),
+                         json={'location_character_id': case['actor_location'].id})
+    assert passed.status_code == 200, passed.get_json()
     second_turn = pay_turn(client, case, auth_headers)
     assert second_turn['current_location_character_id'] == case['actor_location'].id
     row = recover(client, case, auth_headers, identity,

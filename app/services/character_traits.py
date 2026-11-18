@@ -17,11 +17,38 @@ def _known_id(kind,name):
     return next((t['id'] for t in _catalog()[kind] if _name(t['name'])==_name(name)),None)
 
 
-def trait_count(data,name):
-    known=_known_id('traits',name)
-    return sum(1 for t in _traits(data)
-               if isinstance(t,dict) and t.get('active',True)
-               and (_name(t.get('name'))==_name(name) or known and t.get('ruleId')==known))
+@lru_cache(maxsize=1)
+def _trait_index():
+    return {key: entry for entry in _catalog()['traits']
+            for key in (_name(entry['name']), entry['id'], str(entry['templateId']))}
+
+
+def legacy_trait_definition(trait):
+    if trait.get('name') or trait.get('ruleId'):
+        return None
+    template_id = str(trait.get('templateId') or '')
+    if template_id.startswith('-'):
+        return _trait_index().get(template_id)
+    if not template_id.isascii() or not template_id.isdecimal() or len(template_id) > 10:
+        return None
+    from flask import has_app_context
+    from app.services.item_template_lookup import resolve_item_template
+    template = resolve_item_template(trait) if has_app_context() else None
+    if not template or template.category != 'special_trait':
+        return None
+    rule_id = (template.attributes or {}).get('ruleId')
+    by_rule = _trait_index().get(rule_id) if isinstance(rule_id, str) else None
+    return by_rule or _trait_index().get(_name(template.name))
+
+
+def trait_count(data, name):
+    name = _name(name)
+    definition = _trait_index().get(name)
+    return sum(1 for trait in _traits(data) if trait.get('active', True) and (
+        _name(trait.get('name')) == name
+        or (definition and trait.get('ruleId') == definition['id'])
+        or (definition and legacy_trait_definition(trait) is definition)
+    ))
 
 
 def background_is(data,name):

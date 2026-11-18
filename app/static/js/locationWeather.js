@@ -7,7 +7,8 @@ export function createLocationWeather(THREE, scene, { bounds, terrain, blockers,
     const speeds = new Float32Array(capacity);
     const floors = new Float32Array(capacity);
     const geometry = new THREE.BufferGeometry();
-    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3).setUsage(THREE.DynamicDrawUsage));
+    const positionAttribute = new THREE.BufferAttribute(positions, 3).setUsage(THREE.DynamicDrawUsage);
+    geometry.setAttribute('position', positionAttribute);
     const colors = new Float32Array((capacity + impactCapacity) * 8).fill(1);
     for (let i = 0; i < capacity + impactCapacity; i++) colors[i * 8 + 3] = .25;
     geometry.setAttribute('color', new THREE.BufferAttribute(colors, 4));
@@ -28,13 +29,14 @@ export function createLocationWeather(THREE, scene, { bounds, terrain, blockers,
     const ray = new THREE.Raycaster();
     const down = new THREE.Vector3(0, -1, 0);
     const origin = new THREE.Vector3();
-    let count = 0, strength = .5, version = null, columns = new Map(), heights = new Map();
+    const columns = new Map(), heights = new Map();
+    let count = 0, strength = .5, rainNeedsReset = true;
+    let groundGeometry = null, groundDirty = true, blockersDirty = true, puddleVersion = 0;
     let impactDrops = 0, nearDrops = 0;
     const puddles = createRainPuddles(THREE, scene, {bounds, surface, roof: landing, terrainType});
 
-    function index(nextVersion) {
-        version = nextVersion;
-        columns.clear(); heights.clear();
+    function indexBlockers() {
+        columns.clear();
         for (const root of new Set(blockers())) {
             root.updateWorldMatrix(true, true);
             const box = new THREE.Box3().setFromObject(root);
@@ -73,23 +75,31 @@ export function createLocationWeather(THREE, scene, { bounds, terrain, blockers,
         return floors[i];
     }
     return {
+        invalidateGround() { groundDirty = true; },
+        invalidateBlockers() { blockersDirty = true; },
         setLocalFog(density, color) {
             localFogDensity = density;
             localFogColor.set(color);
         },
         apply(settings) {
             const rainSetting = settings?.rain || {}, fog = settings?.fog || {};
-            strength = Math.max(0, Math.min(1, Number(rainSetting.intensity) || 0));
-            count = rainSetting.enabled ? Math.round(600 + 1800 * strength) : 0;
-            if (!count) puddles.hide();
-            rain.visible = count > 0;
-            geometry.setDrawRange(0, count * 2);
-            material.opacity = .30 + strength * .28;
-            if (!count) impactDrops = nearDrops = 0;
+            const nextStrength = Math.max(0, Math.min(1, Number(rainSetting.intensity) || 0));
+            const nextCount = rainSetting.enabled ? Math.round(600 + 1800 * nextStrength) : 0;
+            if (count !== nextCount || strength !== nextStrength) {
+                count = nextCount;
+                strength = nextStrength;
+                rain.visible = count > 0;
+                geometry.setDrawRange(0, count * 2);
+                material.opacity = .30 + strength * .28;
+                rainNeedsReset = true;
+                if (!count) {
+                    puddles.hide();
+                    impactDrops = nearDrops = 0;
+                }
+            }
             fogStrength = fog.enabled ? Math.max(0, Math.min(1, Number(fog.intensity ?? .5))) : null;
-            version = null;
         },
-        update(dt, nextVersion) {
+        update(dt, nextGround) {
             // Масштаб камеры не должен вымывать туман: сохраняем оптическую плотность у точки обзора.
             const area = bounds();
             area.centerX = Math.max(0, Math.min(area.width, area.centerX ?? area.width / 2));
@@ -101,11 +111,19 @@ export function createLocationWeather(THREE, scene, { bounds, terrain, blockers,
             if (!count) return;
             const nearRadius = Math.max(2.25, Math.min(24, distance * .43));
             nearDrops = nearRadius < 15 ? Math.min(count, Math.round(18 + nearRadius * 4 + 22 * strength)) : 0;
-            if (version !== nextVersion) {
-                index(nextVersion);
-                for (let i = 0; i < count; i++) reset(i, area, i < nearDrops ? nearRadius : 24, true);
+            if (blockersDirty || groundDirty || groundGeometry !== nextGround) {
+                if (blockersDirty) indexBlockers();
+                groundGeometry = nextGround;
+                groundDirty = blockersDirty = false;
+                heights.clear();
+                puddleVersion++;
+                rainNeedsReset = true;
             }
-            puddles.update(strength, nextVersion, dt);
+            if (rainNeedsReset) {
+                for (let i = 0; i < count; i++) reset(i, area, i < nearDrops ? nearRadius : 24, true);
+                rainNeedsReset = false;
+            }
+            puddles.update(strength, puddleVersion, dt);
             const length = .18 + strength * .22;
             for (let i = 0; i < count; i++) {
                 const p = i * 6;
@@ -121,9 +139,8 @@ export function createLocationWeather(THREE, scene, { bounds, terrain, blockers,
             }
             impactDrops = 0;
             const impactRadius = Math.min(10, nearRadius + 2);
-            for (const impact of puddles.impacts) {
+            for (const impact of puddles.impactsNear(area.centerX, area.centerZ, impactRadius)) {
                 if (impactDrops >= impactCapacity) break;
-                if (Math.abs(impact.x - area.centerX) > impactRadius || Math.abs(impact.z - area.centerZ) > impactRadius) continue;
                 const untilImpact = (1 - ((puddles.time * .9 + impact.seed) % 1)) / .9;
                 if (untilImpact > .27) continue;
                 const p = (count + impactDrops++) * 6;
@@ -135,7 +152,9 @@ export function createLocationWeather(THREE, scene, { bounds, terrain, blockers,
                 positions[p + 2] = positions[p + 5] - .065;
             }
             geometry.setDrawRange(0, (count + impactDrops) * 2);
-            geometry.attributes.position.needsUpdate = true;
+            positionAttribute.clearUpdateRanges();
+            positionAttribute.addUpdateRange(0, (count + impactDrops) * 6);
+            positionAttribute.needsUpdate = true;
         },
         diagnostics(point) { return {attached: rain.parent === scene, drops: count, fogDensity: scene.fog?.density || 0, cachedColumns: heights.size, rainDrawCalls: count && rain.parent === scene ? 1 : 0,
             fogStrength, nearDrops, impactDrops, ...puddles.diagnostics(),

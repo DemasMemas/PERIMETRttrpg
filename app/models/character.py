@@ -24,6 +24,10 @@ class LobbyCharacter(db.Model):
 
     def data_snapshot(self):
         data = deepcopy(self.data or {})
+        from app.services.character_creation import normalize_background_description
+        basic = data.get('basic')
+        if isinstance(basic, dict):
+            normalize_background_description(basic.get('background'))
         from app.services.weapon_catalog import normalize_character_weapons
         normalize_character_weapons(data)
         from app.services.equipment_modifications import normalize_legacy_gear

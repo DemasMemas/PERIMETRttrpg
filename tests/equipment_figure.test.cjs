@@ -72,6 +72,11 @@ test('balaclavas have a fabric opening and the half-mask is in front of the head
     assert.ok(respirator);
     assert.doesNotMatch(respirator, /loadout-art-lens/);
     assert.ok(markup.indexOf('loadout-art-mask loadout-art-respirator') > markup.indexOf('loadout-art-helmet-anomalous'));
+    const layered = figure({
+        helmet: {templateId: 3, name: 'Советский Котелок 68Г'},
+        mask: {templateId: 1, name: 'Балаклава Призрак'},
+    });
+    assert.match(layered, /data-helmet="open"[^>]*data-cosmetic-mask="true"/);
 });
 
 test('anomalous suit connects its glass helmet to a sealed collar', () => {

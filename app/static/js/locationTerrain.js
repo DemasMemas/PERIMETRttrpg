@@ -16,7 +16,7 @@ const reliefProfiles = new Map([
     ['swamp', [117, 175, .014]],
     ['concrete', [108, 126, .018]],
     ['gravel', [133, 185, .043]],
-    ['snow', [55, 231, .027]],
+    ['snow', [55, 231, .023, 8]],
     ['metal', [104, 165, .012]],
     ['bare_dirt', [109, 174, .029]],
     ['granite_tiles', [150, 173, .012]],
@@ -25,6 +25,25 @@ const reliefProfiles = new Map([
 ]);
 const reliefMaps = new Map();
 let reliefLoading;
+
+function smoothSnowRelief(data) {
+    const smoothed = new Float32Array(data.length);
+    const weights = [1, 4, 6, 4, 1];
+    for (let z = 0; z < RELIEF_SIZE; z++) {
+        for (let x = 0; x < RELIEF_SIZE; x++) {
+            let height = 0;
+            for (let dz = -2; dz <= 2; dz++) {
+                const row = ((z + dz + RELIEF_SIZE) % RELIEF_SIZE) * RELIEF_SIZE;
+                for (let dx = -2; dx <= 2; dx++) {
+                    const column = (x + dx + RELIEF_SIZE) % RELIEF_SIZE;
+                    height += data[row + column] * weights[dx + 2] * weights[dz + 2];
+                }
+            }
+            smoothed[z * RELIEF_SIZE + x] = height / 256;
+        }
+    }
+    return smoothed;
+}
 
 export function hasLocalTerrainRelief(terrain) {
     return reliefMaps.has(terrain);
@@ -40,7 +59,10 @@ export function loadLocalTerrainRelief(materials) {
         let offset = 0;
         for (const [terrain, [low, high, depth, subdivisions = 4]] of reliefProfiles) {
             const repeat = materials.find(entry => entry.terrain === terrain)?.repeat || (terrain === 'grass' ? 8 : 4);
-            reliefMaps.set(terrain, { low, high, depth, repeat, subdivisions, data: data.subarray(offset, offset + area) });
+            const snow = terrain === 'snow';
+            const samples = data.subarray(offset, offset + area);
+            reliefMaps.set(terrain, { low, high, depth, repeat, subdivisions, normalStep: snow ? .12 : .045,
+                data: snow ? smoothSnowRelief(samples) : samples });
             offset += area;
         }
         return true;
@@ -61,7 +83,7 @@ function localTerrainRelief(tiles, x, z, smooth) {
         [x, z + 1, south || west || different(-1, 1)],
         [x + 1, z + 1, south || east || different(1, 1)],
     ].filter(([, , seam]) => seam);
-    const { data, low, high, depth, repeat, subdivisions } = map;
+    const { data, low, high, depth, repeat, subdivisions, normalStep } = map;
     const wrap = value => (value + RELIEF_SIZE) % RELIEF_SIZE;
     const sampleHeight = (px, pz) => {
         let edgeFade = Math.min(1, north ? (pz - z) * 6 : 1, east ? (x + 1 - px) * 6 : 1,
@@ -84,7 +106,7 @@ function localTerrainRelief(tiles, x, z, smooth) {
         // Под покровом остаются боковые грани базовых клеток. Не открываем их в колее.
         return height * depth * fade;
     };
-    return { sampleHeight, subdivisions };
+    return { sampleHeight, subdivisions, normalStep };
 }
 
 function landTile(tiles, x, z) {
@@ -492,8 +514,7 @@ export function buildTerrainSurfaceData(tiles, smoothData, bounds = { minX: 0, m
     const indices = [];
     const putVertex = (x, y, z, nx, ny, nz, relief) => {
         if (relief) {
-            const step = .045;
-            const { sampleHeight } = relief;
+            const { sampleHeight, normalStep: step } = relief;
             const sample = limitRelief ? (px, pz) => limitRelief(px, pz, y, sampleHeight(px, pz)) : sampleHeight;
             const offset = sample(x, z);
             nx -= ny * (sample(x + step, z) - sample(x - step, z)) / (2 * step);

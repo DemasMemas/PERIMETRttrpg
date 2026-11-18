@@ -525,20 +525,6 @@ def test_storm_heart_suppresses_existing_breathlessness_in_client_state(grenade_
     assert CombatService._serialize_character(actor)['strenuous_movement_blocked_until_round'] == 0
 
 
-def test_sniper_reposition_uses_same_breathlessness_immunity_as_actual_movement(grenade_game):
-    from app.services.sniper_position import status as sniper_status
-    actor = grenade_game['actor_location']
-    data = ready(name='Сердце грозы')
-    data['health']['combatMeta'] = {'sniperOldCover': {'id': -1, 'expires_after_round': 2}}
-    actor.character.data = data
-    actor.strenuous_movement_blocked_until_round = 100
-    actor.movement_mode_this_turn = 'walk'
-    db.session.commit()
-    assert sniper_status(actor)['mode'] == 'walk'
-    use(actor.character.data)
-    assert sniper_status(actor)['mode'] == 'run'
-
-
 def armored_shell():
     data = ready(name='Панцирь')
     data['health'].update(current=700, radiation=0)

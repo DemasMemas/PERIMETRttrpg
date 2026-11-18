@@ -244,7 +244,7 @@ test('fast brush movement fills intermediate cells and combines work before rend
     assert.equal(line(1, 1, 4, 3).length, 4);
     assert.match(scene, /applyLocationBrush\(path, null, updates, brushRadius\)/);
     assert.match(scene, /flushPendingTerrainRefresh\(\);[\s\S]*?renderer\.render\(scene, camera\)/);
-    assert.match(scene, /if \(work\.surface && !localSculpt\) rebuildLocationTerrainSurface\(true, true\)/);
+    assert.match(scene, /if \(work\.surface && !localSculpt\) \{\s*rebuildLocationTerrainSurface\(true, true\)/);
     assert.match(scene, /reusableMesh\.geometry\.dispose\(\);\s*reusableMesh\.geometry = geometry/);
 });
 
@@ -306,6 +306,8 @@ test('terrain grid omits covered floor tiles and rebuilds when surfaces change',
             pendingTerrainRefresh: { changed: new Map([['1,0', { x: 1, z: 0 }]]), ...flags },
             scene: {}, currentLocationData: { grid_width: 2 }, editorSelection: null, objectEdit: null,
             characterModels: new Map(),
+            locationWeather: { invalidateGround: mark('weatherGround') },
+            portableLightRenderer: null,
             rebuildSmoothTerrainMesh: mark('smooth'), updateSmoothTerrainColors: mark('smoothColors'),
             updateLocationTerrainSurfaceTexture: mark('texture'),
             rebuildLocationTerrainSurface: mark('surface'), rebuildWaterSurfaceMesh: mark('water'),
@@ -320,13 +322,13 @@ test('terrain grid omits covered floor tiles and rebuilds when surfaces change',
         return calls;
     };
     const heightCalls = flush({ smooth: true, surface: true, water: true, grid: true });
-    assert.deepEqual(heightCalls.map(call => call.name), ['smooth', 'surface', 'water', 'grid']);
-    assert.deepEqual(heightCalls[1].args, [true, true]);
+    assert.deepEqual(heightCalls.map(call => call.name), ['weatherGround', 'smooth', 'surface', 'water', 'grid']);
+    assert.deepEqual(heightCalls.find(call => call.name === 'surface').args, [true, true]);
     assert.deepEqual(heightCalls.surfaceEvents,['map-surface-changed']);
     const paintCalls = flush({ terrainColor: true, texture: true, grass: true });
     assert.deepEqual(paintCalls.map(call => call.name),
-        ['smoothColors', 'texture', 'gridColors', 'grass']);
-    assert.equal(paintCalls[1].args[0][0].x, 1);
+        ['weatherGround', 'smoothColors', 'texture', 'gridColors', 'grass']);
+    assert.equal(paintCalls.find(call => call.name === 'texture').args[0][0].x, 1);
     assert.deepEqual(paintCalls.surfaceEvents,[]);
     assert.match(scene, /updateLocationGridColors\(\)/);
     assert.match(scene, /locationGridMesh\.raycast = \(\) => \{\}/);
@@ -581,7 +583,7 @@ test('terrain cap uses only a constant depth bias while floor materials stay ind
 
 test('covered lower terrain tops do not draw color or depth while keeping pick geometry', () => {
     const scene = read('locationScene.js');
-    assert.match(scene, /landTopMaterial = new THREE\.MeshBasicMaterial\(\{ colorWrite: false, depthWrite: false \}\)/);
+    assert.match(scene, /landTopMaterial = new THREE\.MeshBasicMaterial\(\{ colorWrite: false, depthWrite: false, shadowSide: THREE\.DoubleSide \}\)/);
     assert.match(scene, /locationTileMesh = new THREE\.InstancedMesh\(geometry, \[\s*material, material, landTopMaterial, material, material, material,/);
     assert.match(scene, /tileCubes = \[locationTileMesh, waterTileMesh\]/);
     assert.match(scene, /tileCubes\.push\(smoothTerrainMesh\)/);

@@ -4,7 +4,7 @@ import uuid
 
 from sqlalchemy.orm.attributes import flag_modified
 from app.extensions import db
-from app.models import LocationCharacter,LobbyCharacter
+from app.models import Location,LocationCharacter,LobbyCharacter
 from app.services.exceptions import ConflictError,ValidationError,PermissionDenied
 from app.services.character_traits import trait_count
 from app.services.effects import apply_effect_to_health,sync_health_derived_statuses
@@ -73,25 +73,39 @@ def enqueue(actor,target,trauma,damage,zone,armor_penetrated,allow_bleeding):
         if rules['fall_or_drop']:parts.append('Падение или потеря оружия')
         cards.append({'roll':roll,'offset':offset,'rules':rules,'impact':impact,'trauma':selected,
             'description':'; '.join(parts) or 'Без дополнительного эффекта'})
-    entry={'id':uuid.uuid4().hex,'target_id':target.id,'target_name':target.character.name,'zone':zone,'damage':damage,
+    entry={'id':uuid.uuid4().hex,'location_id':actor.location_id,'target_id':target.id,'target_name':target.character.name,'zone':zone,'damage':damage,
         'armor_penetrated':armor_penetrated,'allow_bleeding':allow_bleeding,'original_roll':trauma['roll'],'cards':cards}
     meta=actor.character.data.setdefault('health',{}).setdefault('combatMeta',{})
     meta.setdefault('sniperTraumaChoices',[]).append(entry);flag_modified(actor.character,'data')
     trauma.update(pending=True,choice_id=entry['id'])
 
 
-def choices(data):
+def _location_id(entry):
+    if entry.get('location_id') is not None:
+        return entry['location_id']
+    target = db.session.get(LocationCharacter, entry['target_id'])
+    return target.location_id if target else None
+
+
+def choices(data, location_id=None):
     return [{'id':entry['id'],'target_name':entry['target_name'],'original_roll':entry['original_roll'],
         'cards':[{key:card[key] for key in ('roll','offset','description')} for card in entry['cards']]}
-        for entry in ((data or {}).get('health') or {}).get('combatMeta',{}).get('sniperTraumaChoices',[])]
+        for entry in ((data or {}).get('health') or {}).get('combatMeta',{}).get('sniperTraumaChoices',[])
+        if location_id is None or _location_id(entry) in (None, location_id)]
 
 
 def require_resolved(state):
-    if state and state.status=='active':
+    if state and state.status=='active' and state.turn_order:
         pending=LobbyCharacter.data['health']['combatMeta']['sniperTraumaChoices'].as_string()
-        if db.session.query(LocationCharacter.id).join(LobbyCharacter,LocationCharacter.character_id==LobbyCharacter.id).filter(
-                LocationCharacter.location_id==state.location_id,pending.isnot(None),pending!='[]').first():
-            raise ConflictError('Сначала выберите дополнительную травму снайперского выстрела')
+        sheets = LobbyCharacter.query.join(LocationCharacter, LocationCharacter.character_id == LobbyCharacter.id).filter(
+            LocationCharacter.id.in_(state.turn_order), LocationCharacter.location_id == state.location_id,
+            pending.isnot(None), pending != '[]',
+        ).all()
+        if any(_location_id(entry) in (None, state.location_id) for sheet in sheets
+               for entry in (sheet.data.get('health') or {}).get('combatMeta', {}).get('sniperTraumaChoices', [])):
+            from app.services.combat import CombatService
+            battle = CombatService.combat_location_label(state.location, state)
+            raise ConflictError(f'Сначала выберите дополнительную травму снайперского выстрела на подлокации {battle}.')
 
 
 def decide(actor,user_id,choice):
@@ -103,6 +117,11 @@ def decide(actor,user_id,choice):
     data=deepcopy(actor.character.data);pending=data.setdefault('health',{}).setdefault('combatMeta',{}).get('sniperTraumaChoices',[])
     entry=next((entry for entry in pending if entry['id']==choice['id']),None)
     if not entry:raise ConflictError('Дополнительная травма уже выбрана или недоступна')
+    location_id = _location_id(entry)
+    if location_id is not None and location_id != actor.location_id:
+        location = db.session.get(Location, location_id)
+        where = f'подлокации «{location.name}»' if location else 'другой подлокации'
+        raise ConflictError(f'Этот выстрел сделан на {where}.')
     target=db.session.get(LocationCharacter,entry['target_id'])
     if not target or target.location_id!=actor.location_id:
         pending.remove(entry);actor.character.data=data;flag_modified(actor.character,'data');db.session.commit()

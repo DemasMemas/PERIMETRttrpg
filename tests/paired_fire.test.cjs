@@ -12,3 +12,16 @@ test('револьвер в паре сохраняет одиночные ре�
     assert.deepEqual(pairedFireOptions([{name:'Револьвер'},{}],[{supports_burst:true},{supports_burst:true}],['pistol','pistol'],[]).map(option=>option.mode),['unaimed','rapid']);
     assert.equal(pairedFireOptions([{},{}],[{},{}],['grenade_launcher','pistol'],[]).length,0);
 });
+
+test('огонь по области из пары сохраняет 10 выстрелов пулемёта при любом минимуме очереди', async () => {
+    const { pairedFireOptions } = await load();
+    const profiles = [
+        { supports_burst: true, supports_area_fire: true, machine_gun_burst: true },
+        { supports_burst: true, supports_area_fire: true, burst_size: 3 },
+    ];
+    const area = (minimum) => pairedFireOptions([{}, {}], profiles, ['machine_gun', 'assault_rifle'], [], false, minimum)
+        .find(option => option.mode === 'area');
+    assert.deepEqual([area(2).shots, area(10).shots], [10, 10]);
+    assert.equal(area(10).volleys, 2);
+    assert.equal(area(10).cost, 5);
+});

@@ -44,6 +44,7 @@ def test_late_missing_bandage_never_creates_medical_roll_or_applies_paid_procedu
     _, profile, item = install_item(pair, 'Бинт', 'Останавливает Слабое кровотечение.',
                                      quantity=2, medicine=10, effects=[bleed])
     pair['actor_location'].action_points_current = 2
+    pair['actor_location'].free_actions_current = 0
     db.session.commit()
     medical_draws, bleeding_draws = [], []
 

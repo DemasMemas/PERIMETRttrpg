@@ -36,27 +36,26 @@ test('GM hidden models use a translucent non-shadow-casting appearance', () => {
 });
 
 test('hidden decor and structures show only to GM regardless of editor mode', () => {
-    const start = scene.indexOf('    objectMeshes.forEach((mesh) => {', scene.indexOf('    entry.label.visible = visible && onViewedFloor;'));
-    const end = scene.indexOf('    syncFogMemoryGhosts(', start);
-    const gmVisibility = scene.match(/^    const gmCanSeeHidden = .*;$/m)?.[0];
-    assert.ok(gmVisibility);
+    const start = scene.indexOf('function applyLocationFloorVisibility(');
+    const end = scene.indexOf('\nfunction closeTeamManagementModal(', start);
     assert.ok(start >= 0 && end > start);
     const decor = { position: { x: 1, z: 1 }, userData: { sourceObject: { gm_hidden: true }, objType: 'rock' }, visible: false };
     const structure = { position: { x: 1, z: 1 }, userData: { locationObject: { properties: { gm_hidden: true } } }, visible: false };
     const context = vm.createContext({
         objectMeshes: [decor], locationObjectMeshes: [structure],
-        window: { isGM: true }, firstPersonView: null, editMode: false, active: false, sources: [],
+        window: { isGM: true }, firstPersonView: null, editMode: false,
+        scene: {}, currentLocationData: {}, pendingFacingSelection: null, characterModels: new Map(),
+        fogIsActive: () => false, loadFogMemory() {}, syncFogMemoryGhosts() {}, updateFogOverlay() {},
         isFogHiddenObject: () => false, locationObjectFloorVisible: () => true,
         decorDisplayLevel: () => 0, structureLevel: () => 0, structureBuildingId: () => null,
         locationLevelVisible: () => true, locationViewLevel: 0, getObjectGridPosition: () => ({ x: 1, y: 1 }),
     });
-    const update = vm.runInContext(`() => { ${gmVisibility}
- ${scene.slice(start, end)} }`, context);
+    vm.runInContext(scene.slice(start, end), context);
     for (const isGM of [true, false]) {
         for (const editMode of [true, false]) {
             context.window.isGM = isGM;
             context.editMode = editMode;
-            update();
+            context.applyFogOfWar();
             assert.equal(decor.visible, isGM);
             assert.equal(structure.visible, isGM);
         }

@@ -44,6 +44,7 @@ class WorldTravelEvent(db.Model):
         index=True,
     )
     description = db.Column(db.Text, nullable=False)
+    weather_shift = db.Column(db.JSON)
     status = db.Column(db.String(20), nullable=False, default="pending", index=True)
     from_tile_x = db.Column(db.Integer, nullable=False)
     from_tile_y = db.Column(db.Integer, nullable=False)

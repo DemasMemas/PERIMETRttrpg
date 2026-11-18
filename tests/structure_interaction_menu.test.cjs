@@ -36,7 +36,7 @@ test('interaction menu remains open until an outside click', () => {
 });
 
 test('leaving a model does not close the interaction menu, and selecting an action ends it first', () => {
-    assert.match(source, /if \(pendingStructureAction && !pendingObjectMoveId\) \{\s*const menuOpen = structureActionMenu\?\.style\.display === 'block';/);
+    assert.match(source, /if \(pendingStructureAction && !pendingObjectMoveId\) \{[\s\S]*?const menuOpen = structureActionMenu\?\.style\.display === 'block';/);
     assert.match(source, /if \(!menuOpen\) clearStructureActionMenu\(\)/);
     assert.match(source, /if \(structureActionMenu\?\.style\.display === 'block'\) \{\s*e\.preventDefault\(\);\s*e\.stopImmediatePropagation\(\);\s*hideStructureInteraction\(\)/);
     assert.match(source, /button\.onclick = async event => \{\s*event\.stopPropagation\(\);\s*hideStructureInteraction\(\);\s*try \{\s*await action\.run\(\)/);
@@ -63,6 +63,7 @@ test('hovering another valid target swaps the open interaction menu', () => {
         hoveredStructureObjectId: null,
         structureHoverLastObjectId: null,
         canvas: { style: {} },
+        showGrenadeInteractionAtPointer: () => false,
         getCharacterAtScreen: x => [10, 20].includes(x)
             ? { userData: { characterId: x === 10 ? 2 : 3 } } : null,
         canInteractWithCharacter: () => true,

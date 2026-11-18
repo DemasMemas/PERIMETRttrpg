@@ -228,13 +228,13 @@ def _allocate(data,recipe,*,with_status=False,grenade_paths=None,lobby_id=None,m
             left=variant['quantity'];trial_spent=prior_spent.copy();trial=[];total=0
             for path,item in candidates:
                 from app.services.flamethrower import charges
-                attrs=item.get('attributes') or {};whole=bool(meat_component and recipe['id']!='recipe-aa8' or component.get('whole_tank') or component.get('whole_air')
+                matches_box=(recipe['id']=='recipe-aa4' and variant['name']=='Спички'
+                    and normalized(item.get('name'))=='спички 10 штук')
+                attrs=item.get('attributes') or {};whole=bool(matches_box or meat_component and recipe['id']!='recipe-aa8' or component.get('whole_tank') or component.get('whole_air')
                     or normalized(variant['name']) in {'стеклянная бутылка','пластиковая бутылка','канистра','кастрюля','котелок'})
                 if component.get('ammo_template_id'):
                     from app.services.crafting_ammo import is_plain_ammo
                     if not ammo_template or not is_plain_ammo(item,ammo_template):continue
-                matches_box=(recipe['id']=='recipe-aa4' and variant['name']=='Спички'
-                    and normalized(item.get('name'))=='спички 10 штук')
                 if meat_component:
                     from app.services.cooked_meat import ingredient_matches
                     matches=ingredient_matches(recipe['id'],item)
@@ -248,6 +248,8 @@ def _allocate(data,recipe,*,with_status=False,grenade_paths=None,lobby_id=None,m
                 else:matches=(attrs.get('flamethrower_tank')==component.get('whole_tank') and charges(item)==0 if component.get('whole_tank')
                     else bool(attrs.get('flamethrower_air')) if component.get('whole_air') else matches_box or bool(item_names(item)&names))
                 if not matches or _contains_individual_items(item):continue
+                if meat_component and whole and not isinstance(item.get('quantity', 1), int):
+                    continue
                 filter_available=_craft_filter_charges(item) if component.get('filter_charges') else None
                 if component.get('filter_charges') and filter_available is None:continue
                 packet_uses=_chlorine_uses(item)
@@ -257,6 +259,9 @@ def _allocate(data,recipe,*,with_status=False,grenade_paths=None,lobby_id=None,m
                     if (type(quantity) not in {int,float} or not isfinite(quantity)
                             or not 0<quantity<=10000 or round(quantity*10)!=quantity*10):continue
                     available=round(quantity-prior_spent.get(tuple(path),0),1)
+                elif matches_box:
+                    # An opened packet does not count towards the recipe's ten matches.
+                    available=_available_uses(item)//10-prior_spent.get(tuple(path),0)
                 else:
                     available=(item.get('quantity',1) if whole else
                         (filter_available if filter_available is not None else packet_uses if packet_uses is not None else _available_uses(item))
@@ -270,7 +275,7 @@ def _allocate(data,recipe,*,with_status=False,grenade_paths=None,lobby_id=None,m
                 if take>0:
                     trial.append({'component':index,'path':path,'amount':take,'item':deepcopy(item),
                                   'whole':whole,'filter_charges':bool(component.get('filter_charges')),
-                                  'liquid_liters':liquid})
+                                  'liquid_liters':liquid,**({'matches_box':True} if matches_box else {})})
                     trial_spent[key]=trial_spent.get(key,0)+take;left=max(0,left-take*unit)
                 if not left and not with_status:break
             if with_status:options.append({'name':variant['name'],'available':total,'required':variant['quantity']})
@@ -369,6 +374,17 @@ def quote(character,data,payload):
     from app.services.crafting_ammo import chosen_ammo
     from app.services.character_traits import background_is, ammo_crafting_modifier, trait_count
     recipe=recipe_by_id(payload.get('recipe_id'));option=payload.get('tool_option',0)
+    if recipe.get('batch_max'):
+        count = payload.get('batch_count', 1)
+        if type(count) is not int or not 1 <= count <= recipe['batch_max']:
+            raise ValidationError(f"Выберите от 1 до {recipe['batch_max']} кусков мяса")
+        meat, *ingredients = recipe['components']
+        recipe = {**recipe, 'output_count': count,
+                  'components': [{**meat, 'quantity': count}, *ingredients]}
+        if recipe['id'] == 'recipe-aa16' and 'tool_option' not in payload:
+            # Older clients sent no option when both vessels shared the same difficulty.
+            if _tools(character, data, recipe, 0) and not _tools(character, data, recipe, 1):
+                option = 1
     recipe,ammo_template,ammo_variant=chosen_ammo(recipe,payload)
     tool_output=CRAFTED_TOOLS.get(recipe['id'])
     output=ammo_template or _template(tool_output[0] if tool_output else recipe['output_name'])
@@ -442,6 +458,11 @@ def quote(character,data,payload):
     station_key=(station.properties or {}).get('portable_station') if station else None
     use_station=bool(station and (station_key or is_distillery(station)))
     return {**result,'recipe':recipe,'allocations':allocations,'missing':missing,'generator_difficulty_bonus':power_bonus,
+        **({'meat_inputs': [
+            {'name': entry['item']['name'], 'amount': entry['amount']}
+            for entry in (primary_inputs if primary_inputs is not None else allocations)
+            if entry['component'] == 0
+        ]} if recipe.get('batch_max') else {}),
         'component_status':component_status,'other_missing':missing[component_missing_count:],
         'constructor_materials':constructor_materials,'extra_component_status':extra_component_status,
         'primary_inputs':primary_inputs,'output_key':output_key,
@@ -513,9 +534,28 @@ def _escrow(data,allocations):
             continue
         maximum=1 if allocation.get('whole') else max(1,int(item.get('maxUses') or (item.get('attributes') or {}).get('uses') or 1))
         if allocation.get('whole'):
-            if item.get('quantity',1)<amount:raise ConflictError('Ёмкости изменились')
-            if item.get('quantity',1)==amount:parent.pop(index)
-            else:item['quantity']-=amount
+            quantity = item.get('quantity', 1)
+            if quantity < amount:
+                raise ConflictError('Количество целых компонентов изменилось')
+            if quantity == amount:
+                parent.pop(index)
+            else:
+                item['quantity'] -= amount
+            if allocation.get('matches_box'):
+                piece.update(uses=10,maxUses=10)
+                piece.setdefault('attributes',{})['uses_remaining']=10
+            if (item.get('attributes') or {}).get('cooked_meat') == 'boiled':
+                max_uses = item.get('maxUses') or 3
+                if item.get('uses', max_uses) not in (None, max_uses):
+                    piece.update(id=str(uuid4()), quantity=1)
+                    result.append({'component': allocation['component'], 'amount': 1, 'item': piece, 'maximum': 1})
+                    # The partially eaten piece is the first one in the stack.
+                    item['uses'] = max_uses
+                    item['attributes']['uses_remaining'] = max_uses
+                    amount -= 1
+                    if not amount:
+                        continue
+                    piece = deepcopy(item)
         elif not _consume_entry(parent,index,amount):raise ConflictError('Компоненты изменились')
         piece.update(id=str(uuid4()),quantity=ceil(amount/maximum))
         if maximum>1:
@@ -923,7 +963,10 @@ def operate(character_id,user_id,payload):
             next(r for r in state['tool_requests'] if r['id']==plan['approval_id'])['used']=True
     elif action in {'finish','cancel'}:
         job=state.get('current')
-        if not job or payload.get('job_id')!=job['id']:raise ConflictError('Работа уже завершена или изменена')
+        if not job:
+            raise ConflictError('Нет активной работы. Сначала начните создание.')
+        if payload.get('job_id') != job['id']:
+            raise ConflictError('Работа уже завершена или изменена')
         if action=='finish' and job.get('preparation_remaining',0)>0:
             raise ValidationError('Сначала завершите подготовку у самогонного аппарата')
         if action=='finish' and now(character)<job['ready_at']:raise ValidationError('Время работы ещё не прошло')
@@ -1047,14 +1090,30 @@ def operate(character_id,user_id,payload):
                     produced['price']=floor((output.price or 0)*(.25 if variant=='handmade' else 1.5))
             if job['recipe_id'] in {'recipe-aa15', 'recipe-aa16'}:
                 from app.services.cooked_meat import cooked_output
-                source=next(entry['item'] for entry in recipe_inputs if entry['component']==0)
-                cooked_output(source, job['recipe_id'], produced, cook_bonus=job.get('cook_bonus', 0))
+                pieces = []
+                for entry in recipe_inputs:
+                    if entry['component'] != 0:
+                        continue
+                    for index in range(entry['amount']):
+                        source = entry['item']
+                        if index and (source.get('attributes') or {}).get('cooked_meat') == 'boiled':
+                            source = {**source, 'uses': source.get('maxUses') or 3}
+                        piece = item_from_template(output)
+                        cooked_output(source, job['recipe_id'], piece, cook_bonus=job.get('cook_bonus', 0))
+                        piece['name'] = f"{output.name} — {piece['attributes']['source_mutant']}"
+                        pieces.append(piece)
+                if len(pieces) != job['output_count']:
+                    raise ConflictError('Количество зарезервированных кусков мяса изменилось')
             if job.get('output_uses') is not None:
                 if type(produced.get('maxUses')) is not int or not 0<job['output_uses']<produced['maxUses']:
                     raise ConflictError('Каталожный максимум зарядов инструмента изменился')
                 produced['uses']=job['output_uses']
                 produced['attributes']['uses_remaining']=job['output_uses']
-            data.setdefault('inventory',{}).setdefault('pockets',[]).append(produced)
+            destination = data.setdefault('inventory', {}).setdefault('pockets', [])
+            if job['recipe_id'] in {'recipe-aa15', 'recipe-aa16'}:
+                destination.extend(pieces)
+            else:
+                destination.append(produced)
             output_key = job.get('output_key', _output_key(output.id, job.get('output_variant')))
             if output_key:
                 state.setdefault('successful_outputs', {})[output_key] = True

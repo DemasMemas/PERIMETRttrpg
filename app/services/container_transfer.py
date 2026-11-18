@@ -16,9 +16,14 @@ def put_on_ground(location, x, y, level, item):
     return put_items_on_ground(location, x, y, level, [item])
 
 
-def put_items_on_ground(location, x, y, level, items):
+def _ground_tile(location, x, y):
     tile_x = min(location.grid_width - 1, max(0, int(x + .5)))
     tile_y = min(location.grid_height - 1, max(0, int(y + .5)))
+    return tile_x, tile_y
+
+
+def put_items_on_ground(location, x, y, level, items):
+    tile_x, tile_y = _ground_tile(location, x, y)
     ground = next((obj for obj in LocationObject.query.filter_by(location_id=location.id,
         type='ground_item', tile_x=tile_x, tile_y=tile_y).all()
         if (obj.properties or {}).get('floor_level', 0) == level and not (obj.properties or {}).get('gm_hidden')
@@ -49,13 +54,14 @@ class ContainerTransferService:
         if not actor or actor.character.lobby_id != lobby_id:
             raise NotFoundError('Character is not in this location')
         CharacterService.check_access(actor.character, user_id, edit=True)
+        tile_x, tile_y = _ground_tile(actor.location, actor.pos_x, actor.pos_y)
         obj = next((ground for ground in LocationObject.query.filter_by(
-            location_id=location_id, type='ground_item', tile_x=actor.pos_x, tile_y=actor.pos_y).all()
+            location_id=location_id, type='ground_item', tile_x=tile_x, tile_y=tile_y).all()
             if (ground.properties or {}).get('floor_level', 0) == (actor.floor_level or 0)), None)
         created = obj is None
         if created:
-            obj = LocationObject(location_id=location_id, name='Пол', type='ground_item', tile_x=actor.pos_x,
-                                 tile_y=actor.pos_y, properties={'contents': [], 'is_ground_item': True,
+            obj = LocationObject(location_id=location_id, name='Пол', type='ground_item', tile_x=tile_x,
+                                 tile_y=tile_y, properties={'contents': [], 'is_ground_item': True,
                                  'passable': True, 'level':actor.floor_level or 0,'floor_level': actor.floor_level or 0,
                                  'interactions': ['open_container']})
             db.session.add(obj)
@@ -82,7 +88,8 @@ class ContainerTransferService:
             raise NotFoundError('Тайник не найден')
         CombatService.ensure_character_can_act(actor)
         state = LocationCombatState.query.filter_by(location_id=obj.location_id).first()
-        if state and state.status == 'active':
+        in_combat = bool(state and state.status == 'active')
+        if in_combat:
             if state.current_location_character_id != actor.id:
                 raise PermissionDenied("It is not this character's turn")
             if max(abs(actor.pos_x - obj.tile_x), abs(actor.pos_y - obj.tile_y)) > 1:
@@ -104,7 +111,7 @@ class ContainerTransferService:
         data = deepcopy(character.data or {})
         properties = deepcopy(obj.properties or {})
         storage = properties['stash_compartment'] if compartment else properties
-        contents = ContainerTransferService.exchange_items(data, storage, payload, dropped=dropped)
+        contents = ContainerTransferService.exchange_items(data, storage, payload, dropped=dropped, in_combat=in_combat)
         character.data = data
         obj.properties = properties
         deleted = not compartment and not contents and (obj.type == 'ground_item' or properties.get('is_ground_item'))
@@ -113,7 +120,7 @@ class ContainerTransferService:
         return character, obj, deleted
 
     @staticmethod
-    def exchange_items(data, properties, payload, *, dropped=False):
+    def exchange_items(data, properties, payload, *, dropped=False, in_combat=False):
         direction = payload.get('direction')
         if direction not in {'to_container', 'to_character'}:
             raise ValidationError('Invalid transfer direction')
@@ -158,9 +165,12 @@ class ContainerTransferService:
             moved['quantity'] = amount
             moved['id'] = f'item_{uuid4().hex}'
         if dropped and moved.get('category') in {'weapon', 'melee_weapon'}:
-            maximum = moved.get('maxDurability') or (moved.get('attributes') or {}).get('max_durability') or 100
-            moved['maxDurability'] = maximum
-            moved['durability'] = max(0, float(moved.get('durability', maximum)) - 3)
+            if in_combat:
+                CombatService._apply_weapon_wear(moved, 3)
+            else:
+                maximum = moved.get('maxDurability') or (moved.get('attributes') or {}).get('max_durability') or 100
+                moved['maxDurability'] = maximum
+                moved['durability'] = max(0, float(moved.get('durability', maximum)) - 3)
         if direction == 'to_container':
             contents.append(moved)
             lights = data.setdefault('health', {}).setdefault('combatMeta', {}).get('portableLights')

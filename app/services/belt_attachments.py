@@ -28,6 +28,7 @@ QUICK_MOUNTS = {'grenade', 'dressing', 'syringe'}
 QUICK_SLOTS = {MOUNTS[kind]['slot'] for kind in QUICK_MOUNTS}
 COUNTED_MOUNTS = {'restraint', 'cartridge'}
 COUNTED_SLOTS = {MOUNTS[kind]['slot']: kind for kind in COUNTED_MOUNTS}
+KNIFE_NAME = re.compile(r'\b(?:[а-яё]*нож|кортик)\b', re.I)
 
 
 def rope(item):
@@ -99,14 +100,79 @@ def holstered(data, weapon):
                 and not belt.get('protectionDisabled') and rule(belt, 'belt_holster'))
 
 
+def cartridge_visual(item):
+    attrs = item.get('attributes') or {}
+    caliber = str(item.get('caliber') or attrs.get('caliber') or item.get('name') or '').casefold()
+    caliber = re.sub(r'\s+', '', caliber.replace(',', '.').replace('х', 'x').replace('×', 'x'))
+    if caliber.startswith(('12x', '16x', '20x', '410')):
+        return 'shell'
+    if caliber.startswith(('7.62x51', '7.62x54', '7.62x63', '12.7x')):
+        return 'rifle'
+    if caliber.startswith(('5.45x39', '5.56x45', '7.62x39', '9x39')):
+        return 'intermediate'
+    return 'pistol'
+
+
+def belt_visuals(data, held_indices=()):
+    """Только силуэты, количества и заполненность, без идентификаторов предметов."""
+    from app.services.character_appearance import equipment_visual
+    from app.services.equipment_modifications import rule
+
+    belt = (data.get('equipment') or {}).get('belt')
+    if not isinstance(belt, dict) or not belt:
+        return None
+    result = {'pouches': min(7, sum(isinstance(pouch, dict) and bool(pouch) for pouch in belt.get('pouches') or []))}
+    stored = belt.get('storedItem')
+    stored = stored if isinstance(stored, dict) else {}
+    attributes = stored.get('savedAttributes')
+    primary = {**stored, **attributes} if isinstance(attributes, dict) else stored
+    headgear = []
+    for item, category in ((primary, stored.get('type')), (belt.get('extraStoredItem'), None)):
+        if isinstance(item, dict) and (category or item.get('category')) in {'helmet', 'gas_mask'}:
+            slot = 'helmet' if (category or item.get('category')) == 'helmet' else 'gasMask'
+            if visual := equipment_visual(item, slot):
+                headgear.append(visual)
+    if headgear:
+        result['headgear'] = headgear
+    for kind in ('grenade', 'syringe', 'detector', 'radio', 'dressing', 'artifact', 'tool'):
+        if count := min(MOUNTS[kind]['capacity'], len(loaded(belt, kind))):
+            result[kind] = count
+    restraints = [item for _, item in loaded(belt, 'restraint')]
+    if any(rope(item) for item in restraints):
+        result['rope'] = True
+    elif restraints:
+        result['ties'] = min(15, sum(_stack_quantity(item) for item in restraints))
+    ammo = []
+    for _, item in loaded(belt, 'cartridge'):
+        ammo.extend([cartridge_visual(item)] * min(50 - len(ammo), _stack_quantity(item)))
+    if ammo or rule(belt, 'belt_cartridge_mount'):
+        result['ammo'] = ammo
+        if (data.get('equipment') or {}).get('armor'):
+            result['armor'] = True
+    stowed = {item.get('id') for index, item in enumerate(data.get('weapons') or [])
+              if index not in held_indices and isinstance(item, dict) and item.get('id')}
+    if rule(belt, 'belt_holster'):
+        result['holster'] = 'filled' if belt.get('holsterWeaponId') in stowed else 'empty'
+    if 'sheathWeaponId' in belt and rule(belt, 'free_pouch_mounts'):
+        result['sheath'] = 'filled' if belt.get('sheathWeaponId') in stowed else 'empty'
+    return result
+
+
+def _stack_quantity(item):
+    value = item.get('quantity', 1)
+    return max(0, value) if type(value) is int else 0
+
+
 def preserve(current, incoming):
     """Сохранение листа не снимает, не копирует и не перезаправляет вложения."""
     from app.services.portable_lights import walk
     old_belts = {item['id']: item for _, item in walk(current or {}, True)
-                 if item.get('id') and (attached(item) or item.get('holsterWeaponId'))}
+                 if item.get('id') and (attached(item) or item.get('holsterWeaponId') or 'sheathWeaponId' in item)}
     incoming_items = list(walk(incoming, True))
     old_holsters = {item['id']: item['holsterWeaponId'] for _, item in walk(current or {}, True)
                     if item.get('id') and item.get('holsterWeaponId')}
+    old_sheaths = {item['id']: item['sheathWeaponId'] for _, item in walk(current or {}, True)
+                   if item.get('id') and 'sheathWeaponId' in item}
     weapon_ids = {weapon.get('id') for weapon in incoming.get('weapons') or [] if isinstance(weapon, dict)}
     for _, item in incoming_items:
         bound = old_holsters.get(item.get('id'))
@@ -114,6 +180,11 @@ def preserve(current, incoming):
             item['holsterWeaponId'] = bound
         else:
             item.pop('holsterWeaponId', None)
+        if item.get('id') in old_sheaths:
+            sheath_weapon = old_sheaths[item['id']]
+            item['sheathWeaponId'] = sheath_weapon if sheath_weapon in weapon_ids else None
+        else:
+            item.pop('sheathWeaponId', None)
     for belt_id, old in old_belts.items():
         matches = [item for _, item in incoming_items if item.get('id') == belt_id]
         if len(matches) > 1:
@@ -154,7 +225,7 @@ def operate(character_id, user_id, payload):
     if not isinstance(payload, dict) or set(payload) - {'operation', 'kind', 'character_revision', 'belt_id', 'source', 'quantity', 'weapon_id'}:
         raise ValidationError('Некорректное действие с креплением пояса')
     kind=payload.get('kind','tool')
-    if not isinstance(kind,str) or kind not in {*MOUNTS, 'holster'}:raise ValidationError('Неизвестное крепление пояса')
+    if not isinstance(kind,str) or kind not in {*MOUNTS, 'holster', 'sheath'}:raise ValidationError('Неизвестное крепление пояса')
     character = db.session.get(LobbyCharacter, character_id)
     if not character:
         raise NotFoundError('Персонаж не найден')
@@ -167,8 +238,8 @@ def operate(character_id, user_id, payload):
         raise ConflictError('Пояс перемещён. Откройте лист заново')
     actor = combat_actor(character, user_id, action_name='Крепление пояса')
     operation = payload.get('operation')
-    if kind == 'holster':
-        return change_holster(character, data, belt, actor, operation, payload.get('weapon_id'))
+    if kind in {'holster', 'sheath'}:
+        return change_weapon_mount(character, data, belt, actor, operation, payload.get('weapon_id'), kind)
     mount = MOUNTS[kind]
     source = payload.get('source') or {}
     if not isinstance(source,dict):raise ValidationError('Выберите предмет для крепления')
@@ -244,13 +315,43 @@ def operate(character_id, user_id, payload):
     return character, actor, {'operation': operation, 'kind':kind, 'action_points': cost, 'free_actions': free}
 
 
-def change_holster(character, data, belt, actor, operation, weapon_id):
+def change_weapon_mount(character, data, belt, actor, operation, weapon_id, kind):
     from app.services.combat import CombatService
-    from app.services.equipment_modifications import rule
+    from app.services.equipment_modifications import belt_general_pouch_limit, belt_pouch_limit, magazine_pouch, rule
     from app.services.item_template_lookup import resolve_item_template
     from app.services.weapon_grip import held
 
-    if operation == 'mount':
+    sheath = kind == 'sheath'
+    key = 'sheathWeaponId' if sheath else 'holsterWeaponId'
+    weapons = data.get('weapons') or []
+    if sheath:
+        if operation == 'unmount' and key in belt:
+            belt.pop(key)
+        elif operation == 'mount' and rule(belt, 'free_pouch_mounts') and not belt.get('protectionDisabled'):
+            if belt.get(key) and any(isinstance(item, dict) and item.get('id') == belt[key] for item in weapons):
+                raise ValidationError('Сначала освободите ножны')
+            proposed = {**belt, key: None}
+            pouches = belt.get('pouches') or []
+            if len(pouches) > belt_pouch_limit(proposed, character.lobby_id) or sum(
+                    not magazine_pouch(pouch, character.lobby_id) for pouch in pouches
+            ) > belt_general_pouch_limit(proposed, character.lobby_id):
+                raise ValidationError('Освободите дополнительное крепление для ножен')
+            if weapon_id is not None:
+                if not isinstance(weapon_id, str) or not weapon_id:
+                    raise ValidationError('Выберите нож для ножен')
+                index = next((i for i, weapon in enumerate(weapons) if isinstance(weapon, dict)
+                              and weapon.get('id') == weapon_id), None)
+                template = resolve_item_template(weapons[index], character.lobby_id) if index is not None else None
+                if (not template or template.category != 'melee_weapon' or not KNIFE_NAME.search(template.name)
+                        or weapon_id == belt.get('holsterWeaponId')):
+                    raise ValidationError('Для ножен выберите отдельный нож из экипированного оружия')
+                in_hand = held(actor, index) if actor else data.get('activeWeaponIndex') == index
+                if in_hand:
+                    raise ValidationError('Сначала уберите нож из руки')
+            belt[key] = weapon_id
+        else:
+            raise ValidationError('Для ножен необходимо дополнительное крепление пояса')
+    elif operation == 'mount':
         if not isinstance(weapon_id, str) or not weapon_id or belt.get('protectionDisabled') or not rule(belt, 'belt_holster'):
             raise ValidationError('Выберите оружие для действующей кобуры')
         bound = belt.get('holsterWeaponId')
@@ -259,6 +360,8 @@ def change_holster(character, data, belt, actor, operation, weapon_id):
         weapon = next((item for item in data.get('weapons') or [] if isinstance(item, dict) and item.get('id') == weapon_id), None)
         if not weapon:
             raise ConflictError('Оружие перемещено. Выберите его заново')
+        if belt.get('sheathWeaponId') == weapon_id:
+            raise ValidationError('Сначала освободите ножны')
         template = resolve_item_template(weapon, character.lobby_id)
         attributes = (template.attributes or {}) if template else {}
         size = CombatService._coerce_float(weapon.get('size', (weapon.get('attributes') or {}).get('size', attributes.get('size'))), 0)
@@ -280,4 +383,4 @@ def change_holster(character, data, belt, actor, operation, weapon_id):
         CombatService._clear_aim(actor)
     character.data = data
     flag_modified(character, 'data')
-    return character, actor, {'operation': operation, 'kind': 'holster', 'action_points': cost, 'free_actions': 0}
+    return character, actor, {'operation': operation, 'kind': kind, 'action_points': cost, 'free_actions': 0}

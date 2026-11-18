@@ -1,15 +1,16 @@
 import { itemPowerWarning, itemTooltipModel, tooltipPosition } from './itemPresentation.js';
+import { isCosmeticMask } from './characterAppearance.js';
 import { applyPouchTemplate, moveUnpackedItemsToPockets, returnPouchContents, vestMountVolume, pouchCapacity } from './inventoryContainers.js';
 import { rollQuickSkill } from './quickSkillCheck.js';
 import {modificationStat,wornModificationStat,modificationRule,wornModificationRule,modifiedFireProfile} from './itemModifications.js';
-import { renderPortableLights,usesNightVision } from './portableLights.js';
+import { activeGlowLabel, renderPortableLights, usesNightVision } from './portableLights.js';
 import { isGroundStashTool } from './traps.js';
 import { openPdaShell } from './pdaShell.js';
 import { animatePanelEntry } from './panelMotion.js';
 import { renderProstheses,prostheticLimb } from './prostheses.js';
 import { pairedFireOptions } from './pairedFire.js';
 import { hearingModifier } from './hearingRules.js';
-import { historyDebtText } from './characterHistory.js';
+import { renderHistoryMonth } from './characterHistory.js';
 import { passiveTraits, traitCount, backgroundIs, addLearningXp, backpackItemVolume, pocketCapacity,facialProfile,carriedWeaponEntries,ruleText } from './characterTraits.js';
 // static/js/characterSheet.js
 /*
@@ -24,7 +25,6 @@ import { passiveTraits, traitCount, backgroundIs, addLearningXp, backpackItemVol
  * 4. Вкладка "Навыки" (renderSkillsTab) + особые черты
  * 5. Вкладка "Экипировка" (renderEquipmentTab) + оружие, броня, шлем, противогаз
  * 6. Раздел «Инвентарь» в экипировке (renderInventoryTab) + карманы, пояс, разгрузка, рюкзак
- * 7. Вкладка "Заметки" (renderNotesTab)
  * 8. Вкладка "Настройки" (renderSettingsTab) + видимость, удаление
  * 9. Публичные функции (openCharacterSheet, closeCharacterSheet, export/import)
  * 10. Вспомогательные функции для UI (добавление/удаление предметов, оружия, модификаций)
@@ -41,11 +41,13 @@ import { diffCharacterData, pathTouches } from './characterSheetSync.js';
 import { artifactSkillBonus, artifactSkillBonusesChanged } from './artifactSkillBonuses.js';
 import { isWorldDarkTime } from './darknessRules.js';
 import { copyProfileComponent, profileComponentOptions, renderConsumableProfileTree } from './consumableProfileEditor.js';
-import { applyEffectToHealth, createEffectDraft, effectSummary, effectDurationLabel, effectConsequences, getEffectTypeOptions, isAlcoholConsumable, normalizeCharacterEffects, normalizeEffectList, getEffectImpact, syncHealthDerivedStatuses } from './effects.js';
+import { applyEffectToHealth, createEffectDraft, effectSummary, effectDurationLabel, effectConsequenceEntries, getEffectTypeOptions, isAlcoholConsumable, normalizeCharacterEffects, normalizeEffectList, getEffectImpact, syncHealthDerivedStatuses } from './effects.js';
+import { activeTourniquetAreas, bleedingIsSuppressed, tourniquetArea } from './effects.js';
 import { initCharacterWidgets, getWidgetSource, resolveWidgetReference, parseWidgetAction, itemBinding } from './characterWidgets.js';
 import { characterWidgetBlocks, findWidgetBlock, projectWidgetBlock, widgetBlockControl } from './characterWidgetBlocks.js';
 import { characterCategory } from './characterFolders.js';
-import { characterEquipmentVisuals, normalizeCharacterAppearance, DEFAULT_CHARACTER_APPEARANCE } from './characterAppearance.js';
+import { characterEquipmentVisuals, normalizeCharacterAppearance, DEFAULT_CHARACTER_APPEARANCE,
+    gearColorPalette, GEAR_COLOR_FIELDS } from './characterAppearance.js';
 import { mountCharacterAppearancePreview } from './characterAppearancePreview.js';
 
 // ========== 1. СОСТОЯНИЕ И УТИЛИТЫ ==========
@@ -298,6 +300,7 @@ export function getCategoryDisplay(cat) {
         'armor': 'Броня',
         'helmet': 'Шлемы',
         'gas_mask': 'Противогазы',
+        'mask': 'Маски',
         'detector': 'Приборы',
         'container': 'Контейнеры',
         'consumable': 'Расходники',
@@ -758,7 +761,7 @@ async function getAllItemTemplates(forceRefresh = false) {
     if (!forceRefresh && allTemplatesCache) return allTemplatesCache;
 
     const categories = [
-        'weapon', 'armor', 'helmet', 'gas_mask', 'detector', 'container',
+        'weapon', 'armor', 'helmet', 'gas_mask', 'mask', 'detector', 'container',
         'consumable', 'crafting_material', 'artifact', 'backpack', 'vest', 'pouch',
         'weapon_module', 'magazine', 'ammo', 'gas_mask_module', 'visor', 'belt',
         'exoskeleton_module', 'grenade', 'device', 'armor_plate', 'melee_weapon',
@@ -789,7 +792,7 @@ async function getAllItemTemplates(forceRefresh = false) {
 
 function clearAllTemplatesCache() {
     allTemplatesCache = null;
-    const categories = ['weapon', 'armor', 'helmet', 'gas_mask', 'detector', 'container',
+    const categories = ['weapon', 'armor', 'helmet', 'gas_mask', 'mask', 'detector', 'container',
                         'consumable', 'crafting_material', 'artifact', 'modification', 'backpack', 'vest', 'pouch',
                         'weapon_module', 'ammo', 'exoskeleton_module', 'tool', 'misc', 'other', 'food'];
     categories.forEach(cat => clearTemplatesCache(cat));
@@ -811,7 +814,7 @@ function getSkillByPath(path) {
 }
 
 function checkAndLevelUpSkill(skill, skillPath) {
-    while (true) {
+    while (Number(skill.base) < 20) {
         const required = getRequiredXp(skill.base);
         if (skill.xp >= required) {
             skill.xp -= required;
@@ -828,7 +831,7 @@ window.addSkillXpFromPoints = function(skillPath) {
     updateDataFromFields();
     if (!currentCharacterData.skills) currentCharacterData.skills = {};
     let skill = getSkillByPath(skillPath);
-    if (!skill) return;
+    if (!skill || Number(skill.base) >= 20) return;
 
     let freePoints = currentCharacterData.skills.skillPoints ?? 30;
     if (freePoints <= 0) {
@@ -850,7 +853,7 @@ window.addSkillXpFromUse = function(skillPath) {
     if (!currentCharacterCanEdit || sheetSaveBlocked) return;
     updateDataFromFields();
     let skill = getSkillByPath(skillPath);
-    if (!skill) return;
+    if (!skill || Number(skill.base) >= 20) return;
 
     addLearningXp(currentCharacterData,skillPath,skill);
     checkAndLevelUpSkill(skill, skillPath);
@@ -1083,6 +1086,8 @@ function handleManualFormEdit(event) {
             const skill = getSkillByPath(skillPath);
             const progress = document.querySelector(`[data-skill-progress="${CSS.escape(skillPath)}"]`);
             if (skill && progress) progress.textContent = `Опыт: ${skill.xp || 0}/${getRequiredXp(skill.base)}`;
+            const increase = document.querySelector(`[data-skill-increase="${CSS.escape(skillPath)}"]`);
+            if (skill && increase) increase.hidden = Number(skill.base) >= 20;
         }
         if (event.type === 'change') forceSyncCharacter();
         else scheduleAutoSave(200);
@@ -1240,7 +1245,7 @@ function restoreSheetViewState(state, { restoreWeaponCards = true } = {}) {
     }
 }
 
-async function refreshSavedSheet(characterId) {
+async function refreshSavedSheet(characterId, { refreshSkills = false } = {}) {
     if (Number(currentCharacterId) !== Number(characterId)) return;
     const viewState = captureSheetViewState();
     await Promise.all([
@@ -1249,11 +1254,12 @@ async function refreshSavedSheet(characterId) {
     ]);
     if (Number(currentCharacterId) !== Number(characterId)) return;
     const activeTab = document.querySelector('#sheet-tabs .tab-btn.active')?.dataset.tab;
-    if (activeTab === 'health') refreshHealthPanel();
-    else if (activeTab === 'basic') await renderBasicTab(currentCharacterData);
-    else if (activeTab === 'skills') renderSkillsTab(currentCharacterData);
-    else if (activeTab === 'settings') renderSettingsTab(currentCharacterData);
-    else if (activeTab === 'notes') renderNotesTab(currentCharacterData);
+    if (activeTab === 'basic') await renderBasicTab(currentCharacterData);
+    else {
+        refreshHealthPanel();
+        if (activeTab === 'settings') renderSettingsTab(currentCharacterData);
+    }
+    if (refreshSkills || activeTab === 'skills') renderSkillsTab(currentCharacterData);
     applySheetEditPermissions();
     restoreSheetViewState(viewState);
 }
@@ -1357,6 +1363,7 @@ async function applyRemoteSheetData(remoteData, characterId = currentCharacterId
     const touches = root => allPaths.some(path => pathTouches(path, root));
     const structuralTouches = root => changes.structuralPaths.some(path => pathTouches(path, root));
     const missingTouches = root => [...missingFields].some(path => pathTouches(path, root));
+    const consumableModifiersChanged = touches('health.combatMeta.consumableModifiers');
     const tasks = [];
     const rerenderBasic = structuralTouches('basic') || missingTouches('basic')
         || touches('health') && backgroundIs(remoteData,'Бригадир')
@@ -1373,6 +1380,7 @@ async function applyRemoteSheetData(remoteData, characterId = currentCharacterId
         || touches('features')
         || touches('equipment.armor') && getExoskeletonPowerProfile(previousData).powered !== getExoskeletonPowerProfile(remoteData).powered
         || artifactSkillsChanged
+        || consumableModifiersChanged
         || ['health.effects', 'health.psyState', 'health.psy_state'].some(touches)
             && willLevelModifier(previousData) !== willLevelModifier(remoteData)
     ) tasks.push(renderSkillsTab(remoteData));
@@ -1390,14 +1398,14 @@ async function applyRemoteSheetData(remoteData, characterId = currentCharacterId
         || ['equipment', 'equipment.belt', 'equipment.vest', 'equipment.backpack', 'weapons']
             .some(path => path === 'equipment' ? allPaths.includes(path) : touches(path))) {
         tasks.push(renderInventoryTab(remoteData));
-    } else if (inventoryPaths.length || touches('equipment') || touches('skills.physical.strength') || artifactStrengthChanged) {
+    } else if (inventoryPaths.length || touches('equipment') || touches('skills.physical.strength') || artifactStrengthChanged
+        || consumableModifiersChanged) {
         tasks.push(Promise.all(inventoryPaths.map(path => rerenderContainer(path.split('.'))))
             .then(() => recalculateInventoryTotals()));
     }
     if (touches('ownerId') || touches('ownerUsername') || touches('visible_to') || touches('editable_to')) {
         renderSettingsTab(remoteData);
     }
-    if (missingTouches('notes')) renderNotesTab(remoteData);
 
     await Promise.all(tasks);
     if (Number(currentCharacterId) !== Number(characterId)) return false;
@@ -1422,6 +1430,25 @@ function rememberPendingSheetRemoteUpdate(data) {
     ) {
         pendingSheetRemoteUpdate = data;
     }
+}
+
+function receiveSheetRemoteData(characterId, data) {
+    if (!data || Number(characterId) !== Number(currentCharacterId)) return;
+    if (widgetOperation) {
+        rememberPendingSheetRemoteUpdate(data);
+        return;
+    }
+    if (medicalOperationInProgress) {
+        if (!medicalRemoteUpdate || Number(data._revision) > Number(medicalRemoteUpdate.data?._revision)) {
+            medicalRemoteUpdate = { character_id: Number(characterId), data };
+        }
+        return;
+    }
+    if (autoSaveTimer || Server.isCharacterSaving(currentCharacterId) || sheetSaveBlocked) {
+        rememberPendingSheetRemoteUpdate(data);
+        return;
+    }
+    return queueRemoteSheetData(data, currentCharacterId);
 }
 
 async function applyPendingSheetRemoteUpdate(characterId) {
@@ -1587,6 +1614,25 @@ function addToBackpack(item) {
     currentCharacterData.inventory.backpack.push(item);
 }
 
+function storeRemovedEquipment(item) {
+    const data = currentCharacterData;
+    const inventory = data.inventory ||= {};
+    if (!Array.isArray(inventory.pockets)) inventory.pockets = [];
+    const pockets = inventory.pockets;
+    const used = pockets.reduce((total, existing) => total + getTotalVolume(existing), 0);
+    const volume = getTotalVolume(item);
+    if (!data.equipment?.backpack && Number.isFinite(volume) && volume >= 0 && used + volume <= pocketCapacity(data) + 1e-7) {
+        pockets.push(item);
+    } else {
+        addToBackpack(item);
+    }
+}
+
+function restoreBeltItem(item, path) {
+    const unplaced = path?.length === 3 && path[0] === 'inventory' && path[1] === 'backpack' && !currentCharacterData.equipment?.backpack;
+    if (!path || unplaced || !restoreItemToPath(item, path)) storeRemovedEquipment(item);
+}
+
 // Универсальная установка модуля в слот.
 function universalInstallModule(targetItem, targetPath, moduleItem, modulePath, slotType) {
     if (['nvg', 'light'].includes(slotType)
@@ -1612,15 +1658,6 @@ function universalInstallModule(targetItem, targetPath, moduleItem, modulePath, 
         };
         moduleItem.durability = charges;
         moduleItem.maxDurability = charges;
-    } else if (slotType === 'exoskeleton_battery') {
-        moduleItem.category = 'exoskeleton_module';
-        moduleItem.subcategory = 'battery';
-        moduleItem.attributes = {
-            ...(moduleItem.attributes || {}),
-            slot_type: 'exoskeleton_battery',
-            charge_days: Number(moduleItem.attributes?.charge_days) || 1,
-            remaining_days: Number(moduleItem.attributes?.remaining_days) || 1,
-        };
     }
 
     // Обработка стопки
@@ -1648,7 +1685,6 @@ function universalInstallModule(targetItem, targetPath, moduleItem, modulePath, 
     moduleItem.sourcePath = modulePath;
     moduleItem.slotType = slotType;
     targetItem.installedModules.push(moduleItem);
-    if (slotType === 'exoskeleton_battery') targetItem.powered = true;
     return true;
 }
 
@@ -1684,7 +1720,7 @@ function createItemFromTemplate(template, quantity = 1, options = {}) {
         contents: [],
         isContainer: template.category === 'container' || template.category === 'backpack' || template.category === 'pouch' || isLiquidCanister(template),
         capacity: template.attributes?.capacity ?? template.attributes?.limit ?? template.volume ?? 0,
-        isEquippable: ['weapon', 'armor', 'helmet', 'gas_mask', 'device', 'detector', 'backpack'].includes(template.category),
+        isEquippable: ['weapon', 'armor', 'helmet', 'gas_mask', 'mask', 'device', 'detector', 'backpack'].includes(template.category),
         isStackable: ['consumable', 'crafting_material', 'artifact', 'ammo'].includes(template.category)
     };
     if (options.createdByPlayer) item.createdByPlayer = true;
@@ -1876,6 +1912,12 @@ async function canEquipGasMaskWithCurrentHelmet() {
 
 function createItemFromTemplateSelection(template, quantity = 1, ammoVariant = null, options = {}) {
     const newItem = createItemFromTemplate(template, quantity, options);
+    if (options.cookedMeat) {
+        const { attributes, price, label } = options.cookedMeat;
+        newItem.attributes = { ...newItem.attributes, ...attributes };
+        newItem.name = `${template.name} — ${label}`;
+        newItem.price = price;
+    }
     if (template.category === 'ammo') {
         applyAmmoVariantToItem(newItem, template, ammoVariant);
         updateAmmoWeight(newItem);
@@ -1901,7 +1943,7 @@ function migrateOldItemToNew(oldItem) {
         installedModules: [],
         contents: oldItem.contents || [], // <-- важно
         isContainer: oldItem.category === 'container' || oldItem.category === 'backpack' || oldItem.category === 'pouch' || isLiquidCanister(oldItem),
-        isEquippable: ['weapon', 'armor', 'helmet', 'gas_mask', 'backpack'].includes(oldItem.category),
+        isEquippable: ['weapon', 'armor', 'helmet', 'gas_mask', 'mask', 'backpack'].includes(oldItem.category),
         isStackable: ['consumable', 'crafting_material', 'artifact'].includes(oldItem.category)
     };
 }
@@ -2000,15 +2042,7 @@ function getSkillEffectiveValue(data, skillPath) {
     }
     const base = Number(skill?.base);
     const bonus = Number(skill?.bonus) || 0;
-    const statName = skillPath.split('.').pop();
-    const modifiers = data?.health?.combatMeta?.consumableModifiers;
-    const temporaryValue = Array.isArray(modifiers)
-        ? modifiers.reduce((sum, modifier) => {
-            if (!modifier || ![statName, `${statName}_delta`].includes(modifier.stat)) return sum;
-            if (modifier.remaining !== undefined && Number(modifier.remaining) <= 0) return sum;
-            return sum + (Number(modifier.value) || 0);
-        }, 0)
-        : 0;
+    const temporaryValue = getConsumableStatValue(data, parts.at(-1));
     const equipmentValue = skillPath === 'physical.strength'
         ? getExoskeletonPowerProfile(data).strengthLevelBonus
         : 0;
@@ -2108,6 +2142,8 @@ function getHealthRollModifier(data, skillPath, options = {}) {
 }
 
 function hasHealthRollDisadvantage(data, skillPath) {
+    const tourniquets = activeTourniquetAreas(data?.health?.effects || []);
+    if (tourniquets.has('leftarm') || tourniquets.has('rightarm')) return true;
     const psyState = Number(data?.health?.psyState ?? data?.health?.psy_state) || 0;
     return (
         skillPath === 'physical.shooting' && psyState >= 30
@@ -2248,7 +2284,8 @@ function getMovementPenaltyBreakdown(data, suppliedWeight = null) {
     const weightPerPenalty = getWeightPerMovementPenalty(data);
     const rawWeightPenalty = Math.floor(totalWeight / weightPerPenalty);
     const backpackReduction = Math.max(0, Number(eq.backpack?.attributes?.weight_reduction) || 0);
-    let weightPenalty = Math.max(0, Math.floor(rawWeightPenalty*passiveTraits(data).weightMultiplier) - backpackReduction+getConsumableStatValue(data,'weight')+wornModificationStat(data,'weight_penalty'));
+    const temporaryWeightPenalty = getConsumableStatValue(data, 'weight');
+    let weightPenalty = Math.max(0, Math.floor(rawWeightPenalty*passiveTraits(data).weightMultiplier) - backpackReduction+temporaryWeightPenalty+wornModificationStat(data,'weight_penalty'));
     let armorPenalty = Math.max(0,modificationStat(armor,'movement_penalty',Number(armor.movementPenalty ?? armor.movement_penalty)||0));
     const helmet = eq.helmet || {};
     const helmetPenalty = helmet.integratedWithArmor
@@ -2302,18 +2339,22 @@ function getMovementPenaltyBreakdown(data, suppliedWeight = null) {
         return sum + (zones[key] && Number(zones[key].current) <= 0 ? 3 : 0);
     }, fractureInjuries);
     const intoxicationPenalty = getIntoxicationProfile(data).movement;
+    const coveredLimbs = activeTourniquetAreas(activeHealthEffects);
+    const tourniquets = 2 * (Number(coveredLimbs.has('leftleg')) + Number(coveredLimbs.has('rightleg')));
     return {
-        total: armorPenalty + helmetPenalty + weightPenalty + temporary + injuries + intoxicationPenalty+passiveTraits(data).movementPenalty+artifactPenalty,
+        total: armorPenalty + helmetPenalty + weightPenalty + temporary + injuries + tourniquets + intoxicationPenalty+passiveTraits(data).movementPenalty+artifactPenalty,
         totalWeight,
         weightPerPenalty,
         rawWeightPenalty,
         backpackReduction,
         weightPenalty,
+        temporaryWeightPenalty,
         armorPenalty,
         helmetPenalty,
         artifactPenalty,
         temporary,
         injuries,
+        tourniquets,
         intoxicationPenalty,
         poweredExoskeleton: powered,
         unpoweredWeightUpgrade: isExoskeleton && !powered && exoskeleton.batteryPresent
@@ -2451,8 +2492,7 @@ async function renderCharacterSheet(characterName, data) {
         { id: 'basic', title: 'Основное' },
         { id: 'skills', title: 'Навыки' },
         { id: 'equipment', title: 'Экипировка' },
-        { id: 'settings', title: 'Настройки' },
-        { id: 'notes', title: 'Заметки' }
+        { id: 'settings', title: 'Настройки' }
     ];
 
     tabs.forEach((tab, index) => {
@@ -2480,7 +2520,6 @@ async function renderCharacterSheet(characterName, data) {
     renderSkillsTab(data);
     await renderEquipmentTab(data);
     await renderInventoryTab(data);
-    renderNotesTab(data);
     renderSettingsTab(data);
 
     const form = document.getElementById('character-sheet-form');
@@ -2536,10 +2575,8 @@ function renderCreationHistory(history){
                     max="${Number(debt.remaining)}" step="0.01" data-history-debt-amount></label>
                 <button type="button" class="btn btn-secondary" onclick="repayCreationDebt(this)">Погасить из денег персонажа</button>
                 </div>`:'';
-        return `<div style="margin:10px 0"><strong>Месяц ${Number(event.month)}: ${escapeHtml(event.title)}</strong>
-            <p>${(event.details||[]).map(escapeHtml).join('<br>')}</p>
-            <p>Доход: ${(event.incomeOptions||[]).map(v=>Number(v).toLocaleString('ru-RU')).join(' или ')} руб.</p>
-            ${debt?`<p data-history-debt>${escapeHtml(historyDebtText(debt))}</p>`:''}${repayment}
+        return `<div class="zone-history-entry">${renderHistoryMonth(event,history.income)}
+            ${repayment}
             ${(event.pending||[]).map(text=>`<p>${escapeHtml(text)}</p>`).join('')}</div>`;
     }).join('');
     return `<details data-creation-history ${history.settled?'':'open'}><summary>Жизнь в Зоне до игры: ${Number(history.months)} мес.</summary>
@@ -3663,6 +3700,10 @@ function renderHealthTab(data, container = null) {
                     <label>Радиация</label>
                     <input type="number" class="form-control" name="health.radiation" value="${health.radiation || 0}">
                 </div>
+                <div class="health-field">
+                    <label>Температура</label>
+                    <output class="health-readonly-value" aria-label="Температура">${Number(health.temperature).toLocaleString('ru-RU')} °C</output>
+                </div>
                 <div class="health-needs-panel">
                     ${[['mealsToday','Еда сегодня'],['drinksToday','Вода сегодня']].map(([key,label])=>`
                         <div class="health-field health-need-field">
@@ -3682,10 +3723,11 @@ function renderHealthTab(data, container = null) {
                 </summary>
                 <div class="health-compact-content">
                     <span>База 5</span>
-                    <span>Тяжесть +${bleeding.totalSeverity || 0}</span>
+                    <span>Тяжесть +${bleeding.severityModifiers?.length ? `${bleeding.rawSeverity} → +` : ''}${bleeding.totalSeverity || 0}</span>
                     <span>Стадия -${bleeding.stagePenalty || 0}</span>
                     <span>Модификаторы ${bleedingModifierTotal >= 0 ? '+' : ''}${bleedingModifierTotal}</span>
                     <span>Воля ${willBonus >= 0 ? '+' : ''}${willBonus}</span>
+                    ${(bleeding.severityModifiers || []).map(({ label, value }) => `<span class="health-compact-note">${escapeHtml(label)}: ${value >= 0 ? '+' : '−'}${Math.abs(value)} к тяжести</span>`).join('')}
                     <span class="health-compact-note">${bleedingEffects.length ? bleedingEffects.map(item => `${escapeHtml(item.name || item.type)} (${item.kind === 'internal' ? 'внутр.' : 'внешн.'} ${item.stage || 'light'})`).join(', ') : 'Активных кровотечений нет'}</span>
                 </div>
             </details>
@@ -3851,11 +3893,11 @@ function renderHealthTab(data, container = null) {
         stress_resistance: 'Снижает воздействие стресса в соответствии с препаратом.',
         next_rest_healing: 'Усилит лечение во время следующего отдыха и затем исчезнет.',
         untreated_wound: 'Рана остановлена, но не обработана: после боя может привести к заражению.',
-        tourniquet: 'Жгут останавливает кровотечения конечности, но накладывает её штрафы.',
         stress_effect: 'Проявление стресса. Выполните указанное требование по решению ГМа.',
         stress_stupor: 'Ступор блокирует действия на указанный срок или до предусмотренного правилами прекращения.',
         phobia: 'Постоянная фобия даёт помеху в ситуациях, связанных с её источником.',
     };
+    const tourniquetAreas = activeTourniquetAreas(effects);
     const describeEffect = (effect) => {
         const templateId = String(effect.source || '').match(/^consumable-template:(\d+)/)?.[1];
         const sourceItem = templateId ? (allTemplatesCache || []).find(item => Number(item.id) === Number(templateId))?.name : null;
@@ -3870,6 +3912,13 @@ function renderHealthTab(data, container = null) {
         }[effect.source];
         if (managedDescription) {
             details.push(managedDescription);
+        } else if (effect.blocks_new_pain && effect.type !== 'pain_block') {
+            details.push('Пока эффект действует, новые уровни боли не начисляются.');
+        } else if (effect.type === 'tourniquet') {
+            const area = tourniquetArea(effect);
+            details.push('Кровотечения этой конечности перекрыты, пока жгут наложен.');
+            if (area.endsWith('leg')) details.push('Штраф к перемещению: 2.');
+            if (area.endsWith('arm')) details.push('Помеха при бросках.');
         } else if (INSTANT_HEALTH_EFFECTS.has(effect.type)) {
             details.push('Изменит показатель один раз после нажатия «Применить разово».');
         } else if (effect.type === 'generic') {
@@ -3886,21 +3935,30 @@ function renderHealthTab(data, container = null) {
             details.push(effect.note);
         } else if (effectRuleDescriptions[effect.type]) {
             details.push(effectRuleDescriptions[effect.type]);
-        } else if (effect.tick && effect.tick !== 'manual') {
-            details.push(`Срабатывает: ${({turn_end:'в конце хода',round_end:'в конце раунда',day_start:'в начале суток',time_elapsed:'по игровому времени',hour_start:'в начале часа',movement_end:'после перехода'})[effect.tick] || 'по условию эффекта'}.`);
-        } else {
-            details.push('Правила применяются системой автоматически, если это предусмотрено типом эффекта.');
         }
-        details.push(...effectConsequences(effect).map(text => `${text}.`));
         if (effect.type.startsWith('bleeding')) {
             const info = getBleedingInfo(effect);
-            if (info) details.push('Учитывается при проверке кровопотери.');
+            if (info) details.push(bleedingIsSuppressed(effect, tourniquetAreas)
+                ? 'Кровотечение перекрыто.'
+                : 'Учитывается при проверке кровопотери.');
         }
         if (effect.type === 'radiation_filter' && effect.remaining_capacity != null) {
             details.push(`Остаток фильтра: ${effect.remaining_capacity}${effect.capacity != null ? ` из ${effect.capacity}` : ''}.`);
         }
-        if (source && effect.type !== 'organ_loss') details.push(`Источник: ${source}.`);
-        return details.join(' ');
+        return { details, source };
+    };
+    const renderEffectChanges = entries => {
+        const groups = new Map();
+        for (const entry of entries) {
+            if (!groups.has(entry.caption)) groups.set(entry.caption, new Map());
+            groups.get(entry.caption).set(entry.text, entry.children);
+        }
+        return [...groups].map(([caption, changes]) => `<div class="health-effect-changes">
+            <div class="health-effect-change-label">${escapeHtml(caption)}</div>
+            <ul>${[...changes].map(([text, children]) => `<li>${escapeHtml(text)}
+                ${children?.length ? renderEffectChanges(children) : ''}
+            </li>`).join('')}</ul>
+        </div>`).join('');
     };
     let effectsHtml = '';
     effects.forEach((effect, index) => {
@@ -3922,12 +3980,12 @@ function renderHealthTab(data, container = null) {
                 name = `${name.replace(/^Цена:\s*/, '')} · Последствия применения`;
                 const healthLoss = effect.adjustments?.find?.(entry => entry.field === 'current' && entry.delta < 0);
                 const movementPenalty = effect.activate_effects?.find?.(entry => entry.artifact_stat === 'movement_penalty');
-                const timeUntil = duration ? `через ${duration.replace(/^осталось /, '')}` : '';
+                const timeUntil = duration ? `через ${duration.replace(/^остал(?:ось|ся) /, '')}` : '';
                 if (healthLoss) {
                     name = [name, [`−${Math.abs(healthLoss.delta)} общих ОЗ`, timeUntil].filter(Boolean).join(' ')].join(' · ');
                     description = duration = '';
                 } else if (movementPenalty) {
-                    const penaltyDuration = effectDurationLabel(movementPenalty).replace(/^осталось /, '');
+                    const penaltyDuration = effectDurationLabel(movementPenalty).replace(/^остал(?:ось|ся) /, '');
                     const penalty = `штраф перемещения +${movementPenalty.value}${penaltyDuration ? ` на ${penaltyDuration}` : ''}`;
                     name = [name, [timeUntil, penalty].filter(Boolean).join(' ')].join(' · ');
                     description = duration = '';
@@ -3972,7 +4030,7 @@ function renderHealthTab(data, container = null) {
         const managedDisabled = isManagedEffect ? 'disabled' : '';
         const fractureStatus = getFractureStatusText(effect, effects);
         const isCustomOrUnknown = ['custom', 'generic'].includes(selectedType);
-        const visibleName = getEffectDisplayName(effect);
+        const visibleName = selectedType === 'tourniquet' ? 'Наложен жгут' : getEffectDisplayName(effect);
         if (selectedType === 'organ_loss') {
             const treatmentExpired = effect.treatment_window_expired
                 || Number(effect.treatment_window_seconds || 0) <= 0;
@@ -3988,10 +4046,21 @@ function renderHealthTab(data, container = null) {
                 </div>`;
             return;
         }
+        const instant = INSTANT_HEALTH_EFFECTS.has(selectedType);
+        const expired = remaining !== '' && Number(remaining) <= 0;
+        const status = effect.active === false ? 'Не действует' : expired ? 'Завершён' : '';
+        const duration = !instant && effectDurationLabel(effect);
+        const { details, source } = describeEffect(effect);
         effectsHtml += `
             <div data-widget-effect-index="${index}" class="health-effect-card${effect.active === false || effect.remaining != null && Number(effect.remaining) <= 0 ? ' is-inactive' : ''}">
-                <div class="health-effect-caption">${INSTANT_HEALTH_EFFECTS.has(selectedType) ? 'Разовое изменение: ' : ''}${escapeHtml(effectSummary({...effect, name:visibleName, ...(INSTANT_HEALTH_EFFECTS.has(selectedType) ? {remaining:null,duration:null} : {})}))}${effect.area ? ` · ${escapeHtml(getEffectAreaLabel(effect.area))}` : ''}</div>
-                <div class="text-muted health-effect-description">${escapeHtml(describeEffect(effect))}</div>
+                <div class="health-effect-heading">
+                    <div class="health-effect-caption">${instant ? 'Разовое изменение: ' : ''}${escapeHtml(effectSummary({...effect, name:visibleName}, {includeTiming:false}))}</div>
+                    ${status || duration ? `<span class="health-effect-duration">${escapeHtml(status || duration)}</span>` : ''}
+                </div>
+                ${effect.area ? `<div class="health-effect-meta">${escapeHtml(getEffectAreaLabel(effect.area))}</div>` : ''}
+                ${renderEffectChanges(effectConsequenceEntries(effect))}
+                ${details.map(detail => `<p class="health-effect-description">${escapeHtml(detail)}</p>`).join('')}
+                ${source ? `<div class="health-effect-source">Источник · ${escapeHtml(source)}</div>` : ''}
                 ${INSTANT_HEALTH_EFFECTS.has(selectedType) && currentCharacterCanEdit ? `<button type="button" data-sheet-control class="btn btn-sm" onclick="applyManualNumericEffect(${index},this)">Применить разово</button>` : ''}
                 <details class="health-effect-editor" data-sheet-panel="effect-editor-${effect.id || index}" ${isCustomOrUnknown && effect.name === 'Пользовательский эффект' ? 'open' : ''}><summary>Изменить эффект</summary><div class="health-effect-fields">
                 <label>Тип<select class="form-control" name="health.effects.${index}.type" style="width:100%;" ${managedDisabled}>
@@ -4017,7 +4086,7 @@ function renderHealthTab(data, container = null) {
                     ${[['manual','Только вручную'],['turn_end','В конце хода'],['round_end','В конце раунда'],['time_elapsed','По времени, минуты'],['hour_start','По времени, часы'],['day_start','В начале суток'],['movement_end','После перехода']].map(([key,text])=>`<option value="${key}" ${effect.tick === key ? 'selected' : ''}>${text}</option>`).join('')}
                 </select></label>`}
                 ${selectedType === 'fracture_unfixed' ? `<button type="button" class="btn btn-sm btn-warning" onclick="rebreakUnfixedFracture(${index})" title="Сломать повторно и лечить как обычный перелом">↻</button>` : ''}
-                ${isManagedEffect ? '<span title="Системный эффект">⌁</span>' : `<button type="button" class="btn btn-sm btn-danger" onclick="removeEffect(${index})">×</button>`}
+                ${isManagedEffect ? '<span title="Системный эффект">⌁</span>' : `<button type="button" class="btn btn-sm btn-danger" onclick="removeEffect(${index})">${selectedType === 'tourniquet' ? 'Снять жгут' : '×'}</button>`}
                 ${isCustomOrUnknown ? `<input class="form-control" name="health.effects.${index}.name" value="${escapeHtml(visibleName)}" placeholder="Название эффекта" style="grid-column:1/-1;">` : ''}
                 ${isCustomOrUnknown ? `<label style="grid-column:1/-1;">Описание<textarea class="form-control" name="health.effects.${index}.note" rows="2" placeholder="Что меняет этот эффект">${escapeHtml(effect.note || '')}</textarea></label>` : ''}
                 </div></details>
@@ -4052,6 +4121,7 @@ function refreshHealthPanel(data = currentCharacterData) {
     if (!healthContainer) return;
     const viewState = captureSheetViewState();
     renderHealthTab(data, healthContainer);
+    if (document.getElementById('move-penalty-display')) recalculateInventoryTotals(data);
     restoreSheetViewState(viewState);
 }
 
@@ -4311,6 +4381,7 @@ async function renderSkillsTab(data) {
     function renderSkillRow(label, base, bonus, xp, path) {
         const required = getRequiredXp(base);
         const transientBonus = (path==='physical.strength'&&getExoskeletonPowerProfile(data).powered?8:0)
+            + getConsumableStatValue(data, path.split('.').at(-1))
             + artifactSkillBonus(data._artifact_profile, path)
             + (path === 'physical.will' ? willLevelModifier(data) : 0)
             +(backgroundIs(data,'Пожарный')&&data.health?.combatMeta?.firefighterNearby&&['physical.strength','physical.agility'].includes(path)?2:0);
@@ -4321,7 +4392,7 @@ async function renderSkillsTab(data) {
                 <span>+</span>
                 <input type="number" class="form-control number-input" name="skills.${path}.bonus" value="${Number(bonus || 0) + transientBonus}" data-transient-bonus="${transientBonus}" style="width: 55px;">
                 <span data-skill-progress="${path}" style="font-size: 0.7rem;">Опыт: ${xp}/${required}</span>
-                <button type="button" class="btn btn-sm btn-secondary" onclick="addSkillXpFromPoints('${path}')" style="padding: 2px 4px; font-size: 0.7rem;" title="Взять 1 свободное очко навыка">➕</button>
+                <button type="button" class="btn btn-sm btn-secondary" data-skill-increase="${path}" ${Number(base) >= 20 ? 'hidden' : ''} onclick="addSkillXpFromPoints('${path}')" style="padding: 2px 4px; font-size: 0.7rem;" title="Взять 1 свободное очко навыка">➕</button>
                 <span style="cursor: pointer; font-size: 1.1em;" onclick="window.rollSkill('${path}', '${label}')">🎲</span>
             </div>
         `;
@@ -4573,6 +4644,11 @@ async function renderEquipmentTab(data, { focusWeaponIndex = null } = {}) {
     );
 
     const eq = data.equipment || {};
+    const gloveTemplate = getInventoryItemTemplate(eq.gloves);
+    const legacyMedicalGloves = /^(?:медицинские|перчатки медицинские)$/iu.test(eq.gloves?.name || '');
+    const gloveName = legacyMedicalGloves ? 'Медицинские перчатки' : eq.gloves?.name;
+    const canSterilizeGloves = eq.gloves?.attributes?.sterile_duration_seconds
+        || gloveTemplate?.attributes?.sterile_duration_seconds || gloveName?.toLowerCase() === 'медицинские перчатки';
     if (armorHasIntegratedHelmet(eq.armor)) {
         syncIntegratedArmorHelmet(eq.armor);
     } else if (!armorHasIntegratedHelmet(eq.armor) && eq.helmet?.integratedWithArmor) {
@@ -4614,7 +4690,10 @@ async function renderEquipmentTab(data, { focusWeaponIndex = null } = {}) {
         template => template.id == helmet.templateId
     );
     const softHeadwear = helmet.attributes?.soft_headwear ?? equippedHelmetTemplate?.attributes?.soft_headwear;
-    const canModifyHelmet = !softHeadwear || helmet.name?.toLowerCase() === 'ушанка';
+    const ushanka = characterEquipmentVisuals({ helmet }).includes('headwear_ushanka')
+        || characterEquipmentVisuals({ helmet: { ...equippedHelmetTemplate, templateId: helmet.templateId } }).includes('headwear_ushanka')
+        || (helmet.attributes?.modification_category ?? equippedHelmetTemplate?.attributes?.modification_category) === 'Ушанка';
+    const canModifyHelmet = !softHeadwear || ushanka;
     if (helmet.templateId && helmet.movementPenalty === undefined) {
         helmet.movementPenalty = Number(
             equippedHelmetTemplate?.attributes?.movement_penalty
@@ -4936,8 +5015,7 @@ async function renderEquipmentTab(data, { focusWeaponIndex = null } = {}) {
         <!-- Косметическая экипировка -->
         <div class="equipment-group" data-equipment-group="cosmetic">
             <h4>Косметическая экипировка</h4>
-            <!-- Первая строка: наушники, очки, перчатки (3 колонки) -->
-            <div class="equipment-cosmetic-grid">
+            <div class="equipment-cosmetic-grid equipment-cosmetic-worn">
                 <!-- Наушники -->
                 <div>
                     <div class="block-header" style="display: flex; justify-content: space-between; align-items: center;">
@@ -4976,12 +5054,27 @@ async function renderEquipmentTab(data, { focusWeaponIndex = null } = {}) {
                     </div>
                     <div style="display: flex; flex-direction: column; gap: 5px;">
                         ${eq.gloves ? `
-                            <div><strong>${escapeHtml(eq.gloves.name)}</strong></div>
-                            ${eq.gloves.attributes?.sterile_duration_seconds || eq.gloves.name?.toLowerCase()==='медицинские' ? `<div class="glove-care">${eq.gloves.sterility?.remaining_seconds>0 ? `Стерильны · осталось ${Math.ceil(eq.gloves.sterility.remaining_seconds/60)} мин` : 'Стерильность истекла'}<button type="button" class="btn btn-sm btn-secondary" onclick="window.sterilizeGloves()">Обработать · 3 ОД</button></div>` : ''}
+                            <div><strong>${escapeHtml(gloveName)}</strong></div>
+                            ${canSterilizeGloves ? `<div class="glove-care">
+                                <strong>${eq.gloves.sterility?.remaining_seconds > 0 ? `Стерильны · осталось ${Math.ceil(eq.gloves.sterility.remaining_seconds / 60)} мин` : 'Требуется обработка'}</strong>
+                                <small>При лечении стерильные перчатки вдвое снижают риск заражения пациента.</small>
+                                <button type="button" class="btn btn-sm btn-secondary" onclick="window.sterilizeGloves()">Обработать перчатки</button>
+                                <small>1 порция спирта или водки. В бою также 3 ОД.</small>
+                            </div>` : ''}
                             <div><label>Бонус харизмы</label> <input type="number" class="form-control number-input" name="equipment.gloves.charismaBonus" value="${eq.gloves.charismaBonus || 0}" step="0.1" style="width: 100%; min-width: 180px;"></div>
                             <div><label>Эффект</label> <input type="text" class="form-control" name="equipment.gloves.effect" value="${escapeHtml(eq.gloves.effect || '')}" style="width: 100%; min-width: 180px;"></div>
                         ` : '<em>Не надеты</em>'}
                     </div>
+                </div>
+                <div>
+                    <div class="block-header">
+                        <h5>Маска</h5>
+                        ${eq.mask ? `<button type="button" class="btn btn-sm btn-danger" onclick="unequipCosmeticMask()">Снять</button>` : ''}
+                    </div>
+                    ${eq.mask ? `
+                        <div><strong>${escapeHtml(eq.mask.name || eq.mask.model)}</strong></div>
+                        <label>Бонус харизмы <input type="number" class="form-control number-input" name="equipment.mask.charismaBonus" value="${Number(eq.mask.charismaBonus) || 0}" step="0.1"></label>
+                    ` : '<em>Не надета</em>'}
                 </div>
             </div>
 
@@ -5123,8 +5216,9 @@ function syncEquipmentAppearancePanel() {
     else equipmentAppearancePreview = mountCharacterAppearancePreview(host, normalized);
 }
 
-function syncCharacterAppearanceControls(panel) {
+function syncCharacterAppearanceControls(panel, equipment = currentCharacterData?.equipment) {
     const value = name => panel.querySelector(`[name="appearance.${name}"]`)?.value;
+    const gear = characterEquipmentVisuals(equipment);
     const visibility = {
         hairColor: value('hair') === 'short',
         sweaterColor: value('top') === 'sweater',
@@ -5133,6 +5227,7 @@ function syncCharacterAppearanceControls(panel) {
         jeansColor: value('bottom') === 'jeans',
         tacticalColor: value('bottom') === 'tactical',
         huntingColor: value('bottom') === 'hunting',
+        ...Object.fromEntries(Object.entries(GEAR_COLOR_FIELDS).map(([model, [key]]) => [key, gear.includes(model)])),
     };
     for (const [name, visible] of Object.entries(visibility)) {
         const field = panel.querySelector(`[data-appearance-dependent="${name}"]`);
@@ -5291,6 +5386,7 @@ function renderEquipmentFigure(equipment, armorTemplates, helmetTemplates, gasMa
     const flags = {
         'data-armor': armorKind,
         'data-helmet': helmetKind,
+        'data-cosmetic-mask': occupied(equipment.mask) || helmetKind === 'balaclava',
         'data-mask': maskKind !== 'none',
         'data-mask-kind': maskKind,
         'data-vest': occupied(equipment.vest),
@@ -5414,7 +5510,7 @@ function renderEquipmentLoadout(container, data, weaponTemplates, helmetTemplate
     );
     const cosmetics = [
         ['Наушники', 'headphones', 'Н'], ['Очки', 'glasses', 'О'],
-        ['Перчатки', 'gloves', 'П'], ['Кольцо', 'ring', 'К'],
+        ['Перчатки', 'gloves', 'П'], ['Маска', 'mask', 'М'], ['Кольцо', 'ring', 'К'],
         ['Амулет', 'necklace', 'А'], ['Серьги', 'earrings', 'С'],
         ['Браслет I', 'bracelet1', 'I'], ['Браслет II', 'bracelet2', 'II'],
     ];
@@ -5543,7 +5639,7 @@ function renderEquipmentLoadout(container, data, weaponTemplates, helmetTemplate
             const value = appearance[control.name.slice('appearance.'.length)];
             if (control.value !== value) setRemoteControlValue(control, value);
         });
-        syncCharacterAppearanceControls(appearancePanel);
+        syncCharacterAppearanceControls(appearancePanel, equipment);
         appearancePanel.addEventListener('change', syncEquipmentAppearancePanel);
     }
     const selectPanel = (key, opening = true) => {
@@ -5625,6 +5721,7 @@ function renderEquipmentLoadout(container, data, weaponTemplates, helmetTemplate
 }
 
 function renderCharacterAppearancePanel(appearance) {
+    const gearFields = Object.values(GEAR_COLOR_FIELDS);
     const options = {
         top: [['sweater', 'Свитер'], ['gorka', 'Куртка «Горка»'], ['leather_coat', 'Кожаный плащ'], ['trench_coat', 'Мужской тренч']],
         bottom: [['jeans', 'Джинсы'], ['gorka', 'Штаны «Горка»'], ['tactical', 'Тактические штаны'], ['hunting', 'Охотничьи штаны']],
@@ -5637,6 +5734,9 @@ function renderCharacterAppearancePanel(appearance) {
         tacticalColor: [['charcoal', 'Графитовый'], ['khaki', 'Хаки']],
         huntingColor: [['olive', 'Оливковый'], ['brown', 'Коричневый']],
         expression: [['calm', 'Спокойное'], ['wounded', 'Раненое']],
+        ...Object.fromEntries(Object.entries(GEAR_COLOR_FIELDS).map(([gear, [key]]) => [
+            key, Object.entries(gearColorPalette(gear)).map(([value, [, label]]) => [value, label]),
+        ])),
     };
     const labels = {
         top: 'Верхняя одежда', bottom: 'Нижняя одежда', hair: 'Причёска',
@@ -5644,8 +5744,10 @@ function renderCharacterAppearancePanel(appearance) {
         leatherCoatColor: 'Цвет плаща', trenchCoatColor: 'Цвет тренча',
         jeansColor: 'Цвет джинсов', tacticalColor: 'Цвет тактических штанов',
         huntingColor: 'Цвет охотничьих штанов', expression: 'Выражение лица',
+        ...Object.fromEntries(gearFields.map(([key, label]) => [key, label])),
     };
-    const dependent = ['hairColor', 'sweaterColor', 'leatherCoatColor', 'trenchCoatColor', 'jeansColor', 'tacticalColor', 'huntingColor'];
+    const dependent = ['hairColor', 'sweaterColor', 'leatherCoatColor', 'trenchCoatColor', 'jeansColor', 'tacticalColor', 'huntingColor',
+        ...gearFields.map(([key]) => key)];
     const field = key => `
         <label class="character-appearance__field${dependent.includes(key) ? ' character-appearance__field--dependent' : ''}"
             ${dependent.includes(key) ? `data-appearance-dependent="${key}"` : ''}>
@@ -5656,7 +5758,7 @@ function renderCharacterAppearancePanel(appearance) {
         </label>`;
     const fields = `<div class="character-appearance__group">${field('top')}${field('sweaterColor')}${field('leatherCoatColor')}${field('trenchCoatColor')}</div>
         <div class="character-appearance__group">${field('bottom')}${field('jeansColor')}${field('tacticalColor')}${field('huntingColor')}</div>
-        <div class="character-appearance__group">${field('hair')}${field('hairColor')}</div>
+        <div class="character-appearance__group">${field('hair')}${field('hairColor')}${gearFields.map(([key]) => field(key)).join('')}</div>
         <div class="character-appearance__group">${field('expression')}</div>`;
     return `<section class="character-appearance" data-character-appearance aria-label="Внешность">
         <div class="character-appearance__body">
@@ -5688,7 +5790,8 @@ function renderSlotsUniversal(item, itemPath, depth = 0) {
 
     for (const slot of slots) {
         const artifactSlot = slot.type === 'artifact' && artifactContainerKind(item);
-        const installed = artifactSlot ? artifactInContainer(item) : (item.installedModules || []).find(m => m.slotType === slot.type);
+        const installed = artifactSlot ? artifactInContainer(item) : (item.installedModules || []).find(m =>
+            m?.slotType === slot.type || slot.type === 'exoskeleton_battery' && m?.attributes?.slot_type === slot.type);
 
         if (installed) {
             let info = escapeHtml(installed.name);
@@ -5730,6 +5833,9 @@ function renderSlotsUniversal(item, itemPath, depth = 0) {
             }
 
             const uninstallBtn = `<button type="button" class="btn btn-sm btn-danger" onclick="window.uninstallModuleFromSlot('${JSON.stringify(itemPath).replace(/"/g, '&quot;')}', '${slot.type}')">${artifactSlot ? 'Извлечь · 8 ОД в бою' : 'Снять'}</button>`;
+            const replaceBatteryBtn = slot.type === 'exoskeleton_battery'
+                ? `<button type="button" class="btn btn-sm btn-primary" onclick="window.installModuleFromSlot('${JSON.stringify(itemPath).replace(/"/g, '&quot;')}', '${slot.type}')">Заменить аккумулятор</button>`
+                : '';
             const configBtn = (slot.type === 'visor') ? `<button type="button" class="btn btn-sm btn-secondary" onclick="openVisorModificationsModal('${JSON.stringify(itemPath).replace(/"/g, '&quot;')}', '${slot.type}')">⚙️</button>` : '';
 
             if (artifactSlot) {
@@ -5746,6 +5852,7 @@ function renderSlotsUniversal(item, itemPath, depth = 0) {
                     <span style="width:100px;">${slot.label}:</span>
                     <span style="flex:1;">${info}</span>
                     ${configBtn}
+                    ${replaceBatteryBtn}
                     ${uninstallBtn}
                 </div>
             `;
@@ -6075,12 +6182,13 @@ window.operateProsthesis = async function(payload) {
 
 window.operatePortableLight = async function(payload) {
     if (medicalOperationInProgress || !currentCharacterCanEdit) return;
+    const sterilizing = payload.operation === 'sterilize';
     const characterId=currentCharacterId;let locked=false;
     try {
         if (autoSaveTimer) await forceSyncCharacter();
         await Server.waitForCharacterSave(characterId);
         if (currentCharacterId!==characterId || medicalOperationInProgress) return;
-        if (sheetSaveBlocked) throw new Error('Переоткройте лист перед управлением фонарём');
+        if (sheetSaveBlocked) throw new Error(sterilizing ? 'Переоткройте лист перед обработкой перчаток' : 'Переоткройте лист перед управлением фонарём');
         medicalOperationInProgress=locked=true;medicalRemoteUpdate=null;
         const {operation,...selection}=payload;
         const result=operation==='sterilize'
@@ -6088,7 +6196,7 @@ window.operatePortableLight = async function(payload) {
             : await Server.operatePortableLight(characterId,{...payload,character_revision:currentCharacterData._revision});
         currentCharacterData=result.data;showNotification(operation==='sterilize'?'Перчатки стерильны ещё час':'Состояние прибора обновлено','success');
         window.dispatchEvent(new CustomEvent('character-item-operation-finished'));
-    } catch (error) { showNotification(error.message || 'Не удалось изменить состояние фонаря','system'); }
+    } catch (error) { showNotification(error.message || (sterilizing ? 'Не удалось обработать перчатки' : 'Не удалось изменить состояние фонаря'),'system'); }
     finally {
         if (locked) {
             if (medicalRemoteUpdate?.character_id===Number(characterId) && Number(medicalRemoteUpdate.data?._revision)>Number(currentCharacterData?._revision)) currentCharacterData=medicalRemoteUpdate.data;
@@ -6098,9 +6206,10 @@ window.operatePortableLight = async function(payload) {
 };
 
 window.sterilizeGloves = async function() {
-    const choices=collectInventoryEntries(currentCharacterData,item=>/(?:^|\s|«|")(?:спирт|водка)(?:\s|$|»|")/i.test(item?.name||''))
+    const choices=collectInventoryEntries(currentCharacterData, item => /(?:^|[^\p{L}\p{N}_])(?:спирт|водка)(?=$|[^\p{L}\p{N}_])/iu
+        .test(getInventoryItemTemplate(item)?.name || item?.name || ''))
         .filter(({item})=>getInventoryItemAvailableUses(item)>0)
-        .map(({item,path})=>({label:`${item.name} · 1 использование · 3 ОД`,path,source_id:item.id??null}));
+        .map(({item,path})=>({label:`${item.name} · 1 порция`,path,source_id:item.id??null}));
     if (!choices.length) {showNotification('В инвентаре нет спирта или водки');return;}
     const choice=await chooseConsumableApplication('Обработать перчатки',choices,{alwaysShow:true});
     if(choice) await window.operatePortableLight({operation:'sterilize',path:choice.path,source_id:choice.source_id});
@@ -6310,6 +6419,22 @@ function renderBeltHolster(belt, weapons) {
     </div>`;
 }
 
+function renderBeltSheath(belt, weapons) {
+    const attached = Object.hasOwn(belt || {}, 'sheathWeaponId');
+    const enabled = modificationRule(belt, 'free_pouch_mounts') && !belt?.protectionDisabled;
+    if (!attached && !enabled) return '';
+    const knife = weapons.find(item => item?.id && item.id === belt.sheathWeaponId);
+    const cost = window.locationCombatState?.status === 'active' ? ' · 3 ОД' : '';
+    return `<div class="loadout-group" data-belt-sheath>
+        <h5>Ножны · ${knife ? escapeHtml(knife.name) : attached ? 'пусто' : 'сняты'}</h5>
+        ${enabled && !knife ? `<button type="button" class="btn btn-sm btn-secondary" data-sheet-control
+            onclick="window.changeBeltSheath('mount')" ${!currentCharacterCanEdit ? 'disabled' : ''}>
+            ${attached ? 'Выбрать нож' : 'Закрепить'}${cost}</button>` : ''}
+        ${attached ? `<button type="button" class="btn btn-sm btn-secondary" data-sheet-control
+            onclick="window.changeBeltSheath('unmount')" ${!currentCharacterCanEdit ? 'disabled' : ''}>Снять ножны${cost}</button>` : ''}
+    </div>`;
+}
+
 function renderBeltQuickMounts(belt) {
     const combat = window.locationCombatState?.status === 'active';
     return Object.entries(beltQuickMounts).map(([kind, mount]) => {
@@ -6374,6 +6499,7 @@ function renderBeltDevices(belt, armor) {
 window.changeBeltDevice = (kind,index) => changeBeltTool(index == null ? 'mount' : 'unmount',index,kind);
 window.retrieveBeltItem = (kind,index) => changeBeltTool('retrieve',index,kind);
 window.changeBeltHolster = operation => changeBeltTool(operation,null,'holster');
+window.changeBeltSheath = operation => changeBeltTool(operation,null,'sheath');
 window.openBeltDosimeter = index => {
     const path = ['equipment','belt','installedModules',index];
     const item = getItemByPath(path);
@@ -6390,14 +6516,34 @@ async function changeBeltTool(operation,index,kind='tool') {
         const belt = currentCharacterData.equipment?.belt;
         const revision = currentCharacterData._revision;
         let details;
-        if (kind==='holster') {
+        if (kind === 'sheath') {
+            let weaponId = null;
+            if (operation === 'mount') {
+                await getAllItemTemplates();
+                if (currentCharacterId !== characterId) return;
+                const choices = (currentCharacterData.weapons || []).flatMap((item, weaponIndex) => {
+                    const template = getInventoryItemTemplate(item);
+                    const knife = template?.category === 'melee_weapon'
+                        && /(?:^|[^а-яё])[а-яё]*(?:нож|кортик)(?![а-яё])/iu.test(template.name);
+                    return knife && item.id && item.id !== belt.holsterWeaponId
+                        && !isHeldWeaponIndex(currentCharacterData.activeWeaponIndex, weaponIndex)
+                        ? [{label: item.name, id: item.id}] : [];
+                });
+                if (!Object.hasOwn(belt, 'sheathWeaponId')) choices.unshift({label: 'Пустые ножны', id: null});
+                if (!choices.length) throw new Error('В снаряжении нет свободного ножа');
+                const choice = await chooseConsumableApplication('Ножны для пояса', choices, {alwaysShow: true});
+                if (!choice || currentCharacterId !== characterId) return;
+                weaponId = choice.id;
+            }
+            details = {weapon_id: weaponId};
+        } else if (kind==='holster') {
             let weaponId = belt?.holsterWeaponId;
             if (operation==='mount') {
                 await getAllItemTemplates();
                 if (currentCharacterId!==characterId) return;
                 const choices = (currentCharacterData.weapons || []).flatMap((item,index)=>{
                     const size = Number(item.size ?? item.attributes?.size ?? getInventoryItemTemplate(item)?.attributes?.size);
-                    return item.id && !item.naturalWeapon && !item.attributes?.natural_weapon && size>0 && size<4
+                    return item.id && item.id !== belt.sheathWeaponId && !item.naturalWeapon && !item.attributes?.natural_weapon && size>0 && size<4
                         && !isHeldWeaponIndex(currentCharacterData.activeWeaponIndex,index) ? [{label:item.name, id:item.id}] : [];
                 });
                 if (!choices.length) throw new Error('Нет экипированного оружия размером меньше 4, убранного из рук');
@@ -6431,7 +6577,8 @@ async function changeBeltTool(operation,index,kind='tool') {
         if(currentCharacterId!==characterId)return;
         currentCharacterData=response.data;
         await renderEquipmentTab(currentCharacterData);renderInventoryTab(currentCharacterData);
-        showNotification(kind==='holster' ? operation==='mount'?'Оружие в кобуре':'Кобура освобождена'
+        showNotification(kind === 'sheath' ? operation === 'mount' ? 'Ножны закреплены' : 'Ножны сняты'
+            : kind==='holster' ? operation==='mount'?'Оружие в кобуре':'Кобура освобождена'
             : operation==='mount'?'Предмет закреплён':operation==='retrieve'?'Предмет в руке':'Предмет снят в карманы','success');
     }catch(error){showNotification(error.message||'Не удалось изменить крепление пояса','system');}
     finally{if(locked){
@@ -6586,7 +6733,7 @@ window.drawWeaponFromEquipment = async function(weaponIndex,hand) {
                 ...(hand?{hand:hand==='both'?'right':hand}:{}),character_revision:currentCharacterData._revision});
             currentCharacterData=result.data;showNotification('Оружие взято в руки','success');return;
         }
-        if (!combat.is_current_turn) throw new Error('Достать оружие можно только в свой ход');
+        if (!combat.is_current_turn) throw new Error(equipmentCombatTurnError(combat));
         const result = await Server.performLocationCombatAction(combat.lobby_id, combat.location_id, {
             location_character_id: combat.location_character_id,
             action_key: 'draw_weapon',
@@ -6737,6 +6884,21 @@ window.clearWeaponJam = async function(weaponIndex, options = {}) {
     }
 };
 
+function machineGunShotsRemaining(weapon, template, weaponIndex) {
+    const base = weapon.fireRate ?? weapon.fire_rate ?? weapon.attributes?.fire_rate ?? template?.attributes?.fire_rate ?? 0;
+    const rate = modificationStat(weapon, 'fire_rate', Number(base) || 0);
+    if (rate <= 0) return Infinity;
+    const combat = window.locationCombatState;
+    const tracker = currentCharacterData?.health?.combatMeta?.weaponShots;
+    const fired = combat?.status === 'active' && Number(tracker?.round) === Number(combat.round_number)
+        ? Number(tracker.shots?.[weaponIndex]) || 0 : 0;
+    return Math.max(0, rate - fired);
+}
+
+function machineGunFireLimitReason(remaining, required) {
+    return remaining < required ? `Скорострельность: осталось ${remaining} выстр. в раунде, нужно ${required}` : '';
+}
+
 window.chooseMachineGunBurst = function(weaponIndex, fireMode, actionPoints = 3, volleyCount = 1) {
     const weapon = currentCharacterData?.weapons?.[weaponIndex];
     if (!weapon) return;
@@ -6746,8 +6908,14 @@ window.chooseMachineGunBurst = function(weaponIndex, fireMode, actionPoints = 3,
         showNotification(`Для пулемётной очереди нужно минимум ${minimum} патронов`);
         return;
     }
-    const fireRate = Math.max(2, Number(weapon.fireRate) || available);
-    const maximum = Math.min(Math.floor(available / volleyCount), fireRate);
+    const template = (allTemplatesCache || []).find(item => item.id == weapon.templateId);
+    const remaining = machineGunShotsRemaining(weapon, template, weaponIndex);
+    const reason = machineGunFireLimitReason(remaining, minimum * volleyCount);
+    if (reason) {
+        showNotification(reason);
+        return;
+    }
+    const maximum = Math.floor(Math.min(available, remaining) / volleyCount);
     if (maximum < minimum) {
         showNotification(`Для действия нужно минимум ${minimum * volleyCount} патронов`);
         return;
@@ -6799,6 +6967,11 @@ function renderRangedAttackButtons(weapon, template, index, disabled) {
     const drawnWeaponIndex = combatState?.current_character?.drawn_weapon_index;
     const persistentWeaponIndex = currentCharacterData?.activeWeaponIndex;
     const isCombatActive = combatState?.status === 'active';
+    const currentActor = combatState?.current_character;
+    const canReuseAim = currentActor && currentActor.character_id === currentCharacterId
+        && currentActor.aimed_weapon_index === index && currentActor.aimed_target_character_id != null;
+    const aimedCostLabel = !isCombatActive ? `${aimedActionPoints} ОД`
+        : canReuseAim ? `${aimedActionPoints}–${aimedActionPoints + 1} ОД` : `${aimedActionPoints + 1} ОД`;
     const weaponWeight = Number(weapon?.weight ?? template?.weight) || 0;
     const buttLabel = weaponWeight <= 1 ? 'Удар рукояткой' : 'Удар прикладом';
     const buttCost = weaponWeight <= 1 ? 2 : 3;
@@ -6848,41 +7021,56 @@ function renderRangedAttackButtons(weapon, template, index, disabled) {
             : (shots === 2 ? 'Дуплет: ' : (shots === 4 ? 'Двойной дуплет: ' : `${shots} выстрела: `));
         buttons.push(`<button type="button" class="btn btn-sm btn-success" ${firingDisabledAttr} onclick="useWeaponFromEquipment(${index}, 'unaimed', ${shots}, ${unaimedActionPoints})">${modeName}Неприцельный · ${unaimedActionPoints} ОД</button>`);
         buttons.push(`<button type="button" class="btn btn-sm btn-success" ${firingDisabledAttr} onclick="useWeaponFromEquipment(${index}, 'rapid', ${shots}, 1)">${modeName}Беглый · 1 ОД</button>`);
-        buttons.push(`<button type="button" class="btn btn-sm btn-success" ${firingDisabledAttr} onclick="useWeaponFromEquipment(${index}, 'aimed', ${shots}, ${aimedActionPoints})">${modeName}Прицельный · ${aimedActionPoints} ОД</button>`);
+        buttons.push(`<button type="button" class="btn btn-sm btn-success" ${firingDisabledAttr} onclick="useWeaponFromEquipment(${index}, 'aimed', ${shots}, ${aimedActionPoints})">${modeName}Прицельный · ${aimedCostLabel}</button>`);
     });
 
     if (profile.supports_burst) {
         const machineGun = Boolean(profile.machine_gun_burst);
         const burstShots = Number(profile.burst_size) || 0;
+        const minimumBurst = backgroundIs(currentCharacterData, 'Пост принял') ? 10 : 2;
+        const areaShots = machineGun ? 10 : burstShots * 2;
+        const remaining = machineGun && isCombatActive ? machineGunShotsRemaining(weapon, template, index) : Infinity;
         const burstActionPoints = Math.max(0,(weaponClass === 'submachine_gun' ? 2 : 3)+modificationRule(weapon,'burst_ap_delta')-(backgroundIs(currentCharacterData,'Полицейский')&&['pistol','submachine_gun'].includes(weaponClass)?1:0));
         const action = (mode, actionPoints = 3, volleyCount = 1) => {
             if (machineGun && mode === 'area') {
-                return `useWeaponFromEquipment(${index}, '${mode}', 10, ${actionPoints}, 2)`;
+                return `useWeaponFromEquipment(${index}, '${mode}', ${areaShots}, ${actionPoints}, 2)`;
             }
             return machineGun
                 ? `chooseMachineGunBurst(${index}, '${mode}', ${actionPoints}, ${volleyCount})`
                 : `useWeaponFromEquipment(${index}, '${mode}', ${burstShots * volleyCount}, ${actionPoints}, ${volleyCount})`;
         };
+        const automaticButton = (label, mode, cost, volleys, minimumShots) => {
+            const reason = machineGunFireLimitReason(remaining, minimumShots);
+            const hint = reason ? ` title="${escapeHtml(reason)}"` : '';
+            return `<button type="button" class="btn btn-sm btn-warning" ${reason ? 'disabled' : firingDisabledAttr}${hint} onclick="${action(mode, cost, volleys)}">${label}</button>`;
+        };
         const burstLabel = machineGun ? 'Пулемётная очередь' : `Очередь x${burstShots}`;
-        buttons.push(`<button type="button" class="btn btn-sm btn-warning" ${firingDisabledAttr} onclick="${action('burst', burstActionPoints)}">${burstLabel} · ${burstActionPoints} ОД</button>`);
+        buttons.push(automaticButton(`${burstLabel} · ${burstActionPoints} ОД`, 'burst', burstActionPoints, 1, minimumBurst));
         if (profile.supports_suppression) {
-            buttons.push(`<button type="button" class="btn btn-sm btn-warning" ${firingDisabledAttr} onclick="${action('suppression', 3, 1)}">Подавление (1 очередь) · 3 ОД</button>`);
-            buttons.push(`<button type="button" class="btn btn-sm btn-warning" ${firingDisabledAttr} onclick="${action('suppression', 5, 2)}">Подавление (2 очереди) · 5 ОД</button>`);
+            buttons.push(automaticButton('Подавление (1 очередь) · 3 ОД', 'suppression', 3, 1, minimumBurst));
+            buttons.push(automaticButton('Подавление (2 очереди) · 5 ОД', 'suppression', 5, 2, minimumBurst * 2));
         }
         if (profile.supports_area_fire) {
-            const areaShots = machineGun ? 10 : burstShots * 2;
-            buttons.push(`<button type="button" class="btn btn-sm btn-warning" ${firingDisabledAttr} onclick="${action('area', 5, 2)}">По области · ${areaShots} выстр. · 5 ОД</button>`);
+            buttons.push(automaticButton(`По области · ${areaShots} выстр. · 5 ОД`, 'area', 5, 2, areaShots));
         }
     }
     const secondary=secondaryWeaponIndex();
     if(isCombatActive&&index===Number(drawnWeaponIndex)&&secondary!=null){
         const indices=[index,secondary],weapons=indices.map(value=>currentCharacterData.weapons[value]);
         const templates=weapons.map(item=>(allTemplatesCache||[]).find(candidate=>candidate.id==item.templateId));
-        const options=pairedFireOptions(weapons,weapons.map((item,i)=>getWeaponFireProfile(item,templates[i])),
+        const profiles=weapons.map((item,i)=>getWeaponFireProfile(item,templates[i]));
+        const minimumBurst = backgroundIs(currentCharacterData, 'Пост принял') ? 10 : 2;
+        const options=pairedFireOptions(weapons,profiles,
             weapons.map((item,i)=>getWeaponClass(item,templates[i])),indices.map(getCombatWeaponErgonomics),
-            backgroundIs(currentCharacterData,'Полицейский'),backgroundIs(currentCharacterData,'Пост принял')?10:2);
-        if(options.length)buttons.push('<span class="paired-fire-label">Два оружия одновременно · с помехой</span>',
-            ...options.map(option=>`<button type="button" class="btn btn-sm btn-warning" data-paired-fire="${option.mode}" ${firingDisabledAttr} onclick="useWeaponFromEquipment(${index},'${option.mode}',${option.shots},${option.cost},${option.volleys},true)">${option.label} из двух · ${option.cost} ОД</button>`));
+            backgroundIs(currentCharacterData,'Полицейский'),minimumBurst);
+        if(options.length)buttons.push('<span class="paired-fire-label">Два оружия одновременно</span>',
+            ...options.map(option => {
+                const required = option.mode === 'area' ? 10 : Math.max(option.shots, minimumBurst * option.volleys);
+                const reason = ['burst', 'suppression', 'area'].includes(option.mode) && profiles.map((profile, i) => profile.machine_gun_burst
+                    ? machineGunFireLimitReason(machineGunShotsRemaining(weapons[i], templates[i], indices[i]), required) : '').find(Boolean);
+                const hint = reason ? ` title="${escapeHtml(reason)}"` : '';
+                return `<button type="button" class="btn btn-sm btn-warning" data-paired-fire="${option.mode}" ${reason ? 'disabled' : firingDisabledAttr}${hint} onclick="useWeaponFromEquipment(${index},'${option.mode}',${option.shots},${option.cost},${option.volleys},true)">${option.label} из двух · ${option.cost} ОД</button>`;
+            }));
     }
     return buttons.join('');
 }
@@ -8718,6 +8906,10 @@ async function refreshCharacterAfterEquipmentAction(characterId, data = null) {
     return queueRemoteSheetData(next, characterId);
 }
 
+function equipmentCombatTurnError(combat) {
+    return `Сейчас не ход этого персонажа. Бой идёт на подлокации «${combat.location_name}», раунд ${combat.round_number}.`;
+}
+
 async function runEquipmentAction(operation, slot, itemPath = null) {
     const characterId = currentCharacterId;
     if (autoSaveTimer) await forceSyncCharacter();
@@ -8729,7 +8921,7 @@ async function runEquipmentAction(operation, slot, itemPath = null) {
     let result;
     if (combat) {
         if (!combat.is_current_turn) {
-            throw new Error('Сейчас не ход этого персонажа');
+            throw new Error(equipmentCombatTurnError(combat));
         }
         const payload = {
             location_character_id: combat.location_character_id,
@@ -8776,9 +8968,10 @@ function equipmentModuleIdentity(item) {
         .filter(key => item[key] !== undefined).map(key => [key, item[key]])) : null;
 }
 
-async function runEquipmentModuleAction(operation, targetPath, slotType, itemPath = null, expected = null) {
+async function runEquipmentModuleAction(operation, targetPath, slotType, itemPath = null, expected = null, recipient = null) {
     const characterId = currentCharacterId;
     const artifact = slotType === 'artifact';
+    const battery = slotType === 'exoskeleton_battery';
     const initialTarget = getItemByPath(targetPath);
     if (artifact && !expected) {
         expected = {target:equipmentModuleIdentity(initialTarget), source:equipmentModuleIdentity(artifactInContainer(initialTarget))};
@@ -8794,7 +8987,7 @@ async function runEquipmentModuleAction(operation, targetPath, slotType, itemPat
     let result;
     if (combat) {
         if (!combat.is_current_turn) {
-            throw new Error('Сейчас не ход этого персонажа');
+            throw new Error(equipmentCombatTurnError(combat));
         }
         const pendingActionId = `equipment-module-${combat.location_character_id}-${Date.now()}`;
         const payload = {
@@ -8806,6 +8999,7 @@ async function runEquipmentModuleAction(operation, targetPath, slotType, itemPat
             module_selection: selection,
             item_path: itemPath,
             pending_action_id: pendingActionId,
+            ...(recipient ? {target_character_id: recipient.characterId} : {}),
         };
         result = await Server.performLocationCombatAction(
             combat.lobby_id,
@@ -8815,7 +9009,9 @@ async function runEquipmentModuleAction(operation, targetPath, slotType, itemPat
         if (result?.pending_action) {
             const sceneModule = await import('./locationScene.js');
             sceneModule.registerDeferredCombatAction(result.pending_action_id, payload);
-            showNotification(artifact ? 'Действие с контейнером продолжится в следующем ходу' : 'Установка фильтра начата и продолжится в следующем ходу', 'system');
+            const message = battery ? 'Замена аккумулятора начата. Остаток ОД будет списан в следующих ходах.'
+                : artifact ? 'Действие с контейнером продолжится в следующем ходу' : 'Установка фильтра начата и продолжится в следующем ходу';
+            showNotification(message, 'system');
             return result;
         }
         if (characterId === currentCharacterId) await refreshCharacterAfterEquipmentAction(characterId);
@@ -8827,10 +9023,11 @@ async function runEquipmentModuleAction(operation, targetPath, slotType, itemPat
             module_selection: selection,
             item_path: itemPath,
             character_revision: currentCharacterData._revision,
+            ...(recipient ? {target_character_id: recipient.characterId, location_id: recipient.locationId} : {}),
         });
         if (characterId === currentCharacterId) await refreshCharacterAfterEquipmentAction(characterId, result.data);
     }
-    const message = artifact
+    const message = battery ? (operation === 'install' ? 'Аккумулятор установлен' : 'Аккумулятор снят') : artifact
         ? (operation === 'install' ? 'Артефакт вложен' : 'Артефакт извлечён')
         : (operation === 'install' ? 'Фильтр установлен' : 'Фильтр снят');
     showNotification(message, 'success');
@@ -8958,6 +9155,14 @@ window.equipHelmetFromInventory = async function(itemPath) {
     } catch (error) {
         showNotification(error.message || 'Не удалось надеть шлем');
         return;
+    }
+};
+
+window.equipCosmeticMaskFromInventory = async function(itemPath) {
+    try {
+        return await runEquipmentAction('equip', 'mask', itemPath);
+    } catch (error) {
+        showNotification(error.message || 'Не удалось надеть маску');
     }
 };
 
@@ -9487,9 +9692,13 @@ window.equipToBeltFromInventory = async function(itemPath) {
         return;
     }
 
-    const basePouches = Math.max(0, Math.floor(Number(belt.maxPouches ?? getInventoryItemTemplate(belt)?.attributes?.max_pouches ?? 2)));
+    const proposed = {...belt, extraStoredItem: item};
+    const pouchCount = belt.pouches || [];
+    const magazineMounts = Math.max(0, Math.floor(modificationRule(belt, 'magazine_pouch_mounts')));
+    const proposedLimit = beltPouchLimit(proposed);
     if (belt.storedItem && !belt.extraStoredItem && modificationRule(belt, 'extra_belt_pouches')
-        && (belt.pouches?.length || 0) <= basePouches) {
+        && pouchCount.length <= proposedLimit
+        && pouchCount.filter(pouch => !isMagazinePouch(pouch)).length <= proposedLimit - magazineMounts) {
         if (!removeItemByPath(itemPath)) {
             showNotification('Не удалось найти предмет в инвентаре');
             return;
@@ -9598,10 +9807,8 @@ window.unequipHeadphones = async function() {
     restoredItem.deafeningCoef = headphones.deafeningCoef;
     restoredItem.noiseAbsorption = headphones.noiseAbsorption;
     restoredItem.awarenessBonus = headphones.awarenessBonus;
-    if (!currentCharacterData.inventory) currentCharacterData.inventory = {};
-    if (!currentCharacterData.inventory.backpack) currentCharacterData.inventory.backpack = [];
-    currentCharacterData.inventory.backpack.push(restoredItem);
     delete currentCharacterData.equipment.headphones;
+    storeRemovedEquipment(restoredItem);
     await renderEquipmentTab(currentCharacterData);
     await renderInventoryTab(currentCharacterData);
     scheduleAutoSave();
@@ -9684,10 +9891,8 @@ window.unequipGlasses = async function() {
     restoredItem.charismaBonus = glasses.charismaBonus;
     restoredItem.flashProtection = glasses.flashProtection;
     restoredItem.eyePhysicalProtection = glasses.eyePhysicalProtection;
-    if (!currentCharacterData.inventory) currentCharacterData.inventory = {};
-    if (!currentCharacterData.inventory.backpack) currentCharacterData.inventory.backpack = [];
-    currentCharacterData.inventory.backpack.push(restoredItem);
     delete currentCharacterData.equipment.glasses;
+    storeRemovedEquipment(restoredItem);
     await renderEquipmentTab(currentCharacterData);
     await renderInventoryTab(currentCharacterData);
     scheduleAutoSave();
@@ -9768,10 +9973,8 @@ window.unequipGloves = async function() {
     const restoredItem = {...createItemFromTemplate(template),...structuredClone(gloves)};
     restoredItem.charismaBonus = gloves.charismaBonus;
     restoredItem.effect = gloves.effect;
-    if (!currentCharacterData.inventory) currentCharacterData.inventory = {};
-    if (!currentCharacterData.inventory.backpack) currentCharacterData.inventory.backpack = [];
-    currentCharacterData.inventory.backpack.push(restoredItem);
     delete currentCharacterData.equipment.gloves;
+    storeRemovedEquipment(restoredItem);
     await renderEquipmentTab(currentCharacterData);
     await renderInventoryTab(currentCharacterData);
     scheduleAutoSave();
@@ -9813,10 +10016,8 @@ window.unequipRing = async function() {
     if (!template) { showNotification('Шаблон не найден'); return; }
     const restored = createItemFromTemplate(template);
     restored.charismaBonus = item.charismaBonus;
-    if (!currentCharacterData.inventory) currentCharacterData.inventory = {};
-    if (!currentCharacterData.inventory.backpack) currentCharacterData.inventory.backpack = [];
-    currentCharacterData.inventory.backpack.push(restored);
     delete currentCharacterData.equipment.ring;
+    storeRemovedEquipment(restored);
     await renderEquipmentTab(currentCharacterData);
     await renderInventoryTab(currentCharacterData);
     scheduleAutoSave(); forceSyncCharacter();
@@ -9881,10 +10082,8 @@ window.unequipNecklace = async function() {
     }
     const restored = createItemFromTemplate(template);
     restored.charismaBonus = item.charismaBonus || 0;
-    if (!currentCharacterData.inventory) currentCharacterData.inventory = {};
-    if (!currentCharacterData.inventory.backpack) currentCharacterData.inventory.backpack = [];
-    currentCharacterData.inventory.backpack.push(restored);
     delete currentCharacterData.equipment.necklace;
+    storeRemovedEquipment(restored);
     await renderEquipmentTab(currentCharacterData);
     await renderInventoryTab(currentCharacterData);
     scheduleAutoSave();
@@ -9950,10 +10149,8 @@ window.unequipEarrings = async function() {
     }
     const restored = createItemFromTemplate(template);
     restored.charismaBonus = item.charismaBonus || 0;
-    if (!currentCharacterData.inventory) currentCharacterData.inventory = {};
-    if (!currentCharacterData.inventory.backpack) currentCharacterData.inventory.backpack = [];
-    currentCharacterData.inventory.backpack.push(restored);
     delete currentCharacterData.equipment.earrings;
+    storeRemovedEquipment(restored);
     await renderEquipmentTab(currentCharacterData);
     await renderInventoryTab(currentCharacterData);
     scheduleAutoSave();
@@ -9995,10 +10192,8 @@ window.unequipBracelet = async function(slotNumber) {
     if (!template) { showNotification('Шаблон не найден'); return; }
     const restored = createItemFromTemplate(template);
     restored.charismaBonus = item.charismaBonus;
-    if (!currentCharacterData.inventory) currentCharacterData.inventory = {};
-    if (!currentCharacterData.inventory.backpack) currentCharacterData.inventory.backpack = [];
-    currentCharacterData.inventory.backpack.push(restored);
     delete currentCharacterData.equipment[`bracelet${slotNumber}`];
+    storeRemovedEquipment(restored);
     await renderEquipmentTab(currentCharacterData);
     await renderInventoryTab(currentCharacterData);
     scheduleAutoSave(); forceSyncCharacter();
@@ -10011,12 +10206,8 @@ window.unequipFromBelt = async function(slot = 'primary') {
         const restoredItem = structuredClone(belt.extraStoredItem);
         const path = restoredItem.sourcePath;
         delete restoredItem.sourcePath;
-        if (!path || !restoreItemToPath(restoredItem, path)) {
-            currentCharacterData.inventory ||= {};
-            currentCharacterData.inventory.backpack ||= [];
-            currentCharacterData.inventory.backpack.push(restoredItem);
-        }
         delete belt.extraStoredItem;
+        restoreBeltItem(restoredItem, path);
         renderInventoryTab(currentCharacterData);
         scheduleAutoSave();
         forceSyncCharacter();
@@ -10039,19 +10230,8 @@ window.unequipFromBelt = async function(slot = 'primary') {
     const restoredItem = createItemFromTemplate(template);
     Object.assign(restoredItem, stored.savedAttributes || {});
 
-    // Пытаемся вернуть в исходный контейнер (если путь сохранён), иначе в рюкзак
-    const path = stored.sourcePath;
-    let restored = false;
-    if (path) {
-        restored = restoreItemToPath(restoredItem, path);
-    }
-    if (!restored) {
-        if (!currentCharacterData.inventory) currentCharacterData.inventory = {};
-        if (!currentCharacterData.inventory.backpack) currentCharacterData.inventory.backpack = [];
-        currentCharacterData.inventory.backpack.push(restoredItem);
-    }
-
     delete belt.storedItem;
+    restoreBeltItem(restoredItem, stored.sourcePath);
 
     renderInventoryTab(currentCharacterData);
     scheduleAutoSave();
@@ -10119,6 +10299,14 @@ window.unequipHelmet = async function() {
     } catch (error) {
         showNotification(error.message || 'Не удалось снять шлем');
         return;
+    }
+};
+
+window.unequipCosmeticMask = async function() {
+    try {
+        return await runEquipmentAction('unequip', 'mask');
+    } catch (error) {
+        showNotification(error.message || 'Не удалось снять маску');
     }
 };
 
@@ -10247,10 +10435,7 @@ window.unequipWeapon = async function(weaponIndex) {
     restoredItem.modifications = weapon.modifications || [];
     restoredItem.installedModules = weapon.installedModules || [];
 
-    // Добавляем в рюкзак
-    if (!currentCharacterData.inventory) currentCharacterData.inventory = {};
-    if (!currentCharacterData.inventory.backpack) currentCharacterData.inventory.backpack = [];
-    currentCharacterData.inventory.backpack.push(restoredItem);
+    storeRemovedEquipment(restoredItem);
 
     // Удаляем оружие из экипировки
     currentCharacterData.weapons.splice(weaponIndex, 1);
@@ -10286,10 +10471,8 @@ window.unequipBelt = async function() {
     restoredItem.modifications = belt.modifications || [];
     restoredItem.storedItem = belt.storedItem || null;
     restoredItem.extraStoredItem = belt.extraStoredItem || null;
-    if (!currentCharacterData.inventory) currentCharacterData.inventory = {};
-    if (!currentCharacterData.inventory.backpack) currentCharacterData.inventory.backpack = [];
-    currentCharacterData.inventory.backpack.push(restoredItem);
     delete currentCharacterData.equipment.belt;
+    storeRemovedEquipment(restoredItem);
     renderEquipmentTab(currentCharacterData);
     renderInventoryTab(currentCharacterData);
     scheduleAutoSave();
@@ -10312,10 +10495,8 @@ window.unequipVest = async function() {
     }
     const templates = await loadTemplatesForLobby('vest');
     const restoredItem = vestInventoryItem(vest, templates);
-    if (!currentCharacterData.inventory) currentCharacterData.inventory = {};
-    if (!currentCharacterData.inventory.backpack) currentCharacterData.inventory.backpack = [];
-    currentCharacterData.inventory.backpack.push(restoredItem);
     delete currentCharacterData.equipment.vest;
+    storeRemovedEquipment(restoredItem);
     renderEquipmentTab(currentCharacterData);
     renderInventoryTab(currentCharacterData);
     scheduleAutoSave();
@@ -10329,10 +10510,8 @@ window.unequipDetector = async function() {
         showNotification('Детектор не надет');
         return;
     }
-    if (!currentCharacterData.inventory) currentCharacterData.inventory = {};
-    if (!currentCharacterData.inventory.backpack) currentCharacterData.inventory.backpack = [];
-    currentCharacterData.inventory.backpack.push(detector);
     delete currentCharacterData.equipment.detector;
+    storeRemovedEquipment(detector);
     await renderEquipmentTab(currentCharacterData);
     await renderInventoryTab(currentCharacterData);
     scheduleAutoSave();
@@ -10704,7 +10883,7 @@ window.reloadGrenadeLauncher = async function(weaponIndex) {
         return;
     }
 
-    const caliber = launcher.attributes?.caliber;
+    const caliber = normalizeCaliberText(launcher.attributes?.caliber);
     if (!caliber) {
         showNotification('Неизвестный калибр гранатомёта');
         return;
@@ -10712,12 +10891,21 @@ window.reloadGrenadeLauncher = async function(weaponIndex) {
 
     // Ищем гранату подходящего калибра
     const grenadeItems = [];
+    const matchesCaliber = item => {
+        const declared = normalizeCaliberText(item.attributes?.caliber ?? item.caliber);
+        if (declared) return declared === caliber;
+        const name = String(item.name || '').trim();
+        if (/^подствольный\s+(газовый|дымовой|светошумовой)/iu.test(name)) {
+            return ['вог-25', 'n-101-2'].includes(caliber);
+        }
+        return normalizeCaliberText(name.replace(/^подствольная\s+/iu, '')) === caliber;
+    };
     const collectGrenades = (items, path) => {
         if (!Array.isArray(items)) return;
         items.forEach((item, idx) => {
             if (
                 item.category === 'grenade'
-                && getItemCaliber(item) === normalizeCaliberText(caliber)
+                && matchesCaliber(item)
                 && item.quantity > 0
             ) {
                 grenadeItems.push({ item, path: path.concat(idx) });
@@ -10733,7 +10921,7 @@ window.reloadGrenadeLauncher = async function(weaponIndex) {
     vestPouches.forEach((pouch, i) => collectGrenades(pouch.contents, ['equipment', 'vest', 'pouches', i, 'contents']));
 
     if (grenadeItems.length === 0) {
-        showNotification(`Нет гранат калибра ${caliber}`);
+        showNotification(`Нет гранат калибра ${launcher.attributes.caliber}`);
         return;
     }
 
@@ -11084,10 +11272,10 @@ function getMedicineSkillLevel() {
 }
 
 function getMedicalTreatmentActionPoints(direct, fallbackActionPoints) {
-    const configuredCost = Number(direct?.treatment_action_points);
-    const hasConfiguredCost = Number.isFinite(configuredCost);
+    const configured = direct?.treatment_action_points;
+    const hasConfiguredCost = configured != null && Number.isFinite(Number(configured));
     let actionPoints = hasConfiguredCost
-        ? configuredCost
+        ? Number(configured)
         : Math.max(0, Number(fallbackActionPoints) || 0);
     if (hasConfiguredCost && direct?.treatment_time_uses_medicine !== false) {
         const medicineLevel = getMedicineSkillLevel();
@@ -11149,7 +11337,9 @@ function getInventoryItemTemplate(item) {
 }
 
 function getInventoryItemCategory(item) {
-    return String(item?.category || getInventoryItemTemplate(item)?.category || '').trim().toLowerCase();
+    const category = String(item?.category || getInventoryItemTemplate(item)?.category || '').trim().toLowerCase();
+    if (category === 'helmet' && (isCosmeticMask(item) || getInventoryItemTemplate(item)?.category === 'mask')) return 'mask';
+    return category;
 }
 
 function getMagazineCompatibleWeaponIds(item) {
@@ -11275,32 +11465,29 @@ async function calculateInventoryAccess(item, itemPath) {
     };
 }
 
-async function spendInventoryAccessForCombat(item, itemPath, baseUseActionPoints = 0, pendingActionId = null, consumableSelection = null) {
+function spendInventoryAccessForCombat(item, pendingActionId, selection, { lobbyId, locationId, access }) {
     const combatState = window.locationCombatState;
-    if (!combatState || combatState.status !== 'active') {
-        return { totalActionPoints: 0, access: null };
+    if (combatState?.status !== 'active'
+        || lobbyId !== Number(window.currentLobbyId) || locationId !== Number(window.currentLocationId)) {
+        throw new Error('Состояние боя изменилось. Выберите расходник заново');
     }
     const actor = combatState.current_character;
-    if (!actor || actor.character_id !== currentCharacterId) {
+    if (!actor || Number(actor.character_id) !== Number(currentCharacterId)) {
         throw new Error('Сейчас не ход этого персонажа');
     }
-    const access = await calculateInventoryAccess(item, itemPath);
     const useActionPoints = Math.max(
         0,
-        Number(baseUseActionPoints || 0) - access.useActionDiscount
+        Number(selection.application.actionPoints || 0) - access.useActionDiscount
     );
     const totalActionPoints = access.retrievalActionPoints + useActionPoints;
-    const resolvedPendingActionId = pendingActionId
-        || `inventory-${actor.location_character_id}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-    const payment = await Server.spendLocationCombatResources(window.currentLobbyId, window.currentLocationId, {
+    return Server.spendLocationCombatResources(lobbyId, locationId, {
         location_character_id: actor.location_character_id,
         action_points: totalActionPoints,
         allow_deferred: true,
-        pending_action_id: resolvedPendingActionId,
+        pending_action_id: pendingActionId,
         pending_action_label: `Использование: ${item?.name || 'предмет'}`,
-        consumable_selection: consumableSelection,
+        consumable_selection: selection,
     });
-    return { totalActionPoints, useActionPoints, access, payment, pendingActionId: resolvedPendingActionId };
 }
 
 function combineCombatPayments(groups) {
@@ -11695,11 +11882,15 @@ function resolveInventoryEntry(itemId, itemPath) {
     )[0] || null;
 }
 
+function matchboxCapacity(item) {
+    return String(item?.name || '').trim().toLowerCase() === 'спички (10 штук)' ? 10 : null;
+}
+
 function spendInventoryItemUses(entry, amount = 1) {
     if (!entry?.item) return false;
     const item = entry.item;
     let remaining = Math.max(0, Number(amount) || 0);
-    const maxUses = Math.max(1, Number(item.maxUses ?? item.attributes?.uses ?? 1) || 1);
+    const maxUses = Math.max(1, Number(item.maxUses ?? item.attributes?.uses ?? matchboxCapacity(item)) || 1);
     let uses = Math.max(0, Number(item.uses ?? item.attributes?.uses_remaining ?? maxUses) || 0);
     while (remaining > 0 && Number(item.quantity || 0) > 0) {
         const spent = Math.min(uses || maxUses, remaining);
@@ -11724,7 +11915,7 @@ function spendInventoryItemUses(entry, amount = 1) {
 function getInventoryItemAvailableUses(item) {
     if (!item) return 0;
     const quantity = Math.max(0, Number(item.quantity || 0));
-    const maxUses = Math.max(1, Number(item.maxUses ?? item.attributes?.uses ?? 1) || 1);
+    const maxUses = Math.max(1, Number(item.maxUses ?? item.attributes?.uses ?? matchboxCapacity(item)) || 1);
     const currentUses = Math.max(0, Number(item.uses ?? item.attributes?.uses_remaining ?? maxUses) || 0);
     return currentUses + Math.max(0, quantity - 1) * maxUses;
 }
@@ -11766,11 +11957,12 @@ function findSmokingFireSource(data) {
     );
     const lighter = sources.find(entry => /зажигал/i.test(String(entry.item?.name || '')));
     if (lighter) return { entry: lighter, consume: false };
-    const matches = sources.find(entry => /спич/i.test(String(entry.item?.name || '')));
+    const matches = sources.find(entry => /спич/i.test(String(entry.item?.name || ''))
+        && getInventoryItemAvailableUses(entry.item) > 0);
     return matches ? { entry: matches, consume: true } : null;
 }
 
-function chooseConsumableApplication(title, choices, { alwaysShow = false } = {}) {
+export function chooseConsumableApplication(title, choices, { alwaysShow = false, details = [] } = {}) {
     if (!Array.isArray(choices) || choices.length === 0) return Promise.resolve(null);
     if (choices.length === 1 && !alwaysShow) return Promise.resolve(choices[0]);
     return new Promise(resolve => {
@@ -11779,9 +11971,10 @@ function chooseConsumableApplication(title, choices, { alwaysShow = false } = {}
         modal.id = 'consumable-application-modal';
         modal.className = 'modal';
         modal.innerHTML = `
-            <div class="modal-content" style="max-width:520px;">
+            <div class="modal-content" style="max-width:520px;max-height:85vh;overflow-y:auto;">
                 <span class="close">&times;</span>
                 <h3>${escapeHtml(title)}</h3>
+                ${details.map(line => `<p>${escapeHtml(line)}</p>`).join('')}
                 <div class="consumable-application-list" style="display:flex; flex-direction:column; gap:8px;"></div>
                 <div class="form-actions" style="margin-top:12px;"><button type="button" class="btn btn-secondary cancel-btn">Отмена</button></div>
             </div>`;
@@ -11853,9 +12046,11 @@ async function resolveMedicalApplication(direct, health, itemName, costContext =
     }
     if (applications.length) {
         const choices = [];
+        const bandage = /^(стерильный )?бинт$/i.test(itemName.trim());
+        const tourniquets = activeTourniquetAreas(effects);
         effects.forEach(effect => {
             const bleed = getBleedingInfo(effect);
-            if (!bleed || effect.closed || effect.suppressed) return;
+            if (!bleed || effect.closed || bleedingIsSuppressed(effect, tourniquets)) return;
             applications.forEach(application => {
                 const outcome = getBleedingTreatmentOutcome(effect, application);
                 if (!outcome) return;
@@ -11867,8 +12062,17 @@ async function resolveMedicalApplication(direct, health, itemName, costContext =
                 const treatmentLabel = outcome.mode === 'weaken'
                     ? `ослабить до ${BLEEDING_STAGE_LABEL[outcome.resultStage]}`
                     : 'остановить';
+                const uses = Number(application.item_uses || 1);
+                const bonus = Number(application.medicine_bonus || 0);
+                const cost = [getMedicalApplicationCostLabel(actionPoints, costContext)];
+                if (bandage && uses <= 2) {
+                    cost.push(uses === 1 ? '1 бинт' : '2 бинта');
+                } else if (uses > 1) {
+                    cost.push(`${uses} зар.`);
+                }
+                if (bonus > 0) cost.push(`+${bonus} к проверке от расходника`);
                 choices.push({
-                    label: `${getEffectAreaLabel(effect.area)}: ${getBleedingEffectLabel(effect, bleed)} → ${treatmentLabel} · ${getMedicalApplicationCostLabel(actionPoints, costContext)}`,
+                    label: `${getEffectAreaLabel(effect.area)}: ${getBleedingEffectLabel(effect, bleed)} → ${treatmentLabel} · ${cost.join(' · ')}`,
                     effect,
                     application,
                     treatmentMode: outcome.mode,
@@ -11883,7 +12087,7 @@ async function resolveMedicalApplication(direct, health, itemName, costContext =
         return { kind: 'bleeding', ...selected };
     }
     if (direct.wound_treatment) {
-        const actionPoints = Number(direct.action_points_cost || 1);
+        const actionPoints = getMedicalTreatmentActionPoints(direct, direct.action_points_cost ?? 1);
         const choices = effects.filter(effect => effect.type === 'untreated_wound').map(effect => ({
             label: `Обработать рану: ${getEffectAreaLabel(effect.area)} · ${getMedicalApplicationCostLabel(actionPoints, costContext)}`,
             effect,
@@ -11955,7 +12159,7 @@ async function resolveMedicalApplication(direct, health, itemName, costContext =
         return selected ? { kind: 'injury', ...selected } : null;
     }
     if (direct.special_limb_treatment) {
-        const actionPoints = Number(direct.action_points_cost || 1);
+        const actionPoints = getMedicalTreatmentActionPoints(direct, direct.action_points_cost ?? 1);
         const areas = ['leftArm', 'rightArm', 'leftLeg', 'rightLeg'];
         if (direct.special_limb_treatment === 'chimera') areas.push('head');
         const choices = areas
@@ -11984,7 +12188,7 @@ async function resolveMedicalApplication(direct, health, itemName, costContext =
             && !direct.restore_limb_health) {
             return { kind: 'self', actionPoints: Number(direct.action_points_cost ?? 1) };
         }
-        const actionPoints = Number(direct.action_points_cost || 1);
+        const actionPoints = getMedicalTreatmentActionPoints(direct, direct.action_points_cost ?? 1);
         const allowedTypes = new Set();
         if (direct.fracture_splint || direct.cure_fracture) allowedTypes.add('fracture');
         if (direct.suppress_limb_trauma) allowedTypes.add('fracture');
@@ -12051,7 +12255,81 @@ async function resolveMedicalApplication(direct, health, itemName, costContext =
         return selected ? { kind: 'injury', ...selected } : null;
     }
     const defaultMedicalCost = direct.medical_difficulty !== undefined || direct.application_form === 'injectable' ? 1 : 0;
-    return { kind: 'self', actionPoints: Number(direct.action_points_cost ?? defaultMedicalCost) };
+    return { kind: 'self', actionPoints: getMedicalTreatmentActionPoints(direct, direct.action_points_cost ?? defaultMedicalCost) };
+}
+
+async function confirmMedicalRoll(characterId, payload, previous) {
+    const preview = await Server.previewMedicalProcedure(characterId, payload);
+    if ((preview.toolkits.length || previous?.toolkits?.length)
+        && JSON.stringify(preview) !== JSON.stringify(previous)) {
+        const difficulty = preview.difficulty_without_toolkits !== preview.difficulty
+            ? `СЛ ${preview.difficulty_without_toolkits} → ${preview.difficulty}`
+            : `СЛ ${preview.difficulty ?? '—'}`;
+        const tools = preview.toolkits.map(tool =>
+            `${tool.name}: +${tool.bonus} к броску, будет потрачен ${tool.charges_spent} заряд.`
+        );
+        if (!tools.length) tools.push('Наборы инструментов больше не применяются.');
+        const choices = [{ label: preview.toolkits.length ? 'Продолжить с наборами' : 'Продолжить лечение' }];
+        if (preview.toolkits.length) {
+            choices.push({
+                label: `Продолжить без наборов · СЛ ${preview.difficulty_without_toolkits}`,
+                skipToolkits: true,
+            });
+        }
+        const confirmed = await chooseConsumableApplication('Бросок Медицины', choices, {
+            alwaysShow: true, details: [difficulty, ...tools],
+        });
+        if (!confirmed) return false;
+        if (confirmed.skipToolkits) payload.skip_toolkits = true;
+    }
+    payload.confirmed_preview = payload.skip_toolkits
+        ? { ...preview, difficulty: preview.difficulty_without_toolkits, toolkits: [] }
+        : preview;
+    return true;
+}
+
+function notifyMedicalProcedure(itemName, result) {
+    const toolkits = (result.toolkits || []).map(tool =>
+        `${tool.name} +${tool.bonus} (−${tool.charges_spent} заряд, осталось ${tool.charges_remaining})`
+    );
+    const difficulty = toolkits.length ? `${result.difficulty_without_toolkits} → ${result.difficulty}` : result.difficulty;
+    const details = result.roll == null
+        ? ''
+        : `к20: ${result.roll}, СЛ: ${difficulty}${toolkits.length ? `. ${toolkits.join(', ')}` : ''}`;
+    if (result.bleeding_grade) {
+        if (!result.success) {
+            const reason = result.bleeding_grade === 'chance'
+                ? 'Шанс 50% не сработал'
+                : 'Проверка Медицины провалена';
+            showNotification(`${reason}. ${details}. Расходник потрачен.`);
+            return;
+        }
+        const reason = result.bleeding_grade === 'chance'
+            ? 'Сработал шанс 50%'
+            : result.bleeding_grade === 'improved' ? 'Успех с запасом 5 или больше' : 'Проверка Медицины успешна';
+        const effect = result.outcome?.mode === 'close'
+            ? 'Кровотечение остановлено'
+            : `Кровотечение ослаблено до ${BLEEDING_STAGE_LABEL[result.outcome?.result_stage]}`;
+        showNotification(`${reason}. ${details}. ${effect}.`, 'success');
+        return;
+    }
+    if (result.success && result.roll == null) {
+        showNotification(`${itemName} использован`, 'success');
+    } else if (result.success) {
+        showNotification(`Проверка Медицины успешна. ${details}`, 'success');
+    } else {
+        showNotification(`Проверка Медицины провалена. ${details}. Расходник потрачен.`);
+    }
+}
+
+function notifyConsumableUse(itemName, addiction, outcome) {
+    let message = outcome?.message || `${itemName} использован.`;
+    if (addiction?.acquired) {
+        message += ` Получена зависимость: ${addiction.profile.label}.`;
+    } else if (addiction?.applicable && addiction.blocked) {
+        message += ' «Котик» заблокировал появление зависимости.';
+    }
+    showNotification(message, addiction?.acquired ? 'system' : (outcome?.type || 'success'));
 }
 
 async function useConsumable(item, itemPath, options = {}) {
@@ -12097,6 +12375,8 @@ async function useConsumable(item, itemPath, options = {}) {
     }
     const combatState = window.locationCombatState;
     const isCombatActive = Boolean(combatState && combatState.status === 'active');
+    const lobbyId = Number(window.currentLobbyId);
+    const locationId = Number(window.currentLocationId);
     let hasChanges = false;
     const itemName = String(item.name || '').toLowerCase();
     const directEffectTypes = new Set();
@@ -12437,6 +12717,7 @@ async function useConsumable(item, itemPath, options = {}) {
     ];
     const serverGeneralConsumable = Boolean(
         template?.id
+        && Number(options.targetCharacterId || currentCharacterId) === Number(currentCharacterId)
         && application.kind === 'self'
         && !serverMedicalProcedure
         && direct.medical_difficulty === undefined
@@ -12448,11 +12729,32 @@ async function useConsumable(item, itemPath, options = {}) {
         && traitCount(currentCharacterData,'Тонкая работа') && Number(application.actionPoints)>=3) {
         const cost=Number(application.actionPoints),reduction=traitCount(currentCharacterData,'Тонкая работа')>=2?6:4;
         const choice=await chooseConsumableApplication('Способ лечения',[
-            {label:`Обычное лечение · ${cost} ОД`,fineWork:false},
-            {label:`Тонкая работа · ${cost*2} ОД, СЛ −${reduction}`,fineWork:true},
+            {label:`Обычное лечение · ${getMedicalApplicationCostLabel(cost, medicalCostContext)}`,fineWork:false},
+            {label:`Тонкая работа · ${getMedicalApplicationCostLabel(cost * 2, medicalCostContext)}, СЛ −${reduction}`,fineWork:true},
         ]);
         if (!choice) return false;
         if (choice.fineWork) { application.fineWork=true;application.actionPoints=cost*2; }
+    }
+    const medicalPayload = serverMedicalProcedure ? {
+        target_character_id: Number(options.targetCharacterId || currentCharacterId),
+        source: { path: [...itemPath], snapshot: JSON.parse(JSON.stringify(item)) },
+        application: JSON.parse(JSON.stringify(options.paidApplication ?? application)),
+        combat_location_id: isCombatActive ? locationId : null,
+        actor_location_character_id: isCombatActive
+            ? Number(options.interactionContext?.actorLocationCharacterId || combatState?.current_character?.location_character_id)
+            : null,
+        interaction_request_id: options.treatmentRequestId || null,
+        ...(options.skipMedicalToolkits ? { skip_toolkits: true } : {}),
+    } : null;
+    if (medicalPayload && !options.autoInjectorPayment) {
+        try {
+            if (!await confirmMedicalRoll(currentCharacterId, medicalPayload, options.confirmedMedicalPreview)) {
+                return false;
+            }
+        } catch (error) {
+            showNotification(error.message || 'Не удалось рассчитать СЛ лечения');
+            return false;
+        }
     }
     if (isCombatActive && !options.skipCombatPayment && !options.autoInjectorPayment) {
         let pendingActionId = null;
@@ -12469,15 +12771,21 @@ async function useConsumable(item, itemPath, options = {}) {
                 server_operation: serverMedicalProcedure
                     ? 'medical'
                     : (serverGeneralConsumable ? 'general' : null),
+                ...(medicalPayload?.confirmed_preview ? { confirmed_preview: medicalPayload.confirmed_preview } : {}),
+                ...(medicalPayload?.skip_toolkits ? { skip_toolkits: true } : {}),
             };
             const payment = await spendInventoryAccessForCombat(
-                item, itemPath, application.actionPoints, pendingActionId, selection
+                item, pendingActionId, selection, { lobbyId, locationId, access: medicalCostContext }
             );
-            if (payment.payment?.payment_complete === false) {
+            if (payment.payment_complete === false) {
                 showNotification(
                     `Начато длительное действие «${item.name}». Остаток ОД будет списан в следующих ходах.`,
                     'system'
                 );
+                return false;
+            }
+            if (selection.server_authoritative) {
+                options.paidCombatState = payment.combat_state;
                 return false;
             }
         } catch (error) {
@@ -12487,33 +12795,15 @@ async function useConsumable(item, itemPath, options = {}) {
     }
     if (serverMedicalProcedure) {
         try {
-            const actor = combatState?.current_character;
             const response = await Server.applyMedicalProcedure(currentCharacterId, {
+                ...medicalPayload,
                 operation_id: medicalOperationId
                     || `medical-${currentCharacterId}-${Date.now()}-${Math.random().toString(36).slice(2)}`,
                 deferred_action_id: isCombatActive ? medicalOperationId : null,
-                target_character_id: Number(options.targetCharacterId || currentCharacterId),
-                source: { path: [...itemPath], snapshot: JSON.parse(JSON.stringify(item)) },
-                application: JSON.parse(JSON.stringify(application)),
-                combat_location_id: isCombatActive ? Number(window.currentLocationId) : null,
-                actor_location_character_id: isCombatActive
-                    ? Number(options.interactionContext?.actorLocationCharacterId || actor?.location_character_id)
-                    : null,
-                interaction_request_id: options.treatmentRequestId || null,
                 ...(options.autoInjectorPayment?{auto_injector_payment:options.autoInjectorPayment}:{}),
             });
             options.serverMedicalResult = response;
-            const result = response.medical_result || {};
-            const details = result.roll == null
-                ? ''
-                : ` d20: ${result.roll}, СЛ: ${result.difficulty}`;
-            if (result.success && result.roll == null) {
-                showNotification(`${item.name} использован`, 'success');
-            } else if (result.success) {
-                showNotification(`Проверка Медицины успешна. ${details}`, 'success');
-            } else {
-                showNotification(`Проверка Медицины провалена. ${details}. Расходник потрачен.`);
-            }
+            notifyMedicalProcedure(item.name, response.medical_result || {});
             return true;
         } catch (error) {
             showNotification(error.message || 'Не удалось применить медикамент');
@@ -12529,19 +12819,13 @@ async function useConsumable(item, itemPath, options = {}) {
                 deferred_action_id: isCombatActive ? medicalOperationId : null,
                 source: { path: [...itemPath], snapshot: JSON.parse(JSON.stringify(item)) },
                 application: JSON.parse(JSON.stringify(application)),
-                combat_location_id: isCombatActive ? Number(window.currentLocationId) : null,
+                combat_location_id: isCombatActive ? locationId : null,
                 actor_location_character_id: isCombatActive
                     ? Number(options.interactionContext?.actorLocationCharacterId || actor?.location_character_id)
                     : null,
             });
             options.serverConsumableResult = response;
-            const addiction = response.consumable_result?.consumable?.addiction;
-            if (addiction?.acquired) {
-                showNotification(`Получена зависимость: ${addiction.profile.label}`, 'system');
-            } else if (addiction?.applicable && addiction.blocked) {
-                showNotification('«Котик» заблокировал появление зависимости', 'success');
-            }
-            showNotification(`${item.name} использован`, 'success');
+            notifyConsumableUse(item.name, response.consumable_result?.consumable?.addiction);
             return true;
         } catch (error) {
             showNotification(error.message || 'Не удалось применить расходник');
@@ -12576,7 +12860,7 @@ async function useConsumable(item, itemPath, options = {}) {
         const roll = Number.isInteger(options.medicineRoll) && options.medicineRoll >= 1 && options.medicineRoll <= 20
             ? options.medicineRoll
             : Math.floor(Math.random() * 20) + 1;
-        const checkDetails = `d20: ${roll}, СЛ: ${difficulty} (база ${baseDifficulty}, Медицина ${medicineSkillBonus >= 0 ? '+' : ''}${medicineSkillBonus}, медикамент ${medicationBonus >= 0 ? '+' : ''}${medicationBonus})`;
+        const checkDetails = `к20: ${roll}, СЛ: ${difficulty} (база ${baseDifficulty}, Медицина ${medicineSkillBonus >= 0 ? '+' : ''}${medicineSkillBonus}, медикамент ${medicationBonus >= 0 ? '+' : ''}${medicationBonus})`;
         if (roll < difficulty) {
             const medicalRetry = {
                 actor_character_id: Number(currentCharacterId),
@@ -12614,7 +12898,9 @@ async function useConsumable(item, itemPath, options = {}) {
                     },
                 },
             }));
-            showNotification(`Проверка Медицины провалена. ${checkDetails}. Расходник потрачен.`);
+            const message = `Проверка Медицины провалена. ${checkDetails}. Расходник потрачен.`;
+            if (options.save === false) options.medicalOutcome = { message, type: 'system' };
+            else showNotification(message);
             if (options.render !== false) renderInventoryTab(currentCharacterData);
             if (options.save !== false) {
                 if (isCombatActive) {
@@ -12630,7 +12916,9 @@ async function useConsumable(item, itemPath, options = {}) {
             }
             return true;
         }
-        showNotification(`Проверка Медицины успешна. ${checkDetails}`, 'system');
+        const message = `Проверка Медицины успешна. ${checkDetails}`;
+        if (options.save === false) options.medicalOutcome = { message, type: 'success' };
+        else showNotification(message, 'system');
     }
 
     if (waterRequirement) {
@@ -12702,8 +12990,8 @@ async function useConsumable(item, itemPath, options = {}) {
 
     if (application.kind === 'bleeding') {
         const targetId = application.effect.id;
+        const bleeding = getBleedingInfo(application.effect);
         if (application.treatmentMode === 'weaken') {
-            const bleeding = getBleedingInfo(application.effect);
             application.effect.type = `bleeding_${bleeding.kind}_${application.resultStage}`;
             application.effect.name = `Кровотечение ${BLEEDING_KIND_LABEL[bleeding.kind]} ${BLEEDING_STAGE_LABEL[application.resultStage]}`;
             application.effect.closed = false;
@@ -12716,7 +13004,7 @@ async function useConsumable(item, itemPath, options = {}) {
             health.effects = (health.effects || []).filter(effect =>
                 effect !== application.effect && (!targetId || effect.id !== targetId)
             );
-            if (!application.application.treated) {
+            if (!application.application.treated && bleeding?.kind === 'external') {
                 applyEffectToHealth(health, {
                     type: 'untreated_wound', name: 'Необработанная рана', area: application.effect.area,
                     source: targetId || application.effect.source || item.name, tick: 'manual'
@@ -12724,11 +13012,8 @@ async function useConsumable(item, itemPath, options = {}) {
             }
         }
         if (direct.tourniquet) {
-            health.effects.forEach(effect => {
-                if (getBleedingInfo(effect) && effect.area === application.effect.area) effect.suppressed = true;
-            });
             applyEffectToHealth(health, {
-                type: 'tourniquet', name: `Жгут: ${getEffectAreaLabel(application.effect.area)}`,
+                type: 'tourniquet', name: 'Наложен жгут',
                 area: application.effect.area, source: item.id || item.name, tick: 'manual'
             });
         }
@@ -13347,12 +13632,63 @@ export async function resumeDeferredConsumable(lobbyId, locationId, actionId) {
     if (medicalOperationInProgress) return false;
     const saved = await Server.prepareDeferredConsumable(lobbyId, locationId, actionId);
     if (medicalOperationInProgress) return false;
+    if (saved.status === 'waiting') return false;
+    if (saved.status === 'completed' || saved.status === 'cancelled') return null;
     const selection = saved.selection;
+    const operation = selection.server_operation;
+    if (operation === 'medical' || operation === 'general') {
+        const payload = {
+            operation_id: saved.id,
+            deferred_action_id: saved.id,
+            source: selection.source,
+            application: selection.application,
+            combat_location_id: Number(locationId),
+            actor_location_character_id: saved.actor_location_character_id,
+        };
+        const actorId = saved.actor_character_id;
+        const itemName = selection.source.snapshot.name;
+        let response;
+        try {
+            if (operation === 'medical') {
+                payload.target_character_id = selection.target_character_id;
+                payload.interaction_request_id = selection.treatment_request_id;
+                if (selection.skip_toolkits) payload.skip_toolkits = true;
+                if (!await confirmMedicalRoll(actorId, payload, selection.confirmed_preview)) {
+                    throw new Error('Бросок Медицины не подтверждён');
+                }
+                response = await Server.applyMedicalProcedure(actorId, payload);
+            } else {
+                response = await Server.applyGeneralConsumable(actorId, payload);
+            }
+        } catch (error) {
+            if (error.status === 403 || error.status === 409) {
+                // The turn can change or another browser can finish while this request is in flight.
+                const fresh = await Server.prepareDeferredConsumable(lobbyId, locationId, actionId).catch(() => null);
+                if (fresh?.status === 'waiting') return false;
+                if (fresh?.status === 'completed') return null;
+            }
+            throw error;
+        }
+        if (operation === 'medical') {
+            notifyMedicalProcedure(itemName, response.medical_result || {});
+        } else {
+            notifyConsumableUse(itemName, response.consumable_result?.consumable?.addiction);
+        }
+        const viewingActor = Number(currentCharacterId) === Number(actorId);
+        const sheetId = viewingActor ? actorId : selection.target_character_id;
+        const sheetData = viewingActor ? response.actor_data || response.data : response.target_data;
+        receiveSheetRemoteData(sheetId, sheetData)?.catch(error => {
+            console.error('Could not refresh the sheet after item use', error);
+        });
+        return null;
+    }
     const applied = await useCharacterInventoryItem(saved.actor_character_id, selection.source.path, {
         forceReload: true,
         targetCharacterId: selection.target_character_id,
         targetData: saved.target_data,
         preselectedApplication: selection.application,
+        confirmedMedicalPreview: selection.confirmed_preview,
+        skipMedicalToolkits: selection.skip_toolkits === true,
         deferredActionId: saved.id,
         medicineRoll: saved.medicine_roll,
         treatmentConsentGranted: true,
@@ -13363,7 +13699,7 @@ export async function resumeDeferredConsumable(lobbyId, locationId, actionId) {
         },
     });
     if (!applied) throw new Error('Процедура не завершена. Проверьте условия применения или отмените действие.');
-    return true;
+    return null;
 }
 
 export async function useCharacterInventoryItem(characterId, itemPath, options = {}) {
@@ -13389,12 +13725,14 @@ export async function useCharacterInventoryItem(characterId, itemPath, options =
         : null;
     medicalOperationInProgress = true;
     medicalRemoteUpdate = null;
-    const sheetModal = document.getElementById('character-sheet-modal');
-    const sheetWasInert = sheetModal?.inert || false;
-    if (sheetModal) sheetModal.inert = true;
+    const sheetContent = document.querySelector('#character-sheet-modal > .modal-content');
+    const sheetWasInert = sheetContent?.inert || false;
+    if (sheetContent) sheetContent.inert = true;
     if (autoSaveTimer) clearTimeout(autoSaveTimer);
     autoSaveTimer = null;
     let appliedData = null;
+    const previousModifiers = previousCharacterData?.health?.combatMeta?.consumableModifiers;
+    let paidCombatState = null;
 
     try {
         if (options.forceReload || shouldRestorePreviousState || !currentCharacterData) {
@@ -13467,6 +13805,8 @@ export async function useCharacterInventoryItem(characterId, itemPath, options =
     const useOptions = {
         ...options,
         preselectedApplication,
+        // Сервер сверяет оплаченный выбор, а актуальность травмы проверяет по данным пациента.
+        paidApplication: options.deferredActionId ? options.preselectedApplication : undefined,
         targetData,
         render: false,
         save: false,
@@ -13476,16 +13816,12 @@ export async function useCharacterInventoryItem(characterId, itemPath, options =
         ? { path: [...resolvedPath], snapshot: JSON.parse(JSON.stringify(item)) }
         : undefined;
     const applied = await useItem(item, resolvedPath, useOptions);
+    paidCombatState = useOptions.paidCombatState;
     if (applied !== true) return false;
     if (useOptions.serverMedicalResult || useOptions.serverConsumableResult) {
         currentCharacterData = useOptions.serverMedicalResult?.actor_data
             || useOptions.serverConsumableResult?.data;
         appliedData = currentCharacterData;
-        showNotification('Применение предмета сохранено', 'system');
-        if (currentCharacterId === characterId) {
-            renderInventoryTab(currentCharacterData);
-            refreshHealthPanel();
-        }
         return true;
     }
     const consumableUse = item.category === 'consumable' ? {
@@ -13535,16 +13871,7 @@ export async function useCharacterInventoryItem(characterId, itemPath, options =
         currentCharacterData = response.data;
     }
     appliedData = currentCharacterData;
-    if (consumableResult?.addiction?.acquired) {
-        showNotification(`Получена зависимость: ${consumableResult.addiction.profile.label}`, 'system');
-    } else if (consumableResult?.addiction?.applicable && consumableResult.addiction.blocked) {
-        showNotification('«Котик» заблокировал появление зависимости', 'success');
-    }
-    showNotification('Применение предмета сохранено', 'system');
-    if (currentCharacterId === characterId) {
-        renderInventoryTab(currentCharacterData);
-        refreshHealthPanel();
-    }
+    notifyConsumableUse(item.name, consumableResult?.addiction, useOptions.medicalOutcome);
     } finally {
         medicalOperationInProgress = false;
         if (shouldRestorePreviousState) {
@@ -13564,13 +13891,15 @@ export async function useCharacterInventoryItem(characterId, itemPath, options =
             currentCharacterData = medicalRemoteUpdate.data;
         }
         medicalRemoteUpdate = null;
-        if (sheetModal) sheetModal.inert = sheetWasInert;
+        if (sheetContent) sheetContent.inert = sheetWasInert;
         if (currentCharacterId && currentCharacterData) {
-            await refreshSavedSheet(currentCharacterId).catch(error => {
+            const refreshSkills = JSON.stringify(previousModifiers)
+                !== JSON.stringify(currentCharacterData.health?.combatMeta?.consumableModifiers);
+            await refreshSavedSheet(currentCharacterId, { refreshSkills }).catch(error => {
                 console.error('Could not refresh the sheet after item use', error);
             });
         }
-        window.dispatchEvent?.(new CustomEvent('character-item-operation-finished'));
+        window.dispatchEvent?.(new CustomEvent('character-item-operation-finished', { detail: paidCombatState }));
     }
     return true;
 }
@@ -13716,6 +14045,7 @@ async function rechargeDevice(item, itemPath) {
     `;
     document.body.appendChild(modal);
 
+    const characterData = currentCharacterData;
     const select = modal.querySelector('#recharge-battery-select');
     batteryItems.forEach((entry, idx) => {
         const opt = document.createElement('option');
@@ -13724,12 +14054,14 @@ async function rechargeDevice(item, itemPath) {
         select.appendChild(opt);
     });
 
-    modal.querySelector('#confirm-recharge-battery').onclick = () => {
+    modal.querySelector('#confirm-recharge-battery').onclick = async () => {
         const idx = select.value;
         if (idx === '') return;
         const selected = batteryItems[idx];
         const battery = selected.item;
         modal.remove();
+        if (currentCharacterData !== characterData || !currentCharacterCanEdit
+            || getItemByPath(itemPath) !== item || getItemByPath(selected.path) !== battery) return;
 
         // Заряжаем устройство
         item.attributes.power = 100;
@@ -13741,45 +14073,11 @@ async function rechargeDevice(item, itemPath) {
             removeItemByPath(batteryPath);
         }
 
-        // Обновляем UI точечно
-        // 1. Слоты устройства
-        const deviceDiv = document.querySelector(`[data-path="${itemPath.join(',')}"]`);
-        if (deviceDiv) {
-            const slotsContainer = deviceDiv.querySelector('.item-slots-container');
-            const newSlotsHtml = renderSlotsUniversal(item, itemPath, 1);
-            if (slotsContainer) {
-                slotsContainer.outerHTML = newSlotsHtml;
-            } else if (newSlotsHtml) {
-                deviceDiv.insertAdjacentHTML('beforeend', newSlotsHtml);
-            }
-        }
-
-        // 2. Стопка батареек
-        if (battery.quantity > 0) {
-            const batteryDiv = document.querySelector(`[data-path="${batteryPath.join(',')}"]`);
-            if (batteryDiv) {
-                const qtyInput = batteryDiv.querySelector('input[placeholder="Кол-во"]');
-                if (qtyInput) qtyInput.value = battery.quantity;
-            }
-        } else {
-            const batteryDiv = document.querySelector(`[data-path="${batteryPath.join(',')}"]`);
-            if (batteryDiv) {
-                const parent = batteryDiv.parentNode;
-                batteryDiv.remove();
-                const remaining = Array.from(parent.children).filter(el => el.hasAttribute('data-path'));
-                remaining.forEach((el, idx) => {
-                    const newPath = batteryPath.slice(0, -1).concat(idx).join(',');
-                    el.dataset.path = newPath;
-                    updateHandlersInElement(el, batteryPath.slice(0, -1), idx);
-                });
-                if (parent.classList.contains('container-contents')) {
-                    updatePouchVolumeFromContentsDiv(parent);
-                }
-            }
-        }
-
+        const render = renderInventoryTab(characterData);
         recalculateInventoryTotals();
         scheduleAutoSave();
+        await render;
+        if (currentCharacterData !== characterData) return;
         forceSyncCharacter();
         showNotification(`${item.name} заряжен`, 'success');
     };
@@ -13862,7 +14160,7 @@ function beltPouchLimit(belt) {
     const base = Number(belt?.maxPouches ?? getInventoryItemTemplate(belt)?.attributes?.max_pouches ?? 2);
     return Math.max(0, Math.floor(Number.isFinite(base) ? base : 2))
         + (belt?.extraStoredItem ? 0 : Math.max(0, Math.floor(modificationRule(belt, 'extra_belt_pouches'))))
-        + Math.max(0,Math.floor(modificationRule(belt,'free_pouch_mounts')))
+        + Math.max(0, Math.floor(modificationRule(belt,'free_pouch_mounts')) - Number(Object.hasOwn(belt || {}, 'sheathWeaponId')))
         + Math.max(0,Math.floor(modificationRule(belt,'magazine_pouch_mounts')));
 }
 
@@ -14886,7 +15184,8 @@ function backpackSectionText(equipped, itemCount) {
 
 async function renderInventoryTab(data) {
     const container = document.getElementById('sheet-tab-inventory');
-    if (!container) return;
+    if (!container || !data) return;
+    const characterId = currentCharacterId;
     normalizeCharacterAmmoSlots(data);
     const inv = data.inventory ||= {};
     const eq = data.equipment || {};
@@ -14900,7 +15199,8 @@ async function renderInventoryTab(data) {
     // Загружаем все возможные шаблоны предметов
     const allTemplates = await getAllItemTemplates();
 
-    if (document.getElementById('sheet-tab-inventory') !== container) return;
+    if (characterId !== currentCharacterId || currentCharacterData !== data
+        || document.getElementById('sheet-tab-inventory') !== container) return;
 
     // Фильтруем нужные категории из allTemplates
     const visibleTemplates = window.isGM ? allTemplates : allTemplates.filter(t => t.source !== 'local');
@@ -14946,12 +15246,14 @@ async function renderInventoryTab(data) {
                 <div style="display:grid; grid-template-columns:minmax(0,1fr) auto; gap:5px 14px; margin-top:8px; padding:9px 11px; background:rgba(0,0,0,.12); border-radius:7px;">
                     <span>Вес до рюкзака</span><span id="weight-penalty-raw">${movementPenalty.rawWeightPenalty}</span>
                     <span>Снижение от рюкзака</span><span id="weight-penalty-backpack">−${movementPenalty.backpackReduction}</span>
+                    <span>Временные модификаторы веса</span><span id="temporary-weight-penalty-source">${movementPenalty.temporaryWeightPenalty}</span>
                     <span>Итог от веса</span><span id="weight-penalty-source">${movementPenalty.weightPenalty}</span>
                     <span>Броня</span><span id="armor-penalty-source">${movementPenalty.armorPenalty}</span>
                     <span>Шлем</span><span id="helmet-penalty-source">${movementPenalty.helmetPenalty}</span>
                     <span>Травмы ног</span><span id="injury-penalty-source">${movementPenalty.injuries}</span>
+                    <span>Жгуты на ногах</span><span id="tourniquet-penalty-source">${movementPenalty.tourniquets}</span>
                     <span>Опьянение</span><span id="intoxication-penalty-source">${movementPenalty.intoxicationPenalty}</span>
-                    <span>Временные модификаторы</span><span id="temporary-penalty-source">${movementPenalty.temporary}</span>
+                    <span>Временные модификаторы перемещения</span><span id="temporary-penalty-source">${movementPenalty.temporary}</span>
                     <span>Артефакты</span><span id="artifact-penalty-source">${movementPenalty.artifactPenalty}</span>
                     <span id="exoskeleton-weight-rule" style="grid-column:span 2; opacity:.7; font-size:12px; display:${movementPenalty.poweredExoskeleton ? 'block' : 'none'};">
                         Запитанный экзоскелет: броня устанавливает штраф 5, перегруз не учитывается. Бег и спринт недоступны.
@@ -15056,6 +15358,7 @@ async function renderInventoryTab(data) {
             </div>
             ${renderBeltQuickMounts(eq.belt)}
             ${renderBeltHolster(eq.belt, data.weapons || [])}
+            ${renderBeltSheath(eq.belt, data.weapons || [])}
         </div>
         ` : ''}
 
@@ -15126,16 +15429,23 @@ async function renderInventoryTab(data) {
         row.draggable = currentCharacterCanEdit;
         row.textContent = item.name || 'Предмет';
         appendInventoryPowerWarning(row, item);
+        bindInventoryRow(row, path);
         row.addEventListener('dragstart', event => {
+            draggedItem = item;
+            draggedItemPath = path;
             event.dataTransfer.setData('application/x-inventory-path', JSON.stringify(path));
             event.dataTransfer.effectAllowed = 'move';
+        });
+        row.addEventListener('dragend', () => {
+            draggedItem = null;
+            draggedItemPath = null;
         });
         if (currentCharacterCanEdit && ['consumable','grenade'].includes(item.category)) {
             const use = document.createElement('button');
             use.type = 'button';
             use.className = 'btn btn-sm btn-secondary';
             use.textContent = item.category === 'grenade' ? 'Метнуть' : 'Использовать';
-            use.onclick = () => useItem(item,path).catch(error=>showNotification(error.message,'system'));
+            use.onclick = () => useItem(getItemByPath(path),path).catch(error=>showNotification(error.message,'system'));
             row.append(' ',use);
         }
         if (currentCharacterCanEdit && window.isLocationActive) {
@@ -15173,7 +15483,7 @@ async function renderInventoryTab(data) {
         setupDropTarget(backpackContainerEl, ['inventory', 'backpack']);
     }
 
-    recalculateInventoryTotals();
+    recalculateInventoryTotals(data);
 
     container.oninput = (e) => {
         const target = e.target;
@@ -15252,55 +15562,37 @@ window.adjustBackpackItemQuantityAtPath = function(pathStr, delta) {
     }
 };
 
-window.removeBackpackItemAtPath = function(pathStr) {
-    const path = pathStr.split(',').map(p => isNaN(p) ? p : parseInt(p));
-    if (path.length === 0) return;
-
-    // 1. Удаление из данных
-    let parentData = currentCharacterData;
-    for (let i = 0; i < path.length - 1; i++) {
-        const key = path[i];
-        if (Array.isArray(parentData) && typeof key === 'number') {
-            parentData = parentData[key];
-        } else if (typeof parentData === 'object' && key in parentData) {
-            parentData = parentData[key];
-        } else {
-            return;
-        }
-    }
-    const index = path[path.length - 1];
-    if (!Array.isArray(parentData)) return;
-    parentData.splice(index, 1);
-
-    // 2. Удаление из DOM и обновление путей
-    const itemDiv = document.querySelector(`[data-path="${pathStr}"]`);
-    if (!itemDiv) {
-        renderInventoryTab(currentCharacterData);
-        recalculateInventoryTotals();
-        scheduleAutoSave();
-        forceSyncCharacter();
-        return;
-    }
-
-    const containerDiv = itemDiv.parentNode;
+window.removeBackpackItemAtPath = async function(pathStr) {
+    if (medicalOperationInProgress || sheetSaveBlocked || !currentCharacterCanEdit) return;
+    const characterData = currentCharacterData;
+    const characterId = currentCharacterId;
+    const path = pathStr.split(',').map(part => /^\d+$/.test(part) ? Number(part) : part);
     const containerPath = path.slice(0, -1);
-    itemDiv.remove();
+    const index = path.at(-1);
+    const items = getItemByPath(containerPath);
+    if (!Array.isArray(items) || !Number.isInteger(index) || !items[index]) return;
+    const item = items[index];
+    const containerDiv = document.querySelector(`#sheet-tab-inventory [data-path="${pathStr}"]`)?.parentElement;
 
-    // Обновляем data-path у оставшихся элементов в контейнере
-    const remainingItems = Array.from(containerDiv.children).filter(el => el.hasAttribute('data-path'));
-    remainingItems.forEach((el, idx) => {
-        const newPath = containerPath.concat(idx).join(',');
-        el.dataset.path = newPath;
-        updateHandlersInElement(el, containerPath, idx);
-    });
-
-    if (containerDiv.classList.contains('container-contents')) {
-        updatePouchVolumeFromContentsDiv(containerDiv);
+    if (containerDiv?.inert) return;
+    if (containerDiv) containerDiv.inert = true;
+    try {
+        if (!allTemplatesCache) await getAllItemTemplates();
+        if (currentCharacterId !== characterId || currentCharacterData !== characterData
+            || getItemByPath(containerPath) !== items || items[index] !== item) return;
+        items.splice(index, 1);
+        const render = containerDiv?.isConnected
+            ? rerenderContainer(containerPath, containerDiv)
+            : renderInventoryTab(characterData);
+        scheduleAutoSave();
+        await render;
+    } finally {
+        if (containerDiv) containerDiv.inert = false;
     }
 
+    if (currentCharacterId !== characterId || currentCharacterData !== characterData) return;
     recalculateInventoryTotals();
-    scheduleAutoSave();
-    forceSyncCharacter();
+    await forceSyncCharacter();
 };
 
 function getBackpackItemAtPath(path) {
@@ -15421,7 +15713,7 @@ window.dropBackpackItemAtPath = async function(pathStr) {
     }
 
     if (amount >= currentQuantity) {
-        window.removeBackpackItemAtPath(pathStr);
+        await window.removeBackpackItemAtPath(pathStr);
     } else {
         setBackpackItemQuantityAtPath(path, currentQuantity - amount);
         renderInventoryTab(currentCharacterData);
@@ -15430,30 +15722,6 @@ window.dropBackpackItemAtPath = async function(pathStr) {
         forceSyncCharacter();
     }
 };
-
-function updateHandlersInElement(element, basePath, index) {
-    const newPath = basePath.concat(index).join(',');
-    // Кнопка удаления (крестик)
-    const delBtn = element.querySelector('.btn-danger');
-    if (delBtn) {
-        delBtn.onclick = () => removeBackpackItemAtPath(newPath);
-    }
-    // Поля ввода (вес, объём, количество, название)
-    element.querySelectorAll('input').forEach(input => {
-        const placeholder = input.placeholder;
-        let field = null;
-        if (placeholder === 'Вес') field = 'weight';
-        else if (placeholder === 'Объём') field = 'volume';
-        else if (placeholder === 'Кол-во') field = 'quantity';
-        else if (input.type === 'text') field = 'name';
-
-        if (field) {
-            input.onchange = (e) => updateBackpackItemAtPath(newPath, field, e.target.value);
-        }
-    });
-    // Кнопки сворачивания и добавления внутрь используют замыкания с путём, их трогать не нужно — они продолжат работать,
-    // так как ссылаются на объект item, а не на путь в виде строки.
-}
 
 function renderBeltPouchesNew(pouches, pouchTemplates, allTemplates) {
     const container = document.getElementById('belt-pouches-container');
@@ -16072,7 +16340,10 @@ function inventoryPickerSection(template) {
     if (template.category === 'weapon') return template.subcategory || 'Другой тип оружия';
     if (template.category === 'armor') return attrs.modification_category || template.subcategory || 'Другой класс брони';
     if (template.category === 'helmet') {
-        if (attrs.soft_headwear) return 'Головные уборы';
+        if (attrs.soft_headwear || attrs.modification_category === 'Ушанка'
+            || [template.name, attrs.catalog_name].some(name => /^ушанка$/iu.test(String(name || '').trim()))) {
+            return 'Головные уборы';
+        }
         if (attrs.requires_filter) return 'Шлемы-противогазы';
         if (/^(?:шлем\s+)?(?:витязь\s*4в76|ударник(?:-м)?|первопроходец)$/i.test(String(template.name || '').trim())) return 'Шлемы без забрала';
         if (attrs.integrated_visor) return 'Шлемы с забралом';
@@ -16228,8 +16499,14 @@ export function renderInventoryTemplatePicker(templates, query = '', options = {
                     if (group === 'Артефакты' && sectionItems.some(item => item.item_class)) {
                         const classes = {};
                         sectionItems.forEach(item => (classes[String(item.item_class || 'Без класса')] ||= []).push(item));
-                        cards = Object.keys(classes).sort((a, b) => a.localeCompare(b, 'ru', {numeric: true}))
-                            .map(key => `<details ${normalizedQuery || options.open ? 'open' : ''} style="margin:8px 0 0 12px; padding:6px; border-left:2px solid rgba(174,165,120,.45)"><summary>Класс ${escapeHtml(key)} · ${classes[key].length}</summary>${renderCards(classes[key])}</details>`).join('');
+                        const classOrder = ['trash', '1', '2', '3', 'x'];
+                        const classLabels = {trash: 'Мусорный класс', x: 'Класс X', 'Без класса': 'Без класса'};
+                        cards = Object.keys(classes)
+                            .sort((a, b) => compareByFixedOrder(a, b, classOrder))
+                            .map(key => {
+                                const label = Object.hasOwn(classLabels, key) ? classLabels[key] : `Класс ${key}`;
+                                return `<details ${normalizedQuery || options.open ? 'open' : ''} style="margin:8px 0 0 12px; padding:6px; border-left:2px solid rgba(174,165,120,.45)"><summary>${escapeHtml(label)} · ${classes[key].length}</summary>${renderCards(classes[key])}</details>`;
+                            }).join('');
                     }
                     return `<details ${normalizedQuery || options.open ? 'open' : ''} style="border-left:2px solid rgba(174,165,120,.45); padding:6px 8px; margin-top:8px; background:rgba(255,255,255,.025);">
                         <summary style="cursor:pointer; font-weight:600; display:flex; justify-content:space-between; gap:10px;"><span>${escapeHtml(section)}</span><span style="opacity:.6; font-weight:400;">${sectionItems.length}</span></summary>${cards}</details>`;
@@ -16269,8 +16546,30 @@ function getInventoryTargetItems(targetPath) {
     return null;
 }
 
+async function chooseCookedMeat(template) {
+    try {
+        const rules = await Server.getWorldRules(currentLobbyId);
+        const kind = template.attributes.cooked_meat;
+        const choices = (rules.cooked_meat?.[kind] || []).map(profile => ({
+            ...profile, label: profile.attributes.source_mutant,
+        }));
+        if (choices.length) {
+            const title = kind === 'fried' ? 'Жареное мясо' : 'Варёное мясо';
+            return await chooseConsumableApplication(`${title} — выберите мутанта`, choices, {
+                alwaysShow: true, details: ['Мясо приготовлено один раз. В предмете три порции.'],
+            });
+        }
+    } catch (error) {
+        showNotification(error.message || 'Не удалось загрузить список мутантов');
+        return null;
+    }
+    showNotification('Для этого мяса нет подходящих мутантов');
+    return null;
+}
+
 async function addTemplateItemToInventory(templateId, target, quantity = 1, ammoVariant = null, itemAttributes = null) {
     if (!templateId) return false;
+    const characterId = currentCharacterId;
 
     const allTemplates = await getAllItemTemplates();
     const template = allTemplates.find(t => t.id == templateId);
@@ -16287,8 +16586,14 @@ async function addTemplateItemToInventory(templateId, target, quantity = 1, ammo
         return false;
     }
 
+    let cookedMeat;
+    if (template.attributes?.cooked_meat) {
+        cookedMeat = await chooseCookedMeat(template);
+        if (!cookedMeat || characterId !== currentCharacterId
+            || getInventoryTargetItems(targetPath) !== targetItems) return false;
+    }
     const newItem = createItemFromTemplateSelection(template, quantity, ammoVariant, {
-        createdByPlayer: !window.isGM,
+        createdByPlayer: !window.isGM, cookedMeat,
     });
     if (itemAttributes) newItem.attributes = { ...(newItem.attributes || {}), ...itemAttributes };
     const targetContainer = targetPath.at(-1) === 'contents' ? getItemByPath(targetPath.slice(0, -1)) : null;
@@ -16448,12 +16753,19 @@ window.selectInventoryTemplate = async function(templateId) {
     }
 
     if (selectionHandler) {
+        let cookedMeat;
+        if (template.attributes?.cooked_meat) {
+            closeInventoryTemplatePicker();
+            cookedMeat = await chooseCookedMeat(template);
+            if (!cookedMeat) return;
+        }
         await selectionHandler(createItemFromTemplateSelection(template, 1, null, {
-            createdByPlayer: !window.isGM,
+            createdByPlayer: !window.isGM, cookedMeat,
         }), template);
         return;
     }
 
+    if (template.attributes?.cooked_meat) closeInventoryTemplatePicker();
     await addTemplateItemToInventory(templateId, target);
 };
 
@@ -16825,16 +17137,17 @@ window.saveInventoryItemTemplate = async function() {
     }
 };
 
-function recalculateInventoryTotals() {
-    const inv = currentCharacterData.inventory || {};
-    const eq = currentCharacterData.equipment || {};
+function recalculateInventoryTotals(data = currentCharacterData) {
+    if (!data) return;
+    const inv = data.inventory || {};
+    const eq = data.equipment || {};
 
     // Рюкзак – только его собственное содержимое
     const backpackItems = Array.isArray(inv.backpack) ? inv.backpack.map(item => migrateOldItemToNew(item)) : [];
     const equippedBackpack = eq.backpack || null;
     const backpackLimit = Number(equippedBackpack?.attributes?.limit || equippedBackpack?.attributes?.capacity || 0);
     const pockets = Array.isArray(inv.pockets) ? inv.pockets.map(item => migrateOldItemToNew(item)) : [];
-    const totalWeight = calculateCarriedWeight(currentCharacterData);
+    const totalWeight = calculateCarriedWeight(data);
 
     // Обновляем отображение общего веса и объёма
     const totalWeightSpan = document.getElementById('total-weight-display');
@@ -16856,7 +17169,7 @@ function recalculateInventoryTotals() {
         backpackFillSpan.textContent = `Заполнено: ${backpackVolume.toFixed(1)} / ${backpackLimit}`;
     }
 
-    const movementPenalty = getMovementPenaltyBreakdown(currentCharacterData, totalWeight);
+    const movementPenalty = getMovementPenaltyBreakdown(data, totalWeight);
     const movePenaltySpan = document.getElementById('move-penalty-display');
     if (movePenaltySpan) movePenaltySpan.textContent = movementPenalty.total;
     const weightPenaltySpan = document.getElementById('weight-penalty-display');
@@ -16866,10 +17179,12 @@ function recalculateInventoryTotals() {
     const sourceValues = {
         'weight-penalty-raw': movementPenalty.rawWeightPenalty,
         'weight-penalty-backpack': `−${movementPenalty.backpackReduction}`,
+        'temporary-weight-penalty-source': movementPenalty.temporaryWeightPenalty,
         'weight-penalty-source': movementPenalty.weightPenalty,
         'armor-penalty-source': movementPenalty.armorPenalty,
         'helmet-penalty-source': movementPenalty.helmetPenalty,
         'injury-penalty-source': movementPenalty.injuries,
+        'tourniquet-penalty-source': movementPenalty.tourniquets,
         'intoxication-penalty-source': movementPenalty.intoxicationPenalty,
         'temporary-penalty-source': movementPenalty.temporary,
         'artifact-penalty-source': movementPenalty.artifactPenalty,
@@ -16884,7 +17199,7 @@ function recalculateInventoryTotals() {
     if (unpoweredWeightRule) unpoweredWeightRule.style.display = movementPenalty.unpoweredWeightUpgrade ? 'block' : 'none';
 
     // Заполненность карманов
-    const pocketMaxVolume = pocketCapacity(currentCharacterData);
+    const pocketMaxVolume = pocketCapacity(data);
     const pocketFill = pockets.reduce((sum, item) => {
         const vol = getTotalVolume(item);
         return sum + (isNaN(vol) ? 0 : vol);
@@ -16988,11 +17303,30 @@ function renderBackpackNew(items, groupedByCategory, allTemplates) {
 
 function appendInventoryPowerWarning(element, item) {
     const warning = itemPowerWarning(item);
-    if (!warning) return;
+    const active = warning ? '' : activeGlowLabel(item?.glowState);
+    if (!warning && !active) return;
     const badge = document.createElement('span');
-    badge.className = 'inventory-power-warning';
-    badge.textContent = warning;
+    badge.className = 'inventory-power-warning' + (active ? ' inventory-power-warning--active' : '');
+    badge.textContent = warning || active;
     element.append(badge);
+}
+
+function sameInventoryItem(item, expected) {
+    return Boolean(item && expected && (item === expected
+        || (expected.id != null && String(item.id) === String(expected.id))));
+}
+
+function bindInventoryRow(row, path) {
+    const characterId = currentCharacterId;
+    const item = getItemByPath(path);
+    const rejectStaleAction = event => {
+        if (currentCharacterId === characterId && sameInventoryItem(getItemByPath(path), item)) return;
+        event.preventDefault();
+        event.stopImmediatePropagation();
+    };
+    for (const eventName of ['click', 'input', 'change', 'dragstart']) {
+        row.addEventListener(eventName, rejectStaleAction, true);
+    }
 }
 
 function renderBackpackItem(item, index, parentPath, parentContainer, allTemplates) {
@@ -17005,13 +17339,14 @@ function renderBackpackItem(item, index, parentPath, parentContainer, allTemplat
     if (item.templateId) itemDiv.dataset.itemTemplateId = String(item.templateId);
     itemDiv.draggable = true;
     itemDiv.style.marginBottom = '5px';
-    itemDiv.style.padding = '5px';
-    itemDiv.style.border = '1px solid #444';
+    itemDiv.style.padding = 'var(--inventory-card-padding, 5px)';
+    itemDiv.style.border = 'var(--inventory-border-width, 1px) solid #444';
     itemDiv.style.borderRadius = '4px';
     itemDiv.style.backgroundColor = 'rgba(0,0,0,0.2)';
 
     const itemPath = parentPath.concat(index);
     itemDiv.dataset.path = itemPath.join(',');
+    bindInventoryRow(itemDiv, itemPath);
     itemDiv.dataset.widgetIdentity = JSON.stringify(item.id != null ? { id: item.id } : { templateId: item.templateId, name: item.name, category: item.category });
 
     // Если предмет — контейнер, делаем его drop-целью (закрытый контейнер)
@@ -17114,7 +17449,7 @@ function renderBackpackItem(item, index, parentPath, parentContainer, allTemplat
             e.stopPropagation();
             return false;
         }
-        draggedItem = item;
+        draggedItem = getItemByPath(itemPath);
         draggedItemPath = itemPath;
         e.dataTransfer.setData('text/plain', itemPath.join(','));
         e.dataTransfer.setData('application/x-inventory-path', JSON.stringify(itemPath));
@@ -17131,9 +17466,10 @@ function renderBackpackItem(item, index, parentPath, parentContainer, allTemplat
 
     nameDragZone.appendChild(nameWrapper);
 
-    const usesLeft = Number.isFinite(Number(item.uses)) ? Number(item.uses) : Number.isFinite(Number(item.attributes?.uses_remaining)) ? Number(item.attributes.uses_remaining) : null;
-    const maxUses = Number.isFinite(Number(item.maxUses)) ? Number(item.maxUses) : Number.isFinite(Number(item.attributes?.uses)) ? Number(item.attributes.uses) : null;
-    if (usesLeft !== null && maxUses !== null && maxUses > 0) {
+    const matchboxUses = matchboxCapacity(item);
+    const usesLeft = Number(item.uses ?? item.attributes?.uses_remaining ?? matchboxUses ?? NaN);
+    const maxUses = Number(item.maxUses ?? item.attributes?.uses ?? matchboxUses ?? NaN);
+    if (Number.isFinite(usesLeft) && Number.isFinite(maxUses) && maxUses > 0) {
         const usesBadge = document.createElement('span');
         usesBadge.style.cssText = 'margin-left:8px; padding:2px 8px; border-radius:999px; font-size:11px; background:rgba(255,255,255,0.08); color:#d7e7ff; white-space:nowrap;';
         usesBadge.textContent = `Исп.: ${Math.max(0, usesLeft)}/${maxUses}`;
@@ -17278,9 +17614,10 @@ function renderBackpackItem(item, index, parentPath, parentContainer, allTemplat
     actionsDiv.appendChild(dropBtn);
 
     // Надеть
-    const equippableCategories = ['armor', 'helmet', 'gas_mask', 'weapon', 'belt', 'vest', 'backpack', 'detector', 'melee_weapon',
+    const category = getInventoryItemCategory(item);
+    const equippableCategories = ['armor', 'helmet', 'gas_mask', 'mask', 'weapon', 'belt', 'vest', 'backpack', 'detector', 'melee_weapon',
     'device', 'headphones', 'glasses', 'gloves', 'jewelry'];
-    if (!item.attributes?.rechargeable_battery && (item.isEquippable || equippableCategories.includes(item.category))) {
+    if (!item.attributes?.rechargeable_battery && (item.isEquippable || equippableCategories.includes(category))) {
         const equipBtn = document.createElement('button');
         equipBtn.dataset.widgetKey = 'equip';
         equipBtn.type = 'button';
@@ -17294,10 +17631,10 @@ function renderBackpackItem(item, index, parentPath, parentContainer, allTemplat
         equipBtn.style.lineHeight = '1';
         equipBtn.onclick = (e) => {
             e.stopPropagation();
-            const category = item.category;
             if (category === 'armor') return equipArmorFromInventory(itemPath);
             else if (category === 'helmet') return equipHelmetFromInventory(itemPath);
             else if (category === 'gas_mask') return equipGasMaskFromInventory(itemPath);
+            else if (category === 'mask') return equipCosmeticMaskFromInventory(itemPath);
             else if (category === 'weapon') return equipWeaponFromInventory(itemPath);
             else if (category === 'belt') return equipBeltFromInventory(itemPath);
             else if (category === 'vest') return equipVestFromInventory(itemPath);
@@ -17737,17 +18074,6 @@ function initArmorStagedDurability(armor, template) {
     armor.condition = stageNames[armor.stage - 1];
 }
 
-// ========== 7. ВКЛАДКА "ЗАМЕТКИ" ==========
-function renderNotesTab(data) {
-    const container = document.getElementById('sheet-tab-notes');
-    container.innerHTML = `
-        <div class="form-group">
-            <label>Журнал заметок</label>
-            <textarea class="form-control" name="notes" rows="20" style="width:100%;">${escapeHtml(data.notes || '')}</textarea>
-        </div>
-    `;
-}
-
 // ========== 8. ВКЛАДКА "НАСТРОЙКИ" ==========
 function renderSettingsTab(data) {
     const container = document.getElementById('sheet-tab-settings');
@@ -17962,22 +18288,8 @@ export async function openCharacterSheet(characterId, tabId = 'basic', options =
             if (sheetSocketHandler) socket.off('character_data_updated', sheetSocketHandler);
             sheetSocketHandler = async (data) => {
                 rememberCharacterSnapshots(data);
-                if (Number(data.character_id) === Number(currentCharacterId)) {
-                    if (Server.isOwnCharacterSave(data.save_id)) return;
-                    if (widgetOperation) { rememberPendingSheetRemoteUpdate(data.updates.data); return; }
-                    if (medicalOperationInProgress) {
-                        if (!medicalRemoteUpdate || Number(data.updates.data?._revision) > Number(medicalRemoteUpdate.data?._revision)) {
-                            medicalRemoteUpdate = { character_id: Number(data.character_id), data: data.updates.data };
-                        }
-                        return;
-                    }
-                    if (autoSaveTimer || Server.isCharacterSaving(currentCharacterId) || sheetSaveBlocked) {
-                        rememberPendingSheetRemoteUpdate(data.updates.data);
-                        return;
-                    }
-                    if (Number(data.updates.data?._revision) < Number(currentCharacterData?._revision)) return;
-                    await queueRemoteSheetData(data.updates.data, currentCharacterId);
-                }
+                if (Server.isOwnCharacterSave(data.save_id)) return;
+                await receiveSheetRemoteData(data.character_id, data.updates.data);
             };
             socket.on('character_data_updated', sheetSocketHandler);
         }
@@ -18153,7 +18465,7 @@ window.rollSkill = async function(skillPath, skillLabel) {
 
     // --- Бонус к Харизме (от очков, перчаток, бижутерии) ---
     if (skillPath === 'social.charisma') {
-        for (const key of ['glasses','gloves','ring','necklace','earrings','bracelet1','bracelet2','helmet','gasMask']) {
+        for (const key of ['glasses','gloves','ring','necklace','earrings','bracelet1','bracelet2','helmet','gasMask','mask']) {
             const item=eq[key];if(!item)continue;
             let bonus=Number(item.charismaBonus ?? item.charisma_bonus ?? item.attributes?.charisma_bonus)||0;
             if(key==='glasses'&&traitCount(currentCharacterData,'Сварщик')
@@ -18225,13 +18537,22 @@ window.rollSkill = async function(skillPath, skillLabel) {
 
 // ========== УНИВЕРСАЛЬНЫЕ ОБЁРТКИ ДЛЯ СЛОТОВ ==========
 
-window.universalInstallModulePrompt = async function(targetPath, slotType) {
+export async function openExoskeletonBatteryPicker(actorId, recipientId, locationId) {
+    await openCharacterSheet(actorId, 'inventory');
+    if (Number(currentCharacterId) !== Number(actorId)) return;
+    await window.universalInstallModulePrompt(['equipment', 'armor'], 'exoskeleton_battery', {
+        characterId: recipientId, locationId,
+    });
+}
+
+window.universalInstallModulePrompt = async function(targetPath, slotType, recipient = null) {
     const characterId=currentCharacterId;
+    const selectedTarget = recipient ? null : getItemByPath(targetPath);
     await forceSyncCharacter();
     if(currentCharacterId!==characterId||!currentCharacterCanEdit)return;
-    const targetItem = getItemByPath(targetPath);
-    if (!targetItem) {
-        showNotification('Целевой предмет не найден');
+    const targetItem = recipient ? null : getItemByPath(targetPath);
+    if (!recipient && !sameInventoryItem(targetItem, selectedTarget)) {
+        showNotification('Целевой предмет изменился. Выберите слот заново');
         return;
     }
     if (slotType === 'visor_device' && !canInstallVisorDevice(targetItem)) {
@@ -18239,6 +18560,7 @@ window.universalInstallModulePrompt = async function(targetPath, slotType) {
         return;
     }
 
+    const battery = slotType === 'exoskeleton_battery';
     const candidateModules = [];
     const collect = (items, path) => {
         if (!Array.isArray(items)) return;
@@ -18247,7 +18569,7 @@ window.universalInstallModulePrompt = async function(targetPath, slotType) {
             let type = slotType;
             if (slotType === 'battery') {
                 matches = (it.category === 'device' && it.subcategory === 'battery');
-            } else if (slotType === 'exoskeleton_battery') {
+            } else if (battery) {
                 matches = (
                     it.category === 'exoskeleton_module'
                     && (
@@ -18281,6 +18603,7 @@ window.universalInstallModulePrompt = async function(targetPath, slotType) {
 
     collect(currentCharacterData.inventory?.backpack, ['inventory', 'backpack']);
     collect(currentCharacterData.inventory?.pockets, ['inventory', 'pockets']);
+    if (battery) collect(currentCharacterData.inventory?.held, ['inventory', 'held']);
     const beltPouches = currentCharacterData.equipment?.belt?.pouches || [];
     beltPouches.forEach((pouch, i) => collect(pouch.contents, ['equipment', 'belt', 'pouches', i, 'contents']));
     const vestPouches = currentCharacterData.equipment?.vest?.pouches || [];
@@ -18302,6 +18625,7 @@ window.universalInstallModulePrompt = async function(targetPath, slotType) {
             <span class="close" onclick="this.closest('.modal').remove()">&times;</span>
             <h3>${slotType === 'visor_device' ? 'Выберите фонарик или ПНВ' : 'Выберите модуль'}</h3>
             <select id="universal-module-select" class="form-control" size="5"></select>
+            ${battery ? `<p>В бою ${getExoskeletonPowerProfile(currentCharacterData).isExoskeleton ? 24 : 12} ОД. Нужна отвёртка.</p>` : ''}
             <div class="form-actions" style="margin-top:15px;">
                 <button class="btn btn-primary" id="confirm-universal-module">Установить</button>
                 <button class="btn btn-secondary" onclick="this.closest('.modal').remove()">Отмена</button>
@@ -18335,40 +18659,32 @@ window.universalInstallModulePrompt = async function(targetPath, slotType) {
         if (idx === '') return;
         const selected = candidateModules[idx];
         modal.remove();
+        if (!sameInventoryItem(getItemByPath(selected.path), selected.item)
+            || (!recipient && !sameInventoryItem(getItemByPath(targetPath), targetItem))) {
+            showNotification('Предмет перемещён. Выберите модуль заново');
+            return;
+        }
 
-        if (slotType === 'filter' || (slotType === 'artifact' && artifactContainerKind(targetItem))) {
+        if (battery || slotType === 'filter' || (slotType === 'artifact' && artifactContainerKind(targetItem))) {
             try {
-                const expected = slotType === 'artifact'
+                const expected = battery || slotType === 'artifact'
                     ? {target:equipmentModuleIdentity(targetItem), source:equipmentModuleIdentity(selected.item)} : null;
-                await runEquipmentModuleAction('install', targetPath, slotType, selected.path, expected);
+                await runEquipmentModuleAction('install', targetPath, slotType, selected.path, expected, recipient);
             } catch (error) {
-                showNotification(error.message || (slotType === 'artifact' ? 'Не удалось вложить артефакт' : 'Не удалось установить фильтр'));
+                showNotification(error.message || 'Не удалось установить модуль');
             }
             return;
         }
 
         updateDataFromFields();
         const currentTarget=getItemByPath(targetPath),currentModule=getItemByPath(selected.path);
-        if(!currentTarget||!currentModule||currentTarget.id!==targetItem.id||currentModule.id!==selected.item.id){
+        if(!sameInventoryItem(currentTarget,targetItem)||!sameInventoryItem(currentModule,selected.item)){
             showNotification('Предмет перемещён. Выберите модуль заново');return;
         }
         const success = universalInstallModule(currentTarget, targetPath, currentModule, selected.path, selected.type);
         if (success) {
-            // Обновить слоты – удалить старый блок, вставить новый
-            const targetDiv = document.querySelector(`[data-path="${targetPath.join(',')}"]`);
-            if (targetDiv) {
-                const oldSlots = targetDiv.querySelector('.item-slots-container');
-                if (oldSlots) oldSlots.remove();
-                const newSlotsHtml = renderSlotsUniversal(currentTarget, targetPath, 1);
-                if (newSlotsHtml) targetDiv.insertAdjacentHTML('beforeend', newSlotsHtml);
-            }
-            // Перерисовать контейнер-источник
-            const sourceContainerPath = selected.path.slice(0, -1);
-            await rerenderContainer(sourceContainerPath);
+            await renderInventoryTab(currentCharacterData);
             await renderEquipmentTab(currentCharacterData);
-            if (slotType === 'exoskeleton_battery') {
-                await renderSkillsTab(currentCharacterData);
-            }
             recalculateInventoryTotals();
             updatePlateProtectionDisplay();
             scheduleAutoSave();
@@ -18389,7 +18705,6 @@ function universalUninstallModule(targetItem, targetPath, slotType) {
 
     const moduleItem = targetItem.installedModules[index];
     targetItem.installedModules.splice(index, 1);
-    if (slotType === 'exoskeleton_battery') targetItem.powered = false;
 
     // Шаблон заполняет недостающие поля старых модулей; состояние экземпляра сохраняется.
     const template = moduleItem.templateId && allTemplatesCache?.find(t => t.id === moduleItem.templateId);
@@ -18404,11 +18719,12 @@ function universalUninstallModule(targetItem, targetPath, slotType) {
 }
 
 window.universalUninstallModuleByPath = async function(targetPath, slotType) {
-    if (slotType === 'filter' || (slotType === 'artifact' && artifactContainerKind(getItemByPath(targetPath)))) {
+    if (slotType === 'exoskeleton_battery' || slotType === 'filter'
+            || (slotType === 'artifact' && artifactContainerKind(getItemByPath(targetPath)))) {
         try {
             await runEquipmentModuleAction('uninstall', targetPath, slotType);
         } catch (error) {
-            showNotification(error.message || (slotType === 'artifact' ? 'Не удалось извлечь артефакт' : 'Не удалось снять фильтр'));
+            showNotification(error.message || 'Не удалось снять модуль');
         }
         return;
     }
@@ -18421,16 +18737,7 @@ window.universalUninstallModuleByPath = async function(targetPath, slotType) {
 
     const restoredItem = universalUninstallModule(targetItem, targetPath, slotType);
     if (restoredItem) {
-        // Обновить слоты – удалить старый блок, вставить новый
-        const targetDiv = document.querySelector(`[data-path="${targetPath.join(',')}"]`);
-        if (targetDiv) {
-            const oldSlots = targetDiv.querySelector('.item-slots-container');
-            if (oldSlots) oldSlots.remove();
-            const newSlotsHtml = renderSlotsUniversal(targetItem, targetPath, 1);
-            if (newSlotsHtml) targetDiv.insertAdjacentHTML('beforeend', newSlotsHtml);
-        }
-        // Перерисовать рюкзак (куда вернули модуль)
-        await rerenderContainer(['inventory', 'backpack']);
+        await renderInventoryTab(currentCharacterData);
         await renderEquipmentTab(currentCharacterData);
         if (slotType === 'exoskeleton_battery') {
             await renderSkillsTab(currentCharacterData);
@@ -18543,7 +18850,8 @@ async function rerenderContainer(containerPath, parentElement = null, options = 
     const wasCollapsed = (!isPockets && !isBackpack && !keepExpanded)
         ? (containerDiv.style.display === 'none')
         : false;
-    const allTemplates = await getAllItemTemplates();
+    const allTemplates = allTemplatesCache || await getAllItemTemplates();
+    if (!containerDiv.isConnected || getItemByPath(containerPath) !== container) return;
     const parentItem = (!isPockets && !isBackpack) ? containerDiv.closest('.container-item') : null;
 
     containerDiv.innerHTML = '';
@@ -18679,6 +18987,9 @@ function setupDropTarget(containerDiv, containerPath) {
     if (!containerDiv) return;
     const wasBound = Boolean(containerDiv.inventoryDropPath);
     containerDiv.inventoryDropPath = containerPath;
+    containerDiv.inventoryDropCharacterId = currentCharacterId;
+    const targetPath = containerPath.at(-1) === 'contents' ? containerPath.slice(0, -1) : containerPath;
+    containerDiv.inventoryDropTarget = getItemByPath(targetPath);
     containerDiv.classList.add('drop-target');
     containerDiv.setAttribute('data-container-path', containerPath.join(','));
     if (wasBound) return;
@@ -18699,26 +19010,17 @@ function setupDropTarget(containerDiv, containerPath) {
         e.stopPropagation();
         containerDiv.classList.remove('drag-over');
 
-        let sourcePath = draggedItemPath;
-        try {
-            const transferredPath = e.dataTransfer.getData('application/x-inventory-path');
-            if (transferredPath) sourcePath = JSON.parse(transferredPath);
-        } catch (error) {
-            console.warn('Invalid inventory drag path', error);
-        }
-        if (!Array.isArray(sourcePath)) {
-            const plainPath = e.dataTransfer.getData('text/plain');
-            if (plainPath) sourcePath = plainPath.split(',').map(part => /^\d+$/.test(part) ? Number(part) : part);
-        }
-        const sourceItem = Array.isArray(sourcePath) ? getItemByPath(sourcePath) : null;
-        if (!sourceItem || !sourcePath) return;
+        const sourceItem = draggedItemPath && getItemByPath(draggedItemPath);
+        if (!sameInventoryItem(sourceItem, draggedItem)) return;
         draggedItem = sourceItem;
-        draggedItemPath = sourcePath;
 
         const containerPath = containerDiv.inventoryDropPath;
         const targetPath = containerPath.at(-1) === 'contents' ? containerPath.slice(0, -1) : containerPath;
         const targetContainer = getItemByPath(targetPath);
-        if (!targetContainer) return;
+        const expectedTarget = containerDiv.inventoryDropTarget;
+        if (currentCharacterId !== containerDiv.inventoryDropCharacterId
+            || !(Array.isArray(expectedTarget) ? Array.isArray(targetContainer)
+                : sameInventoryItem(targetContainer, expectedTarget))) return;
 
         if (containerPath.length > draggedItemPath.length &&
             containerPath.slice(0, draggedItemPath.length).every((v, i) => v === draggedItemPath[i])) {

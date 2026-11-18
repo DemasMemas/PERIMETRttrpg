@@ -7,7 +7,7 @@ import pytest
 from app.extensions import db
 from app.models import LocationObject,LocationCombatState
 from app.services.combat import CombatService
-from app.services.exceptions import ValidationError
+from app.services.exceptions import ConflictError, ValidationError
 
 
 @pytest.fixture
@@ -395,7 +395,7 @@ def test_projectile_range_does_not_round_fractional_impact():
     assert airburst and math.hypot(x-1.1,y-2.2)==pytest.approx(5)
 
 
-@pytest.mark.parametrize('protection,armor,expected',[(20,32,75),(35,32,56),(50,0,0),(0,35,75),(0,50,0)])
+@pytest.mark.parametrize('protection,armor,expected',[(20,32,25),(35,32,19),(50,0,0),(0,35,75),(0,50,0)])
 def test_fragments_use_bullet_damage_formula_through_cover_and_armor(grenade_game,monkeypatch,protection,armor,expected):
     target=grenade_game['actor_location'];hits=[]
     monkeypatch.setattr(CombatService,'_target_armor',lambda *a,**kw:(armor,[]))
@@ -536,6 +536,147 @@ def short_fuse(case):
     actor.action_points_current=5;actor.free_actions_current=1;actor.movement_points_current=8
     db.session.commit()
     return state
+
+
+@pytest.mark.parametrize('mode,trait,rolls,moved', [
+    ('kick', False, [10, 14], True),
+    ('kick', False, [9], False),
+    ('throw', False, [10, 13], False),
+    ('throw', True, [7, 11], True),
+])
+def test_redirect_grenade_pays_and_applies_each_check(grenade_game, monkeypatch, mode, trait, rolls, moved):
+    from app.services.grenade_reaction import begin
+
+    actor = grenade_game['actor_location']
+    state = short_fuse(grenade_game)
+    events = deepcopy(state.pending_explosives)
+    events[0]['x'] = actor.pos_x + 1
+    events[0]['profile']['source_character_id'] = grenade_game['target_character'].id
+    state.pending_explosives = events
+    if trait:
+        actor.character.data = {**actor.character.data, 'features': {'specialTraits': [{'name': 'Вернуть отправителю'}]}}
+    begin(actor, state)
+    db.session.commit()
+    assert actor.action_points_current == 2
+    taken = iter(rolls)
+    def roll(data, skill, *, roll_bonus=0):
+        raw = next(taken)
+        return {'roll': raw, 'total': raw + roll_bonus}
+    monkeypatch.setattr(CombatService, '_narrative_skill_check', roll)
+    monkeypatch.setattr('app.services.brigadier_order.boost_roll', lambda *args, **kwargs: ([18], 18, 0))
+    def redirect(target_x=8):
+        return CombatService.perform_action(actor.location_id, grenade_game['actor_user']['id'], actor.id,
+            'redirect_grenade', attribute_choice={'event_id': 'short-test', 'mode': mode},
+            target_x=target_x, target_y=actor.pos_y, target_floor_level=0)['narrative_action']
+    result = redirect()
+    assert actor.action_points_current == 0
+    assert result['moved'] is moved
+    assert result['action_points'] == 2
+    assert [check['difficulty'] for check in result['checks'][:2]] == [10, 14][:len(rolls)]
+    assert [check['total'] for check in result['checks'][:2]] == [value + (3 if trait else 0) for value in rolls]
+    event = state.pending_explosives[0]
+    assert event['id'] == 'short-test' and event['round'] == state.round_number
+    assert event['profile']['source_character_id'] == grenade_game['target_character'].id
+    assert event['x'] == pytest.approx((actor.pos_x + 11 if mode == 'kick' else 8) if moved else actor.pos_x + 1)
+    if mode == 'throw' and moved:
+        assert result['checks'][2]['total'] == 21
+    if rolls == [9]:
+        with pytest.raises(ValidationError, match='После провала Воли'):
+            redirect()
+
+
+def test_redirect_rejects_a_grenade_beyond_reach_without_paying(grenade_game):
+    from app.services.grenade_reaction import begin
+
+    actor = grenade_game['actor_location']
+    state = short_fuse(grenade_game)
+    begin(actor, state)
+    db.session.commit()
+    with pytest.raises(ValidationError, match='1,5 м'):
+        CombatService.perform_action(actor.location_id, grenade_game['actor_user']['id'], actor.id,
+            'redirect_grenade', attribute_choice={'event_id': 'short-test', 'mode': 'kick'},
+            target_x=10, target_y=actor.pos_y, target_floor_level=0)
+    assert actor.action_points_current == 2
+
+
+def test_redirect_delayed_grenade_on_normal_turn_preserves_its_fuse(grenade_game, monkeypatch):
+    actor = grenade_game['actor_location']
+    state = short_fuse(grenade_game)
+    event = {**state.pending_explosives[0], 'x': actor.pos_x + 1.5, 'trigger': 'actor_turn_start', 'round': 2}
+    state.pending_explosives = [event]
+    db.session.commit()
+    monkeypatch.setattr(CombatService, '_narrative_skill_check', lambda *args, **kwargs: {'roll': 20, 'total': 20})
+    def kick():
+        return CombatService.perform_action(actor.location_id, grenade_game['actor_user']['id'], actor.id,
+            'redirect_grenade', attribute_choice={'event_id': 'short-test', 'mode': 'kick'},
+            target_x=8, target_y=actor.pos_y, target_floor_level=0, pending_action_id='kick-delayed-grenade')
+
+    details = kick()['narrative_action']
+    assert details['moved'] and actor.action_points_current == 3
+    moved = state.pending_explosives[0]
+    assert moved['trigger'] == 'actor_turn_start' and moved['round'] == 2
+    assert moved['x'] == pytest.approx(event['x'] + 10)
+    with pytest.raises(ConflictError, match='идентификатором уже принято'):
+        kick()
+    assert actor.action_points_current == 3
+    assert state.pending_explosives == [moved]
+
+
+@pytest.mark.parametrize('wall_floor, expected_x', [(0, 7.89), (1, 13.1)])
+def test_kicked_grenade_stops_at_the_first_wall_on_its_floor(grenade_game, monkeypatch, wall_floor, expected_x):
+    from app.services.grenade_reaction import begin
+
+    actor = grenade_game['actor_location']
+    state = short_fuse(grenade_game)
+    state.pending_explosives = [{**state.pending_explosives[0], 'x': actor.pos_x + 1}]
+    db.session.add(LocationObject(location_id=actor.location_id, type='wall', tile_x=8, tile_y=5, properties={
+        'level': wall_floor, 'dimensions': {'width': .2, 'depth': 3, 'height': 2},
+        'traversal_category': 'blocked',
+    }))
+    begin(actor, state)
+    db.session.commit()
+    monkeypatch.setattr(CombatService, '_narrative_skill_check', lambda *a, **kw: {'roll': 20, 'total': 20})
+    result = CombatService.perform_action(actor.location_id, grenade_game['actor_user']['id'], actor.id,
+        'redirect_grenade', attribute_choice={'event_id': 'short-test', 'mode': 'kick'},
+        target_x=18, target_y=actor.pos_y, target_floor_level=0)
+    assert result['narrative_action']['impact'] == {'x': pytest.approx(expected_x), 'y': actor.pos_y, 'floor_level': 0}
+    assert result['narrative_action']['stopped_at_wall'] is (wall_floor == 0)
+    assert state.pending_explosives[0]['x'] == pytest.approx(expected_x)
+
+
+def test_redirect_hits_previously_out_of_range_participant_immediately_and_once(grenade_game, monkeypatch):
+    from app.services.grenade_reaction import begin, finish, window
+
+    quiet_explosion(monkeypatch)
+    actor, target = grenade_game['actor_location'], grenade_game['target_location']
+    state = short_fuse(grenade_game)
+    target.pos_x, target.pos_y = actor.pos_x + 11, actor.pos_y
+    target.character.data = {**target.character.data, 'health': {'current': 700, 'max': 700, 'effects': []}}
+    event = deepcopy(state.pending_explosives[0])
+    event.update(x=actor.pos_x + 1, profile=profile(blast_base=30, radius=2, source_character_id=target.character_id))
+    state.pending_explosives = [event]
+    state.current_location_character_id = target.id
+    assert begin(target, state) == []
+    assert not window(target) and state.pending_explosives[0]['skipped_actor_ids'] == [target.id]
+    before = target.character.data['health']['current']
+    state.current_location_character_id = actor.id
+    begin(actor, state)
+    db.session.commit()
+    monkeypatch.setattr(CombatService, '_narrative_skill_check', lambda *a, **kw: {'roll': 20, 'total': 20})
+    result = CombatService.perform_action(actor.location_id, grenade_game['actor_user']['id'], actor.id,
+        'redirect_grenade', attribute_choice={'event_id': 'short-test', 'mode': 'kick'},
+        target_x=18, target_y=actor.pos_y, target_floor_level=0, pending_action_id='immediate-grenade')
+    assert [hit['character_id'] for event in result['secondary_explosions']
+            for hit in event['explosion']['targets']] == [target.character_id]
+    db.session.expire_all()
+    after = target.character.data['health']['current']
+    assert after < before and not window(target)
+    pending = state.pending_explosives[0]
+    assert pending['skipped_actor_ids'] == [] and pending['remaining_actor_ids'] == [actor.id]
+    assert pending['profile']['source_character_id'] == target.character_id
+    assert target.character_id not in [hit['character_id'] for event in finish(actor, state)
+                                      for hit in event['explosion']['targets']]
+    assert target.character.data['health']['current'] == after and state.pending_explosives == []
 
 
 def test_short_fuse_reserves_existing_resources_and_keeps_same_turn(grenade_game,monkeypatch):

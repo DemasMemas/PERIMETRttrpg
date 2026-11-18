@@ -24,7 +24,11 @@ test('снятие и надевание сохраняют экземпляр, 
         loadTemplatesForLobby:async()=>[template],createItemFromTemplate:t=>({id:'wrong-new-id',...t}),
         generateItemId:()=> 'new-id',showNotification:()=>{},renderEquipmentTab:()=>{},renderInventoryTab:()=>{},
         scheduleAutoSave:()=>{},forceSyncCharacter:()=>{},
+        pocketCapacity:()=>10,getTotalVolume:item=>item.volume,
         getItemByPath:()=>data.inventory.backpack[0],removeItemByPath:()=>{data.inventory.backpack.splice(0,1);return true}});
+    // Проверяем цикл с надетым рюкзаком, поэтому оружие возвращается именно в него.
+    data.equipment={backpack:{}};
+    vm.runInContext(extract('function addToBackpack(', '\nfunction restoreBeltItem('),context);
     vm.runInContext(extract('window.unequipWeapon =', '\nwindow.unequipBelt ='),context);
     vm.runInContext(extract('window.equipWeaponFromInventory =','\nwindow.equipMeleeWeaponFromInventory ='),context);
     await context.window.unequipWeapon(0);

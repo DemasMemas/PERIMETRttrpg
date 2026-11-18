@@ -3,11 +3,12 @@ const source=fs.readFileSync(path.join(__dirname,'../app/static/js/characterShee
 test('снятие и повторное надевание пояса сохраняет физические инструменты и оплаченные слоты',async()=>{
     const template={id:7,name:'Пояс',category:'belt',weight:1,volume:2,attributes:{max_pouches:2}};
     const tool={id:'tool',slotType:'belt_tool',uses:17,maxUses:50};
-    const belt={id:'belt',category:'belt',templateId:7,quantity:1,installedModules:[tool],unlockedModificationSlots:2,
+    const belt={id:'belt',category:'belt',templateId:7,quantity:1,installedModules:[tool],unlockedModificationSlots:2,sheathWeaponId:null,
         modifications:[{ruleId:'armor-g61'}],attributes:{custom:'сохранить'}};
     const data={equipment:{belt},inventory:{backpack:[],pockets:[]}};
     const context=vm.createContext({window:{},currentCharacterData:data,structuredClone,
         loadTemplatesForLobby:async()=>[template],createItemFromTemplate:()=>({}),
+        storeRemovedEquipment:item=>data.inventory.backpack.push(item),
         getItemByPath:keys=>keys.reduce((value,key)=>value[key],data),
         removeItemByPath:keys=>{keys.slice(0,-1).reduce((value,key)=>value[key],data).splice(keys.at(-1),1);return true;},
         generateItemId:()=> 'split',renderEquipmentTab:()=>{},renderInventoryTab:()=>{},
@@ -21,6 +22,7 @@ test('снятие и повторное надевание пояса сохр�
     assert.equal(data.inventory.backpack.length,0);assert.equal(data.equipment.belt.id,'belt');
     assert.equal(data.equipment.belt.installedModules[0].id,'tool');assert.equal(data.equipment.belt.unlockedModificationSlots,2);
     assert.equal(data.equipment.belt.attributes.custom,'сохранить');
+    assert.equal(data.equipment.belt.sheathWeaponId,null);
 });
 
 test('повторный щелчок крепления не открывает второй выбор и ответ не подменяет другой лист',async()=>{

@@ -18,6 +18,7 @@ def test_sheet_equipment_context_identifies_the_characters_actual_combat(client,
     response = client.get(endpoint, headers=headers)
     assert response.json['combat'] == {
         'lobby_id': pair['lobby'].id, 'location_id': actor.location_id,
+        'location_name': actor.location.name, 'round_number': 1,
         'location_character_id': actor.id, 'is_current_turn': True,
     }
     assert client.get(endpoint, headers=auth_headers(pair['target_user'])).status_code == 403
@@ -217,36 +218,84 @@ def test_armor_equipment_cost_includes_inventory_retrieval_and_preserves_item(ap
     CombatService.apply_equipment_action(data, remove)
     assert remove["action_points"] == 10
     assert "armor" not in data["equipment"]
-    assert data["inventory"]["backpack"][0]["durability"] == 27
+    assert data["inventory"]["pockets"][0]["durability"] == 27
+
+
+@pytest.mark.parametrize('trait,has_backpack,used,destination', [
+    (None, False, 8, 'pockets'),
+    (None, False, 9, 'backpack'),
+    ('Узкие карманы', False, 4, 'backpack'),
+    ('Глубокие карманы', False, 38, 'pockets'),
+    (None, True, 0, 'backpack'),
+])
+def test_removing_equipment_uses_pockets_only_if_it_fits_without_a_backpack(app, trait, has_backpack, used, destination):
+    helmet = add_template('Проверочный шлем', 'helmet', weight=1)
+    equipped = inventory_item(helmet, id='helmet-to-remove', volume=2, durability=27)
+    contents = {'volume': 1, 'quantity': used} if used else None
+    pockets = [{'id': 'pocket-container', 'volume': 0, 'contents': [contents]}] if contents else []
+    data = {'equipment': {'helmet': equipped}, 'inventory': {'pockets': pockets, 'backpack': []}}
+    if has_backpack:
+        data['equipment']['backpack'] = {'id': 'equipped-backpack'}
+    if trait:
+        data['features'] = {'specialTraits': [{'name': trait}]}
+    details = CombatService.equipment_action_details(data, 'unequip', 'helmet')
+    CombatService.apply_equipment_action(data, details)
+    assert 'helmet' not in data['equipment']
+    assert data['inventory'][destination][-1] == equipped
+    assert sum(item.get('id') == equipped['id'] for items in data['inventory'].values() for item in items) == 1
 
 
 @pytest.mark.parametrize(
     ("weight", "equip_cost", "remove_cost"),
     [(2, 2, 1), (2.1, 4, 3)],
 )
-def test_helmet_cost_uses_two_kilogram_boundary(app, weight, equip_cost, remove_cost):
-    helmet = add_template("Helmet", "helmet", weight=weight)
+@pytest.mark.parametrize(('slot', 'category'), [('helmet', 'helmet'), ('gasMask', 'gas_mask')])
+@pytest.mark.parametrize(('source', 'retrieval_cost'), [('held', 0), ('backpack', 2)])
+def test_head_equipment_cost_uses_two_kilogram_boundary(app, weight, equip_cost, remove_cost, slot, category,
+                                                     source, retrieval_cost):
+    template = add_template('Проверочная экипировка', category, weight=weight)
     data = {
-        "inventory": {"backpack": [inventory_item(helmet)], "pockets": []},
+        "inventory": {source: [inventory_item(template)], "pockets": []},
         "equipment": {},
     }
     equip = CombatService.equipment_action_details(
         data,
         "equip",
-        "helmet",
-        item_path=["inventory", "backpack", 0],
+        slot,
+        item_path=["inventory", source, 0],
         in_combat=True,
     )
-    assert equip["action_points"] == equip_cost + 2
-    assert equip["inventory_access"]["source"] == "backpack"
+    assert equip["action_points"] == equip_cost + retrieval_cost
+    assert equip["inventory_access"]["source"] == source
     CombatService.apply_equipment_action(data, equip)
     remove = CombatService.equipment_action_details(
         data,
         "unequip",
-        "helmet",
+        slot,
         in_combat=True,
     )
     assert remove["action_points"] == remove_cost
+
+
+def test_legacy_heavy_gas_mask_can_be_removed_and_worn_again_with_its_filter(app):
+    template = add_template('Тяжёлый противогаз', 'gas_mask', weight=2.5)
+    installed_filter = {'slotType': 'filter', 'durability': 6}
+    data = {'equipment': {'gasMask': {'templateId': template.id, 'name': template.name,
+                                     'installedModules': [installed_filter]}}}
+
+    remove = CombatService.equipment_action_details(data, 'unequip', 'gasMask', in_combat=True)
+    assert remove['action_points'] == 3
+    CombatService.apply_equipment_action(data, remove)
+    stored = data['inventory']['pockets'][0]
+    assert stored['category'] == 'gas_mask'
+    assert stored['weight'] == 2.5
+
+    equip = CombatService.equipment_action_details(
+        data, 'equip', 'gasMask', item_path=['inventory', 'pockets', 0], in_combat=True,
+    )
+    assert equip['action_points'] == 4 + equip['inventory_access']['retrieval_action_points']
+    CombatService.apply_equipment_action(data, equip)
+    assert data['equipment']['gasMask']['installedModules'] == [installed_filter]
 
 
 def test_integrated_helmet_follows_armor(app):
@@ -352,7 +401,28 @@ def test_helmet_with_empty_visor_mount_can_be_worn_with_gas_mask_in_either_order
         details=CombatService.equipment_action_details(data,'unequip',slot)
         CombatService.apply_equipment_action(data,details)
     assert not data['equipment']
-    assert {item['templateId'] for item in data['inventory']['backpack']}=={helmet.id,mask.id}
+    assert {item['templateId'] for item in data['inventory']['pockets']}=={helmet.id,mask.id}
+
+
+@pytest.mark.parametrize('first', ['helmet', 'gasMask'])
+@pytest.mark.parametrize('installed_visor', [False, True])
+def test_open_helmet_ignores_stale_integrated_visor_flag(app, first, installed_visor):
+    template = add_template('Шлем Ударник-М', 'helmet', attributes={'integrated_visor': True})
+    helmet = inventory_item(template, name='Полевой шлем', installedModules=[
+        {'slotType': 'visor', 'name': 'Забрало'},
+    ] if installed_visor else [])
+    mask = inventory_item(add_template('Противогаз МП-50', 'gas_mask'))
+    gear = {'helmet': helmet, 'gasMask': mask}
+    second = 'gasMask' if first == 'helmet' else 'helmet'
+    data = {'inventory': {'pockets': [gear[second]]}, 'equipment': {first: gear[first]}}
+    path = ['inventory', 'pockets', 0]
+    if installed_visor:
+        with pytest.raises(ValidationError, match='cannot be worn'):
+            CombatService.equipment_action_details(data, 'equip', second, item_path=path)
+        return
+    details = CombatService.equipment_action_details(data, 'equip', second, item_path=path)
+    CombatService.apply_equipment_action(data, details)
+    assert set(data['equipment']) == {'helmet', 'gasMask'}
 
 
 @pytest.mark.parametrize('helmet_attrs,installed_modules',[

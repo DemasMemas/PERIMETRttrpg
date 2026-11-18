@@ -966,6 +966,84 @@ module.exports=async({page,request,token,lobby,loc,locationId,rules,safeSession}
     }
 
     const remainingResults={};
+    const nearby=(await liveState()).characters.filter(person=>
+        person.character_id!==spongeBearer.id && Math.hypot(person.x-45,person.y-62)<5);
+    for(const [index,person] of nearby.entries()){
+        await request(loc+'/spawn_character',{character_id:person.character_id,tile_x:25+index,tile_y:34,force_relocate:true},token);
+    }
+    const immunityResults={};
+    for(const [name,id,rounds] of [
+        ['Ядро пепелища','native-ash-core-damage',3],
+        ['Печенка','native-liver-damage',1],
+    ]){
+        await equipSpecial(name,id);
+        const thermal=name==='Ядро пепелища';
+        const burn={type:'burning',name:'Горение',remaining:6,tick:'round_end',source:'native-ash-core-damage',damage_per_round:50};
+        await prepareHealth(getSponge,spongeUrl,{effects:thermal?[burn]:[]});
+        let grenadePath;
+        if(!thermal){
+            const sheet=await getSponge();
+            sheet.data.skills.physical.strength={base:14};
+            sheet.data.skills.physical.agility={base:14};
+            sheet.data.skills.other.tactics={base:16};
+            sheet.data.inventory.pockets.push({id:'native-liver-gas',name:'Химическая граната Refresher',category:'grenade',quantity:1});
+            grenadePath=['inventory','pockets',sheet.data.inventory.pockets.length-1];
+            await request(spongeUrl,{data:sheet.data},token,'PUT');
+        }
+        await startSolo();
+        await clickSpecial(id);
+        if(!thermal){
+            const carrier=(await liveState()).current_character;
+            const toss=await request(loc+'/combat/action',{location_character_id:crystalOrigin.location_character_id,
+                action_key:'explosive_attack',explosive_source:'hand',item_path:grenadePath,
+                target_x:carrier.x,target_y:carrier.y,target_floor_level:carrier.floor_level||0},token);
+            if(toss.explosive.explosion?.awaiting_gm){
+                const pending=(await liveState()).pending_explosives.find(event=>event.trigger==='gm_explosion');
+                for(const participant of pending.gm_choices){
+                    await request(loc+'/combat/explosions/'+pending.id+'/targets/'+participant,{choice:'exclude'},token);
+                }
+            }
+            assert.ok((await liveState()).area_effects.some(area=>area.type==='gas'),
+                JSON.stringify({impact:toss.explosive.impact,explosion:toss.explosive.explosion}));
+        }
+        const before=(await getSponge()).data.health.current;
+        for(let round=0;round<rounds;round++){
+            await endSoloTurn();
+            assert.equal((await getSponge()).data.health.current,before,name+' поглотил урон до истечения');
+        }
+        await endSoloTurn();
+        const after=(await getSponge()).data.health.current;
+        assert.equal(after,before-50,name+' больше не защищает от того же источника');
+        immunityResults[id]={name,protectedRounds:rounds,health:[before,before,after],source:thermal?'Горение':'Refresher'};
+        await request(loc+'/combat/end',{},token);
+    }
+    const physicalId='native-attraction-heart-damage';
+    await equipSpecial('Сердце притяжения',physicalId);
+    await prepareHealth(getSponge,spongeUrl,{});
+    await prepareHealth(getExposed,exposedUrl,{});
+    const attacker=await request(loc+'/spawn_character',{character_id:exposed.id,tile_x:45,tile_y:63,force_relocate:true},token);
+    await request(loc+'/characters/'+spongeBearer.id+'/facing',{facing_x:0,facing_y:-1},token,'PATCH');
+    await request(loc+'/combat/start',{location_character_ids:[crystalOrigin.location_character_id,attacker.location_character_id],
+        initiator_location_character_id:crystalOrigin.location_character_id,initiator_first:true},token);
+    await clickSpecial(physicalId);
+    const healthBeforeMelee=(await getSponge()).data.health.current;
+    const hitFromBehind=()=>request(loc+'/combat/action',{location_character_id:attacker.location_character_id,
+        action_key:'attack',attack_type:'unarmed',payment:'back_auto',weapon_index:-1,target_character_id:spongeBearer.id},token);
+    const endAttackTurn=()=>request(loc+'/combat/end_turn',{location_character_id:attacker.location_character_id},token);
+    await endSoloTurn();
+    const immuneMelee=await hitFromBehind();
+    assert.ok(immuneMelee.attack.results.some(hit=>hit.hit&&hit.damage===0),JSON.stringify(immuneMelee.attack));
+    assert.equal((await getSponge()).data.health.current,healthBeforeMelee);
+    await endAttackTurn();
+    await endSoloTurn();
+    const normalMelee=await hitFromBehind();
+    assert.ok(normalMelee.attack.results.some(hit=>hit.hit&&hit.damage>0),JSON.stringify(normalMelee.attack));
+    const healthAfterMelee=(await getSponge()).data.health.current;
+    assert.ok(healthAfterMelee<healthBeforeMelee);
+    immunityResults[physicalId]={name:'Сердце притяжения',protectedRounds:1,
+        health:[healthBeforeMelee,healthBeforeMelee,healthAfterMelee],source:'Удар со спины'};
+    await request(loc+'/combat/end',{},token);
+    await prepareHealth(getSponge,spongeUrl,{});
     const burningEffect={type:'burning',name:'Горение',remaining:6,tick:'round_end',source:'artifact-special-test-fire',damage_per_round:50};
     for(const withDamage of [false,true]){
         const id=`native-second-skin-${withDamage}`;
@@ -1112,7 +1190,8 @@ module.exports=async({page,request,token,lobby,loc,locationId,rules,safeSession}
         staticCrystal:{facing:80,turnedAway:0,owner:0},
         sparkVein:{actionPoints:1,movementReduction:3,rounds:1},
         nerveCatalyst:{actionPoints:1,movementReduction:5,strengthBonus:2,rounds:2},
-        rotStar:{radiationRemoved:40,hpRestored:200},amplifiers:amplifierResults,timedEffects:timedResults,remaining:remainingResults},null,2));
+        rotStar:{radiationRemoved:40,hpRestored:200},amplifiers:amplifierResults,timedEffects:timedResults,
+        incomingDamageImmunities:immunityResults,remaining:remainingResults},null,2));
     console.log('Особые свойства: подготовленное ношение+реальный раунд, две кнопки Ядра твари по1ОД без рук, радиация→ОЗ; общий срок после первого, переоткрытие.');
     console.log('Генератор: кнопка без радиации, фактический штраф перемещения−1→−3,600→594секунд за раунд; истечение по игровому времени возвращает−1.');
     console.log('Сердце жара: настоящая кнопка и настоящее горение; первый раунд0урона, после истечения50.');

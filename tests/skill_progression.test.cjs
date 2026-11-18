@@ -20,6 +20,7 @@ function sheet(data) {
     vm.runInContext(fs.readFileSync(path.join(__dirname,'../app/static/js/characterTraits.js'),'utf8').replaceAll('export ',''),context);
     vm.runInContext(fs.readFileSync(path.join(__dirname,'../app/static/js/artifactSkillBonuses.js'),'utf8').replace(/^export /gm,''),context);
     vm.runInContext(source.slice(source.indexOf('function willLevelModifier('), source.indexOf('function getIntoxicationProfile(')), context);
+    vm.runInContext(source.slice(source.indexOf('function getConsumableStatValue('), source.indexOf('function getAwarenessModeChoices(')), context);
     vm.runInContext(source.slice(source.indexOf('function getRequiredXp('), source.indexOf('// ========== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ')), context);
     vm.runInContext(source.slice(source.indexOf('async function renderSkillsTab('), source.indexOf('function renderSpecialTraits(')), context);
     return { context, container, saves: () => saves, render: () => context.renderSkillsTab(data) };
@@ -129,6 +130,20 @@ test('ручной ввод немедленно меняет модель и ц
     ui.context.window.addSkillXpFromUse('physical.will');
     assert.equal(data.skills.physical.will.xp,1);
     assert.equal(ui.context.validSkillField({name:'skills.physical.will.bonus',value:'1e100'}),false);
+});
+
+test('на базовом уровне 20 навык больше не растёт и не тратит свободные очки', async () => {
+    const medicine = {base: 19, bonus: 2, xp: 20};
+    const data = {skills: {skillPoints: 2, other: {medicine}}};
+    const ui = sheet(data);
+    await ui.render();
+    ui.context.window.addSkillXpFromPoints('other.medicine');
+    assert.equal(medicine.base, 20);
+    assert.match(ui.container.innerHTML, /data-skill-increase="other.medicine" hidden/);
+    ui.context.window.addSkillXpFromPoints('other.medicine');
+    ui.context.window.addSkillXpFromUse('other.medicine');
+    assert.equal(data.skills.skillPoints, 1);
+    assert.equal(medicine.xp, 11);
 });
 
 test('ожидание шаблонов черт не задерживает строки навыков и не перерисовывает новый ввод',async()=>{

@@ -219,7 +219,7 @@ def test_generated_npc_equips_one_glove_pair_from_stack(client,create_user,auth_
         'danger_id':'danger_low','wealth_id':'wealth_low'})
     assert created.status_code==201,created.json
     data=db.session.get(LobbyCharacter,created.json['character']['id']).data
-    assert data['equipment']['gloves']['name']=='Рабочие'
+    assert data['equipment']['gloves']['name']=='Рабочие перчатки'
     assert data['equipment']['gloves']['quantity']==1
     assert data['inventory']['backpack'][0]['quantity']==1
     assert data['equipment']['gloves']['id']!=data['inventory']['backpack'][0]['id']

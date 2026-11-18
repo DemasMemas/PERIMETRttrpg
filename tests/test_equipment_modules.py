@@ -181,6 +181,7 @@ def test_filter_installation_uses_server_access_cost_and_can_finish_next_turn(
         controlled_by=actor_user["id"],
         action_points_current=1,
         action_points_max=5,
+        free_actions_current=0,
     )
     other = LocationCharacter(
         location_id=location.id,
@@ -384,7 +385,8 @@ def test_artifact_extraction_finishes_next_turn_without_double_charge(client, cr
     db.session.add(location)
     db.session.flush()
     actor = LocationCharacter(location_id=location.id, character_id=character['id'],
-                              controlled_by=user['id'], action_points_current=5, action_points_max=5)
+                              controlled_by=user['id'], action_points_current=5, action_points_max=5,
+                              free_actions_current=0)
     db.session.add(actor)
     db.session.flush()
     db.session.add(LocationCombatState(location_id=location.id, status='active', round_number=1,

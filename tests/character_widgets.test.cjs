@@ -4,7 +4,8 @@ const fs = require('node:fs');
 const vm = require('node:vm');
 const source = fs.readFileSync(require('node:path').join(__dirname, '../app/static/js/characterWidgets.js'), 'utf8');
 const context = vm.createContext({});
-vm.runInContext(source.replace(/^import .*\n/gm, '').replaceAll('export ', ''), context);
+const importLine = /^import [^\r\n]*\r?\n/gm;
+vm.runInContext(source.replace(importLine, '').replaceAll('export ', ''), context);
 
 test('widget action references accept existing actions and literal arguments only', () => {
     assert.deepEqual(JSON.parse(JSON.stringify(context.parseWidgetAction("window.useMeleeAttack(2, 'Рубящий', true)"))),
@@ -53,7 +54,7 @@ test('effect blocks follow the effect ID after removal of a preceding effect', (
 
 test('block controls normalize weapon positions and derived prices but retain attack identity', () => {
     const blockSource = fs.readFileSync(require('node:path').join(__dirname, '../app/static/js/characterWidgetBlocks.js'), 'utf8');
-    vm.runInContext(blockSource.replace(/^import .*\n/gm, '').replaceAll('export ', ''), context);
+    vm.runInContext(blockSource.replace(importLine, '').replaceAll('export ', ''), context);
     const control = text => ({ name: '', dataset: {}, id: '', getAttribute: () => text });
     const key = (index, text) => context.blockControlKey({ reference: { path: `weapons.${index}` } }, control(text));
     assert.equal(key(0, "useWeaponFromEquipment(0, 'unaimed', 1, 4)"), key(3, "useWeaponFromEquipment(3, 'unaimed', 1, 2)"));

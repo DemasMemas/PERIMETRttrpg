@@ -170,7 +170,7 @@ test('near multi-storey houses retain lower floors while single-storey houses st
         structureLevel: object => Number(object?.properties?.level || 0),
     });
     vm.runInContext(functionSource('decorDisplayLevel', 'locationFloorCount')
-        + functionSource('applyFogOfWar', 'closeTeamManagementModal'), context);
+        + functionSource('applyLocationFloorVisibility', 'closeTeamManagementModal'), context);
     for (const level of [0, 1, 2]) {
         context.locationViewLevel = level;
         context.applyFogOfWar();

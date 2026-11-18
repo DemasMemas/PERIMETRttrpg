@@ -133,6 +133,7 @@ def test_install_uses_common_multiturn_combat_payment(controller_game):
     result=CombatService.perform_action(actor.location_id,pair['actor_user']['id'],actor.id,'controller',attribute_choice=payload,pending_action_id='test-controller-payment')
     assert result['pending_action']
     assert not any(item.get('controllerState',{}).get('kind')=='timer' for item in actor.character.data['inventory']['pockets'])
+    CombatService.end_turn(actor.location_id,pair['actor_user']['id'],actor.id)
     CombatService.end_turn(actor.location_id,pair['target_user']['id'],pair['target_location'].id)
     result=CombatService.perform_action(actor.location_id,pair['actor_user']['id'],actor.id,'controller',resume_pending_action_id='test-controller-payment')
     assert result['narrative_action']['attachment_id']

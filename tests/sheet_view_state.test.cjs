@@ -94,6 +94,30 @@ test('saved basic tab waits for its redraw before restoring permissions and focu
     assert.ok(refresh.indexOf('await renderBasicTab') < refresh.indexOf('applySheetEditPermissions()'));
 });
 
+test('a saved item use refreshes health while inventory or equipment is active', async () => {
+    const source = fs.readFileSync(path.join(__dirname, '../app/static/js/characterSheet.js'), 'utf8');
+    const start = source.indexOf('async function refreshSavedSheet(');
+    const end = source.indexOf('\nfunction applySheetEditPermissions(', start);
+    for (const tab of ['inventory', 'equipment']) {
+        const refreshed = [];
+        const context = vm.createContext({
+            document: { querySelector: () => ({ dataset: { tab } }) },
+            currentCharacterId: 12,
+            currentCharacterData: { health: { effects: [{ name: 'Снижение стресса через 5 минут' }] } },
+            captureSheetViewState: () => tab,
+            renderInventoryTab: () => refreshed.push('inventory'),
+            renderEquipmentTab: () => refreshed.push('equipment'),
+            renderBasicTab: () => assert.fail('basic tab should stay hidden'),
+            refreshHealthPanel: () => refreshed.push('health'),
+            applySheetEditPermissions() {},
+            restoreSheetViewState: state => assert.equal(state, tab),
+        });
+        vm.runInContext(source.slice(start, end), context);
+        await context.refreshSavedSheet(12);
+        assert.deepEqual(refreshed, ['inventory', 'equipment', 'health']);
+    }
+});
+
 test('inventory container expansion survives a direct redraw and can be closed', () => {
     const source = fs.readFileSync(path.join(__dirname, '../app/static/js/characterSheet.js'), 'utf8');
     const start = source.indexOf('const expandedInventoryContainers = new Set();');

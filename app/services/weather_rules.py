@@ -15,11 +15,12 @@ def profile(settings):
     clouds,clarity=intensity(settings,'sun');rain,water=intensity(settings,'rain');fog,density=intensity(settings,'fog')
     storm=rain and water>.5
     cloudy=clouds and clarity<=.5
-    fog_penalty=(-4 if density>.5 else -2) if fog else 0
+    fog_penalty=-2 if fog else 0
+    impaired=storm or (fog and density>.5)
     return {'cloudy':cloudy,'rain':rain and not storm,'storm':storm,'fog':fog,
         'accuracy':fog_penalty+(-2 if rain and not storm else 0),
         'awareness':fog_penalty,'visual_awareness':fog_penalty-int(cloudy),
-        'accuracy_disadvantage':storm,'awareness_disadvantage':storm,
+        'accuracy_disadvantage':impaired,'awareness_disadvantage':impaired,
         'radiation_multiplier':2 if storm else 1.5 if rain else 1,
         'revealed_anomalies':['electric']+(['gravity'] if not storm else []) if rain else []}
 
@@ -42,16 +43,31 @@ def at_character(location,actor,objects=None):
     return {**result,'outdoors':exposed}
 
 
-def change(lobby,amount,*,rng=None):
-    rng=rng or random
-    key=rng.choice(('sun','rain','fog'));direction=rng.choice((-1,1))
-    settings=deepcopy(lobby.weather_settings or {});_,before=intensity(settings,key)
-    after=round(max(0,min(1,before+direction*amount)),1)
+def roll_change(amount, *, rng=None):
+    rng = rng or random
+    return {'parameter': rng.choice(('sun', 'rain', 'fog')), 'amount': rng.choice((-1, 1)) * amount}
+
+
+def preview_change(settings, shift):
+    key = shift['parameter']
+    _, before = intensity(settings, key)
+    after = round(max(0, min(1, before + shift['amount'])), 1)
+    return {'parameter': key, 'before': before, 'after': after, 'delta': round(after - before, 1)}
+
+
+def apply_change(lobby, shift):
+    settings = deepcopy(lobby.weather_settings or {})
+    result = preview_change(settings, shift)
+    key, after = result['parameter'], result['after']
     settings[key]={**(settings.get(key) or {}),'enabled':True,'intensity':after}
     lobby.weather_settings=settings
     lobby._weather_changed=True
     reveal(lobby)
-    return {'parameter':key,'before':before,'after':after,'delta':round(after-before,1)}
+    return result
+
+
+def change(lobby, amount, *, rng=None):
+    return apply_change(lobby, roll_change(amount, rng=rng))
 
 
 def advance(lobby,before_minutes,after_minutes):

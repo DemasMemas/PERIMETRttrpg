@@ -7,7 +7,23 @@ from uuid import uuid4
 from sqlalchemy.orm.attributes import flag_modified
 
 from app.models import LocationCharacter
+from app.services.character_traits import trait_count
 from app.services.exceptions import ValidationError
+
+
+def target_on_tile(actor, x, y, floor_level):
+    width, height = actor.location.grid_width, actor.location.grid_height
+    tile_x = min(width - 1, math.floor(x + .5))
+    tile_y = min(height - 1, math.floor(y + .5))
+    candidates = LocationCharacter.query.filter_by(location_id=actor.location_id).filter(
+        LocationCharacter.id != actor.id,
+        LocationCharacter.pos_x >= tile_x - .5,
+        LocationCharacter.pos_x < (width if tile_x == width - 1 else tile_x + .5),
+        LocationCharacter.pos_y >= tile_y - .5,
+        LocationCharacter.pos_y < (height if tile_y == height - 1 else tile_y + .5),
+    )
+    return min((other for other in candidates if (other.floor_level or 0) == floor_level),
+               key=lambda other: (math.hypot(other.pos_x - x, other.pos_y - y), other.id), default=None)
 
 
 def weight_band(weight):
@@ -81,20 +97,23 @@ def prepare(location, actor, data, item_path, item_id, target_x, target_y, targe
         location.id, actor, data, x, y, distance, band['difficulty'])
     from app.services.weather_rules import at_character as weather_at
     weather = weather_at(location, actor)
+    weapon_throw_bonus = 3 * trait_count(data, 'Метатель оружия') if item_path[0] == 'weapons' else 0
     return {'item': item, 'path': item_path, 'item_name': item.get('name') or 'Предмет',
         'target_x': x, 'target_y': y, 'floor_level': floor, 'weight': weight, 'band': band,
         'difficulty': check['difficulty'] - weather['accuracy'], 'distance': distance,
         'disadvantage': weather['accuracy_disadvantage'], 'obstacle': check['obstacle'],
         'posture': check['posture'], 'action_points': 2 + retrieval_cost, 'attack_type': attack_type,
-        'split_stack': item.get('quantity', 1) > 1, 'held_binding': bool(held_binding)}
+        'split_stack': item.get('quantity', 1) > 1, 'held_binding': bool(held_binding),
+        'weapon_throw_bonus': weapon_throw_bonus}
 
 
 def execute(location, actor, data, plan, round_number):
     from app.services.combat import CombatService
     from app.services.brigadier_order import boost_roll
     rolls, roll, order_bonus = boost_roll(data, [], disadvantage=plan['disadvantage'])
-    success = roll + order_bonus >= plan['difficulty']
-    failure = max(0, plan['difficulty'] - roll - order_bonus) if not success else 0
+    total = roll + order_bonus + plan['weapon_throw_bonus']
+    failure = max(0, plan['difficulty'] - total)
+    success = failure == 0
     x, y = (plan['target_x'], plan['target_y']) if success else CombatService._scatter_point(
         plan['target_x'], plan['target_y'], failure, location.grid_width, location.grid_height,
         location=location, floor_level=plan['floor_level'])
@@ -113,11 +132,10 @@ def execute(location, actor, data, plan, round_number):
     from app.services.container_transfer import put_on_ground
     ground, created = put_on_ground(location, x, y, plan['floor_level'], item)
     tile_x, tile_y = ground.tile_x, ground.tile_y
-    target = next((other for other in LocationCharacter.query.filter_by(location_id=location.id).all()
-        if other.id != actor.id and (other.floor_level or 0) == plan['floor_level']
-        and other.pos_x == tile_x and other.pos_y == tile_y), None)
+    target = target_on_tile(actor, x, y, plan['floor_level']) if success else None
     hit = None
-    if success and target:
+    edge_check = None
+    if target:
         zone = {1: 'left_leg', 2: 'right_leg', 3: 'left_arm', 4: 'abdomen',
             5: 'chest', 6: 'head'}[random.randint(1, 6)]
         damage = plan['band']['damage']
@@ -128,7 +146,11 @@ def execute(location, actor, data, plan, round_number):
             agility = CombatService._base_skill_modifier(data, 'skills.physical.agility')
             weapon_bonus = CombatService._coerce_int(attrs.get('throwing_bonus', item.get('throwing_bonus', 0)), 0)
             edge_roll = random.randint(1, 20)
-            if edge_roll >= 10 - agility - weapon_bonus:
+            edge_total = edge_roll + plan['weapon_throw_bonus']
+            edge_difficulty = 10 - agility - weapon_bonus
+            edge_check = {'roll': edge_roll, 'total': edge_total, 'difficulty': edge_difficulty,
+                          'success': edge_total >= edge_difficulty}
+            if edge_check['success']:
                 primary = CombatService._weapon_damage_profile(item, plan['attack_type'])
                 profile.update(damage=primary['damage'], armor_piercing=primary['armor_piercing'],
                     melee_damage_type=primary['melee_damage_type'], bleeding=primary.get('bleeding', ''))
@@ -141,7 +163,9 @@ def execute(location, actor, data, plan, round_number):
             apply_effect_to_health(health, {'type': 'concussion', 'name': 'Контузия',
                 'remaining': 5, 'tick': 'round_end', 'source': 'thrown_item', 'roll_modifier': -3})
             flag_modified(target.character, 'data')
-    return {'item_name': plan['item_name'], 'rolls': rolls, 'roll': roll,
+    return {'item_name': plan['item_name'], 'rolls': rolls, 'roll': roll, 'total': total,
+        'weapon_throw_bonus': plan['weapon_throw_bonus'],
+        'weapon_edge_check': edge_check,
         'difficulty': plan['difficulty'], 'success': success, 'failure': failure,
         'target': {'x': plan['target_x'], 'y': plan['target_y']},
         'landing': {'x': tile_x, 'y': tile_y}, 'damage': hit,

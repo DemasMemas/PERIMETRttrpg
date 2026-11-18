@@ -350,12 +350,6 @@ def test_tree_shooting_distinguishes_storage_and_ray_height(tree_location, stora
     shooter = SimpleNamespace(pos_x=0, pos_y=y, floor_level=level, posture="standing")
     target = SimpleNamespace(pos_x=4, pos_y=y, floor_level=level, posture="standing")
     analysis = CombatService._cover_analysis(location.id, shooter, target)
-    if ray == "centre":
-        assert analysis["grade"] == "full", "Центральный луч через дерево должен встретить укрытие"
-        assert analysis['zones']['chest']['physical_protection'] == 20
-        assert set(analysis["blocked_zones"]) == {
-            "head", "chest", "abdomen", "left_arm", "right_arm", "left_leg", "right_leg",
-        }
-    else:
-        assert analysis["grade"] == "none"
-        assert analysis["blocked_zones"] == []
+    assert analysis["grade"] == "none", "Узкий ствол не закрывает ни одну зону тела целиком"
+    assert analysis["blocked_zones"] == []
+    assert bool(analysis['shot_cover']) == (ray == 'centre')

@@ -82,13 +82,18 @@ def apply_object_edit(location_id, lobby_id, data):
         if before is None:
             if ident > 0 and db.session.get(LocationObject, ident) is not None:
                 conflict()
-        elif obj is None or schema.dump(obj) != before:
-            conflict()
+        else:
+            if not isinstance(before, dict) or obj is None:
+                conflict()
+            current = schema.dump(obj)
+            current.pop('weapon_support', None)
+            if current != {k: v for k, v in before.items() if k != 'weapon_support'}:
+                conflict()
         spec = None
         if after is not None:
             if not isinstance(after, dict):
                 raise ValidationError('Invalid object snapshot')
-            spec = schema.load({k: v for k, v in after.items() if k not in {'id', 'revision'}})
+            spec = schema.load({k: v for k, v in after.items() if k not in {'id', 'revision', 'weapon_support'}})
             if (set(spec) != {'name', 'type', 'tile_x', 'tile_y', 'properties'}
                     or not 0 <= spec['tile_x'] < location.grid_width
                     or not 0 <= spec['tile_y'] < location.grid_height):

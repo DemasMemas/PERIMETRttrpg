@@ -69,7 +69,7 @@ def test_retired_sport_gloves_are_not_offered_or_generated(client,prepared,auth_
     response=client.get(f"/lobbies/{prepared['lobby'].id}/templates?category=gloves",
         headers=auth_headers(prepared['actor_user']))
     assert response.status_code==200,response.json
-    assert [entry['name'] for entry in response.json['global']]==['Рабочие']
+    assert [entry['name'] for entry in response.json['global']]==['Рабочие перчатки']
     merchant_url=f"/lobbies/{prepared['lobby'].id}/characters/{prepared['target_character'].id}/merchant"
     settings={'character_revision':prepared['target_character'].revision,'enabled':True,
               'prices':{str(sport.id):{'buy':100,'sell':200}}}
@@ -111,7 +111,7 @@ def test_legacy_catalog_duplicates_are_hidden_from_new_issuance(client,prepared,
         return ItemTemplate(**next(entry for entry in source
             if entry['category']==category and entry['name']==name))
     pouch=catalog_item('pouch','Вещевой подсумок — 1')
-    glove=catalog_item('gloves','Медицинские')
+    glove=catalog_item('gloves','Медицинские перчатки')
     detector=catalog_item('detector','ДА-2')
     nvg=catalog_item('device','Очки ПНВ-1п')
     grenade=catalog_item('grenade','Граната РГД-5')
@@ -169,7 +169,6 @@ def test_old_catalog_aliases_do_not_reappear_in_item_picker():
          'attributes': {'capacity': 1, 'allowed_categories': []}},
         {'category': 'grenade', 'name': 'РГД 5', 'attributes': {'explosive_key': 'rgd5'}},
         {'category': 'container', 'name': 'Контейнер для ношения Блок-А', 'attributes': {}},
-        {'category': 'gloves', 'name': 'Перчатки Медицинские', 'attributes': {}},
         {'category': 'misc', 'name': 'Лента на 5 патронов', 'attributes': {}},
         {'category': 'ammo', 'name': 'Граната РГД-5', 'attributes': {}},
     ]

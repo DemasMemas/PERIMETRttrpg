@@ -1089,6 +1089,29 @@ def test_water_purification_spends_one_tablet_from_chlorine_packet(client,worksh
             if item.get('templateId') == output.id] == [1]
 
 
+@pytest.mark.parametrize('name', ['Вода', 'Болотная вода', 'Дождевая вода', 'Радиоактивная вода'])
+def test_boiling_recipe_requires_clean_water(client, workshop, auth_headers, name):
+    from app.services.character_starting_purchase import item_from_template
+    from app.services.cooked_meat import templates
+
+    db.session.add_all(ItemTemplate(**entry) for entry in templates())
+    character = workshop['actor_character']
+    data = deepcopy(character.data)
+    data['skills']['other']['survival'] = {'base': 13, 'bonus': 0}
+    data['inventory']['pockets'] = [
+        item_from_template(catalog_template(name)),
+        {'name': 'Мясо: Слепыш', 'category': 'mutant_part', 'quantity': 1,
+         'attributes': {'mutant_part': 'meat', 'source_mutant': 'Слепыш', 'radiation': 25}},
+        {'name': 'Костер', 'quantity': 1},
+        {'name': 'Котелок', 'quantity': 1},
+    ]
+    character.data = data
+    db.session.commit()
+    response = call(client, workshop, auth_headers, 'quote', recipe_id='recipe-aa16')
+    assert response.status_code == 200, response.json
+    assert response.json['result']['missing'] == ([] if name == 'Вода' else ['Вода: не хватает 2'])
+
+
 def test_cancel_water_purification_restores_chlorine_tablet(client,workshop,auth_headers):
     data=deepcopy(workshop['actor_character'].data)
     data['skills']['other']['survival']={'base':13,'bonus':0}
@@ -1214,7 +1237,8 @@ def test_tool_charge_suffix_matches_recipe_and_multiple_sets_cover_fifty_uses(wo
     assert _tools(workshop['actor_character'],data,recipe,0)==['Смесительные инструменты']
 
 
-def test_dry_ration_recipe_spends_one_box_of_ten_matches(client,workshop,auth_headers,monkeypatch):
+@pytest.mark.parametrize('packaging', ['separate', 'opened_first', 'stacked'])
+def test_dry_ration_recipe_spends_one_box_of_ten_matches(client,workshop,auth_headers,monkeypatch,packaging):
     from app.services.character_starting_purchase import item_from_template
 
     matches = catalog_template('Спички (10 штук)')
@@ -1223,7 +1247,17 @@ def test_dry_ration_recipe_spends_one_box_of_ten_matches(client,workshop,auth_he
     data['skills']['other']['survival']={'base':13,'bonus':0}
     data['inventory']['pockets']=[{'name':name,'category':'consumable','quantity':quantity}
         for name,quantity in [('Консервы',2),('Хлеб',1),('Бумага',1)]]
-    boxes = [item_from_template(matches), item_from_template(matches)]
+    if packaging == 'stacked':
+        boxes = [item_from_template(matches, quantity=2)]
+        boxes[0]['uses'] = 4
+        remaining_box = (boxes[0]['id'], 1, 4)
+    else:
+        boxes = [item_from_template(matches), item_from_template(matches)]
+        if packaging == 'opened_first':
+            boxes[0]['uses'] = 4
+            remaining_box = (boxes[0]['id'], 1, 4)
+        else:
+            remaining_box = (boxes[1]['id'], 1, 10)
     data['inventory']['pockets'].extend(boxes)
     workshop['actor_character'].data=data
     db.session.commit()
@@ -1239,7 +1273,8 @@ def test_dry_ration_recipe_spends_one_box_of_ten_matches(client,workshop,auth_he
     assert finished.status_code==200,finished.json
     assert finished.json['result']['success']
     pockets = finished.json['data']['inventory']['pockets']
-    assert [item['id'] for item in pockets if item.get('templateId') == matches.id] == [boxes[1]['id']]
+    assert [(item['id'], item['quantity'], item['uses']) for item in pockets
+            if item.get('templateId') == matches.id] == [remaining_box]
     assert [item['quantity'] for item in pockets if item.get('templateId') == output.id] == [1]
     repeat = call(client, workshop, auth_headers, 'finish', job_id=job['id'], chosen_loss=[0])
     assert repeat.status_code == 200 and repeat.json['result']['replayed'], repeat.json
@@ -1592,6 +1627,64 @@ def test_frying_meat_uses_real_raw_part_and_fat(client, workshop, auth_headers, 
     assert cooked[0]['attributes']['meat_remaining_radiation']==6.25
     assert cooked[0]['attributes']['cooking_count']==1
     assert cooked[0]['price']==25
+
+
+@pytest.mark.parametrize('recipe_id,batch,tool_option,tool,base_difficulty', [
+    ('recipe-aa15', 3, 2, 'Сковорода', 35),
+    ('recipe-aa16', 5, 1, 'Кастрюля', 45),
+])
+def test_cooking_batch_reserves_and_returns_one_piece_per_input(
+        client, workshop, auth_headers, monkeypatch, recipe_id, batch, tool_option, tool, base_difficulty):
+    from app.services.cooked_meat import templates as meat_templates
+
+    db.session.add_all(ItemTemplate(**entry) for entry in meat_templates())
+    character = workshop['actor_character']
+    data = deepcopy(character.data)
+    data['skills']['other']['survival'] = {'base': 20}
+    raw = {'name': 'Мясо: Жмурка', 'category': 'mutant_part', 'quantity': batch - 2,
+           'attributes': {'mutant_part': 'meat', 'source_mutant': 'Жмурка', 'radiation': 60}}
+    second = {'name': 'Мясо: Слепыш', 'category': 'mutant_part', 'quantity': 2,
+              'attributes': {'mutant_part': 'meat', 'source_mutant': 'Слепыш', 'radiation': 25}}
+    if recipe_id == 'recipe-aa16':
+        second.update(name='Мясо (варёное): Слепыш', category='consumable', uses=1, maxUses=3,
+                      attributes={'cooked_meat': 'boiled', 'source_mutant': 'Слепыш',
+                                  'meat_original_radiation': 25, 'meat_remaining_radiation': 18.75,
+                                  'radiation': 18.75, 'cooking_count': 1})
+    data['inventory']['pockets'].extend([
+        raw, second, {'name': 'Жир', 'category': 'crafting_material', 'quantity': 1},
+        {'name': 'Вода', 'category': 'consumable', 'quantity': 2},
+        {'name': 'Костер', 'category': 'tool', 'quantity': 1},
+        {'name': tool, 'category': 'tool', 'quantity': 1},
+    ])
+    character.data = data
+    db.session.commit()
+    payload = {'recipe_id': recipe_id, 'batch_count': batch, 'tool_option': tool_option}
+    quote = call(client, workshop, auth_headers, 'quote', **payload)
+    assert quote.status_code == 200, quote.json
+    plan = quote.json['result']
+    assert plan['missing'] == []
+    assert plan['recipe']['output_count'] == batch
+    assert plan['original_difficulty'] == base_difficulty
+    assert [entry['amount'] for entry in plan['meat_inputs']] == [batch - 2, 2]
+
+    started = call(client, workshop, auth_headers, 'start', **payload)
+    assert started.status_code == 200, started.json
+    job = started.json['result']
+    assert job['output_count'] == batch
+    workshop['lobby'].game_time_minutes += 60
+    db.session.commit()
+    monkeypatch.setattr('app.services.crafting.resolve_creation', lambda _: {'success': True, 'roll': 100})
+    finished = call(client, workshop, auth_headers, 'finish', job_id=job['id'])
+    assert finished.status_code == 200, finished.json
+    assert finished.json['result']['output_count'] == batch
+    pieces = [item for item in finished.json['data']['inventory']['pockets']
+              if item.get('attributes', {}).get('cooked_meat')]
+    assert len(pieces) == batch and len({item['id'] for item in pieces}) == batch
+    expected_radiation = [15, 6.25, 6.25] if recipe_id == 'recipe-aa15' else [45, 45, 45, 12.5, 12.5]
+    assert [item['attributes']['meat_remaining_radiation'] for item in pieces] == expected_radiation
+    assert [item['uses'] for item in pieces] == ([3, 3, 3] if batch == 3 else [3, 3, 3, 1, 3])
+    missing = call(client, workshop, auth_headers, 'finish', job_id='missing', operation_id='no-active-meat-job')
+    assert missing.status_code == 409 and 'Сначала начните создание' in missing.json['error']['message']
 
 
 def test_cooked_meat_migration_adds_only_missing_templates(app, monkeypatch):

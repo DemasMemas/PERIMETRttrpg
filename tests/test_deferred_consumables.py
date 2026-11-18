@@ -4,7 +4,7 @@ import pytest
 from sqlalchemy.orm.attributes import flag_modified
 
 from app.extensions import db
-from app.models import ConsumableUse, DeferredCombatAction
+from app.models import ConsumableUse, DeferredCombatAction, LocationCombatState
 from app.services.character_interaction import CharacterInteractionService
 from app.services.combat import CombatService
 from app.services.exceptions import ValidationError
@@ -37,6 +37,11 @@ def start(client, pair, auth_headers, chosen=None, *, cost=6, user=None):
 
 
 def pay(client, pair, auth_headers):
+    state = CombatService.get_state(pair['location'].id, pair['actor_user']['id'])
+    if state['current_location_character_id'] == pair['actor_location'].id:
+        ended = client.post(base_url(pair) + '/end_turn', headers=auth_headers(pair['actor_user']),
+                            json={'location_character_id': pair['actor_location'].id})
+        assert ended.status_code == 200, ended.json
     response = client.post(base_url(pair) + '/end_turn', headers=auth_headers(pair['target_user']),
                            json={'location_character_id': pair['target_location'].id})
     assert response.status_code == 200, response.json
@@ -56,6 +61,49 @@ def completion_payload(pair):
         'id': row.id, 'deferred_action_id': row.id, 'source': deepcopy(row.payload['selection']['source']),
         'combat_location_id': pair['location'].id, 'side_effects': {},
     }}
+
+
+def test_solo_treatment_keeps_turns_with_free_actions(client, pair, auth_headers):
+    actor = pair['actor_location']
+    state = LocationCombatState.query.filter_by(location_id=actor.location_id).one()
+    state.turn_order = [actor.id]
+    state.turn_index = 0
+    engine_data = deepcopy(actor.character.data)
+    engine_data['combat'] = {**engine_data.get('combat', {}), 'action_points': 5, 'free_actions': 1}
+    actor.character.data = engine_data
+    actor.action_points_current = 3
+    actor.free_actions_current = 1
+    db.session.commit()
+    initial_round = state.round_number
+    url = base_url(pair)
+    headers = auth_headers(pair['actor_user'])
+
+    response = client.post(url + '/spend', headers=headers, json={
+        'location_character_id': actor.id, 'action_points': 16, 'allow_deferred': True,
+        'pending_action_id': 'medical-test', 'consumable_selection': selection(pair),
+    })
+    assert response.status_code == 200, response.json
+    assert state.round_number == initial_round
+    assert db.session.get(DeferredCombatAction, 'medical-test').remaining_action_points == 13
+
+    for round_offset, remaining in enumerate((8, 3, 0), 1):
+        response = client.post(url + '/end_turn', headers=headers, json={'location_character_id': actor.id})
+        assert response.status_code == 200, response.json
+        assert response.json['round_number'] == initial_round + round_offset
+        assert response.json['current_location_character_id'] == actor.id
+        assert actor.free_actions_current == 1
+        assert actor.action_points_current == (0 if remaining else 2)
+        row = db.session.get(DeferredCombatAction, 'medical-test')
+        assert row.remaining_action_points == remaining
+        assert row.status == ('paying' if remaining else 'ready')
+        if round_offset == 1:
+            movement = client.post(url + '/action', headers=headers, json={
+                'location_character_id': actor.id, 'action_key': 'convert_free_action_to_movement',
+            })
+            assert movement.status_code == 200, movement.json
+            assert actor.free_actions_current == 0
+            assert actor.movement_points_current > 0
+            assert state.round_number == initial_round + round_offset
 
 
 def test_reconnect_recovers_procedure_and_atomic_completion_once(client, pair, auth_headers, monkeypatch):

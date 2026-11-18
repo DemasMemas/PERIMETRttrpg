@@ -6,8 +6,14 @@ from app.extensions import db
 from app.models import User
 
 
-def test_registration_login_and_profile_round_trip(client, create_user, auth_headers):
-    user = create_user("stalker")
+def test_registration_login_and_profile_round_trip(client, auth_headers):
+    credentials = {"username": "stalker", "password": "secret-123"}
+    registration = client.post("/auth/register", json={**credentials, "email": "stalker@example.com"})
+    assert registration.status_code == 201
+    login = client.post("/auth/login", json=credentials)
+    assert login.status_code == 200
+    result = login.get_json()
+    user = {"id": result["user_id"], "token": result["access_token"]}
 
     response = client.get("/auth/profile", headers=auth_headers(user))
 

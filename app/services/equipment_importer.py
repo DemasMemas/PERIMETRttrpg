@@ -3,11 +3,13 @@ from __future__ import annotations
 import re
 import zipfile
 import xml.etree.ElementTree as ET
+from copy import deepcopy
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from app.extensions import db
 from app.models.templates import ItemTemplate
+from app.services.cosmetic_masks import mask_name
 from app.services.weapon_catalog import attachment_slots, parse_weapon_size
 
 
@@ -141,6 +143,20 @@ def _normalize_equipment_name(value: Any) -> str:
     text = text.replace("х", "x")
     text = text.replace("ё", "е")
     return re.sub(r"\s+", " ", text)
+
+
+LEGACY_HEADWEAR_NAME = 'головной убор на выбор'
+HEADWEAR_VARIANTS = ('Берет', 'Шапка', 'Кепка', 'Панама')
+
+
+def expand_headwear_templates(templates):
+    for template in templates:
+        if (template['category'] == 'helmet'
+                and _normalize_equipment_name(template['name']) == LEGACY_HEADWEAR_NAME):
+            for name in HEADWEAR_VARIANTS:
+                yield {**deepcopy(template), 'name': name}
+        else:
+            yield template
 
 
 def _equipment_alias(value: Any) -> str:
@@ -622,7 +638,7 @@ def _parse_helmets(rows: List[Dict[str, str]]) -> List[Dict[str, Any]]:
         templates.append(
             {
                 "name": name,
-                "category": "gas_mask" if is_gas_mask else "helmet",
+                "category": "mask" if mask_name(name) else "gas_mask" if is_gas_mask else "helmet",
                 "subcategory": _normalize_text(row.get("I")),
                 "item_class": _normalize_text(row.get(columns['class'])),
                 "description": _normalize_text(row.get("A")),
@@ -962,7 +978,8 @@ def parse_equipment_templates(workbook_path: Path) -> List[Dict[str, Any]]:
             known.add(key)
     for source_order, template in enumerate(templates):
         template.setdefault("attributes", {})["source_order"] = source_order
-    return [template for template in templates if not (template['category']=='gloves' and template['name']=='Спортивные')]
+    return [template for template in expand_headwear_templates(templates)
+            if not (template['category'] == 'gloves' and template['name'] == 'Спортивные')]
 
 
 def insert_missing_templates(templates, session=None):
@@ -1015,7 +1032,7 @@ def upsert_equipment_templates(workbook_path: str | Path, session=None) -> Dict[
 
     imported_categories = [
         "ammo", "magazine", "weapon", "melee_weapon", "armor", "helmet",
-        "gas_mask", "exoskeleton_module", "tool",
+        "gas_mask", "mask", "exoskeleton_module", "tool",
     ]
     existing_by_category: Dict[str, List[ItemTemplate]] = {}
     for item in ItemTemplate.query.filter(ItemTemplate.category.in_(imported_categories)).all():
@@ -1029,6 +1046,8 @@ def upsert_equipment_templates(workbook_path: str | Path, session=None) -> Dict[
         category = data["category"]
         normalized_name = _normalize_equipment_name(data["name"])
         candidates = existing_by_category.get(category, [])
+        if category == "mask":
+            candidates = [*candidates, *existing_by_category.get("helmet", [])]
         item = None
         for candidate in candidates:
             if candidate.id in used_ids:
@@ -1064,7 +1083,7 @@ def upsert_equipment_templates(workbook_path: str | Path, session=None) -> Dict[
             # Сохраняем ограничения слотов, вручную заданные ведущим.
             data["attributes"]["slots"] = attachment_slots(item.subcategory, item.attributes["slots"])
         changed = False
-        for field in ["name", "subcategory", "item_class", "description", "price", "weight", "volume"]:
+        for field in ["name", "category", "subcategory", "item_class", "description", "price", "weight", "volume"]:
             value = data[field]
             if getattr(item, field) != value:
                 setattr(item, field, value)

@@ -33,6 +33,12 @@ class LocationSchema(Schema):
     updated_at = fields.DateTime(dump_only=True)
 
 class LocationObjectSchema(Schema):
+    weapon_support = fields.Method('get_weapon_support', dump_only=True)
+
+    def get_weapon_support(self, obj):
+        from app.services.cover_geometry import supports_weapon
+        return supports_weapon(obj)
+
     def __init__(self,*args,reveal_locked=False,reveal_stashes=False,**kwargs):
         super().__init__(*args,**kwargs)
         self.reveal_locked=reveal_locked

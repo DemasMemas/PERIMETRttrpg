@@ -23,7 +23,7 @@ const protectionLabels = {physical:'Физическая',chemical:'Химиче
     electric:'Электрическая',radiation:'Радиационная',psy:'Пси'};
 const statLabels = {weight:'Штраф нагрузки'};
 const categories = {weapon:'Огнестрельное оружие',melee_weapon:'Холодное оружие',ammo:'Патроны',
-    consumable:'Расходник',armor:'Броня',helmet:'Шлем',gas_mask:'Противогаз',artifact:'Артефакт',
+    consumable:'Расходник',armor:'Броня',helmet:'Шлем',gas_mask:'Противогаз',mask:'Маска',artifact:'Артефакт',
     backpack:'Рюкзак',vest:'Разгрузка',belt:'Пояс',misc:'Предмет',magazine:'Магазин',
     weapon_module:'Оружейный модуль',gas_mask_module:'Модуль противогаза',detector:'Детектор',jewelry:'Аксессуар',
     headphones:'Наушники',glasses:'Очки',gloves:'Перчатки',container:'Контейнер',pouch:'Подсумок',
@@ -175,7 +175,7 @@ export function itemTooltipModel(template = {}, item = {}) {
             if (!caption || value == null || value === false || typeof value === 'object') continue;
             if (!profile.editor_version && describedRule(description, field, value)) continue;
             if (field === 'duration') {
-                add(rules, `Длительность: ${effectDurationLabel({remaining:value,tick:profile.direct.duration_phase || 'turn_end'}).replace(/^осталось /, '')}`);
+                add(rules, `Длительность: ${effectDurationLabel({remaining:value,tick:profile.direct.duration_phase || 'turn_end'}).replace(/^остал(?:ось|ся) /, '')}`);
                 continue;
             }
             if (typeof value === 'string' && !readable(value)) continue;

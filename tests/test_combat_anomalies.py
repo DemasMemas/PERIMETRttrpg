@@ -94,8 +94,17 @@ def test_weather_reveals_gm_hidden_outdoor_anomalies_through_api(app,client,inte
     assert location.tiles_data[2][2]['objects'][0]['gm_hidden']==('gravity' not in expected)
 
 
+@pytest.mark.parametrize('density,disadvantage', [(0.5, False), (0.6, True)])
+def test_fog_alone_has_fixed_penalty_and_dense_fog_adds_disadvantage(density, disadvantage):
+    from app.services.weather_rules import profile
+
+    weather = profile({'fog': {'enabled': True, 'intensity': density}})
+    assert weather['accuracy'] == weather['awareness'] == weather['visual_awareness'] == -2
+    assert weather['accuracy_disadvantage'] is weather['awareness_disadvantage'] is disadvantage
+
+
 @pytest.mark.parametrize('intensity,accuracy,visual,storm,radiation',[
-    (.5,-4,-3,False,1.5),(.6,-4,-4,True,2),
+    (.5,-4,-3,False,1.5),(.6,-2,-2,True,2),
 ])
 def test_weather_thresholds_and_indoor_exemption(app,intensity,accuracy,visual,storm,radiation):
     from app.services.weather_rules import at_character
@@ -150,7 +159,7 @@ def test_character_sheet_skill_check_applies_weather_and_explains_it(app,client,
         json={'skill_path':'skills.physical.awareness.visual','difficulty':12,'operation_id':'sheet-weather'})
     assert response.status_code==200,response.json
     check=response.json['check']
-    assert check['weather_modifier']==(0 if indoors else -5)
+    assert check['weather_modifier']==(0 if indoors else -3)
     assert check['weather_disadvantage']==(not indoors)
     assert ('Ливень: Помеха' in check['rules'])==(not indoors)
 

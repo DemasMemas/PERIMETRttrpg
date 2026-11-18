@@ -98,12 +98,12 @@ module.exports=async({page,request,token,lobby,base,connect,debugPort,safeSessio
         let current=(await state()).current_character;
         if(current.action_points_current>1)await ok(page,combat+'/spend',{location_character_id:actorId,action_points:current.action_points_current-1});
         const savedItem=(await request('/lobbies/characters/'+physician.id,null,token,'GET')).data.inventory.backpack[0];
-        const application={kind:'self',actionPoints:1},source={path:['inventory','backpack',0],snapshot:savedItem};
+        const application={kind:'self',actionPoints:2},source={path:['inventory','backpack',0],snapshot:savedItem};
         const selection={source,application,target_character_id:patient.id,treatment_request_id:consent.id,server_authoritative:true};
-        await ok(page,combat+'/spend',{location_character_id:actorId,action_points:3,allow_deferred:true,pending_action_id:id,pending_action_label:'Тестовая ампула',consumable_selection:selection});
-        const paying=await database('paying');assert.equal(paying.deferred.status,'paying');assert.equal(paying.deferred.remaining,2);assert.equal(paying.receipt_count,0);assert.equal(paying.draws.length,0);
+        await ok(page,combat+'/spend',{location_character_id:actorId,action_points:4,allow_deferred:true,pending_action_id:id,pending_action_label:'Тестовая ампула',consumable_selection:selection});
+        const paying=await database('paying');assert.equal(paying.deferred.status,'paying');assert.equal(paying.deferred.remaining,3);assert.equal(paying.receipt_count,0);assert.equal(paying.draws.length,0);
         assert.equal(paying.characters.find(c=>c.id===patient.id).movement_locked,true);
-        for(const client of clients){await client.until(`window.locationCombatState?.characters?.some(c=>c.character_id===${physician.id}&&c.deferred_action?.remaining_action_points===2)`,'both clients debt 2');}
+        for(const client of clients){await client.until(`window.locationCombatState?.characters?.some(c=>c.character_id===${physician.id}&&c.deferred_action?.remaining_action_points===3)`,'both clients debt 3');}
         await shots('paying');
         const rejectMove=async(label)=>{
             const from=await peer.evaluate('med.rejections.length');
@@ -115,7 +115,7 @@ module.exports=async({page,request,token,lobby,base,connect,debugPort,safeSessio
         // Actual reload while debt and lock exist; no fresh fake page state.
         for(const client of clients){const before=await client.evaluate(`(${hud.toString()})()`);await client.call('Page.reload',{ignoreCache:true});
             await waitForDocument(client,{href,afterEpoch:before.epoch,label:'paying reload'});await ready(client);
-            await client.until(`window.locationCombatState?.characters?.some(c=>c.character_id===${physician.id}&&c.deferred_action?.remaining_action_points===2)`,'debt survives reload');}
+            await client.until(`window.locationCombatState?.characters?.some(c=>c.character_id===${physician.id}&&c.deferred_action?.remaining_action_points===3)`,'debt survives reload');}
         await rejectMove('patient-locked-after-reload');check('debt-lock-reload');
         await ok(page,combat+'/end_turn',{location_character_id:actorId});
         await ok(peer,combat+'/end_turn',{location_character_id:patientId});

@@ -6467,7 +6467,130 @@
       "compatible_ids": []
     },
     {
-      "name": "Головной убор на выбор",
+      "name": "Берет",
+      "category": "helmet",
+      "subcategory": "Текстиль",
+      "item_class": "1",
+      "description": "Закрывает: темя, затылок, уши, лицо.",
+      "price": 250,
+      "weight": 0.0,
+      "volume": 1.0,
+      "attributes": {
+        "import_source": "equipment_workbook",
+        "max_durability": 1,
+        "protection": {
+          "physical": 0.0,
+          "chemical": 0.0,
+          "thermal": 0.0,
+          "electric": 0.0,
+          "radiation": 0.0
+        },
+        "armor_type": "Текстиль",
+        "material": "Текстиль",
+        "accuracy_penalty": "0",
+        "ergonomics_penalty": "0",
+        "charisma_bonus": "1",
+        "movement_penalty": 0,
+        "soft_headwear": true,
+        "modification_category": "Шлема без забрала",
+        "requires_filter": false,
+        "integrated_visor": false,
+        "slots": [],
+        "protection_zones": [
+          "crown",
+          "back",
+          "ears",
+          "face"
+        ],
+        "source_order": 122,
+        "source_description": ""
+      },
+      "compatible_ids": []
+    },
+    {
+      "name": "Шапка",
+      "category": "helmet",
+      "subcategory": "Текстиль",
+      "item_class": "1",
+      "description": "Закрывает: темя, затылок, уши, лицо.",
+      "price": 250,
+      "weight": 0.0,
+      "volume": 1.0,
+      "attributes": {
+        "import_source": "equipment_workbook",
+        "max_durability": 1,
+        "protection": {
+          "physical": 0.0,
+          "chemical": 0.0,
+          "thermal": 0.0,
+          "electric": 0.0,
+          "radiation": 0.0
+        },
+        "armor_type": "Текстиль",
+        "material": "Текстиль",
+        "accuracy_penalty": "0",
+        "ergonomics_penalty": "0",
+        "charisma_bonus": "1",
+        "movement_penalty": 0,
+        "soft_headwear": true,
+        "modification_category": "Шлема без забрала",
+        "requires_filter": false,
+        "integrated_visor": false,
+        "slots": [],
+        "protection_zones": [
+          "crown",
+          "back",
+          "ears",
+          "face"
+        ],
+        "source_order": 122,
+        "source_description": ""
+      },
+      "compatible_ids": []
+    },
+    {
+      "name": "Кепка",
+      "category": "helmet",
+      "subcategory": "Текстиль",
+      "item_class": "1",
+      "description": "Закрывает: темя, затылок, уши, лицо.",
+      "price": 250,
+      "weight": 0.0,
+      "volume": 1.0,
+      "attributes": {
+        "import_source": "equipment_workbook",
+        "max_durability": 1,
+        "protection": {
+          "physical": 0.0,
+          "chemical": 0.0,
+          "thermal": 0.0,
+          "electric": 0.0,
+          "radiation": 0.0
+        },
+        "armor_type": "Текстиль",
+        "material": "Текстиль",
+        "accuracy_penalty": "0",
+        "ergonomics_penalty": "0",
+        "charisma_bonus": "1",
+        "movement_penalty": 0,
+        "soft_headwear": true,
+        "modification_category": "Шлема без забрала",
+        "requires_filter": false,
+        "integrated_visor": false,
+        "slots": [],
+        "protection_zones": [
+          "crown",
+          "back",
+          "ears",
+          "face"
+        ],
+        "source_order": 122,
+        "source_description": ""
+      },
+      "compatible_ids": []
+    },
+    {
+      "name": "Панама",
       "category": "helmet",
       "subcategory": "Текстиль",
       "item_class": "1",
@@ -6509,7 +6632,7 @@
     },
     {
       "name": "Балаклава",
-      "category": "helmet",
+      "category": "mask",
       "subcategory": "Текстиль",
       "item_class": "1",
       "description": "Закрывает: темя, затылок, уши, лицо.",
@@ -6591,7 +6714,7 @@
     },
     {
       "name": "Балаклава Призрак",
-      "category": "helmet",
+      "category": "mask",
       "subcategory": "Текстиль",
       "item_class": "1",
       "description": "Закрывает: темя, затылок, уши, лицо.",
@@ -10809,7 +10932,8 @@
         "source_section": "Выживание и Лагерь",
         "source_size": "1/20",
         "source_order": 281,
-        "source_description": "Позволяет поджигать костры и сигареты"
+        "source_description": "Позволяет поджигать костры и сигареты",
+        "uses": 10
       },
       "compatible_ids": []
     },
@@ -21152,19 +21276,7 @@
           "status_additions": [],
           "requirements": [],
           "notes": [],
-          "addiction": {
-            "key": "analgin",
-            "label": "Анальгин",
-            "chance": 2,
-            "multipliers": {
-              "2": 2,
-              "3": 5,
-              "4": 8,
-              "5": 10,
-              "6": 15
-            },
-            "kind": "medicine"
-          }
+          "addiction": null
         },
         "is_alcohol": false,
         "effects": [
@@ -21323,18 +21435,7 @@
           "status_additions": [],
           "requirements": [],
           "notes": [],
-          "addiction": {
-            "key": "painkiller_stimulants",
-            "label": "Обезболивающие стимуляторы",
-            "chance": 10,
-            "multipliers": {
-              "2": 3,
-              "3": 5,
-              "4": 7,
-              "5": 8
-            },
-            "kind": "medicine"
-          }
+          "addiction": null
         },
         "is_alcohol": false,
         "effects": [
@@ -21795,19 +21896,7 @@
           "status_additions": [],
           "requirements": [],
           "notes": [],
-          "addiction": {
-            "key": "ibuprofen",
-            "label": "Ибупрофен",
-            "chance": 1,
-            "multipliers": {
-              "2": 1,
-              "3": 3,
-              "4": 5,
-              "5": 8,
-              "6": 10
-            },
-            "kind": "medicine"
-          }
+          "addiction": null
         },
         "is_alcohol": false,
         "effects": [
@@ -22169,8 +22258,8 @@
           "requirements": [],
           "notes": [],
           "addiction": {
-            "key": "regenerative_stimulants",
-            "label": "Регенеративные стимуляторы",
+            "key": "painkiller_stimulants",
+            "label": "Обезболивающие стимуляторы",
             "chance": 10,
             "multipliers": {
               "2": 3,
@@ -22519,8 +22608,8 @@
           "requirements": [],
           "notes": [],
           "addiction": {
-            "key": "regenerative_stimulants",
-            "label": "Регенеративные стимуляторы",
+            "key": "painkiller_stimulants",
+            "label": "Обезболивающие стимуляторы",
             "chance": 10,
             "multipliers": {
               "2": 3,

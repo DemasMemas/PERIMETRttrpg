@@ -12,8 +12,9 @@ from app.services.held_items import items as held_items
 from app.services.transaction import atomic_operation
 from app.services.action_journal import journaled
 from app.services import power_cells
+from app.utils.defaults import CHARACTER_SIGHT_RANGE
 
-BEAM_RANGE=35
+BEAM_RANGE = CHARACTER_SIGHT_RANGE
 BEAM_END_WIDTH=5
 
 def mount_height(mount,posture='standing'):
@@ -29,11 +30,20 @@ def mount_forward(mount, posture='standing'):
 NAMES={'фонарик':'hand','улучшенный фонарик':'improved','налобный фонарик':'head','налобный фонарь':'head'}
 GLOW_COLORS = {'#dcf0aa', '#f9666b', '#68beff', '#ffd265'}
 DEFAULT_GLOW_COLOR = '#dcf0aa'
-GLOW_ARC_DEGREES = 150
 
 
 def glow(item):
     return str((item or {}).get('name') or '').strip().casefold() in {'светящаяся палочка','хис'}
+
+
+def _take_single_glow(parent, index):
+    item = parent[index]
+    if item.get('quantity', 1) <= 1:
+        return item
+    item['quantity'] -= 1
+    single = {**deepcopy(item), 'quantity': 1, 'id': str(uuid4())}
+    parent.insert(index + 1, single)
+    return single
 
 
 def glow_range(item):
@@ -92,6 +102,52 @@ def nvg_items(data):
 
 def nvg_on(item):
     return item.get('active',True) and item.get('enabled',True) and not item.get('raised',False)
+
+
+def _light_model(data, path, item, mount):
+    from app.services.equipment_modifications import visor_light_mount
+
+    if mount in (None, 'head') and item.get('slotType') == 'light' and visor_light_mount(data, path):
+        return 'flashlight_visor'
+    kind = definition(item)
+    if mount == 'head' and kind == 'head':
+        return 'headlamp'
+    if mount not in {'hand', 'belt'} or kind not in {'glow', 'hand', 'improved', 'head'}:
+        return None
+    if mount == 'belt' and not belt_light_mount(data, path, item):
+        return None
+    shape = ('his' if glow_range(item) == 8 else 'glowstick') if kind == 'glow' else 'flashlight'
+    return f'{shape}_{mount}'
+
+
+def equipped_device_visuals(data, active_sources):
+    """Публичные модели подготовленного света и установленных ПНВ."""
+    from app.services.equipment_modifications import helmet_module_available
+
+    active = {source['id']: source for source in active_sources if not source.get('ignition_aura')}
+    prepared = {binding.get('id'): binding for binding in bindings(data) if binding.get('id')}
+    helmet = (data.get('equipment') or {}).get('helmet')
+    has_helmet_modules = isinstance(helmet, dict) and bool(helmet.get('installedModules'))
+    models = {}
+    if prepared or has_helmet_modules:
+        for path, item in walk(data):
+            binding = prepared.get(item.get('id'), {})
+            if not (model := _light_model(data, path, item, binding.get('mount'))):
+                continue
+            source = active.get(item.get('id'))
+            models[model] = source.get('color', '#ffe5b5') if source else None
+
+    if has_helmet_modules:
+        for path, item in nvg_items(data):
+            if not helmet_module_available(data, path):
+                continue
+            name = str((item.get('attributes') or {}).get('source_name') or item.get('name') or '').casefold()
+            model = next((key for word, key in (
+                ('пнв-1п', 'pnv1p'), ('сидр', 'sidr'), ('supernova', 'supernova'),
+            ) if word in name), None)
+            if model:
+                models[model + ('_raised' if item.get('raised') else '')] = None
+    return models
 
 
 def power(item):
@@ -398,27 +454,29 @@ def ready_sources(actor,*,objects=None,jammers=None):
     active=[binding for binding in bindings(data) if binding.get('on')]
     if not active:return result
     jammed_by=for_actor(actor,sources=jammers,objects=objects)
-    paths={item.get('id'):path for path,item in walk(data)};items={item.get('id'):item for _,item in walk(data)}
+    items = {item.get('id'): (path, item) for path, item in walk(data)}
     weapons=data.get('weapons') or [];primary=actor.drawn_weapon_index
     for binding in active:
-        item=items.get(binding.get('id'))
+        path, item = items.get(binding.get('id'), (None, None))
         if not item or device_block_reason(data,item,jammed_by=jammed_by):continue
         if glow(item):
             if (item.get('glowState') or {}).get('remaining_seconds',0)<=0:continue
         elif (item.get('lightPower') or {}).get('uses_left',10)<=0:continue
         mount=binding.get('mount')
-        if mount=='belt' and not belt_light_mount(data,paths[binding['id']],item):continue
+        if mount=='belt' and not belt_light_mount(data,path,item):continue
         if mount=='head' and item.get('slotType')=='light':
             from app.services.equipment_modifications import visor_light_mount
-            if not visor_light_mount(data,paths[binding['id']]):continue
+            if not visor_light_mount(data,path):continue
         if mount in {'weapon','taped'} and not (type(primary) is int and 0<=primary<len(weapons)
                 and weapons[primary].get('id')==binding.get('weapon_id')):continue
         facing=math.hypot(actor.facing_x or 0,actor.facing_y or 0) or 1
         radial=glow(item)
         forward = mount_forward(mount, actor.posture) if not radial else 0
+        model = _light_model(data, path, item, mount)
         result.append({'id':binding['id'],'mount':mount,'improved':definition(item)=='improved' or radial,
             'radial':radial,'range':glow_range(item) if radial else BEAM_RANGE,'end_width':BEAM_END_WIDTH,'mount_height':mount_height(mount,actor.posture),
-            **({'color': glow_color(item), 'arc_degrees': GLOW_ARC_DEGREES} if radial else {}),
+            **({'color': glow_color(item)} if radial else {}),
+            **({'visual_model': model} if model else {}),
             'x':actor.pos_x+.5+forward*(actor.facing_x or 0)/facing,
             'z':actor.pos_y+.5+forward*(actor.facing_y or 0)/facing,
             'y':CombatService.physical_position(actor,objects=objects)['height']+
@@ -478,9 +536,6 @@ def covers(actor,target,*,objects=None,jammers=None):
     fx, fz = actor.facing_x or 0, actor.facing_y or 0
     facing = math.hypot(fx, fz)
     dot = (dx * fx + dz * fz) / (length * facing) if length > 1e-9 and facing else 1
-    horizontal = math.hypot(dx, dz)
-    glow_direction = dx * fx + dz * fz if facing else dz
-    glow_dot = glow_direction / (horizontal * (facing or 1)) if horizontal > 1e-9 else 1
     visible=[]
     for source in sources:
         if length>source['range']+1e-9:
@@ -489,8 +544,7 @@ def covers(actor,target,*,objects=None,jammers=None):
             if (actor.floor_level or 0)==(target.floor_level or 0):
                 visible.append(source)
         elif source.get('radial'):
-            if glow_dot >= math.cos(math.radians(source['arc_degrees'] / 2)) - 1e-9:
-                visible.append(source)
+            visible.append(source)
         elif facing:
             angle=math.atan(source['end_width']/2/source['range'])
             if dot>=math.cos(angle)-1e-9:
@@ -754,31 +808,36 @@ def operate(character_id,user_id,payload):
     if glow(selected) and operation not in {'ignite','prepare','stow'}:
         raise ValidationError('Одноразовый источник света нельзя выключить или перезарядить')
     if operation=='ignite':
-        if not glow(selected) or binding or selected.get('glowState'):
+        mounted = bool(binding and binding.get('mount') == 'belt')
+        if not glow(selected) or (binding and not mounted) or selected.get('glowState'):
             raise ValidationError('Источник уже активирован')
-        if path[0]!='inventory':raise ValidationError('Выберите источник света в инвентаре')
+        if mounted and not belt_light_mount(data, path, selected):
+            raise ValidationError('Крепление на поясе недоступно')
+        if not mounted and path[0]!='inventory':raise ValidationError('Выберите источник света в инвентаре')
         if not LocationCharacter.query.filter_by(character_id=character_id).first():
             raise ValidationError('Активировать источник света можно на подлокации')
         from app.services.weapon_grip import functional_arms
         meta=data.get('health',{}).get('combatMeta',{})
         primary=actor.drawn_weapon_index if actor else data.get('activeWeaponIndex')
         armed=type(primary) is int and 0<=primary<len(data.get('weapons') or [])
-        if (held_hand(data) or functional_arms(data)-len(held_items(data))<(2 if armed or meta.get('heldWaterItem') else 1)
+        held_light_or_device = held_hand(data)
+        free_arms = functional_arms(data) - len(held_items(data)) - int(held_light_or_device)
+        if ((held_light_or_device and not mounted) or free_arms < (2 if armed or meta.get('heldWaterItem') else 1)
                 or meta.get('bodyTransport') or meta.get('secondaryWeaponId') or actor and actor.grapple_target_id):
             raise ValidationError('Для источника света нужна свободная действующая рука')
         from app.services.magazine import inventory_slot
         parent,index=inventory_slot(data,path)
-        if selected.get('quantity',1)>1:
-            parent[index]['quantity']-=1
-            selected=deepcopy(parent[index]);selected['quantity']=1;selected['id']=str(uuid4())
-            parent.insert(index+1,selected)
+        if not mounted:
+            selected = _take_single_glow(parent, index)
         selected.setdefault('id',str(uuid4()))
         selected['glowState']={'activated':True,'remaining_seconds':glow_duration(selected)}
         if color is not None:
             selected['glowState']['color'] = color
-        binding={'id':selected['id'],'mount':'hand','on':True}
-        states.append(binding)
-        cost=(1+int(calculate_inventory_access(data,path,parent[index])['retrieval_action_points'])) if actor else 0
+        if mounted:
+            binding['on'] = True
+        else:
+            states.append({'id':selected['id'],'mount':'hand','on':True})
+        cost=(1 if mounted else 1+int(calculate_inventory_access(data,path,parent[index])['retrieval_action_points'])) if actor else 0
     if operation=='prepare':
         mount=payload.get('mount') or ('head' if definition(selected)=='head' else 'weapon' if definition(selected)=='module' else 'hand')
         previous=binding
@@ -798,9 +857,16 @@ def operate(character_id,user_id,payload):
         from app.services.equipment_modifications import visor_light_mount
         if mount=='head' and definition(selected)!='head' and not visor_light_mount(data,path):raise ValidationError('Для головы нужен налобный фонарь или крепление на забрале')
         if definition(selected)=='module' and mount!='weapon':raise ValidationError('Оружейный модуль крепится к оружию')
-        if glow(selected) and (mount not in {'hand','belt'} or (selected.get('glowState') or {}).get('remaining_seconds',0)<=0):
-            raise ValidationError('Этот источник света нельзя снова активировать')
-        binding={'id':selected['id'],'mount':mount,'on':not burned(selected) and bool(glow(selected) or (previous or {}).get('on') or (selected.get('lightPower') or {}).get('scheduled_on')),
+        glow_active = False
+        if glow(selected):
+            glow_state = selected.get('glowState') or {}
+            glow_active = glow_state.get('remaining_seconds', 0) > 0
+            if not (mount == 'belt' and (glow_active or not glow_state) or mount == 'hand' and glow_active):
+                raise ValidationError('Этот источник света нельзя снова активировать')
+            if not glow_state:
+                from app.services.magazine import inventory_slot
+                selected = _take_single_glow(*inventory_slot(data, path))
+        binding={'id':selected['id'],'mount':mount,'on':not burned(selected) and bool(glow_active or (previous or {}).get('on') or (selected.get('lightPower') or {}).get('scheduled_on')),
             **{key:previous[key] for key in ('battle_used','period_used') if previous and key in previous}}
         if mount in {'weapon','taped'}:
             index=payload.get('weapon_index')

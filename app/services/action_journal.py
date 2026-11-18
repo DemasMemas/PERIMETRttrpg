@@ -14,7 +14,8 @@ from app.services.exceptions import ServiceError
 
 LIMIT = 100
 STATUSES = {'paying':'Ожидает доплаты', 'ready':'Оплачено, ожидает исполнения',
-            'completed':'Исполнено', 'cancelled':'Отменено', 'rejected':'Отклонено'}
+            'completed':'Исполнено', 'cancelled':'Отменено', 'rejected':'Отклонено',
+            'blocked':'Сорвано'}
 REASONS={'Unknown action':'Неизвестное действие','Not enough action points':'Недостаточно ОД',
     'Draw this weapon first':'Сначала возьмите оружие в руки','Weapon not found':'Оружие не найдено',
     'The target is outside the character\'s field of view':'Цель вне поля зрения',
@@ -93,7 +94,8 @@ def entries(character):
             row = db.session.get(DeferredCombatAction, entry['deferred_id'])
             owner = db.session.get(LocationCharacter, row.location_character_id) if row else None
             if owner and owner.character_id == character.id:
-                entry['status'] = row.status
+                if entry['status'] != 'blocked' or row.status != 'completed':
+                    entry['status'] = row.status
                 entry['remaining_action_points'] = row.remaining_action_points
                 entry['action_points'] = max(0, entry.get('total_action_points', 0) - row.remaining_action_points)
         entry['status_label'] = STATUSES.get(entry['status'], entry['status'])
@@ -167,13 +169,15 @@ def record(actor, values, before, result=None, error=None):
                 summaries.append(f"d20 {result['roll']} против СЛ {result.get('difficulty','—')}: "
                     +('успех' if result.get('success') else 'провал'))
         narrative=result.get('narrative_action') or {}
+        if narrative.get('blocked_by_will'):
+            entry['status'] = 'blocked'
         if narrative.get('name'):
             if key=='narrative_action':entry['label']=narrative['name']
             else:summaries.append(narrative['name'])
-        check=narrative.get('check')
-        if isinstance(check,dict):
-            summaries.append(f"d20 {check.get('roll','—')}, итог {check.get('total','—')} против СЛ {check.get('difficulty','—')}: "
-                +('успех' if check.get('success') else 'провал'))
+        for check in narrative.get('checks') or [narrative.get('check')]:
+            if isinstance(check,dict):
+                summaries.append(f"d20 {check.get('roll','—')}, итог {check.get('total','—')} против СЛ {check.get('difficulty','—')}: "
+                    +('успех' if check.get('success') else 'провал'))
         entry['outcome'] = '\n'.join(text for text in summaries if text)[:4000]
     if not existing:
         history.append(entry)

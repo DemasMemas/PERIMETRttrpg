@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
+const vm = require('node:vm');
 
 const source = fs.readFileSync(path.join(__dirname, '../app/static/js/locationScene.js'), 'utf8');
 const appearanceSource = fs.readFileSync(path.join(__dirname, '../app/static/js/characterAppearance.js'), 'utf8')
@@ -10,6 +11,40 @@ const appearanceSource = fs.readFileSync(path.join(__dirname, '../app/static/js/
     .replace(/^export /gm, '');
 const start = source.indexOf('function showHumanLocationPose(');
 const end = source.indexOf('const CHARACTER_LABEL_NEAR_DISTANCE', start);
+
+test('опора ног переиспользует геометрию при движении персонажей', async () => {
+    const architecture = await import('../app/static/js/locationArchitecture.js');
+    const floor = {type: 'floor', tile_x: 1, tile_y: 1, properties: {
+        building_id: 'one', dimensions: {width: 2, depth: 2, height: .12},
+    }};
+    const another = {...floor, tile_x: 3, properties: {...floor.properties, building_id: 'two'}};
+    const tiles = Array.from({ length: 4 }, () => Array.from({ length: 8 }, () => ({ height: 1 })));
+    let ground = 1, samplerBuilds = 0;
+    const context = vm.createContext({
+        ...architecture, currentLocationData: { grid_width: 8, grid_height: 4, tiles_data: tiles,
+            objects: [floor, another, { type: 'chair', tile_x: 1, tile_y: 1 }] },
+        terrainSurfaceMesh: { geometry: {} }, movementMapVersion: 1, FLOOR_SURFACE_OFFSET: .03,
+        getTileHeight: () => ground, locationGroundReliefLimit: () => undefined,
+        createTerrainSurfaceHeightSampler() { samplerBuilds++; return () => ground; },
+        floorVisualPose(object, building) {
+            assert.equal(building.length, 1);
+            assert.equal(building[0], object);
+            return architecture.floorVisualPose(object, building);
+        },
+    });
+    const start = source.indexOf('let characterFootSurfaces;');
+    const end = source.indexOf('export function updateCharacterPosition(', start);
+    vm.runInContext(source.slice(start, end), context);
+    const surface = context.characterFootSurface(0);
+    assert.equal(surface(1.5, 1.5, 1.03), 1.03);
+    context.movementMapVersion++;
+    assert.equal(context.characterFootSurface(0), surface);
+    assert.equal(samplerBuilds, 1);
+    ground = 2;
+    context.terrainSurfaceMesh.geometry = {};
+    assert.equal(context.characterFootSurface(0)(1.5, 1.5, 2.03), 2.03);
+    assert.equal(samplerBuilds, 2);
+});
 
 class Transform {
     constructor() { this.x = 0; this.y = 0; this.z = 0; }
@@ -122,7 +157,8 @@ test('Импортированный персонаж сохраняет оде�
     const model = createCharacterModel(1);
     const marker = model.children.find(child => child.userData.posturePart === 'facingMarker');
     const parts = ['base','top_sweater','top_gorka','bottom_jeans','bottom_gorka',
-        'face_calm','face_wounded','hair_short'].map(name => ({ name, userData: {}, isSkinnedMesh: true }));
+        'face_calm','face_wounded','hair_short','gear_mp50','gear_helmet_68g']
+        .map(name => ({ name, userData: {}, isSkinnedMesh: true }));
     const coat = { name: 'top_leather_coat', isGroup: true };
     const coatMeshes = ['Кожа', 'Пуговицы'].map(name => ({ name, parent: coat, userData: {}, isSkinnedMesh: true }));
     parts.push(...coatMeshes);
@@ -145,6 +181,125 @@ test('Импортированный персонаж сохраняет оде�
     poseStandardHumanModel(model, 'standing');
     assert.deepEqual(parts.filter(part => part.visible).map(part => part.name),
         ['base','bottom_jeans','face_wounded','Кожа','Пуговицы']);
+    const equipment = { gasMask: { templateId: 3, name: 'Противогаз МП-50' },
+        helmet: { templateId: 4, name: 'Советский Котелок 68Г' } };
+    const visuals = new Function(`${appearanceSource}\nreturn characterEquipmentVisuals;`)();
+    const mask = parts.find(part => part.name === 'gear_mp50');
+    mask.morphTargetDictionary = { bare_head_strap: 0 };
+    mask.morphTargetInfluences = [0];
+    assert.deepEqual(visuals(equipment), ['mp50', 'helmet_68g']);
+    assert.deepEqual(visuals({ helmet: { name: equipment.helmet.name } }), []);
+    model.userData.characterAppearance.hair = 'short';
+    model.userData.characterAppearance.gear = visuals(equipment);
+    poseStandardHumanModel(model, 'sitting');
+    assert.deepEqual(parts.filter(part => part.visible && /^(hair|gear)_/.test(part.name)).map(part => part.name),
+        ['gear_mp50', 'gear_helmet_68g']);
+    assert.equal(mask.morphTargetInfluences[0], 1);
+    delete equipment.helmet;
+    model.userData.characterAppearance.gear = visuals(equipment);
+    poseStandardHumanModel(model, 'sitting');
+    assert.deepEqual(parts.filter(part => part.visible && /^(hair|gear)_/.test(part.name)).map(part => part.name),
+        ['hair_short', 'gear_mp50']);
+    assert.equal(mask.morphTargetInfluences[0], 0);
+    const hair = parts.find(part => part.name === 'hair_short');
+    hair.morphTargetDictionary = { soft_headwear_fit: 0 };
+    hair.morphTargetInfluences = [0];
+    for (const [name, style, colorField] of [
+        ['Берет', 'beret', 'beretColor'], ['Шапка', 'beanie', 'beanieColor'],
+        ['Кепка', 'cap', 'capColor'], ['Панама', 'panama', 'panamaColor'],
+    ]) {
+        const gear = 'headwear_' + style;
+        const material = { name: gear + '_fabric', userData: {}, color: {
+            set(value) { this.value = value; return this; }, convertSRGBToLinear() {},
+        } };
+        const headwear = { name: 'gear_' + gear, userData: {}, isSkinnedMesh: true, material };
+        parts.push(headwear);
+        model.userData.characterAppearance.gear = visuals({ helmet: { templateId: 4, name } });
+        model.userData.characterAppearance[colorField] = 'burgundy';
+        poseStandardHumanModel(model, 'sitting');
+        assert.equal(headwear.visible, true);
+        assert.equal(hair.visible, style !== 'beanie');
+        assert.equal(hair.morphTargetInfluences[0], 1);
+        assert.equal(material.color.value, '#78515a');
+    }
+    const gp5 = { name: 'gear_gasmask_gp5', userData: {}, isSkinnedMesh: true,
+        morphTargetDictionary: { under_headwear: 0 }, morphTargetInfluences: [0] };
+    const beanie = parts.find(part => part.name === 'gear_headwear_beanie');
+    beanie.morphTargetDictionary = { over_gas_mask: 0 };
+    beanie.morphTargetInfluences = [0];
+    parts.push(gp5);
+    for (const [gear, maskFit, beanieFit] of [
+        [['gasmask_gp5', 'headwear_beanie'], 1, 1],
+        [['gasmask_gp5', 'helmet_udarnik'], 1, 1],
+        [['gasmask_gp5'], 0, 1],
+        [['gasmask_gp5', 'helmet_gusar'], 1, 0],
+        [['gasmask_respirator', 'headwear_beanie'], 1, 0],
+    ]) {
+        model.userData.characterAppearance.gear = gear;
+        poseStandardHumanModel(model, 'sitting');
+        assert.equal(gp5.morphTargetInfluences[0], maskFit);
+        assert.equal(beanie.morphTargetInfluences[0], beanieFit);
+    }
+    const ushankaGroup = { name: 'gear_headwear_ushanka', isGroup: true };
+    const ushankaParts = ['ushanka_canvas', 'ushanka_fur']
+        .map(name => ({ name, parent: ushankaGroup, userData: {}, isSkinnedMesh: true, material: { name, userData: {},
+            color: { set(value) { this.value = value; return this; }, convertSRGBToLinear() {} } } }));
+    const star = { name: 'gear_headwear_ushanka_star', userData: {}, isSkinnedMesh: true };
+    parts.push(...ushankaParts, star);
+    const ushanka = { templateId: 6, name: 'Ушанка' };
+    model.userData.characterAppearance.gear = visuals({ helmet: ushanka });
+    poseStandardHumanModel(model, 'sitting');
+    assert.ok(ushankaParts.every(part => part.visible));
+    assert.equal(star.visible, false);
+    assert.equal(hair.visible, false);
+    ushanka.modifications = [{ ruleId: 'armor-g7' }];
+    model.userData.characterAppearance.ushankaColor = 'brown';
+    model.userData.characterAppearance.gear = visuals({ helmet: ushanka });
+    poseStandardHumanModel(model, 'sitting');
+    assert.equal(star.visible, true);
+    assert.ok(ushankaParts.every(part => part.material.color.value === '#ffcca0'));
+    model.userData.characterAppearance.gear = [];
+    poseStandardHumanModel(model, 'sitting');
+    assert.ok(ushankaParts.every(part => !part.visible));
+    assert.equal(star.visible, false);
+    assert.equal(hair.visible, true);
+    for (const [name, variant] of [['Балаклава', 'balaclava'], ['Балаклава Призрак', 'ghost']]) {
+        const modelName = 'mask_' + variant;
+        const part = { name: 'gear_' + modelName, userData: {}, isSkinnedMesh: true,
+            morphTargetDictionary: { under_mp50: 0 }, morphTargetInfluences: [0] };
+        parts.push(part);
+        const item = { templateId: 5, name };
+        const helmet = { templateId: 4, name: 'Советский Котелок 68Г' };
+        const face = parts.find(part => part.name === 'face_wounded');
+        face.material = { name: 'field_face' };
+        face.morphTargetDictionary = { under_balaclava: 0 };
+        face.morphTargetInfluences = [0];
+        assert.deepEqual(visuals({ helmet: item }), [modelName]);
+        model.userData.characterAppearance.gear = visuals({ helmet, mask: item });
+        assert.deepEqual(model.userData.characterAppearance.gear, ['helmet_68g', modelName]);
+        poseStandardHumanModel(model, 'prone');
+        assert.equal(part.visible, true);
+        assert.equal(hair.visible, false);
+        assert.equal(parts.find(part => part.name === 'gear_helmet_68g').visible, true);
+        assert.equal(face.morphTargetInfluences[0], 1);
+        const shader = { uniforms: {}, vertexShader: '#include <common>\n#include <begin_vertex>',
+            fragmentShader: '#include <common>\n#include <clipping_planes_fragment>' };
+        face.material.onBeforeCompile(shader);
+        assert.equal(shader.uniforms.balaclavaCoversFace.value, true);
+        assert.match(shader.fragmentShader, /if \(lowerFace \|\| ear\) discard/);
+        model.userData.characterAppearance.gear.push('mp50');
+        poseStandardHumanModel(model, 'prone');
+        assert.equal(part.morphTargetInfluences[0], 1);
+        assert.equal(shader.uniforms.gasMaskFaceCoverage.value, 1);
+        model.userData.characterAppearance.gear.pop();
+        poseStandardHumanModel(model, 'prone');
+        assert.equal(part.morphTargetInfluences[0], 0);
+        model.userData.characterAppearance.gear = [];
+        poseStandardHumanModel(model, 'prone');
+        assert.equal(face.morphTargetInfluences[0], 0);
+        assert.equal(shader.uniforms.balaclavaCoversFace.value, false);
+        assert.equal(shader.uniforms.gasMaskFaceCoverage.value, 0);
+    }
 });
 
 test('Игровой GLB содержит общий скелет и три цикла покоя', () => {
@@ -153,10 +308,82 @@ test('Игровой GLB содержит общий скелет и три ци
     assert.equal(gltf.skins.length, 1);
     assert.deepEqual(gltf.animations.map(clip => clip.name).sort(), ['prone', 'sitting', 'standing']);
     const meshes = gltf.nodes.filter(node => node.mesh !== undefined);
-    assert.equal(meshes.length, 13);
+    assert.equal(meshes.length, 54);
     assert.ok(meshes.every(node => node.skin === 0));
-    for (const name of ['bottom_tactical', 'bottom_hunting', 'gear_mp50']) {
+    for (const name of ['flashlight_hand', 'flashlight_belt', 'his_hand', 'his_belt', 'glowstick_hand',
+        'glowstick_belt', 'headlamp', 'flashlight_visor', 'pnv1p', 'sidr', 'supernova',
+        'pnv1p_raised', 'sidr_raised', 'supernova_raised']) {
+        const node = meshes.find(mesh => mesh.name === 'gear_device_' + name);
+        assert.ok(node, name);
+        if (/flashlight|headlamp|glowstick|his/.test(name)) {
+            assert.ok(gltf.meshes[node.mesh].primitives.some(primitive =>
+                gltf.materials[primitive.material].name === 'device_' + name + '_emitter'), name);
+        }
+    }
+    for (const name of ['bottom_tactical', 'bottom_hunting', 'gear_mp50', 'gear_helmet_68g']) {
         assert.ok(meshes.some(mesh => mesh.name === name), name);
+    }
+    for (const style of ['respirator', 'gp5', 'gp9v', 'gp7', 'sp10']) {
+        const node = meshes.find(mesh => mesh.name === 'gear_gasmask_' + style);
+        const mesh = gltf.meshes[node.mesh];
+        const materials = mesh.primitives.map(primitive => gltf.materials[primitive.material]);
+        assert.ok(materials.some(material => material.name === 'gasmask_' + style + '_rubber' && material.normalTexture));
+        assert.equal(materials.some(material => material.alphaMode === 'BLEND'), style !== 'respirator');
+        assert.equal(mesh.extras.targetNames.includes('under_headwear'), style !== 'respirator');
+    }
+    const mask = gltf.meshes[meshes.find(node => node.name === 'gear_mp50').mesh];
+    assert.deepEqual(mask.extras.targetNames, ['bare_head_strap', 'under_headwear']);
+    assert.ok(mask.primitives[0].targets[0].POSITION !== undefined);
+    const hair = gltf.meshes[meshes.find(node => node.name === 'hair_short').mesh];
+    assert.deepEqual(hair.extras.targetNames, ['soft_headwear_fit']);
+    for (const name of ['face_calm', 'face_wounded']) {
+        const mesh = gltf.meshes[meshes.find(node => node.name === name).mesh];
+        assert.deepEqual(mesh.extras.targetNames, ['under_balaclava']);
+        assert.ok(mesh.primitives.some(primitive => gltf.materials[primitive.material].name === 'field_ear'));
+    }
+    assert.ok(meshes.some(node => node.name === 'gear_mp50_ear_seals'));
+    for (const style of ['beret', 'beanie', 'cap', 'panama']) {
+        const node = meshes.find(node => node.name === 'gear_headwear_' + style);
+        const mesh = gltf.meshes[node.mesh];
+        const primitive = mesh.primitives[0];
+        assert.equal(gltf.materials[primitive.material].name, 'headwear_' + style + '_fabric');
+        if (style === 'beanie') assert.deepEqual(mesh.extras.targetNames, ['over_gas_mask']);
+    }
+    const ushanka = gltf.meshes[meshes.find(node => node.name === 'gear_headwear_ushanka').mesh];
+    const ushankaMaterials = ushanka.primitives.map(primitive => gltf.materials[primitive.material]);
+    assert.deepEqual(ushankaMaterials.map(material => material.name).sort(), ['ushanka_canvas', 'ushanka_fur']);
+    assert.ok(ushankaMaterials.every(material => material.normalTexture));
+    assert.ok(meshes.some(node => node.name === 'gear_headwear_ushanka_star'));
+    for (const style of ['vityaz', 'udarnik', 'udarnik_m', 'pervoprohodets']) {
+        const node = meshes.find(mesh => mesh.name === 'gear_helmet_' + style);
+        const materials = gltf.meshes[node.mesh].primitives.map(primitive => gltf.materials[primitive.material].name);
+        assert.ok(materials.includes('helmet_' + style + '_shell'));
+        assert.ok(materials.includes('tactical_helmet_webbing'));
+    }
+    for (const style of ['blockpost', 'voevoda', 'kuznets']) {
+        const node = meshes.find(mesh => mesh.name === 'gear_helmet_' + style);
+        const materials = gltf.meshes[node.mesh].primitives.map(primitive => gltf.materials[primitive.material]);
+        assert.ok(materials.some(material => material.name === 'respirator_' + style + '_shell'));
+        assert.equal(materials.find(material => material.name === 'respirator_' + style + '_lens').alphaMode, 'BLEND');
+    }
+    for (const style of ['kysa_2', 'gusar', 'shz_13m', 'karbovanets', 'volk_a']) {
+        const node = meshes.find(mesh => mesh.name === 'gear_helmet_' + style);
+        const materials = gltf.meshes[node.mesh].primitives.map(primitive => gltf.materials[primitive.material]);
+        const glass = style === 'karbovanets' ? 'visor_smoked_glass' : 'visor_clear_glass';
+        assert.equal(materials.find(material => material.name === glass).alphaMode, 'BLEND');
+        assert.ok(materials.some(material => material.name === 'helmet_' + style + '_shell' && material.normalTexture));
+    }
+    for (const variant of ['balaclava', 'ghost']) {
+        const node = meshes.find(node => node.name === 'gear_mask_' + variant);
+        const mesh = gltf.meshes[node.mesh];
+        const primitive = mesh.primitives[0];
+        const material = gltf.materials[primitive.material];
+        assert.equal(material.name, 'mask_' + variant + '_fabric');
+        assert.ok(material.normalTexture);
+        assert.ok(primitive.attributes.WEIGHTS_0 !== undefined);
+        assert.deepEqual(mesh.extras.targetNames, ['under_mp50']);
+        assert.ok(primitive.targets[0].POSITION !== undefined);
+        assert.ok(primitive.attributes.TEXCOORD_1 !== undefined);
     }
     for (const [name, fabric, fasteners] of [
         ['top_leather_coat', 'coat_leather', 'coat_buttons'],
@@ -170,16 +397,21 @@ test('Игровой GLB содержит общий скелет и три ци
     }
 });
 
-function readAnimationTracks(asset, clipName) {
+function readCharacterGlb(asset) {
     const file = fs.readFileSync(path.join(__dirname, '../app/static/models/characters', asset));
     const jsonLength = file.readUInt32LE(12);
     const gltf = JSON.parse(file.toString('utf8', 20, 20 + jsonLength));
+    return { file, gltf, binaryOffset: 28 + jsonLength };
+}
+
+function readAnimationTracks(asset, clipName) {
+    const { file, gltf, binaryOffset } = readCharacterGlb(asset);
     const clip = gltf.animations.find(animation => animation.name === clipName);
     return new Map(clip.channels.map(channel => {
         const { output } = clip.samplers[channel.sampler];
         const accessor = gltf.accessors[output];
         const view = gltf.bufferViews[accessor.bufferView];
-        const offset = 28 + jsonLength + (view.byteOffset || 0) + (accessor.byteOffset || 0);
+        const offset = binaryOffset + (view.byteOffset || 0) + (accessor.byteOffset || 0);
         const components = channel.target.path === 'rotation' ? 4 : 3;
         const frames = Array.from({ length: accessor.count }, (_, frame) =>
             Array.from({ length: components }, (_, component) => file.readFloatLE(offset + (frame * components + component) * 4)));
@@ -201,6 +433,45 @@ test('Все режимы передвижения замыкаются в ци�
         assert.ok(shins.every(([, frames]) => frames.some(frame => poseDifference(frame, frames[0]) > .05)), name);
         for (const [bone, frames] of tracks) {
             assert.ok(poseDifference(frames[0], frames.at(-1)) < 1e-4, `${name}: ${bone}`);
+        }
+    }
+});
+
+test('В приседе кисти идут снаружи корпуса и опускаются при шаге назад', async () => {
+    const vendor = pathToFileURL(path.join(__dirname, '../app/static/vendor/three-0.162.0/build/three.module.min.js'));
+    const { Object3D, Vector3 } = await import(vendor);
+    const asset = 'field_fall.glb';
+    const { gltf } = readCharacterGlb(asset);
+    const nodes = gltf.nodes.map(node => {
+        const object = new Object3D();
+        object.name = node.name;
+        if (node.translation) object.position.fromArray(node.translation);
+        if (node.rotation) object.quaternion.fromArray(node.rotation);
+        if (node.scale) object.scale.fromArray(node.scale);
+        return object;
+    });
+    gltf.nodes.forEach(({ children = [] }, index) => children.forEach(child => nodes[index].add(nodes[child])));
+    const scene = new Object3D();
+    gltf.scenes[gltf.scene].nodes.forEach(index => scene.add(nodes[index]));
+    const byName = new Map(nodes.map(node => [node.name, node]));
+    const properties = { rotation: 'quaternion', translation: 'position', scale: 'scale' };
+    for (const direction of ['left', 'right', 'back']) {
+        const tracks = readAnimationTracks(asset, 'crouch_walk_' + direction);
+        const channels = [...tracks].map(([name, frames]) => {
+            const split = name.lastIndexOf('.');
+            return [byName.get(name.slice(0, split))[properties[name.slice(split + 1)]], frames];
+        });
+        const frameCount = Math.max(...channels.map(([, frames]) => frames.length));
+        for (let frame = 0; frame < frameCount; frame++) {
+            for (const [property, frames] of channels) property.fromArray(frames[Math.min(frame, frames.length - 1)]);
+            scene.updateMatrixWorld(true);
+            for (const [side, sign] of [['L', 1], ['R', -1]]) {
+                const shoulder = byName.get('UpperArm.' + side).getWorldPosition(new Vector3());
+                const wrist = byName.get('Wrist.' + side).getWorldPosition(new Vector3());
+                const offset = wrist.sub(shoulder);
+                const position = direction === 'back' ? Math.abs(offset.z) < .105 && offset.y < -.32 : offset.z > .18;
+                assert.ok(position && sign * offset.x > .07, `${direction}, ${side}, кадр ${frame}: ${offset.toArray()}`);
+            }
         }
     }
 });

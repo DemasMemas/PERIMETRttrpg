@@ -124,7 +124,7 @@ def test_cotton_quote_variants_apply_then_expire_after_ten_recipient_turns(
     application = {'kind': 'self', 'actionPoints': 0}
     identity = 'cotton-ten-turns'
     with scripted(monkeypatch, deferred_module, [('prepare_medicine_roll', 1, 20, 20)]):
-        paid(client, pair, auth_headers, item, application, identity, 3)
+        paid(client, pair, auth_headers, item, application, identity, 4)
     assert data(pair)['inventory'] == original['inventory']
     body = medical_body(pair, item, application, identity, combat=True)
     response = medical(client, pair, auth_headers, body)
@@ -144,7 +144,7 @@ def test_cotton_quote_variants_apply_then_expire_after_ten_recipient_turns(
     expected_inventory['backpack'][0].update(quantity=1, uses=1, maxUses=1)
     expected_inventory['backpack'][0].setdefault('attributes', {})['uses_remaining'] = 1
     assert data(pair)['inventory'] == expected_inventory
-    assert pair['actor_location'].action_points_current == 2
+    assert pair['actor_location'].action_points_current == 1
     use_receipt(pair, identity)
     reject_unchanged(pair, lambda: medical(client, pair, auth_headers, body), 409)
     used_inventory = deepcopy(data(pair)['inventory'])
@@ -233,7 +233,7 @@ def test_antirad_b4_is_paid_applied_once_and_removes_five_radiation_per_own_turn
     assert len(treatment) == 1 and treatment[0]['value'] == -5 and treatment[0]['remaining'] == 4
     application = {'kind': 'self', 'actionPoints': 0}
     with scripted(monkeypatch, deferred_module, [('prepare_medicine_roll', 1, 20, 20)]):
-        paid(client, pair, auth_headers, item, application, 'antirad-b4', 3)
+        paid(client, pair, auth_headers, item, application, 'antirad-b4', 4)
     assert data(pair)['health']['radiation'] == 30
     assert data(pair)['inventory']['backpack'][0]['quantity'] == 2
     body = medical_body(pair, item, application, 'antirad-b4', combat=True)
@@ -241,10 +241,10 @@ def test_antirad_b4_is_paid_applied_once_and_removes_five_radiation_per_own_turn
     assert response.status_code == 200, response.get_json()
     result = response.get_json()['medical_result']
     assert result['success'] is True and result['roll'] == 20 and result['difficulty'] == 4
-    assert result['payment_details']['total_action_points'] == 3
+    assert result['payment_details']['total_action_points'] == 4
     assert data(pair)['health']['radiation'] == 30 and data(pair)['health']['exhaustion'] == 1
     assert data(pair)['inventory']['backpack'][0]['quantity'] == 1
-    assert pair['actor_location'].action_points_current == 2
+    assert pair['actor_location'].action_points_current == 1
     use_receipt(pair, 'antirad-b4')
     reject_unchanged(pair, lambda: medical(client, pair, auth_headers, body), 409)
     for number in range(1, 5):

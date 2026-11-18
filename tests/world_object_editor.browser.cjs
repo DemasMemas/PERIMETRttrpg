@@ -345,7 +345,7 @@ if(typeof renderFacingPreview==='function'){const original=renderFacingPreview;r
             return;
         }
         if (safeSession && process.env.VTT_SAFE_SCENARIO === 'catalog') {
-            await require('./catalog_picker.browser.cjs')({page,request,token,lobby,base,safeSession});
+            await require('./catalog_picker.browser.cjs')({page,request,token,lobby,base,connect,debugPort,safeSession});
             await require('./manual_qa_sleep.browser.cjs')({page,request,token,lobby,base,connect,debugPort,safeSession});
             return;
         }

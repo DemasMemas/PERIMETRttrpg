@@ -313,6 +313,30 @@ def test_nvg_mount_can_be_installed_and_requires_removing_nvg_before_replacement
     assert not rule(helmet,'nvg_mount')
 
 
+def test_ushanka_retains_its_modification_family_and_effect():
+    from app.services.character_appearance import public_character_appearance
+    from app.services.equipment_catalog import load_catalog
+    from app.services.equipment_modifications import definition, family, install
+
+    hat = deepcopy(next(item for item in load_catalog() if item['name'] == 'Ушанка'))
+    assert family(hat) == 'Ушанка'
+    assert family({'category': 'helmet', 'model': 'Прочее Ушанка',
+                   'attributes': {'modification_category': 'Шлема без забрала'}}) == 'Ушанка'
+    for identity in ('armor-g5', 'armor-g6', 'armor-g7'):
+        definition_row = definition(identity)
+        assert (definition_row['family'], definition_row['branch']) == ('Ушанка', 'Пафос')
+    insulation, reinforced = deepcopy(hat), deepcopy(hat)
+    install(insulation, make_record('armor-g5'))
+    install(reinforced, make_record('armor-g6'))
+    assert stat(insulation, 'thermal', 5) == 10
+    assert rule(reinforced, 'ear_protection') == 15
+    install(hat, make_record('armor-g7'))
+    assert stat(hat, 'charisma', 1.5) == 2.5
+    assert public_character_appearance({'equipment': {'helmet': {**hat, 'templateId': 7}}}) == {
+        'gear': ['headwear_ushanka', 'headwear_ushanka_star'],
+    }
+
+
 def test_expanded_belt_adds_two_pouch_places_and_protects_filled_places(app):
     from app.services.equipment_modifications import belt_pouch_limit,install,supported,definition,validate_belt_pouches
     from app.services.exceptions import ValidationError

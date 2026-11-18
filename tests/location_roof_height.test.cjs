@@ -84,13 +84,15 @@ async function harness(data = building('gable', 1)) {
         alignFloorRugToSurface() {},
         refreshFloorRugHeights() {},
         locationWaterProfiles: null,
+        locationWeather: null,
+        portableLightRenderer: null,
         disposeLocationObject: object => { object.disposed = true; },
         refreshTerrainFoundation: () => false, updateTileCubes: () => false,
         ...Object.fromEntries(['invalidateMovementMapCache', 'rebuildLocationTerrainSurface',
             'rebuildLocationGrid', 'rebuildGrassDetailMesh', 'clearFogOverlay', 'applyFogOfWar',
             'queueStaticLightFieldRefresh'].map(name => [name, () => {}])),
     });
-    for (const name of ['getTileHeight', 'getObjectGridPosition', 'updateLocationObjectHeight',
+    for (const name of ['getTileHeight', 'getObjectGridPosition', 'isRainBlocker', 'updateLocationObjectHeight',
         'moveTileDecorWithTerrain', 'terrainEditTouchesRoof', 'terrainEditTouchesLight',
         'terrainEditTouchesWater', 'queueTerrainRefresh', 'flushPendingTerrainRefresh',
         'rebuildLocationRoofs', 'applyLocationBrush', 'applyLocationTilesUpdate']) {

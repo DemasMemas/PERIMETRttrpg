@@ -118,6 +118,62 @@ def vertical_game(client,create_user,auth_headers):
     return pair
 
 
+@pytest.mark.parametrize('kind,tile_x,level,allowed', [
+    ('table', 3, 0, True),
+    ('household_street_lamp', 3, 0, False),
+    ('table', 4, 0, False),
+    ('table', 3, 1, False),
+])
+def test_weapon_braces_directly_on_eligible_support(vertical_game, client, auth_headers, kind, tile_x, level, allowed):
+    from app.extensions import db
+    from app.models import LocationObject
+
+    pair = vertical_game
+    actor = pair['actor_location']
+    actor.character.data = {**actor.character.data, 'weapons': [
+        {'id': 'brace-rifle', 'name': 'Rifle', 'category': 'weapon', 'ammo': 1},
+    ]}
+    actor.drawn_weapon_index = 0
+    support = LocationObject(location_id=actor.location_id, type=kind, tile_x=tile_x, tile_y=3,
+                             properties={'level': level, 'dimensions': {'width': .8, 'depth': .8, 'height': .8}})
+    db.session.add(support)
+    db.session.commit()
+    before = actor.action_points_current
+    url = f"/lobbies/{pair['lobby'].id}/locations/{actor.location_id}/combat/action"
+    response = client.post(url, headers=auth_headers(pair['actor_user']), json={
+        'location_character_id': actor.id, 'action_key': 'brace_weapon', 'target_object_id': support.id,
+        'payment': 'action',
+    })
+    assert response.status_code == (200 if allowed else 400), response.json
+    assert actor.cover_object_id == (support.id if allowed else None)
+    assert actor.action_points_current == before - int(allowed)
+    assert bool(actor.weapon_braced) is allowed
+
+
+@pytest.mark.parametrize('kind,width,depth,height,grade', [
+    ('household_street_lamp', 1, .5, 5, 'none'),
+    ('barrier', .05, .05, 2.5, 'none'),
+    ('barrier', 1, 1, 2.5, 'full'),
+])
+def test_cover_resolves_visible_parts_of_each_zone(vertical_game, kind, width, depth, height, grade):
+    from app.extensions import db
+    from app.models import LocationObject
+
+    actor = vertical_game['actor_location']
+    target = vertical_game['target_location']
+    target.pos_x, target.pos_y = 7, 3
+    cover = LocationObject(location_id=actor.location_id, type=kind, tile_x=6, tile_y=3,
+                           properties={'dimensions': {'width': width, 'depth': depth, 'height': height}})
+    db.session.add(cover)
+    db.session.flush()
+    analysis = CombatService._cover_analysis(actor.location_id, actor, target, objects=[cover])
+    assert analysis['grade'] == grade
+    assert analysis['targetable'] is (grade != 'full')
+    if grade == 'none':
+        assert analysis['shot_cover']['chest'][0]['object_id'] == cover.id
+        assert None in analysis['shot_cover']['chest']
+
+
 @pytest.mark.parametrize('mode,cost,penalty', [('drag',2,2), ('rope',1,1), ('shoulder',2,0)])
 def test_body_transport_follows_real_route_and_preserves_body(vertical_game, mode, cost, penalty):
     from app.extensions import db
@@ -358,7 +414,10 @@ def test_pripyat_inner_partition_lands_directly_across_from_actor(vertical_game)
     from pathlib import Path
     from app.extensions import db
     from app.models import LocationObject
-    source=json.loads((Path(__file__).parents[1]/'tmp/pripyat-regression.json').read_text(encoding='utf-8'))
+    source_path = Path(__file__).parents[1] / 'tmp/pripyat-regression.json'
+    if not source_path.exists():
+        pytest.skip('Нужна локальная копия Припяти')
+    source = json.loads(source_path.read_text(encoding='utf-8'))
     location=vertical_game['location'];actor=vertical_game['actor_location']
     location.grid_width,location.grid_height=source['grid_width'],source['grid_height'];location.tiles_data=source['tiles_data']
     wall=None
@@ -556,6 +615,23 @@ def test_walk_preserves_facing_and_charges_backward_steps(client,create_user,aut
     assert moved.action_points_current == 5
 
 
+def test_walk_can_change_direction_during_the_same_turn(vertical_game):
+    from app.extensions import db
+
+    actor = vertical_game['actor_location']
+    actor.facing_x, actor.facing_y = 0, 1
+    actor.movement_points_current = 20
+    db.session.commit()
+    args = vertical_game['location'].id, vertical_game['actor_user']['id'], actor.character_id
+    x, y = actor.pos_x, actor.pos_y
+    for target_y, expected_mode, expected_cost in [(y + 1, 'walk', 1), (y, 'backward_sideways', 2), (y + 1, 'walk', 1)]:
+        moved, cost, _ = CombatService.move_character(*args, x, target_y, movement_mode='walk')
+        assert moved.movement_mode_this_turn == expected_mode
+        assert cost == pytest.approx(expected_cost)
+        assert (moved.facing_x, moved.facing_y) == (0, 1)
+    assert actor.movement_distance_this_turn == pytest.approx(3)
+
+
 def test_running_behind_requires_an_explicit_turn_without_spending_points():
     actor = SimpleNamespace(facing_x=0,facing_y=1)
     with pytest.raises(ValidationError,match='направление взгляда'):
@@ -635,7 +711,8 @@ def test_direction_constrained_planner_on_weighted_terrain(client,create_user,au
     back=CombatService._find_movement_path(location,3.1,1.1,3.1,.1,actor.character_id,movement_mode='walk')
     assert back and CombatService._movement_direction_profile(actor,back)==(False,True)
     actor.movement_mode_this_turn='walk'
-    assert CombatService._find_movement_path(location,3.1,1.1,3.1,.1,actor.character_id,movement_mode='walk') is None
+    continued = CombatService._find_movement_path(location,3.1,1.1,3.1,.1,actor.character_id,movement_mode='walk')
+    assert continued and CombatService._movement_direction_profile(actor,continued)==(False,True)
 
 
 def test_pripyat_ice_planner_avoids_mixed_direction_detour(client,create_user,auth_headers):
@@ -672,7 +749,10 @@ def test_pripyat_ice_planner_avoids_mixed_direction_detour(client,create_user,au
     assert cost==pytest.approx(preview['cost'])
     assert moved.movement_mode_this_turn=='walk'
     assert (moved.facing_x,moved.facing_y)==(0,1)
-    for mode in ('walk','run','sprint'):
+    back = client.post(base+'/movement-preview',headers=auth_headers(case['actor_user']),
+        json={'character_id':actor.character_id,'x':45.1,'y':48.1,'movement_mode':'walk'}).get_json()['route']
+    assert back and CombatService._movement_direction_profile(actor,back)==(False,True)
+    for mode in ('run','sprint'):
         blocked=client.post(base+'/movement-preview',headers=auth_headers(case['actor_user']),
             json={'character_id':actor.character_id,'x':45.1,'y':48.1,'movement_mode':mode})
         assert blocked.status_code==200 and blocked.get_json()['route'] is None
@@ -1488,12 +1568,12 @@ def test_posture_allows_compatible_movement_modes(posture, movement_mode):
 @pytest.mark.parametrize(
     ("cover_class", "max_hp", "protection"),
     [
-        ("conditional", 25, 0),
-        ("flimsy", 50, 5),
-        ("medium", 100, 20),
-        ("strong", 200, 40),
-        ("very_strong", 400, 60),
-        ("titanium", 800, 90),
+        ("conditional", 200, 0),
+        ("flimsy", 1000, 5),
+        ("medium", 1500, 20),
+        ("strong", 2500, 40),
+        ("very_strong", 8500, 60),
+        ("titanium", 16000, 90),
     ],
 )
 def test_cover_class_profiles(cover_class, max_hp, protection):

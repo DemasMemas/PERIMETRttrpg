@@ -36,6 +36,9 @@ from app.services.effects import advance_timed_effects
         ('Сигареты обычные', 600, 3),
         ('Сигареты дорогие', 800, 2),
         ('Сигары', 1500, 1),
+        ('Сигареты Египетская сила', 2000, 4),
+        ('Сигареты Гибралтарский пролив', 100, 3),
+        ('Сигареты Пётр Второй', 100, 2),
     ],
 )
 def test_alcohol_and_tobacco_addiction_chances(name, price, chance):
@@ -43,11 +46,29 @@ def test_alcohol_and_tobacco_addiction_chances(name, price, chance):
 
 
 def test_stimulants_are_assigned_to_their_rule_groups():
-    assert addictions.addiction_profile('Стимулятор Болид')['key'] == 'accelerating_stimulants'
+    assert addictions.addiction_profile('Адреналин')['key'] == 'accelerating_stimulants'
+    assert addictions.addiction_profile('Стимулятор Болид')['key'] == 'combat_stimulants'
     assert addictions.addiction_profile('Стимулятор Орёл')['key'] == 'combat_stimulants'
-    assert addictions.addiction_profile('Стимулятор Бык') is None
-    assert addictions.addiction_profile('Стимулятор Геракл') is None
-    assert addictions.addiction_profile('Стимулятор Гора') is None
+    assert addictions.addiction_profile('Стимулятор Бык')['key'] == 'combat_stimulants'
+    assert addictions.addiction_profile('Стимулятор Геракл')['key'] == 'combat_stimulants'
+    assert addictions.addiction_profile('Стимулятор Гора')['key'] == 'combat_stimulants'
+    assert addictions.addiction_profile('Питательный стимулятор') is None
+
+
+def test_catalog_stimulants_correct_legacy_profiles_and_keep_explicit_edits():
+    from app.schemas.templates import ItemTemplateSchema
+
+    old = addictions.addiction_profile('Адреналин')
+    assert addictions.resolve_addiction_profile({'addiction': old}, 'Стимулятор Болид')['chance'] == 20
+    assert addictions.resolve_addiction_profile({'addiction': None}, 'Стимулятор Воля-Н')['key'] == 'combat_stimulants'
+    assert addictions.resolve_addiction_profile({'addiction': old}, 'Питательный стимулятор') is None
+    assert addictions.resolve_addiction_profile({'editor_version': 2, 'addiction': old}, 'Стимулятор Болид') == old
+
+    template = {'name': 'Болид (переименованный)', 'category': 'consumable',
+                'attributes': {'catalog_name': 'Стимулятор Болид', 'consumable': {'addiction': old}}}
+    shown = ItemTemplateSchema().dump(template)
+    assert shown['attributes']['consumable']['addiction']['key'] == 'combat_stimulants'
+    assert template['attributes']['consumable']['addiction'] == old
 
 
 def test_saved_profile_string_multiplier_keys_are_used_for_repeat_doses(monkeypatch):
@@ -64,19 +85,19 @@ def test_saved_profile_string_multiplier_keys_are_used_for_repeat_doses(monkeypa
     assert second['chance'] == 6
 
 
-def test_repeated_analgin_uses_ten_minute_multiplier(monkeypatch):
+def test_repeated_hawthorn_uses_ten_minute_multiplier(monkeypatch):
     monkeypatch.setattr(addictions.random, 'random', lambda: 0.99)
     health = {}
 
-    first = addictions.record_exposure(health, 'Анальгин (Таблетка)', 0, 100)
-    second = addictions.record_exposure(health, 'Анальгин (Таблетка)', 0, 110)
-    reset = addictions.record_exposure(health, 'Анальгин (Таблетка)', 0, 121)
+    first = addictions.record_exposure(health, 'Настойка боярышника', 0, 100)
+    second = addictions.record_exposure(health, 'Настойка боярышника', 0, 110)
+    reset = addictions.record_exposure(health, 'Настойка боярышника', 0, 121)
 
-    assert first['chance'] == 2
+    assert first['chance'] == 3
     assert second['dose'] == 2
-    assert second['chance'] == 4
+    assert second['chance'] == 15
     assert reset['dose'] == 1
-    assert reset['chance'] == 2
+    assert reset['chance'] == 3
 
 
 def test_kotik_blocks_a_later_addiction_roll_for_24_hours(monkeypatch):

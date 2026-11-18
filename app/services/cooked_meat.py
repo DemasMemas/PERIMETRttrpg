@@ -72,6 +72,29 @@ def cooked_output(source, recipe_id, output, *, cook_bonus=0):
     return output
 
 
+def catalog_choices():
+    """Build the same profiles as cooking raw butchered meat once."""
+    from app.services.combat import CombatService
+    from app.services.world_rules import mutant_catalog
+
+    choices = {kind: [] for kind in NAMES}
+    part = CombatService.BUTCHERING_PARTS['meat']
+    for mutant in mutant_catalog():
+        name = mutant['name']
+        species = CombatService._butchering_species_key({'mutant': {'profile': name}})
+        radiation = CombatService.BUTCHERING_MEAT_RADIATION.get(species)
+        if radiation is None:
+            continue
+        source = {
+            'price': int(CombatService.BUTCHERING_BASE_PRICES[species] * part['price_multiplier']),
+            'attributes': {'mutant_part': 'meat', 'source_mutant': name, 'radiation': radiation},
+        }
+        for recipe_id, kind in RECIPES.items():
+            if ingredient_matches(recipe_id, source):
+                choices[kind].append(cooked_output(source, recipe_id, {}))
+    return choices
+
+
 def _cook_bonus(attrs):
     bonus = attrs.get('cook_exhaustion_bonus')
     return bonus if type(bonus) is int and bonus > 0 else 0
@@ -86,7 +109,7 @@ def portion_profile(template, item, profile, direct):
     if remaining is None or original is None or remaining > original:
         raise ValidationError('У мяса нет подтверждённого профиля приготовления')
     profile, direct = deepcopy(profile), deepcopy(direct)
-    direct.update(nutrition=1, radiation_delta=remaining / 3,
+    direct.update(nutrition=1, radiation_delta=remaining,
                   exhaustion_delta=(0.5 if remaining else -1) - _cook_bonus(attrs))
     profile['direct'] = direct
     return profile, direct

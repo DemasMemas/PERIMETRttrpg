@@ -22,6 +22,8 @@ import {
 } from './locationModelAssets.js';
 
 const CHUNK_SIZE = 32;
+const BLEEDING_LABELS = { light: 'слабое', medium: 'среднее', severe: 'сильное', extreme: 'экстремальное' };
+const BLOOD_LOSS_LABELS = { normal: 'нет', light: 'лёгкая', medium: 'средняя', severe: 'тяжёлая', critical: 'критическая' };
 const models = new Map();
 const eventModels = new Map();
 const movementHighlights = [];
@@ -35,8 +37,60 @@ let availableCharacters = [];
 let worldTurn = { active_group_ids: [], submitted_group_ids: [], waiting_group_ids: [] };
 let selectionMode = null;
 let contextMenu = null;
+let groupContextAnchor = null;
 let editingMembersGroupId = null;
 let activeAnomalyFieldGroup = null;
+
+function bloodLossOutcome(stage) {
+    return stage === 'fatal' ? 'гибель персонажа' : `${BLOOD_LOSS_LABELS[stage]} кровопотеря`;
+}
+
+function confirmWorldBloodLoss(risks, waiting) {
+    const dialog = document.createElement('dialog');
+    dialog.className = 'modal-content world-blood-loss-dialog';
+    dialog.setAttribute('aria-labelledby', 'world-blood-loss-title');
+    dialog.innerHTML = `
+        <h2 id="world-blood-loss-title">Кровотечение в группе</h2>
+        <p>${waiting ? 'Ожидание' : 'Переход'} займёт 10 минут. Каждый раненый сделает проверку кровопотери.</p>
+        <ul>${risks.map(risk => `
+            <li>
+                <strong>${escapeHtml(risk.character_name)}</strong> · ${BLEEDING_LABELS[risk.severity]} кровотечение · СЛ ${risk.difficulty}
+                <div>Сейчас ${risk.before === 'normal' ? 'без кровопотери' : bloodLossOutcome(risk.before)}</div>
+                ${risk.on_success === 'fatal' ? '<strong>Персонаж погибнет за этот ход.</strong>' : `
+                    <div>При успехе — ${bloodLossOutcome(risk.on_success)}</div>
+                    <div>При провале — ${bloodLossOutcome(risk.on_failure)}</div>`}
+            </li>`).join('')}
+        </ul>
+        <form method="dialog" class="form-actions">
+            <button class="btn btn-secondary" value="cancel" autofocus>Вернуться</button>
+            <button class="btn btn-danger" value="continue">${waiting ? 'Ждать 10 минут' : 'Продолжить переход'}</button>
+        </form>`;
+    dialog.addEventListener('keydown', event => {
+        if (event.key === 'Escape') event.stopPropagation();
+    });
+    document.body.append(dialog);
+    return new Promise(resolve => {
+        dialog.addEventListener('close', () => {
+            const accepted = dialog.returnValue === 'continue';
+            dialog.remove();
+            resolve(accepted);
+        }, { once: true });
+        dialog.showModal();
+    });
+}
+
+async function submitWorldGroupAction(send, { waiting = false } = {}) {
+    let confirmation = null;
+    while (true) {
+        try {
+            return await send(confirmation);
+        } catch (error) {
+            if (error.code !== 'world_group_bleeding' || !error.bloodLossRisks?.length) throw error;
+            if (!await confirmWorldBloodLoss(error.bloodLossRisks, waiting)) return null;
+            confirmation = error.bloodLossRisks;
+        }
+    }
+}
 
 function tileHeight(tileX, tileY) {
     const chunkX = Math.floor(tileX / CHUNK_SIZE);
@@ -320,6 +374,7 @@ function showMovementHighlights(group) {
 }
 
 function hideContextMenu() {
+    groupContextAnchor = null;
     if (contextMenu) contextMenu.style.display = 'none';
 }
 
@@ -354,10 +409,29 @@ function worldObjectFromPointer(event) {
 
 function showGroupContextMenu(group, clientX, clientY) {
     if (!contextMenu) return;
+    groupContextAnchor = { id: group.id, x: clientX, y: clientY };
+    const waitingIds = new Set((worldTurn.waiting_group_ids || []).map(Number));
+    const waitingGroups = group.turn_submitted
+        ? groups.filter(item => waitingIds.has(Number(item.id)))
+        : [];
+    let moveBlockReason = '';
+    if (!group.turn_active) {
+        moveBlockReason = 'Группа не участвует в мировом ходе.';
+    } else if (group.turn_submitted) {
+        moveBlockReason = waitingGroups.length ? 'Ещё не сходили' : 'Ход уже сделан. Ожидается следующий мировой ход.';
+    } else if (group.has_pending_event) {
+        moveBlockReason = 'ГМ ещё не разрешил событие в пути.';
+    } else if (group.movement_distance <= 0) {
+        moveBlockReason = 'Группа не может идти из-за штрафа перемещения.';
+    }
     contextMenu.innerHTML = `
         <div class="world-group-context-title">${escapeHtml(group.name)}</div>
         <div class="world-group-context-speed">${escapeHtml(group.movement_speed_label)} · ${group.movement_distance} кл. / 10 мин.</div>
-        <button type="button" data-context-move ${group.has_pending_event || !group.turn_active || group.turn_submitted || group.movement_distance <= 0 ? 'disabled' : ''}>Переместить</button>
+        <button type="button" data-context-move ${moveBlockReason ? 'disabled aria-describedby="world-group-move-reason"' : ''}>Переместить</button>
+        ${moveBlockReason ? `<div id="world-group-move-reason" class="world-group-context-reason">
+            ${moveBlockReason}
+            ${waitingGroups.length ? `<ul>${waitingGroups.map(item => `<li>${escapeHtml(item.name)}</li>`).join('')}</ul>` : ''}
+        </div>` : ''}
         <button type="button" data-context-wait ${group.has_pending_event || !group.turn_active || group.turn_submitted ? 'disabled' : ''}>Ждать 10 минут</button>
         ${group.anomaly_field ? `<button type="button" data-context-anomaly-field>Исследовать поле · ${escapeHtml(group.anomaly_field.name)}</button>` : ''}
         ${group.members?.length ? '<button type="button" data-context-stashes>Тайники на клетке</button>' : ''}
@@ -366,8 +440,8 @@ function showGroupContextMenu(group, clientX, clientY) {
     `;
     contextMenu.style.display = 'grid';
     const rect = contextMenu.getBoundingClientRect();
-    contextMenu.style.left = `${Math.min(clientX, window.innerWidth - rect.width - 8)}px`;
-    contextMenu.style.top = `${Math.min(clientY, window.innerHeight - rect.height - 8)}px`;
+    contextMenu.style.left = `${Math.max(8, Math.min(clientX, window.innerWidth - rect.width - 8))}px`;
+    contextMenu.style.top = `${Math.max(8, Math.min(clientY, window.innerHeight - rect.height - 8))}px`;
     contextMenu.querySelector('[data-context-move]')?.addEventListener('click', () => {
         hideContextMenu();
         beginWorldGroupMove(group.id);
@@ -375,7 +449,11 @@ function showGroupContextMenu(group, clientX, clientY) {
     contextMenu.querySelector('[data-context-wait]')?.addEventListener('click', async () => {
         hideContextMenu();
         try {
-            const result = await Server.waitWorldGroup(lobbyId, group.id);
+            const result = await submitWorldGroupAction(
+                confirmation => Server.waitWorldGroup(lobbyId, group.id, confirmation), { waiting: true },
+            );
+            if (!result) return;
+            showWorldRadiationNotifications(result);
             showNotification(
                 result.time_advanced
                     ? 'Все активные группы завершили ход. Прошло 10 минут.'
@@ -421,6 +499,7 @@ function showGroupContextMenu(group, clientX, clientY) {
 
 function showMapEventContextMenu(event, clientX, clientY) {
     if (!contextMenu || !window.isGM) return;
+    groupContextAnchor = null;
     contextMenu.innerHTML = `
         <div class="world-group-context-title">${escapeHtml(event.name)}</div>
         <div class="world-group-context-speed">${event.repeatable ? 'Повторяемое событие' : 'Одноразовое событие'} · клетка ${event.tile_x}, ${event.tile_y}</div>
@@ -465,7 +544,7 @@ function closeAnomalyFieldModal() {
 }
 
 function artifactClassLabel(value) {
-    return ({ trash: 'Мусор', 1: 'I класс', 2: 'II класс', 3: 'III класс', x: 'X класс' })[value] || value;
+    return ({ trash: 'Мусорный класс', 1: 'I класс', 2: 'II класс', 3: 'III класс', x: 'Класс X' })[value] || value;
 }
 
 function renderAnomalyFieldResult(result) {
@@ -496,7 +575,12 @@ function renderAnomalyFieldResult(result) {
             ${escapeHtml(recovery.artifact_name)} · ${recovery.rolls.join(', ')} → ${recovery.total} против СЛ ${recovery.difficulty}
             ${recovery.field_exposures ? ` · воздействий поля: ${recovery.field_exposures}` : ''}
         </div>` : '';
-    results.innerHTML = recoveryNotice + field.artifacts.map((artifact, index) => `
+    const classOrder = { trash: 0, 1: 1, 2: 2, 3: 3, x: 4 };
+    const entries = field.artifacts.map((artifact, index) => ({artifact, index}));
+    entries.sort((left, right) =>
+        (classOrder[left.artifact.artifact_class] ?? Infinity)
+        - (classOrder[right.artifact.artifact_class] ?? Infinity));
+    results.innerHTML = recoveryNotice + entries.map(({artifact, index}) => `
         <div class="anomaly-field-artifact ${artifact.recovered ? 'recovered' : ''}">
             <div>
                 <strong>${escapeHtml(artifact.name)}</strong>
@@ -661,6 +745,12 @@ export async function refreshWorldTravel() {
         availableCharacters = data.available_characters || [];
         renderModels();
         renderModal();
+        if (groupContextAnchor) {
+            const { id, x, y } = groupContextAnchor;
+            const group = groups.find(item => item.id === id);
+            if (group) showGroupContextMenu(group, x, y);
+            else hideContextMenu();
+        }
     } catch (error) {
         console.error('World travel load failed:', error);
     }
@@ -754,31 +844,11 @@ async function handleTileSelection({ tile }) {
             document.getElementById('world-map-event-repeatable').checked = false;
             showNotification('Событие размещено на карте', 'success');
         } else {
-            const result = await Server.moveWorldGroup(lobbyId, mode.groupId, tileX, tileY);
-            const exposureByCharacter = new Map(
-                (result.radiation_updates || []).map(item => [Number(item.character_id), item])
+            const result = await submitWorldGroupAction(
+                confirmation => Server.moveWorldGroup(lobbyId, mode.groupId, tileX, tileY, confirmation),
             );
-            const radiationMessages = (result.radiation_consequences || []).flatMap(consequence => {
-                const exposure = exposureByCharacter.get(Number(consequence.character_id)) || {};
-                const details = [];
-                if (Number(consequence.damage || 0) > 0) {
-                    details.push(`урон ${consequence.damage}`);
-                }
-                if ((consequence.bleedings || []).length) {
-                    details.push(`кровотечения: ${consequence.bleedings.length}`);
-                }
-                if (consequence.critical) details.push('критическое состояние');
-                if (consequence.death) details.push('смерть');
-                if (Number(exposure.received || 0) > 0) {
-                    details.push(`радиация +${exposure.received}`);
-                }
-                return details.length
-                    ? [`${consequence.character_name || `#${consequence.character_id}`}: ${details.join(', ')}`]
-                    : [];
-            });
-            if (radiationMessages.length) {
-                showNotification(radiationMessages.join('\n'), 'error');
-            }
+            if (!result) return true;
+            showWorldRadiationNotifications(result);
             showNotification(
                 result.event_pending
                     ? 'Группа перемещена. Событие ожидает решения ГМа.'
@@ -793,6 +863,25 @@ async function handleTileSelection({ tile }) {
         showNotification(error.message, 'error');
     }
     return true;
+}
+
+function showWorldRadiationNotifications(result) {
+    const exposureByCharacter = new Map(
+        (result.radiation_updates || []).map(item => [Number(item.character_id), item])
+    );
+    const messages = (result.radiation_consequences || []).flatMap(consequence => {
+        const dose = Number(exposureByCharacter.get(Number(consequence.character_id))?.received || 0);
+        const details = [];
+        if (Number(consequence.damage || 0) > 0) details.push(`урон ${consequence.damage}`);
+        if ((consequence.bleedings || []).length) details.push(`кровотечения: ${consequence.bleedings.length}`);
+        if (consequence.critical) details.push('критическое состояние');
+        if (consequence.death) details.push('смерть');
+        if (dose > 0) details.push(`радиация +${dose}`);
+        return details.length
+            ? [`${consequence.character_name || `#${consequence.character_id}`}: ${details.join(', ')}`]
+            : [];
+    });
+    if (messages.length) showNotification(messages.join('\n'), 'error');
 }
 
 async function handleModalClick(event) {
@@ -816,8 +905,13 @@ async function handleModalClick(event) {
     }
     const wait = event.target.closest('[data-world-wait]');
     if (wait) {
+        wait.disabled = true;
         try {
-            const result = await Server.waitWorldGroup(lobbyId, wait.dataset.worldWait);
+            const result = await submitWorldGroupAction(
+                confirmation => Server.waitWorldGroup(lobbyId, wait.dataset.worldWait, confirmation), { waiting: true },
+            );
+            if (!result) return;
+            showWorldRadiationNotifications(result);
             showNotification(
                 result.time_advanced
                     ? 'Все активные группы завершили ход. Прошло 10 минут.'
@@ -827,6 +921,8 @@ async function handleModalClick(event) {
             await refreshWorldTravel();
         } catch (error) {
             showNotification(error.message, 'error');
+        } finally {
+            wait.disabled = false;
         }
         return;
     }
@@ -926,8 +1022,12 @@ export function initWorldTravel(currentLobbyId, socket) {
     }, true);
     ['world_group_created', 'world_group_updated', 'world_group_moved', 'world_group_deleted',
         'world_map_event_created', 'world_map_event_deleted', 'world_map_event_triggered',
-        'world_travel_event_pending', 'world_travel_event_resolved'].forEach(eventName => {
+        'world_travel_event_pending', 'world_travel_event_resolved', 'lobby_time_updated'].forEach(eventName => {
         socket.on(eventName, refreshWorldTravel);
+    });
+    socket.on('world_blood_loss_resolved', result => {
+        showNotification(`${result.character_name} · ${bloodLossOutcome(result.after)} (d20 ${result.roll}, СЛ ${result.difficulty})`,
+            result.after === 'fatal' ? 'error' : 'system');
     });
     return refreshWorldTravel();
 }

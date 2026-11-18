@@ -60,8 +60,10 @@ def start(client, case, auth_headers, **extra):
 
 
 def pay(client, case, auth_headers):
-    response = client.post(f"/lobbies/{case['lobby'].id}/locations/{case['location'].id}/combat/end_turn",
-                           headers=auth_headers(case['target_user']), json={})
+    url = f"/lobbies/{case['lobby'].id}/locations/{case['location'].id}/combat/end_turn"
+    response = client.post(url, headers=auth_headers(case['actor_user']), json={})
+    assert response.status_code == 200, response.json
+    response = client.post(url, headers=auth_headers(case['target_user']), json={})
     assert response.status_code == 200, response.json
     return response.json
 

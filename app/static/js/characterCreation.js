@@ -52,11 +52,16 @@ export async function openCharacterCreation(lobbyId, onCreated) {
         ? `Книга · ${template.name}` : template.name;
     const modal = document.createElement('div');
     modal.id = 'character-creation-modal'; modal.className = 'modal creation-modal';
-    const skillCards = (stage, editable = true) => Object.entries(GROUPS).map(([group, title]) => `<section class="creation-skill-group"><h4>${title}</h4><div class="creation-skill-grid">${skills.filter(([path]) => path.startsWith(group + '.')).map(([path, label]) => `<div class="creation-skill-card">
-        <div><strong>${escape(label)}</strong><span class="creation-skill-meta" data-skill-meta="${stage}:${path}"></span></div>
-        <output data-result="${path}" data-result-stage="${stage}">5</output>
-        ${stage === 'specializations' ? `<label class="creation-spec"><input type="checkbox" data-specialization="${path}" aria-label="Специализация: ${escape(label)}"> +3</label>` : editable ? `<div class="creation-stepper"><button type="button" class="btn btn-sm" data-adjust="-1" data-target="${stage}:${path}" aria-label="Уменьшить: ${escape(label)}">−</button><input type="number" min="0" max="${stage === 'lowers' ? 5 : 19}" value="0" data-stage="${stage}" data-skill="${path}" aria-label="${stage === 'lowers' ? 'Понижений на 3' : 'Добавить уровней'}: ${escape(label)}" class="form-control"><button type="button" class="btn btn-sm" data-adjust="1" data-target="${stage}:${path}" aria-label="Увеличить: ${escape(label)}">+</button></div>` : ''}
-    </div>`).join('')}</div></section>`).join('');
+    const skillCards = (stage, editable = true) => {
+        const specialization = stage === 'specializations';
+        const cardTag = specialization ? 'label' : 'div';
+        const valueTag = specialization ? 'span' : 'output';
+        return Object.entries(GROUPS).map(([group, title]) => `<section class="creation-skill-group"><h4>${title}</h4><div class="creation-skill-grid">${skills.filter(([path]) => path.startsWith(group + '.')).map(([path, label]) => `<${cardTag} class="creation-skill-card${specialization ? ' creation-skill-card--specialization' : ''}">
+            <span class="creation-skill-name"><strong>${escape(label)}</strong><span class="creation-skill-meta" data-skill-meta="${stage}:${path}"></span></span>
+            <${valueTag} class="creation-skill-value" data-result="${path}" data-result-stage="${stage}">5</${valueTag}>
+            ${specialization ? `<span class="creation-spec"><input type="checkbox" data-specialization="${path}" aria-label="Специализация: ${escape(label)}"> +3</span>` : editable ? `<div class="creation-stepper"><button type="button" class="btn btn-sm" data-adjust="-1" data-target="${stage}:${path}" aria-label="Уменьшить: ${escape(label)}">−</button><input type="number" min="0" max="${stage === 'lowers' ? 5 : 19}" value="0" data-stage="${stage}" data-skill="${path}" aria-label="${stage === 'lowers' ? 'Понижений на 3' : 'Добавить уровней'}: ${escape(label)}" class="form-control"><button type="button" class="btn btn-sm" data-adjust="1" data-target="${stage}:${path}" aria-label="Увеличить: ${escape(label)}">+</button></div>` : ''}
+        </${cardTag}>`).join('')}</div></section>`).join('');
+    };
     const purchaseCategory = template => template.attributes?.book_kind ? 'books'
         : ['belt', 'armor_plate'].includes(template.category) ? 'vest' : template.category;
     const purchaseCategoryLabel = category => category === 'vest' ? 'Разгрузки, пояса и бронеплиты' : getCategoryDisplay(category);

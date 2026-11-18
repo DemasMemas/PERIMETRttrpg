@@ -1,3 +1,6 @@
+CHARACTER_SIGHT_RANGE = 25
+
+
 def empty_dict():
     return {}
 

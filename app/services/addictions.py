@@ -7,6 +7,35 @@ from app.services.effects import normalize_effect_list
 WITHDRAWAL_DAYS = 28
 MAX_DAILY_CHECKS = 5
 _UNSET_PROFILE = object()
+NON_ADDICTIVE_MEDICINES = {
+    'анальгин (таблетка)', 'аспирин (таблетка)', 'ибупрофен (таблетка)', 'бутылек нашатыря',
+}
+RECLASSIFIED_PAINKILLERS = {'миколий', 'препарат 02'}
+ACCELERATING_STIMULANTS = {'адреналин', 'эпинефрин'}
+COMBAT_STIMULANTS = {
+    'стимулятор бык', 'стимулятор геракл', 'стимулятор грация',
+    'стимулятор б.о.л.т.', 'стимулятор болид', 'стимулятор орел',
+    'военный стимулятор пчела', 'научный стимулятор волкодав',
+    'стимулятор мозгоправ', 'стимулятор психолог-м', 'стимулятор покой',
+    'стимулятор гармония', 'подавитель эмоций', 'стимулятор воля',
+    'стимулятор воля-н', 'стимулятор скала', 'стимулятор скала-н',
+    'стимулятор гора', 'стимулятор гора-д',
+}
+NON_ADDICTIVE_STIMULANTS = {
+    'ингибитор', 'жаропонижающее средство "мороз"', 'стимулятор морковчатник',
+    'стимулятор "котик"', 'психостимулирующее "прорыв"', 'препарат к.о.д.',
+    'питательный стимулятор', 'стимулятор шумодав', 'стимулятор сова', 'стимулятор сова-н',
+}
+STIMULANT_RULE_NAMES = ACCELERATING_STIMULANTS | COMBAT_STIMULANTS | NON_ADDICTIVE_STIMULANTS
+NICOTINE_BRAND_CHANCES = {
+    'сигареты египетская сила': 4,
+    'сигареты гибралтарский пролив': 3,
+    'сигареты петр второй': 2,
+}
+
+
+def _normalized_item_name(item_name):
+    return str(item_name or '').strip().lower().replace('ё', 'е')
 
 
 def _number(value, default=0.0):
@@ -29,16 +58,13 @@ def _dose_multiplier(dose, values):
 
 
 def addiction_profile(item_name: str, price=0) -> Optional[Dict[str, Any]]:
-    name = str(item_name or '').strip().lower().replace('ё', 'е')
+    name = _normalized_item_name(item_name)
     price = _number(price, 0)
-    if not name:
+    if not name or name in NON_ADDICTIVE_MEDICINES or name in NON_ADDICTIVE_STIMULANTS:
         return None
 
     exact = {
-        'анальгин (таблетка)': ('analgin', 'Анальгин', 2, {2: 2, 3: 5, 4: 8, 5: 10, 6: 15}),
-        'ибупрофен (таблетка)': ('ibuprofen', 'Ибупрофен', 1, {2: 1, 3: 3, 4: 5, 5: 8, 6: 10}),
         'настойка боярышника': ('hawthorn', 'Настойка боярышника', 3, {2: 5, 3: 7, 4: 10, 5: 15, 6: 30}),
-        'питательный стимулятор': ('nutritional_stimulant', 'Питательный стимулятор', 4, {2: 2, 3: 4, 4: 5, 5: 10, 6: 15}),
         'борщевик': ('borshevik', 'Борщевик', 25, {2: 2, 3: 2, 4: 3, 5: 3, 6: 4}),
     }
     if name in exact:
@@ -55,7 +81,9 @@ def addiction_profile(item_name: str, price=0) -> Optional[Dict[str, Any]]:
         return {'key': 'alcohol', 'label': 'Алкоголь', 'chance': 1, 'multipliers': {}, 'kind': 'alcohol'}
 
     if any(token in name for token in ('самокрут', 'сигарет', 'сигарилл', 'сигар')):
-        if 'самокрут' in name:
+        if name in NICOTINE_BRAND_CHANCES:
+            chance = NICOTINE_BRAND_CHANCES[name]
+        elif 'самокрут' in name:
             chance = 5
         elif 'сигарилл' in name:
             chance = 2
@@ -75,40 +103,48 @@ def addiction_profile(item_name: str, price=0) -> Optional[Dict[str, Any]]:
         return {'key': 'caffeine', 'label': 'Кофеин', 'chance': 1, 'multipliers': {}, 'kind': 'caffeine'}
 
     pain_regen = any(token in name for token in (
-        'аспирин', 'обезболивающ', 'морфин', 'миколий', 'варвар', 'викинг', 'препарат 02',
+        'обезболивающ', 'морфин', 'миколий', 'варвар', 'викинг', 'препарат 02',
         'регенеративный стимулятор', 'стимпак',
     ))
     if pain_regen:
         key,label=('stimpaks','Стимпаки') if 'стимпак' in name else (
-            ('regenerative_stimulants','Регенеративные стимуляторы') if any(t in name for t in ('регенератив','миколий','препарат 02'))
+            ('regenerative_stimulants','Регенеративные стимуляторы') if 'регенератив' in name
             else ('painkiller_stimulants','Обезболивающие стимуляторы'))
         return {
             'key': key, 'label': label,
             'chance': 10, 'multipliers': {2: 3, 3: 5, 4: 7, 5: 8}, 'kind': 'medicine',
         }
-    accelerating = any(token in name for token in (
-        'адреналин', 'эпинефрин', 'грация', 'б.о.л.т.', 'болид', 'ускоряющий',
-    ))
-    if accelerating:
-        return {
-            'key': 'accelerating_stimulants', 'label': 'Ускоряющие стимуляторы',
-            'chance': 25, 'multipliers': {2: 2}, 'kind': 'medicine',
-        }
-    combat = any(token in name for token in (
+    if name in COMBAT_STIMULANTS or any(token in name for token in (
         'стимулятор орел', 'стимулятор пчела', 'стимулятор волкодав',
-    ))
-    if combat:
+    )):
         return {
             'key': 'combat_stimulants', 'label': 'Боевые стимуляторы',
             'chance': 20, 'multipliers': {2: 1.5, 3: 2, 4: 3}, 'kind': 'medicine',
+        }
+    if name in ACCELERATING_STIMULANTS or any(token in name for token in (
+        'адреналин', 'эпинефрин', 'ускоряющий',
+    )):
+        return {
+            'key': 'accelerating_stimulants', 'label': 'Ускоряющие стимуляторы',
+            'chance': 25, 'multipliers': {2: 2}, 'kind': 'medicine',
         }
     return None
 
 
 def resolve_addiction_profile(consumable_profile, template_name, price=0):
+    name = _normalized_item_name(template_name)
+    if name in NON_ADDICTIVE_MEDICINES:
+        return None
     if isinstance(consumable_profile, dict) and 'addiction' in consumable_profile:
+        if not consumable_profile.get('editor_version') and (
+            name in STIMULANT_RULE_NAMES or name in NICOTINE_BRAND_CHANCES
+        ):
+            return addiction_profile(template_name, price)
         stored=consumable_profile['addiction']
-        if isinstance(stored,dict) and stored.get('key')=='pain_regen_stimulants':
+        if isinstance(stored, dict) and (
+            stored.get('key') == 'pain_regen_stimulants'
+            or (name in RECLASSIFIED_PAINKILLERS and stored.get('key') == 'regenerative_stimulants')
+        ):
             resolved=addiction_profile(template_name,price)
             if resolved:return {**stored,'key':resolved['key'],'label':resolved['label']}
         return stored

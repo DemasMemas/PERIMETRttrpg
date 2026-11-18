@@ -93,7 +93,7 @@ def shoot(arena, **kwargs):
 
 def cover(arena, height):
     item = LocationObject(location_id=arena[1].id, type='cover', name='Wall', tile_x=5, tile_y=1,
-                          properties={'height': height, 'hp': 100, 'max_hp': 100})
+                          properties={'height': height, 'cover_hp': 100, 'cover_max_hp': 100})
     db.session.add(item)
     db.session.commit()
     return item

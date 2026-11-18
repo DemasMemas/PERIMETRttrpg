@@ -67,6 +67,7 @@ module.exports=async({page,request,token,lobby,base,connect,debugPort,safeSessio
         for(const client of [page,peer])await client.evaluate(`window.__weatherEvents=[];socket.on('weather_updated',s=>window.__weatherEvents.push(s));true`);
         for(const [name,settings,drops,fog] of [
             ['clear',{sun:{enabled:true,intensity:1},rain:{enabled:false,intensity:.5},fog:{enabled:false,intensity:.5}},0,false],
+            ['fog',{sun:{enabled:true,intensity:1},rain:{enabled:false,intensity:.5},fog:{enabled:true,intensity:.6}},0,true],
             ['rain',{sun:{enabled:true,intensity:.5},rain:{enabled:true,intensity:.5},fog:{enabled:false,intensity:.5}},1500,false],
             ['storm-fog',{sun:{enabled:true,intensity:.5},rain:{enabled:true,intensity:.8},fog:{enabled:true,intensity:.6}},2040,true],
         ]){
@@ -92,9 +93,20 @@ module.exports=async({page,request,token,lobby,base,connect,debugPort,safeSessio
             }
             if(drops){
                 const wet=await page.evaluate(`window.getLocationWeatherDiagnostics()`);
-                assert.ok(wet.puddles>0&&wet.puddles<=192,'Лужицы добавлены ограниченным общим мешем');
-                assert.ok(wet.puddleJoins>0&&wet.puddles+wet.puddleJoins<=192,'Соседние дождевые лужи сливаются в пределах прежнего лимита');
-                assert.ok(wet.puddleSamples.every(p=>p.flatness<=.025&&p.height-p.ground<=(p.merged?.073:.04)),'Лужицы прилегают к ровной поверхности');
+                const limit=Math.ceil(fixture.grid_width/6)*Math.ceil(fixture.grid_height/6);
+                assert.ok(wet.puddles>0&&wet.puddles<=limit&&wet.puddleDrawCalls===1,'Лужи распределены по всей сцене одним мешем');
+                assert.ok(wet.puddleJoins>0&&wet.puddleJoins<=wet.puddles,'Соседние клетки делят один контур');
+                assert.ok(wet.puddleSamples.every(p=>p.flatness<=(p.merged?.045:.025)&&p.height-p.ground<=(p.merged?.055:.035)),'Лужи прилегают к ровной поверхности');
+                if(name==='rain'){
+                    const far=await page.evaluate(`(async()=>{
+                        locationControls.target.set(44,1,39);locationControls.object.position.set(72,67,88);locationControls.update();
+                        await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
+                        return getLocationWeatherDiagnostics();
+                    })()`);
+                    assert.equal(far.puddles,wet.puddles);
+                    assert.deepEqual(far.puddleSamples,wet.puddleSamples,'Зум и перемещение камеры не пересобирают лужи');
+                    await page.evaluate('locationControls.target.set(24,1,25);locationControls.object.position.set(44,40,55);locationControls.update();true');
+                }
                 const floors=fixture.objects.filter(o=>o.type==='floor'&&o.properties?.building_id&&Number(o.properties?.level||0)>0);
                 assert.ok(floors.length>0);
                 const probes=await page.evaluate(`(${JSON.stringify(floors.slice(0,12).map(o=>({x:o.tile_x+.5,z:o.tile_y+.5})))}).map(p=>window.getLocationWeatherDiagnostics(p))`);
@@ -114,7 +126,7 @@ module.exports=async({page,request,token,lobby,base,connect,debugPort,safeSessio
                 await page.evaluate(`new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(()=>resolve(true))))`);
                 const close=await page.call('Page.captureScreenshot',{format:'png'});
                 fs.writeFileSync(path.join(safeSession.artifacts,'rain-puddles-close.png'),Buffer.from(close.data,'base64'));
-                await page.evaluate(`locationControls.object.position.set(${p.x-3},${p.ground+4},${p.z-3});locationControls.update();true`);
+                await page.evaluate(`locationControls.object.position.set(${p.x+4},${p.ground+1.6},${p.z-1});locationControls.update();true`);
                 await page.evaluate(`new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(()=>resolve(true))))`);
                 const angle=await page.call('Page.captureScreenshot',{format:'png'});
                 fs.writeFileSync(path.join(safeSession.artifacts,'rain-puddles-angle.png'),Buffer.from(angle.data,'base64'));

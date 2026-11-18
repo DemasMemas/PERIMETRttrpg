@@ -112,6 +112,8 @@ def install(item,record,replacing=None):
             raise ValidationError(f'Сначала снимите {label} с крепления пояса')
     if previous and previous['ruleId'] == 'armor-g73' and record.get('ruleId') != 'armor-g73' and item.get('holsterWeaponId'):
         raise ValidationError('Сначала освободите кобуру')
+    if previous and previous['ruleId'] == 'armor-g56' and record.get('ruleId') != 'armor-g56' and 'sheathWeaponId' in item:
+        raise ValidationError('Сначала снимите ножны с дополнительного крепления')
     if previous and previous.get('ruleId') in {'armor-a15','armor-a31'} and not any(
             mod.get('ruleId') in {'armor-a15','armor-a31'} for mod in proposed if isinstance(mod,dict)):
         from app.services.auto_injector import loaded
@@ -392,7 +394,8 @@ def belt_general_pouch_limit(item,lobby_id=None):
     attrs=(template.attributes or {}) if template else (item.get('attributes') or {})
     base=attrs.get('max_pouches',2)
     if type(base) is not int or not 0<=base<=20:base=2
-    return base+(0 if item.get('extraStoredItem') else int(rule(item,'extra_belt_pouches')))+int(rule(item,'free_pouch_mounts'))
+    free_mounts = max(0, int(rule(item, 'free_pouch_mounts')) - int('sheathWeaponId' in item))
+    return base+(0 if item.get('extraStoredItem') else int(rule(item,'extra_belt_pouches')))+free_mounts
 
 
 def belt_pouch_limit(item,lobby_id=None):
@@ -480,13 +483,17 @@ def family(item):
     from app.services.combat import CombatService
     template=CombatService._equipment_template(item)
     category=item.get('category') or (template.category if template else None)
+    attrs=CombatService._template_attributes(item)
+    names=(attrs.get('catalog_name'), item.get('name'), item.get('model'), template.name if template else None)
+    if category in {None, 'helmet'} and (attrs.get('modification_category') == 'Ушанка' or any(
+            re.fullmatch(r'(?:прочее\s+)?ушанка', name.strip(), re.IGNORECASE) for name in names if isinstance(name, str))):
+        return 'Ушанка'
     if category=='weapon' or item.get('model'):
         names={'pistol':'Пистолеты','shotgun':'Дробовики','submachine_gun':'Пистолеты-пулеметы','assault_rifle':'Штурмовые винтовки и карабины',
             'sniper_rifle':'Снайперские винтовки','grenade_launcher':'Гранатометы','machine_gun':'Пулемёты'}
         if re.search(r'штурмов|карабин',CombatService._weapon_subcategory(item)):return 'Штурмовые винтовки и карабины'
         return names.get(CombatService._weapon_class(item))
-    attrs=CombatService._template_attributes(item)
-    if attrs.get('soft_headwear') and str(item.get('name','')).casefold()!='ушанка':return None
+    if attrs.get('soft_headwear'):return None
     if attrs.get('modification_category'):return attrs['modification_category']
     if category=='gas_mask':return 'Противогазы'
     if category=='belt':return 'Пояс'

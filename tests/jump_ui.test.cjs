@@ -51,6 +51,7 @@ test('двойной клик по точке не отправляет втор
         getPointerWorldPoint:()=>({x:3.8,z:2.5}),currentLocationData:{grid_width:20,grid_height:20},
         Server:{performLocationCombatAction:async()=>{calls++;await gate;return{state:{},jump:{outcome:'midpoint',check:{total:1,difficulty:10}}};}},
         window:{currentLobbyId:1},getCurrentLocationId:()=>3,setCombatState(){},showNotification(){},
+        notifyWillFailure:()=>false,
         clearPendingCombatAction(){cleared++;context.pendingCombatAction=null;}});
     const start=source.indexOf('async function resolveCombatPointSelection(');
     vm.runInContext(source.slice(start,source.indexOf('\n}',start)+2),context);

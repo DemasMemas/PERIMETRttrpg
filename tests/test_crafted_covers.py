@@ -138,7 +138,9 @@ def test_deferred_placement_waits_for_full_payment_and_resumes_once(cover_game,c
         'item_path':initial['item_path'],'item_id':initial['item_id']})
     assert response.status_code==200 and response.json['pending_action'],response.json
     assert LocationObject.query.count()==0 and character.data['inventory']['pockets']==original
-    row=db.session.get(DeferredCombatAction,'cover-deferred');assert row.status=='ready'
+    row=db.session.get(DeferredCombatAction,'cover-deferred');assert row.status=='paying'
+    CombatService.end_turn(actor.location_id,pair['actor_user']['id'],actor.id)
+    assert row.status=='ready'
     paid_ap=actor.action_points_current
     resumed=client.post(url,headers=auth_headers(pair['actor_user']),json={'location_character_id':actor.id,
         'action_key':'place_cover','resume_pending_action_id':row.id,'attribute_choice':{'x':29}})

@@ -1,10 +1,25 @@
 import { findLocationAsset } from './locationAssetCatalog.js';
 
+export function defaultAssetCoverClass(asset) {
+    const id = asset?.id || '';
+    if (/^crafted_cover_m1[89]$|^crafted_cover_m2[0-3]$/.test(id)) {
+        return ['conditional', 'flimsy', 'strong', 'very_strong', 'strong', 'strong'][Number(id.slice(-2)) - 18];
+    }
+    if (/concrete|monument|masonry_debris|^ruin_wall|^rock$|swamp_rock|household_well/.test(id)) return 'very_strong';
+    if (/bunker_hatch|sandbag|chainlink|safe_|corrugated_iron|rusty_metal|car_|electric_pole|power_tower|transformer|dumpster|generator|wood_stove|sauna_stove/.test(id)) return 'strong';
+    if (/cardboard|bush|shrub|grass|fern|wheat|reeds|litter|rug|clothes_line/.test(id)
+        || asset?.kind === 'lamp' || asset?.group === 'Посуда' || asset?.group === 'Огонь') return 'conditional';
+    if (/tire|broken_boards|^fence$|^tent$|bucket_plastic|laundry_basket|glass|mirror|poster|lamp|bulb/.test(id)) return 'flimsy';
+    return asset?.passable ? 'conditional' : 'medium';
+}
+
 export function placementForLocationAsset(asset, seed = asset.id) {
     const properties=asset.properties?JSON.parse(JSON.stringify(asset.properties)):{};
     for(const key of ['structural_damage','structural_debris']){
         if(properties[key]?.version===1)properties[key].seed=String(seed);
     }
+    properties.cover_class ??= defaultAssetCoverClass(asset);
+    if (asset.id === 'art_chainlink_fence') properties.mesh_cover = true;
     return {
         type: asset.baseType || asset.id,
         visualAsset: asset.baseType ? asset.id : null,

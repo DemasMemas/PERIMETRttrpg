@@ -1,5 +1,11 @@
 """Publish sheet changes only to subscribers who still have access."""
 
+import logging
+
+from flask import current_app
+from sqlalchemy import event
+from sqlalchemy.orm import Session
+
 from app.extensions import db, socketio
 from app.models import Lobby, LobbyCharacter, LocationCharacter
 from app.services.character import CharacterService
@@ -8,6 +14,33 @@ from app.services.character_appearance import public_character_appearance
 
 
 _subscriptions = {}
+logger = logging.getLogger(__name__)
+
+
+def queue_witness_sheet_update(character_id):
+    db.session.info.setdefault('witness_sheet_updates', set()).add(character_id)
+
+
+@event.listens_for(Session, 'after_commit')
+def _publish_witness_sheet_updates(session):
+    if session.in_nested_transaction():
+        return
+    witnesses = session.info.pop('witness_sheet_updates', ())
+    if not witnesses:
+        return
+    # Читаем сохранённый лист в отдельной сессии: SQL внутри завершённой транзакции недоступен.
+    with current_app.app_context():
+        for character_id in sorted(witnesses):
+            try:
+                emit_character_update({'character_id': character_id, 'updates': {'data': None},
+                                       'source': 'witness_human_death'})
+            except Exception:
+                logger.exception('Не удалось отправить обновление листа свидетеля %s', character_id)
+
+
+@event.listens_for(Session, 'after_rollback')
+def _clear_witness_sheet_updates(session):
+    session.info.pop('witness_sheet_updates', None)
 
 
 def register_subscription(sid, character_id, user_id):

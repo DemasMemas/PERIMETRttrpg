@@ -36,18 +36,24 @@ export async function showCrafting({characterId,lobbyId,onSaved,recipeId='',stat
     header.append(button('×',close));panel.append(header);
     const body=el('div',null,'crafting-body');panel.append(body);
     let snapshot,busy=false,selectedRecipe=recipeId,searchValue='',generation=0,snapshotGeneration=0;
+    let operationError='';
+    const meatBatchSettings = new Map();
     let activeTab=modificationTarget?'modifications':'creation',selectedGroup='Все';
     const targetKey=entry=>String(entry.item.id || JSON.stringify(entry.path));
     const modSelection={target:modificationTarget && String(modificationTarget.id || JSON.stringify(modificationTarget.path))};
     const act=async(operation,payload={},targetId=characterId,revision=snapshot.revision)=>{
-        if(busy)return;busy=true;
+        if(busy)return;busy=true;operationError='';
         body.querySelectorAll('button,select,input').forEach(e=>{e.disabled=true;});
         try{
             const response=await Server.craft(targetId,{operation,operation_id:crypto.randomUUID(),character_revision:revision,...payload});
             if(operation==='modify')activeTab='creation';
             if(targetId===characterId)await onSaved?.(response.data);
             await refresh();return response;
-        }catch(error){showNotification(error.message,'system');await refresh();}
+        }catch(error){
+            operationError = error.message || 'Не удалось выполнить действие с крафтом.';
+            showNotification(operationError,'system');
+            await refresh();
+        }
         finally{busy=false;}
     };
     const refresh=async()=>{
@@ -56,6 +62,11 @@ export async function showCrafting({characterId,lobbyId,onSaved,recipeId='',stat
         if(requested!==snapshotGeneration||!modal.isConnected)return;
         snapshot=fresh;
         body.replaceChildren();
+        if (operationError) {
+            const error = el('p', operationError, 'error-message');
+            error.setAttribute('role', 'alert');
+            body.append(error);
+        }
         const toolbar=el('div',null,'crafting-toolbar');
         toolbar.append(button('Обновить',refresh));
         if(snapshot.is_gm)toolbar.append(button('Подтверждения условий сцены',showRequests));
@@ -167,8 +178,17 @@ export async function showCrafting({characterId,lobbyId,onSaved,recipeId='',stat
                 }
             }
             const parts=recipe.tools_text.split(',').at(-1).split('/');
-            const tool=select('Вариант приготовления',(ammoCategory===2?[65]:recipe.difficulty_options.length?recipe.difficulty_options:[0]).map((difficulty,i)=>[i,`${parts[i]?.trim()||'По рецепту'} · исходная СЛ ${difficulty}`]));
-            if(recipe.difficulty_options.length>1)detail.append(tool);
+            const tool=select(recipe.batch_max?'Посуда':'Вариант приготовления',(ammoCategory===2?[65]:recipe.difficulty_options.length?recipe.difficulty_options:[0]).map((difficulty,i)=>[i,`${parts[i]?.trim()||'По рецепту'} · исходная СЛ ${difficulty}`]));
+            const batch = recipe.batch_max ? select('Количество кусков мяса',
+                Array.from({length:recipe.batch_max}, (_, index) => [index + 1, String(index + 1)])) : null;
+            if (batch) {
+                const previous = meatBatchSettings.get(recipe.id);
+                if (previous) {
+                    batch.value = previous.count;
+                    tool.value = previous.tool;
+                }
+                detail.append(el('label', 'Количество кусков мяса'), batch, el('label', 'Посуда'), tool);
+            } else if(recipe.difficulty_options.length>1)detail.append(tool);
             const approval=snapshot.state.tool_requests?.filter(r=>r.recipe_id===recipe.id&&r.environment&&r.status==='approved'&&!r.used).at(-1);
             const preview=el('div');detail.append(preview);
             const updateQuote=async()=>{
@@ -177,10 +197,17 @@ export async function showCrafting({characterId,lobbyId,onSaved,recipeId='',stat
                     const ammoPayload=ammo?{ammo_template_id:Number(ammo.value),ammo_variant:ammoVariant.value}:{};
                     if(stationId)ammoPayload.station_id=stationId;
                     if(grenadeChoices.length)ammoPayload.grenade_paths=grenadeChoices.map(choice=>grenades[Number(choice.value)]?.path||[]);
+                    if (batch) {
+                        ammoPayload.batch_count = Number(batch.value);
+                        meatBatchSettings.set(recipe.id, {count: batch.value, tool: tool.value});
+                    }
                     const response=await Server.craft(characterId,{operation:'quote',recipe_id:recipe.id,tool_option:Number(tool.value),approval_id:approval?.id,...ammoPayload});
                     if(quoteGeneration!==generation||!modal.isConnected)return;
                     const plan=response.result;preview.replaceChildren(el('p',`Результат: ${plan.recipe.output_name} × ${plan.recipe.output_count}`),
                         el('p',`Итоговая СЛ ${plan.difficulty}${plan.automatic_success?' · автоуспех':''}`));
+                    if (plan.meat_inputs?.length) {
+                        preview.append(el('p', `В партии: ${plan.meat_inputs.map(item => `${item.name} × ${item.amount}`).join(', ')}`));
+                    }
                     if(plan.station_name)preview.append(el('p',`Устройство: ${plan.station_name}${plan.spoil_chance?` · риск порчи результата ${plan.spoil_chance}%`:''}`));
                     if(plan.generator_difficulty_bonus)preview.append(el('p',`Питание от генератора · −${plan.generator_difficulty_bonus} к СЛ`));
                     if(approval)preview.append(el('p','ГМ подтвердил условие сцены. СЛ не меняется.'));
@@ -208,6 +235,7 @@ export async function showCrafting({characterId,lobbyId,onSaved,recipeId='',stat
                 }catch(error){if(quoteGeneration===generation)preview.replaceChildren(el('p',error.message));}
             };
             tool.onchange=updateQuote;
+            if (batch) batch.onchange=updateQuote;
             for(const choice of grenadeChoices)choice.onchange=updateQuote;
             if(ammo){ammo.onchange=()=>{fillAmmoVariants();void updateQuote();};ammoVariant.onchange=updateQuote;}
             await updateQuote();

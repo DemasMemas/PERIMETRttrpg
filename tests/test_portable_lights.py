@@ -8,7 +8,7 @@ from sqlalchemy.orm.attributes import flag_modified
 from app.extensions import db, socketio
 from app.models import LocationCombatState,LocationObject
 from app.services.combat import CombatService
-from app.services.portable_lights import advance,advance_ground,bindings,covers,ergonomics,ground_sources,illumination,ready_sources,shooting,start_battle
+from app.services.portable_lights import advance,advance_ground,bindings,covers,equipped_device_visuals,ergonomics,ground_sources,illumination,ready_sources,shooting,start_battle
 from test_grenade_rules import grenade_game
 
 
@@ -23,6 +23,7 @@ def test_belt_mount_frees_hand_keeps_power_and_stops_after_belt_is_removed(clien
     from app.services.portable_lights import held_hand
     actor=install(grenade_game['actor_location']);belt_mount(actor);before=actor.action_points_current
     assert operate(client,grenade_game,auth_headers,'prepare',mount='hand').status_code==200
+    assert equipped_device_visuals(actor.character.data, ready_sources(actor)) == {'flashlight_hand': None}
     assert operate(client,grenade_game,auth_headers,'toggle').status_code==200
     assert held_hand(actor.character.data)
     response=operate(client,grenade_game,auth_headers,'prepare',mount='belt');assert response.status_code==200,response.json
@@ -30,8 +31,11 @@ def test_belt_mount_frees_hand_keeps_power_and_stops_after_belt_is_removed(clien
     assert len(bindings(actor.character.data))==1 and bindings(actor.character.data)[0]['on']
     assert not held_hand(actor.character.data)
     source=ready_sources(actor)[0];assert source['mount']=='belt' and source['y']==CombatService.physical_position(actor)['height']+1
+    assert source['visual_model'] == 'flashlight_belt'
+    assert equipped_device_visuals(actor.character.data, [source]) == {'flashlight_belt': '#ffe5b5'}
     data=deepcopy(actor.character.data);data['equipment'].pop('belt');actor.character.data=data;db.session.commit()
     assert not ready_sources(actor)
+    assert equipped_device_visuals(actor.character.data, []) == {}
     advance(data,600);assert not bindings(data)[0]['on']
     assert data['inventory']['pockets'][0]['lightPower']['uses_left']==10
     actor.character.data=data;db.session.commit()
@@ -62,6 +66,32 @@ def test_active_glow_can_move_to_belt_without_restarting_timer(client,grenade_ga
     response=operate(client,grenade_game,auth_headers,'prepare',mount='belt');assert response.status_code==200,response.json
     assert not held_hand(actor.character.data) and ready_sources(actor)[0]['radial']
     assert actor.character.data['inventory']['pockets'][0]['glowState']['remaining_seconds']==1740
+
+
+@pytest.mark.parametrize('name,duration', [('Светящаяся палочка', 600), ('ХИС', 1800)])
+def test_glow_can_be_mounted_before_ignition(client, grenade_game, auth_headers, name, duration):
+    actor = grenade_game['actor_location']
+    data = deepcopy(actor.character.data)
+    data['inventory'] = {'pockets': [{'id': f'light-{actor.id}', 'name': name, 'quantity': 2}]}
+    actor.character.data = data
+    db.session.commit()
+    belt_mount(actor)
+    response = operate(client, grenade_game, auth_headers, 'prepare', mount='belt')
+    assert response.status_code == 200, response.json
+    assert not ready_sources(actor)
+    items = actor.character.data['inventory']['pockets']
+    assert [item['quantity'] for item in items] == [1, 1]
+    assert bindings(actor.character.data)[0]['id'] == items[1]['id']
+
+    response = client.post(f'/lobbies/characters/{actor.character_id}/portable-lights',
+        headers=auth_headers(grenade_game['actor_user']),
+        json={'operation': 'ignite', 'path': ['inventory', 'pockets', 1],
+              'source_id': items[1]['id'], 'character_revision': actor.character.revision})
+    assert response.status_code == 200, response.json
+    assert response.json['light_operation']['action_points'] == 1
+    assert ready_sources(actor)[0]['mount'] == 'belt'
+    assert ready_sources(actor)[0]['radial']
+    assert actor.character.data['inventory']['pockets'][1]['glowState']['remaining_seconds'] == duration
 
 
 def test_unloading_belt_discount_includes_attached_light_once(grenade_game):
@@ -137,17 +167,22 @@ def test_visor_mount_light_and_nvg_keep_real_power_and_stop_when_visor_is_remove
     import pytest
     actor=grenade_game['actor_location'];data=deepcopy(actor.character.data)
     visor={'id':'mounted-visor','name':'Забрало','slotType':'visor','modifications':[make_record('armor-g18')],
-        'installedModules':[{'id':'visor-nvg','name':'ПНВ','slotType':'nvg','active':True,'lightPower':{'uses_left':8}},
+        'installedModules':[{'id':'visor-nvg','name':'Очки ПНВ-1п','slotType':'nvg','active':True,'lightPower':{'uses_left':8}},
             {'id':'visor-light','name':'Фонарик','category':'misc','slotType':'light','quantity':1,'lightPower':{'uses_left':7}}]}
     data.setdefault('equipment',{})['helmet']={'id':'helmet','category':'helmet','installedModules':[visor]}
     actor.character.data=data;db.session.commit();path=['equipment','helmet','installedModules',0,'installedModules',1]
     status=client.get(f'/lobbies/characters/{actor.character_id}/portable-lights',headers=auth_headers(grenade_game['actor_user']))
     assert next(item for item in status.json['lights'] if item['id']=='visor-light')['visor_mount']
+    assert equipped_device_visuals(actor.character.data, []) == {'pnv1p': None, 'flashlight_visor': None}
     before=actor.action_points_current
     assert operate(client,grenade_game,auth_headers,'prepare',path=path,source_id='visor-light',mount='head').status_code==200
     assert operate(client,grenade_game,auth_headers,'toggle',path=path,source_id='visor-light').status_code==200
     assert actor.action_points_current==before-2
     assert uses_nvg(actor.character.data) and ready_sources(actor)[0]['mount']=='head'
+    assert ready_sources(actor)[0]['visual_model'] == 'flashlight_visor'
+    assert equipped_device_visuals(actor.character.data, ready_sources(actor)) == {
+        'pnv1p': None, 'flashlight_visor': '#ffe5b5',
+    }
     owned=deepcopy(actor.character.data);advance(owned,600)
     assert owned['equipment']['helmet']['installedModules'][0]['installedModules'][1]['lightPower']['uses_left']==6
     visor=owned['equipment']['helmet']['installedModules'][0]
@@ -155,6 +190,7 @@ def test_visor_mount_light_and_nvg_keep_real_power_and_stop_when_visor_is_remove
     owned['equipment']['helmet']['installedModules']=[];owned['inventory']['backpack']=[visor]
     actor.character.data=owned
     assert not uses_nvg(owned) and ready_sources(actor)==[]
+    assert equipped_device_visuals(owned, []) == {}
 
 
 def test_visor_accepts_one_device_with_mount_and_preserves_legacy_items(client, grenade_game, auth_headers):
@@ -233,18 +269,18 @@ def test_beam_limits_sideways_target_and_real_wall(grenade_game):
     assert not covers(actor,target)
 
 
-def test_thirty_five_meter_beam_preserves_five_meter_end_width(grenade_game):
+def test_twenty_five_meter_beam_preserves_five_meter_end_width(grenade_game):
     actor=install(grenade_game['actor_location'],on=True);target=grenade_game['target_location']
     source=ready_sources(actor)[0]
-    assert source['range']==35 and source['end_width']==5
-    target.pos_x,target.pos_y=actor.pos_x+35,actor.pos_y;assert covers(actor,target)
-    target.pos_x=actor.pos_x+35.01;assert not covers(actor,target)
-    target.pos_x,target.pos_y=actor.pos_x+17.5,actor.pos_y+1.2;assert covers(actor,target)
+    assert source['range']==25 and source['end_width']==5
+    target.pos_x,target.pos_y=actor.pos_x+25,actor.pos_y;assert covers(actor,target)
+    target.pos_x=actor.pos_x+25.01;assert not covers(actor,target)
+    target.pos_x,target.pos_y=actor.pos_x+12.5,actor.pos_y+1.2;assert covers(actor,target)
     target.pos_y=actor.pos_y+1.4;assert not covers(actor,target)
 
 
 @pytest.mark.parametrize('name, radius', [('ХИС', 8), ('Светящаяся палочка', 5)])
-def test_carried_glow_only_illuminates_forward_sector(client, grenade_game, auth_headers, name, radius):
+def test_carried_glow_illuminates_in_all_directions(client, grenade_game, auth_headers, name, radius):
     actor = grenade_game['actor_location']
     target = grenade_game['target_location']
     data = deepcopy(actor.character.data)
@@ -254,12 +290,15 @@ def test_carried_glow_only_illuminates_forward_sector(client, grenade_game, auth
     db.session.commit()
     assert operate(client, grenade_game, auth_headers, 'ignite').status_code == 200
     source = ready_sources(actor)[0]
-    assert source['range'] == radius and source['arc_degrees'] == 150
-    for angle, lit in [(0, True), (74, True), (76, False), (-74, True), (-76, False), (180, False)]:
+    assert source['range'] == radius and source['radial']
+    for angle in (0, 90, -90, 180):
         angle = math.radians(angle)
         target.pos_x = actor.pos_x + 2 * math.cos(angle)
         target.pos_y = actor.pos_y + 2 * math.sin(angle)
-        assert bool(covers(actor, target, objects=[])) is lit
+        assert covers(actor, target, objects=[])
+    target.pos_x = actor.pos_x - radius - 1
+    target.pos_y = actor.pos_y
+    assert not covers(actor, target, objects=[])
 
 
 @pytest.mark.parametrize('mount,posture,height,forward',[('head','standing',1.65,.35),('head','prone',.32,.80),
@@ -285,8 +324,8 @@ def test_old_light_template_serializes_current_range_without_changing_storage(na
     from app.schemas.templates import ItemTemplateSchema
     source={'name':name,'category':'misc','description':previous,'attributes':{}}
     public=ItemTemplateSchema().dump(source)
-    assert '35 м' in public['description'] and '5 м' in public['description']
-    assert public['description'].count('35')==1 and '55' not in public['description']
+    assert '25 м' in public['description'] and '5 м' in public['description']
+    assert public['description'].count('25')==1 and '35' not in public['description'] and '55' not in public['description']
     assert source['description']==previous
 
 

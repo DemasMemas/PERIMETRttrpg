@@ -283,6 +283,8 @@ test('deleting ground container closes the open exchange and removes its model',
         applyFogOfWar: () => {},
         isFireObject: () => false,
         isObjectLightSource: () => false,
+        isGroundItem: object => object?.type === 'ground_item',
+        refreshLocationFloorMenu: () => {},
         applyLocationLighting: () => {},
         syncPortableLights: () => {},
     });
@@ -329,7 +331,7 @@ test('ground items remain accessible beneath another character', () => {
     const end = source.indexOf('function getFogVisionSources()', start);
     const menu = source.slice(start, end);
     assert.match(menu, /if \(groundItemsHere\) \{[\s\S]*?label: 'Вещи',[\s\S]*?allowAlways: true/);
-    assert.match(menu, /showContainerInteractionMenu\(groundItemsHere\)/);
+    assert.match(menu, /showContainerInteractionMenu\(groundItemsHere, false, characterId\)/);
 });
 
 test('combat state refreshes model health and effects after GM healing', () => {

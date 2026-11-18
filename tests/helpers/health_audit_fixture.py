@@ -11,10 +11,19 @@ def install(app, db, check_database, run_id):
     original = effects.random
     draws = []
     armed = []
+    pain_draws = []
+    armed_pain = []
 
     def randint(low, high):
         import sys
-        if sys._getframe(1).f_code.co_name != '_intoxication_check':
+        caller = sys._getframe(1).f_code.co_name
+        if caller == 'pain_gain_allowed' and armed_pain:
+            check_database()
+            value = armed_pain.pop(0)
+            assert low <= value <= high
+            pain_draws.append(value)
+            return value
+        if caller != '_intoxication_check':
             return original.randint(low, high)
         check_database()
         value = armed.pop(0) if armed else 100
@@ -38,14 +47,18 @@ def install(app, db, check_database, run_id):
     def fixture_control():
         check_database()
         if request.method == 'POST':
-            values = (request.get_json() or {}).get('rolls', [])
+            body = request.get_json() or {}
+            values = body.get('rolls', [])
             assert isinstance(values, list) and all(type(v) is int and 1 <= v <= 100 for v in values)
             armed[:] = values
+            values = body.get('pain_rolls', [])
+            assert isinstance(values, list) and all(type(v) is int and 1 <= v <= 100 for v in values)
+            armed_pain[:] = values
         descriptions = ['Препарат "Радист". Ампула.', 'Йод-плюс. Ампула. -2.5 радиации',
                         'Стимулятор Сова-Н. Действует 8 часов. +1 истощения', 'Стимулятор Воля. Ампула.']
         skala_profiles={name:parse_consumable_effects(f'{name}. Ампула. Действует 3 хода.')
             for name in ('Стимулятор Скала','Стимулятор Скала-Н')}
-        return {'run_id': run_id, 'draws': draws, 'pending': len(armed),
+        return {'run_id': run_id, 'draws': draws, 'pending': len(armed), 'pain_draws': pain_draws,
                 'skala_profiles':skala_profiles,
                 'catalog_profiles': [{'name': text.split('.')[0], 'description': text,
                                       'profile': parse_consumable_effects(text)} for text in descriptions]}

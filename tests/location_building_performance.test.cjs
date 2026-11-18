@@ -26,6 +26,7 @@ test('furniture batches retain architecture and terrain, with idempotent socket 
     const {A}=await modules(),calls={};
     const floor={id:1,type:'floor',tile_x:4,tile_y:4,properties:{building_id:'b',level:0,dimensions:{width:6,depth:6,height:.12}}};
     const c=createSceneContext({...A,performance,currentLocationId:1,currentLocationData:{objects:[floor],grid_width:36,grid_height:36},editorSelections:[],
+        isGroundItem:object=>object?.type==='ground_item',
         isObjectLightSource:o=>o?.type==='campfire',...Object.fromEntries(['addLocationObjectMesh','removeLocationObjectMesh','refreshArchitecturalMeshes','rebuildGrassDetailMesh','queueStaticLightFieldRefresh','applyFogOfWar','refreshLocationDarkness','refreshLocationFloorMenu','invalidateMovementMapCache','notifyEditorBuildingsChanged','refreshObjectLightSource'].map(name=>[name,()=>{calls[name]=(calls[name]||0)+1}]))});
     vm.runInContext(code('buildingGrassChangedTiles')+'\n'+code('applyLocationObjectsChange'),c);
     const batch={location_id:1,objects:[{id:2,type:'household_bed_single',properties:{building_id:'b',level:0}}]};

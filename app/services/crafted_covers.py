@@ -125,7 +125,8 @@ def apply(actor,data,prepared,payload):
                 'dimensions':dict(zip(('width','depth','height'),profile['size'])),
                 'cover_max_hp':maximum,'cover_hp':hp,'cover_base_physical_protection':protection,
                 'cover_physical_protection':min(protection,int(saved.get('physical_protection',round(protection*hp/maximum)))),
-                'cover_class':'medium','blocks_movement':key!='recipe-m18','traversal_category':'passable' if key=='recipe-m18' else 'climbable',
+                'cover_class':{0:'conditional',5:'flimsy',40:'strong',60:'very_strong'}[profile['protection']],
+                'blocks_movement':key!='recipe-m18','traversal_category':'passable' if key=='recipe-m18' else 'climbable',
                 'interactions':['move_crafted_cover','recover_crafted_cover'] if profile['recover'] else [],**position}
             parent,index=inventory_slot(data,payload['item_path'])
             if source.get('quantity',1)==1:parent.pop(index)

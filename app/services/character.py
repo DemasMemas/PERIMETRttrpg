@@ -452,6 +452,8 @@ class CharacterService:
             for key in ('unstableJump','jumpSupport','slipperyMovement','grenadeReaction','heldWaterItem'):
                 jump_meta.pop(key,None)
         normalize_inventory_ammo_stacks(character_data)
+        from app.services.cosmetic_masks import normalize_character_masks
+        normalize_character_masks(character_data)
         from app.services.weapon_catalog import normalize_character_weapons
         normalize_character_weapons(character_data)
         from app.services.character_creation import validate_trait_selection
@@ -586,6 +588,8 @@ class CharacterService:
                 updates.get('_manual_fields'),
             )
             normalize_inventory_ammo_stacks(character_data)
+            from app.services.cosmetic_masks import normalize_character_masks
+            normalize_character_masks(character_data)
             from app.services.weapon_catalog import normalize_character_weapons
             normalize_character_weapons(character_data)
             from app.services.weapon_grip import validate_saved_pair

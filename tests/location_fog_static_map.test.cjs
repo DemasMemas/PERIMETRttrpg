@@ -11,6 +11,8 @@ const end = source.indexOf('\nfunction closeTeamManagementModal(', start);
 test('terrain decorations and structures remain visible outside line of sight', () => {
     assert.ok(start >= 0 && end > start);
     let canSee = false;
+    let onViewedFloor = true;
+    let overlayRefreshes = 0;
     const tree = { visible: false, userData: { objType: 'tree', tileX: 2, tileZ: 2 } };
     const anomaly = { visible: true, userData: { objType: 'anomaly', tileX: 3, tileZ: 3 } };
     const wall = { visible: false, userData: { locationObject: { type: 'wall', x: 4, y: 4 } } };
@@ -18,8 +20,7 @@ test('terrain decorations and structures remain visible outside line of sight', 
     const character = { model: { visible: true }, label: { visible: true } };
     for (const mesh of [tree, anomaly, wall, item, character.model]) mesh.position = {x:0,z:0};
     const context = vm.createContext({pendingFacingSelection:null,pendingCharacterPlacement:null,scoutedCharacters:new Set(),firstPersonView:null,window:{isGM:false},
-        updateFogOverlay(){},
-        locationLevelVisible: () => true, decorDisplayLevel: () => 0,
+        locationLevelVisible: () => onViewedFloor, decorDisplayLevel: () => 0,
         structureLevel: () => 0, structureBuildingId: () => null,
         scene: {}, currentLocationData: {}, locationProfiler: null,
         fogIsActive: () => true, loadFogMemory() {}, getFogVisionSources: () => [],
@@ -34,12 +35,24 @@ test('terrain decorations and structures remain visible outside line of sight', 
         syncFogMemoryGhosts() {},
     });
     vm.runInContext(source.slice(start, end), context);
+    context.updateFogOverlay = () => { overlayRefreshes += 1; };
     context.applyFogOfWar();
     assert.equal(tree.visible, true);
     assert.equal(wall.visible, true);
     assert.equal(anomaly.visible, false);
     assert.equal(item.visible, false);
     assert.equal(character.model.visible, false);
+
+    onViewedFloor = false;
+    context.applyLocationFloorVisibility();
+    assert.equal(wall.visible, false);
+    onViewedFloor = true;
+    context.applyLocationFloorVisibility();
+    assert.equal(wall.visible, true);
+    assert.equal(anomaly.visible, false);
+    assert.equal(item.visible, false);
+    assert.equal(character.label.visible, false);
+    assert.equal(overlayRefreshes, 1);
 
     canSee = true;
     context.applyFogOfWar();

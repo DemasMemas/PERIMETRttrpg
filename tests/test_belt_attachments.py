@@ -233,6 +233,45 @@ def test_holster_binds_one_weapon_and_reduces_the_actual_draw_cost(client,pair,a
     assert [item['id'] for item in character.data['weapons']] == ['short','large']
 
 
+def test_sheath_uses_free_mount_and_tracks_drawn_knife(client, pair, auth_headers):
+    from app.services.belt_attachments import belt_visuals
+    from app.services.equipment_modifications import belt_pouch_limit
+
+    setup_tools(pair)
+    character, actor = pair['actor_character'], pair['actor_location']
+    template = ItemTemplate(name='Охотничий нож', category='melee_weapon')
+    db.session.add(template)
+    db.session.flush()
+    data = deepcopy(character.data)
+    data['weapons'] = [{'id': 'knife', 'name': template.name, 'category': template.category, 'templateId': template.id}]
+    data['equipment']['belt'].update(modifications=[make_record('armor-g56')], pouches=[{}, {}, {}])
+    character.data = data
+    actor.drawn_weapon_index = None
+    db.session.commit()
+
+    def change_sheath(operation, weapon_id=None):
+        return client.post(f'/lobbies/characters/{character.id}/belt-attachment',
+                           headers=auth_headers(pair['actor_user']), json={
+                               'operation': operation, 'weapon_id': weapon_id, 'kind': 'sheath',
+                               'belt_id': 'belt-test', 'character_revision': character.revision,
+                           })
+
+    assert change_sheath('mount').status_code == 400
+    data = deepcopy(character.data)
+    data['equipment']['belt']['pouches'].pop()
+    character.data = data
+    db.session.commit()
+    assert change_sheath('mount').status_code == 200
+    assert belt_visuals(character.data)['sheath'] == 'empty'
+    assert belt_pouch_limit(character.data['equipment']['belt']) == 2
+    assert change_sheath('mount', 'knife').status_code == 200
+    assert belt_visuals(character.data)['sheath'] == 'filled'
+    assert belt_visuals(character.data, (0,))['sheath'] == 'empty'
+    assert change_sheath('unmount').status_code == 200
+    assert 'sheath' not in belt_visuals(character.data)
+    assert belt_pouch_limit(character.data['equipment']['belt']) == 3
+
+
 @pytest.mark.parametrize('quantity',[1,2])
 def test_mount_and_unmount_preserve_real_tool_and_charges(client,pair,auth_headers,quantity):
     original=setup_tools(pair,quantity=quantity);actor=pair['actor_location']

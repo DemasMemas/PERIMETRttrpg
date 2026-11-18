@@ -180,7 +180,8 @@ def after_kill(attacker,target,was_alive):
         if not check['success']:
             state=LocationCombatState.query.filter_by(location_id=attacker.location_id).first()
             if state and state.status=='active':
-                meta(attacker)['sniperOldCover']={'id':attacker.cover_object_id,'pending':True,'expires_after_round':max(1,state.round_number or 1)+1}
+                meta(attacker)['sniperOldCover']={'location_id':attacker.location_id,
+                    'pending':True,'expires_after_round':max(1,state.round_number or 1)+1}
         flag_modified(attacker.character,'data')
 
 

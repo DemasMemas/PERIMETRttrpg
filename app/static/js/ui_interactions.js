@@ -304,7 +304,8 @@ const customModals = [
     '#inventory-template-picker-modal',
     '#ammo-selection-modal',
     '#create-special-trait-template-modal',
-    '#create-background-template-modal'
+    '#create-background-template-modal',
+    '#world-travel-modal'
 ];
 
 export function initHotkeys() {

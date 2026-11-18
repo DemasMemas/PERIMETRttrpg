@@ -39,8 +39,23 @@ def builtin_templates(category=None):
     return result
 
 
+def normalize_background_description(background, *, name=None):
+    if not isinstance(background, dict) or not (
+        background.get('ruleId') == 'background-t' or (name or background.get('name')) == 'Дядя Толик'
+    ):
+        return
+    obsolete = 'Усиливает боль на 1 уровень при каждом пробуждении.'
+    minuses = background.get('minuses')
+    if isinstance(minuses, str) and obsolete in minuses:
+        before, _, after = minuses.partition(obsolete)
+        background['minuses'] = '\n'.join(part for part in (before.strip(), after.strip()) if part)
+
+
 def preserve_creation(current,incoming,*,is_gm=False):
     """Расчёт создания неизменяем; обычное сохранение никогда не применяет его заново."""
+    incoming_basic = incoming.get('basic')
+    if isinstance(incoming_basic, dict):
+        normalize_background_description(incoming_basic.get('background'))
     if 'creation' in (current or {}):
         incoming['creation']=deepcopy(current['creation'])
         if not is_gm:
@@ -50,6 +65,9 @@ def preserve_creation(current,incoming,*,is_gm=False):
                 return {key:(' '.join(item.split()) if key in {'pluses','minuses','effect'} and isinstance(item,str) else item) for key,item in value.items()}
             for parent,key in (('basic','background'),('features','specialTraits')):
                 original=(current.get(parent) or {}).get(key)
+                if key == 'background':
+                    original = deepcopy(original)
+                    normalize_background_description(original)
                 if descriptions((incoming.get(parent) or {}).get(key))!=descriptions(original):
                     raise ValidationError('Изменение предыстории и черт готового персонажа доступно ГМу')
                 # Переносы исходной таблицы могут отличаться от показанного текста.
@@ -78,10 +96,12 @@ def validate_trait_selection(current,incoming):
         if origin in allowed and origin not in consumed and selected.get('ruleId')==allowed[origin]:consumed.add(origin)
         else:regular+=1
     if regular>3:raise ValidationError('Можно иметь не более трёх начальных особых черт')
+    from app.services.character_traits import legacy_trait_definition
     counts={}
     for selected in traits:
         if not isinstance(selected,dict):raise ValidationError('Некорректная особая черта')
         entry=next((t for t in _catalog()['traits'] if selected.get('ruleId')==t['id'] or selected.get('name')==t['name']),None)
+        if not entry:entry=legacy_trait_definition(selected)
         if not entry:continue
         counts[entry['id']]=counts.get(entry['id'],0)+1
         if entry['limitText'] and counts[entry['id']]>entry['maxCount']:raise ValidationError(f'Превышен лимит черты «{entry["name"]}»')
@@ -285,14 +305,17 @@ def generate_zone_history(data,rng=None):
             roll=rng.randint(1,4);rolls.append(roll);details.append(cells.get(f'{column}{row+roll-1}',''));return roll
         if event==1:pick('A',34);pick('B',34)
         elif event==2:
-            kind=pick('A',41)
+            kind=rng.randint(1,4)
+            rolls.append(kind)
             if kind<4:
                 detail=pick({1:'B',2:'C',3:'D'}[kind],41)
                 multiplier-=({2:[1,.75,.25,.1],3:[1.5,.5,.4,.2]}.get(kind,[0,0,0,0]))[detail-1]
                 if kind==1:extra['addiction']=['Регенеративный стимулятор','Обезболивающий стимулятор','Водка','Сигареты'][detail-1]
+            else:
+                details.append(cells['A44'])
         elif event==3:
             creditor=rng.randint(1,4)
-            debt=rng.randint(1,12)
+            debt=rng.randint(1,6)
             rolls.extend([creditor,debt])
             extra['debt']={'amount':debt*10000}
             if creditor==4:
@@ -304,7 +327,10 @@ def generate_zone_history(data,rng=None):
         elif event==5:pick('A',62);multiplier-=[2,1,.5,.25][pick('B',62)-1]
         elif event==6:multiplier-=[1,.75,.5,.25][pick('A',69)-1]
         elif event==7:multiplier+=[.25,.5,.75,1][pick('A',76)-1]
-        elif event==8:delta=[5000,10000,15000,25000][pick('A',83)-1]
+        elif event==8:
+            bonus_roll=rng.randint(1,4)
+            rolls.append(bonus_roll)
+            delta=int(cells[f'A{82+bonus_roll}'].split('. ',1)[1])
         elif event==9:pick('A',90);pick('B',90)
         elif event==10:
             group=pick('A',97);amount=[1,2,4,6][pick('B',97)-1]

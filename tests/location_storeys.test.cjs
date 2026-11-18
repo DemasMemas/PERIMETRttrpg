@@ -12,6 +12,33 @@ const building=()=>[make('floor',5,5,8,8),make('wall',5,1,8,.2),make('wall',5,9,
     make('wall',5,5,8,.12),make('door',5,1,.9,.18),make('window',1,4,1.2,.14,0,{rotation:Math.PI/2,elevation:1}),
     make('household_wardrobe',3,3,1,.5,0,{contents:[{id:'real-inventory-id'}]})];
 
+test('прозрачность этажа сохраняет материалы теней и переиспользует варианты', async () => {
+    const url = `data:text/javascript;base64,${Buffer.from(read('locationStoreyFade.js')).toString('base64')}`;
+    const { createLocationStoreyFade } = await import(url);
+    const fade = createLocationStoreyFade();
+    let disposed = 0;
+    const original = { opacity: 0.8, userData: { lighting: true }, onBeforeCompile() {},
+        clone() { return { ...this, dispose() { disposed++; } }; } };
+    const mesh = { isMesh: true, material: original };
+    const root = { visible: true, parent: {}, traverseVisible: visit => visit(mesh) };
+
+    fade.prepare(root, 0.5);
+    const copy = mesh.material;
+    assert.equal(copy.opacity, 0.4);
+    assert.equal(copy.onBeforeCompile, original.onBeforeCompile);
+    fade.withOriginals(() => assert.equal(mesh.material, original));
+    assert.equal(mesh.material, copy);
+    fade.restore();
+    assert.equal(mesh.material, original);
+    fade.restore();
+    fade.prepare(root, 0.25);
+    assert.equal(mesh.material, copy);
+    assert.equal(copy.opacity, 0.2);
+    root.parent = null;
+    fade.restore();
+    assert.equal(disposed, 1);
+});
+
 test('signed levels retain legacy zero and copy any storey independently',async()=>{
     const {structureLevel,structureLevelOffset,storeyPlan}=await load();
     for(const level of [-3,-2,-1,0,1,4]){

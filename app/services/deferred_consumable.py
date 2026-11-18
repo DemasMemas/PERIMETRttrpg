@@ -8,6 +8,7 @@ from sqlalchemy.orm.attributes import flag_modified
 
 from app.extensions import db
 from app.models import CharacterInteractionRequest, DeferredCombatAction, LocationCharacter, LocationCombatState
+from app.services.effects import active_tourniquet_areas, bleeding_is_suppressed
 from app.services.exceptions import ConflictError, PermissionDenied, ServiceError, ValidationError
 from app.services.magazine import inventory_slot
 
@@ -23,7 +24,7 @@ def _same_effect(entry, selected):
 def _selection_source(actor, selection):
     if not isinstance(selection, dict) or set(selection) - {
         'source', 'application', 'target_character_id', 'treatment_request_id', 'server_authoritative',
-        'server_operation',
+        'server_operation', 'confirmed_preview', 'skip_toolkits',
     }:
         raise ValidationError('Некорректная процедура лечения')
     if len(json.dumps(selection, ensure_ascii=False)) > 50000:
@@ -71,7 +72,9 @@ def _selection_application(actor, target, selection):
                 raise ConflictError('Конечность уже восстановлена. Отмените старую процедуру.')
         else:
             current = next((entry for entry in health.get('effects', []) if _same_effect(entry, effect)), None)
-            if not current or any(current.get(key) != effect.get(key) for key in ('type', 'area')) or current.get('closed') or current.get('suppressed'):
+            if (not current or any(current.get(key) != effect.get(key) for key in ('type', 'area'))
+                    or current.get('closed') or current.get('active') is False
+                    or bleeding_is_suppressed(current, active_tourniquet_areas(health.get('effects')))):
                 raise ConflictError('Выбранная травма изменилась или уже вылечена. Отмените старую процедуру.')
 
 
@@ -127,13 +130,15 @@ def required_payment(actor, user_id, selection):
     details = minimum_consumable_payment(
         actor.character.data or {}, target.character.data or {}, selection, actor.character.lobby_id,
     )
+    if selection.get('server_authoritative') is True and selection.get('server_operation') == 'general':
+        from app.services.general_consumable import validate_general_inputs
+        validate_general_inputs(actor.character.data or {}, selection, actor.character.lobby_id)
     return target, consent, details
 
 
-def remember_consumable(actor, user_id, pending, selection, *, ready=False):
+def remember_consumable(actor, pending, selection, payment, consent, *, ready=False):
     from app.services.deferred_action import remember_action
 
-    _, consent, payment = required_payment(actor, user_id, selection)
     remember_action(actor, pending, {
         'action_key': 'consumable_use',
         'selection': deepcopy(selection),
@@ -152,7 +157,7 @@ def remember_consumable(actor, user_id, pending, selection, *, ready=False):
         flag_modified(consent, 'payload')
 
 
-def resolve_ready(action_id, user_id, *, location_id=None):
+def resolve_ready(action_id, user_id, *, location_id=None, background=False):
     from app.services.combat import CombatService
 
     row = db.session.get(DeferredCombatAction, action_id) if isinstance(action_id, str) else None
@@ -164,9 +169,13 @@ def resolve_ready(action_id, user_id, *, location_id=None):
         raise PermissionDenied('Вы не управляете этим персонажем')
     state = LocationCombatState.query.filter_by(location_id=actor.location_id, status='active').first()
     meta = ((actor.character.data or {}).get('health') or {}).get('combatMeta') or {}
-    if row.status != 'ready' or not state or state.current_location_character_id != actor.id or meta.get('completedPendingActionId') != row.id:
+    if row.status != 'ready' or not state or state.current_location_character_id != actor.id:
+        if background:
+            return row, actor, None, None
         raise ConflictError('Процедура ещё не оплачена, завершена, отменена или сейчас не ход врача')
     if meta.get('grenadeReaction'):
+        if background:
+            return row, actor, None, None
         raise ConflictError('Сначала завершите реакцию на гранату')
     actor_id, action_id = actor.id, row.id
     try:
@@ -180,13 +189,18 @@ def resolve_ready(action_id, user_id, *, location_id=None):
     return row, actor, target, consent
 
 
-def preparation(action_id, user_id, location_id):
-    row, actor, target, _ = resolve_ready(action_id, user_id, location_id=location_id)
+def preparation(action_id, user_id, location_id, *, background=False):
+    row, actor, target, _ = resolve_ready(action_id, user_id, location_id=location_id, background=background)
+    if target is None:
+        return {'status': row.status if row.status in {'completed', 'cancelled'} else 'waiting'}
+    selection = row.payload['selection']
     return {
+        'status': 'ready',
         'id': row.id, 'actor_character_id': actor.character_id,
         'actor_location_character_id': actor.id,
-        'selection': deepcopy(row.payload['selection']),
-        'target_data': target.character.data_snapshot(),
+        'selection': deepcopy(selection),
+        **({'target_data': target.character.data_snapshot()}
+           if not background or selection.get('server_operation') not in {'medical', 'general'} else {}),
         'medicine_roll': row.payload.get('medicine_roll'),
     }
 
@@ -214,7 +228,10 @@ def prepare_medicine_roll(row):
         except ServiceError as error:
             raise ConflictError(str(error)) from error
 
-        # Draw only after full payment, once for every browser and network retry.
+        if selection.get('server_operation') == 'medical' and isinstance(selection.get('confirmed_preview'), dict):
+            # Актуальные СЛ и инструменты подтверждаются при завершении лечения.
+            return
+        # Старые и клиентские процедуры сохраняют бросок при полной оплате.
         row.payload = {**row.payload, 'medicine_roll': random.randint(1, 20)}
         flag_modified(row, 'payload')
 

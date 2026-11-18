@@ -342,8 +342,28 @@ function getBleedingStageValue(stage) {
     return index >= 0 ? index : 0;
 }
 
+export function tourniquetArea(effect) {
+    return String(effect.area || '').trim().toLowerCase().replaceAll('_', '');
+}
+
+export function activeTourniquetAreas(effects = []) {
+    return new Set(normalizeEffectList(effects).filter(effect =>
+        effect.type === 'tourniquet' && effect.active !== false
+        && (effect.remaining == null || Number(effect.remaining) > 0)
+    ).map(tourniquetArea).filter(Boolean));
+}
+
+export function bleedingIsSuppressed(effect, tourniquets) {
+    const area = tourniquetArea(effect);
+    if (getBleedingRule(effect.type) && ['leftarm', 'rightarm', 'leftleg', 'rightleg'].includes(area)) {
+        return tourniquets.has(area);
+    }
+    return Boolean(effect.suppressed);
+}
+
 function getBleedingState(health = {}) {
     const effects = normalizeEffectList(Array.isArray(health.effects) ? health.effects : []);
+    const tourniquets = activeTourniquetAreas(effects);
     const combatMeta = health.combatMeta || {};
     const breakdown = {
         external: { light: 0, medium: 0, severe: 0, extreme: 0, total: 0 },
@@ -354,7 +374,7 @@ function getBleedingState(health = {}) {
 
     effects.forEach((effect) => {
         const rule = getBleedingRule(effect.type);
-        if (!rule || effect.active === false || effect.closed || effect.suppressed) return;
+        if (!rule || effect.active === false || effect.closed || bleedingIsSuppressed(effect, tourniquets)) return;
         const stacks = Math.max(1, toInt(effect.stacks, 1));
         const baseSeverity = Math.max(1, toInt(effect.value, rule.severity || 1));
         const resolvedSeverity = Math.max(rule.severity || 1, baseSeverity) * stacks;
@@ -381,17 +401,20 @@ function getBleedingState(health = {}) {
     const stagePenalty = getBleedingStageValue(bloodStage);
     const rawSeverity=totalSeverity;
     let severityModifierTotal=0,modifierTotal=0;
+    const severityModifiers = [];
     if(Array.isArray(combatMeta.bleedingModifiers))for(const item of combatMeta.bleedingModifiers){
         if(item?.remaining!=null&&Number(item.remaining)<=0)continue;
         const value=toInt(item?.value??item,0);
-        if(item?.affects_severity||item?.note==='hematogen')severityModifierTotal+=value;
-        else modifierTotal+=value;
+        if(item?.affects_severity||item?.note==='hematogen') {
+            severityModifierTotal+=value;
+            if (value) severityModifiers.push({ label: item.note === 'hematogen' ? 'Гематоген' : 'Поправка', value });
+        } else modifierTotal+=value;
     }else modifierTotal=toInt(combatMeta.bleedingModifierTotal??health.bleedingModifierTotal??0,0);
     totalSeverity=Math.max(0,rawSeverity+severityModifierTotal);
     return {
         baseDifficulty: 5,
         totalSeverity,
-        rawSeverity,severityModifierTotal,
+        rawSeverity,severityModifierTotal,severityModifiers,
         bloodStage,
         stagePenalty,
         modifierTotal,
@@ -947,7 +970,7 @@ export function applyPeriodicEffectsToHealth(healthInput = {}, effectsInput = []
     return { health, effects, applied };
 }
 
-export function effectSummary(effect) {
+export function effectSummary(effect, { includeTiming = true } = {}) {
     const normalized = normalizeEffect(effect);
     const name = !normalized.name || normalized.name === normalized.type
         ? getEffectMeta(normalized.type).label : normalized.name;
@@ -955,16 +978,21 @@ export function effectSummary(effect) {
     const bleedingRule = getBleedingRule(normalized.type);
     if (bleedingRule) parts.push(`тяжесть ${Math.max(bleedingRule.severity, Number(normalized.value) || 0) * Math.max(1, Number(normalized.stacks) || 1)}`);
     const valueInName = new RegExp(`(^|[^\\d])${String(Math.abs(normalized.value)).replace('.', '\\.')}([^\\d]|$)`).test(name);
-    if (normalized.value && !valueInName && !bleedingRule) {
+    if (normalized.value && !valueInName && !bleedingRule && !normalized.adjustments?.length
+        && !normalized.blocks_new_pain) {
         if (['blindness','deafness'].includes(normalized.type)) parts.push(`${normalized.value} очков`);
         else parts.push(`${normalized.value > 0 ? '+' : ''}${normalized.value}`);
     }
-    const duration = effectDurationLabel(normalized);
-    if (duration) parts.push(duration);
-    if (normalized.active === false) parts.push('не действует');
-    else if (normalized.remaining != null && normalized.remaining !== '' && Number(normalized.remaining) <= 0) parts.push('завершён');
+    if (includeTiming) {
+        const duration = effectDurationLabel(normalized);
+        if (duration) parts.push(duration);
+        if (normalized.active === false) parts.push('не действует');
+        else if (normalized.remaining != null && normalized.remaining !== '' && Number(normalized.remaining) <= 0) parts.push('завершён');
+    }
     return parts.join(' · ');
 }
+
+const russianEffectPlural = new Intl.PluralRules('ru');
 
 export function effectDurationLabel(effect) {
     if (effect.remaining == null || effect.remaining === '') return '';
@@ -977,28 +1005,83 @@ export function effectDurationLabel(effect) {
         const hours = Math.floor(totalMinutes / 60), minutes = totalMinutes % 60;
         return `осталось ${hours} ч${minutes ? ` ${minutes} мин` : ''}`;
     }
-    const labels = {second:'с', minute:'мин', hour:'ч', movement:'переходов'};
-    const suffix = labels[unit] || ({turn_end:'ходов',round_end:'раундов',day_start:'дней'})[effect.tick];
+    const labels = {second:'с', minute:'мин', hour:'ч'};
+    const clock = unit === 'movement' ? 'movement_end' : effect.tick;
+    const forms = {
+        turn_end: {one:'ход', few:'хода', many:'ходов', other:'хода'},
+        round_end: {one:'раунд', few:'раунда', many:'раундов', other:'раунда'},
+        day_start: {one:'день', few:'дня', many:'дней', other:'дня'},
+        movement_end: {one:'переход', few:'перехода', many:'переходов', other:'перехода'},
+    }[clock];
+    const suffix = labels[unit] || forms?.[russianEffectPlural.select(Number(effect.remaining))];
+    if (suffix && Number(effect.remaining) === 1 && forms && !labels[unit]) return `остался 1 ${suffix}`;
     return suffix ? `осталось ${effect.remaining} ${suffix}` : `срок: ${effect.remaining}`;
 }
 
-export function effectConsequences(effect, depth = 0) {
+const periodicEffectCaptions = {
+    turn_start: 'В начале каждого хода', turn_end: 'В конце каждого хода',
+    round_end: 'В конце каждого раунда', day_start: 'В начале каждых суток',
+    hour_start: 'В начале каждого часа', movement_end: 'После каждого перехода',
+};
+
+function painReliefLabel(delta) {
+    const levels = Math.abs(delta);
+    const unit = {one:'уровень', few:'уровня', many:'уровней', other:'уровня'}[russianEffectPlural.select(levels)];
+    return `Снижение боли на ${levels} ${unit}`;
+}
+
+export function effectConsequenceEntries(effect, depth = 0) {
     const labels = {exhaustion:'Истощение',painLevel:'Боль',stress:'Стресс',radiation:'Радиация',
         intoxication:'Опьянение',current:'ОЗ',max:'Максимум ОЗ',infection:'Заражение',temperature:'Температура'};
-    const lines = [];
+    const entries = [];
+    const nextEffects = effect.activate_effects || effect.activateEffects || [];
+    const analgesia = depth < 2 && nextEffects.find(next => next?.type === 'analgesia' && !next.blocks_new_pain
+        && effect.adjustments?.some(change => change.field === 'painLevel' && Number(change.delta) === -Number(next.value)));
+    const periodic = effect.type === 'periodic_adjustment';
+    const cadence = periodicEffectCaptions[effect.tick] || 'При каждом срабатывании';
     for (const [changes, caption] of [[effect.onExpire || effect.on_expire,'После окончания'],
-        [effect.adjustments,effect.type === 'periodic_adjustment' ? 'При срабатывании' : 'После задержки']]) {
+        [effect.adjustments,periodic ? cadence : 'После задержки']]) {
         for (const change of changes || []) {
-            if (labels[change.field]) lines.push(`${caption}: ${labels[change.field]} ${Number(change.delta)>0?'+':''}${change.delta}`);
+            const delta = Number(change.delta);
+            if (labels[change.field] && Number.isFinite(delta) && delta !== 0) {
+                const duration = changes === effect.adjustments && change.field === 'painLevel' && analgesia
+                    ? effectDurationLabel(analgesia) : '';
+                const text = periodic && changes === effect.adjustments && change.field === 'painLevel' && delta < 0
+                    ? painReliefLabel(delta)
+                    : change.field === 'temperature'
+                        ? `Изменение температуры ${delta < 0 ? '−' : '+'}${Math.abs(delta).toLocaleString('ru-RU')} °C`
+                        : `${labels[change.field]} ${delta > 0 ? '+' : ''}${delta}`;
+                entries.push({ caption, text: `${text}${duration ? ` · обезболивание на ${duration.replace(/^остал(?:ось|ся) /, '')}` : ''}` });
+            }
         }
     }
-    if (effect.death_on_expire) lines.push('После окончания срока: смерть');
+    if (effect.death_on_expire) entries.push({caption:'После окончания срока', text:'Смерть'});
     const stats = {accuracy:'Точность',agility:'Ловкость',strength:'Сила',will:'Воля',awareness:'Внимательность',melee:'Ближний бой'};
     for (const next of effect.activate_modifiers || []) if (stats[next.stat]) {
-        lines.push(`После окончания: ${stats[next.stat]} ${Number(next.value)>0?'+':''}${next.value} · ${effectDurationLabel(next)}`);
+        entries.push({caption:'После окончания', text:`${stats[next.stat]} ${Number(next.value)>0?'+':''}${next.value} · ${effectDurationLabel(next)}`});
     }
-    if (depth < 2) for (const next of effect.activate_effects || effect.activateEffects || []) {
-        if (next && typeof next === 'object') lines.push(`После задержки: ${effectSummary(next)}`, ...effectConsequences(next, depth + 1));
+    if (depth < 2) for (const next of nextEffects) {
+        if (!next || next === analgesia || typeof next !== 'object') continue;
+        const caption = 'После задержки';
+        const children = effectConsequenceEntries(next, depth + 1);
+        const duration = effectDurationLabel(next).replace(/^остал(?:ось|ся) /, '');
+        if (next.blocks_new_pain && !children.length) {
+            entries.push({ caption, text: ['Новые уровни боли не начисляются', duration].filter(Boolean).join(' · ') });
+        } else if (next.type === 'periodic_adjustment' && children.length === 1
+                && next.adjustments?.length === 1 && next.adjustments[0].field === 'painLevel'
+                && Number(next.adjustments[0].delta) < 0 && children[0].caption !== 'После окончания') {
+            const cadence = periodicEffectCaptions[next.tick]?.toLocaleLowerCase('ru') || 'при каждом срабатывании';
+            entries.push({ caption, text: [`${children[0].text} ${cadence}`, duration].filter(Boolean).join(' · ') });
+        } else {
+            entries.push({caption, text:effectSummary(next), children});
+        }
     }
-    return [...new Set(lines)];
+    return entries;
+}
+
+export function effectConsequences(effect, depth = 0) {
+    const asLines = entries => entries.flatMap(({caption, text, children}) => [
+        `${caption}: ${text}`, ...asLines(children || []),
+    ]);
+    return [...new Set(asLines(effectConsequenceEntries(effect, depth)))];
 }

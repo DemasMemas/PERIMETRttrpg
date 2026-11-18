@@ -444,6 +444,24 @@ def test_preserve_creation_does_not_apply_bonuses_again():
     preserve_creation(data,updated,is_gm=True)
 
 
+def test_old_tolik_sheet_drops_waking_pain_text_and_can_still_be_saved(app):
+    from app.models import LobbyCharacter
+
+    data = build_character('Толик', plan('Дядя Толик'))
+    background = data['basic']['background']
+    expected = background['minuses']
+    obsolete = 'Усиливает боль на 1 уровень при каждом пробуждении.'
+    assert obsolete not in expected
+    before, after = expected.split('\n', 1)
+    background['minuses'] = f'{before} \n{obsolete} \n{after}'
+    character = LobbyCharacter(data=data)
+    snapshot = character.data_snapshot()
+    assert snapshot['basic']['background']['minuses'] == expected
+    preserve_creation(data, snapshot, is_gm=False)
+    assert snapshot['basic']['background']['minuses'] == expected
+    assert obsolete in data['basic']['background']['minuses']
+
+
 def test_monthly_income_uses_current_highest_skill_category():
     data=build_character('Имя',plan());data['skills']['physical']['strength']['base']=16
     assert monthly_income(data)['options']==[3250]
@@ -457,6 +475,45 @@ def test_zone_history_has_server_rolls_and_preserves_choices():
     assert not history['settled']
     assert all(1<=event['event']<=12 and event['incomeOptions'] for event in history['events'])
     assert data['inventory']['money']==10000
+
+
+class HistoryRolls:
+    def __init__(self, *rolls):
+        self.rolls=iter(rolls)
+        self.bounds=[]
+
+    def randint(self, low, high):
+        self.bounds.append((low,high))
+        roll=next(self.rolls)
+        assert low<=roll<=high
+        return roll
+
+
+def test_history_debts_use_a_six_sided_roll():
+    data=build_character('Имя',plan())
+    rng=HistoryRolls(2,3,1,1,3,3,6)
+    history=generate_zone_history(data,rng)
+    assert rng.bounds==[(1,12),(1,12),(1,4),(1,6),(1,12),(1,4),(1,6)]
+    assert [event['debt']['amount'] for event in history['events']]==[10000,60000]
+
+
+@pytest.mark.parametrize('roll,expected',[(1,2500),(2,5000),(3,7500),(4,15000)])
+def test_history_artifact_uses_catalog_reward_in_monthly_income(roll,expected):
+    data=build_character('Имя',plan())
+    history=generate_zone_history(data,HistoryRolls(1,8,roll))
+    event=history['events'][0]
+    assert event['cashDelta']==expected
+    assert event['incomeOptions']==[history['income']['options'][0]+expected]
+
+
+@pytest.mark.parametrize('kind,detail,multiplier',[(2,'Заражение крови',.25),(3,'Перелом',.5)])
+def test_history_illness_and_injury_keep_only_the_rolled_outcome(kind,detail,multiplier):
+    data=build_character('Имя',plan())
+    event=generate_zone_history(data,HistoryRolls(1,2,kind,2))['events'][0]
+    assert len(event['details'])==1
+    assert detail in event['details'][0]
+    assert event['rolls']==[kind,2]
+    assert event['incomeMultiplier']==multiplier
 
 
 def test_templates_seed_is_idempotent_without_overwriting_custom_templates(app):
@@ -996,7 +1053,8 @@ def test_radio_background_reduces_only_electric_protection():
 
 
 @pytest.mark.parametrize('selected',[None,'Мастер вскидывания'])
-def test_launcher_unaimed_trait_changes_paid_attack_difficulty(grenade_game,monkeypatch,selected):
+@pytest.mark.parametrize('miss', [False, True])
+def test_launcher_unaimed_trait_changes_paid_attack_difficulty(grenade_game,monkeypatch,selected,miss):
     from app.extensions import db
     from sqlalchemy.orm.attributes import flag_modified
     from app.services.combat import CombatService
@@ -1006,12 +1064,17 @@ def test_launcher_unaimed_trait_changes_paid_attack_difficulty(grenade_game,monk
         'installedModules':[{'name':'ГП-25','attributes':{'type':'grenade_launcher','range':30},
                              'loaded':True,'loadedGrenade':{'name':'ВОГ-25','quantity':1}}]}]
     actor.character.data=data;actor.drawn_weapon_index=0;flag_modified(actor.character,'data');db.session.commit()
-    monkeypatch.setattr('app.services.combat.random.randint',lambda a,b:b)
+    monkeypatch.setattr('app.services.combat.random.randint',lambda a,b:a if miss else b)
+    monkeypatch.setattr('app.services.combat.random.random', lambda: 0)
+    aim_x = actor.pos_x + 3
     result=CombatService.perform_action(actor.location_id,grenade_game['actor_user']['id'],actor.id,'explosive_attack',
-        explosive_source='underbarrel',explosive_fire_mode='unaimed',weapon_index=0,target_x=10,target_y=5.2)
+        explosive_source='underbarrel',explosive_fire_mode='unaimed',weapon_index=0,target_x=aim_x,target_y=5.2)
     check=result['explosive']
     # Стрельба отсутствует в фикстуре: базовая сложность 12 и штраф +4/+3.
     assert check['difficulty']==(15 if selected else 16)
+    if miss:
+        assert check['failure'] > 3
+        assert CombatService._point_distance(aim_x, 5.2, check['impact']['x'], check['impact']['y']) <= 3 + 1e-8
     assert actor.action_points_current==18
     assert actor.character.data['weapons'][0]['installedModules'][0]['loadedGrenade'] is None
 

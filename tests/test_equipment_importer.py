@@ -163,6 +163,10 @@ def test_helmet_repair_migration_is_idempotent_and_preserves_manual_price(app,mo
     assert (hat.id,hat.item_class,hat.price,hat.volume)==(identity,'1',1000,1)
     assert hat.attributes['ergonomics_penalty']=='0' and hat.attributes['manual_note']=='Сохранить'
     assert custom.price==999
+
+
+def test_equipment_workbook_imports_reference_items():
+    import pytest
     from pathlib import Path
     from app.services.equipment_importer import parse_equipment_templates
     path = Path(__file__).resolve().parents[1] / '.private-testing' / 'Снаряжение (4).xlsx'
@@ -238,14 +242,18 @@ def test_catalog_descriptions_are_idempotent_and_do_not_repeat_compatibility():
     assert result['attributes']['source_description'] == cartridge['description']
 
 
-def test_published_equipment_matches_current_book_and_accepted_builtin_rules():
-    import pytest
-    from pathlib import Path
-    from app.services.equipment_catalog import load_catalog, parse_catalog
-    source = Path(__file__).resolve().parents[1] / '.private-testing/Снаряжение (4).xlsx'
-    if not source.exists():
-        pytest.skip('Книга приватна и не включена в репозиторий')
-    assert parse_catalog(source) == load_catalog()
+def test_catalog_glove_aliases_are_published_once_with_complete_names():
+    from app.services.equipment_catalog import prepare_catalog
+    from app.services.catalog_import import template
+
+    result = prepare_catalog([
+        template('Медицинские', 'gloves', 50, .1, 2, ''),
+        template('Перчатки медицинские', 'gloves', 50, .1, 2, ''),
+        template('Военные М2', 'gloves', 50, .1, 2, ''),
+    ])
+    assert [item['name'] for item in result] == ['Медицинские перчатки', 'Военные перчатки М2']
+    assert '3 ОД' in result[0]['description']
+    assert prepare_catalog(result) == result
 
 
 def test_skill_books_have_one_fixed_section_per_skill():
@@ -697,7 +705,142 @@ def test_helmet_import_removes_misc_prefix_and_skips_embedded_templates():
     assert all(template["subcategory"] != "Встроенный" for template in helmets)
 
 
+def test_headwear_variants_match_legacy_parameters_and_migrate_without_replacing_saved_ids(app, monkeypatch):
+    import importlib.util
+    from pathlib import Path
+    from app.extensions import db
+    from app.models.templates import ItemTemplate
+    from app.services.equipment_catalog import canonical_catalog_templates, load_catalog
+    from app.services.equipment_importer import HEADWEAR_VARIANTS, expand_headwear_templates
+
+    variants = [row for row in load_catalog() if row['category'] == 'helmet' and row['name'] in HEADWEAR_VARIANTS]
+    assert [row['name'] for row in variants] == list(HEADWEAR_VARIANTS)
+    legacy_data = {**variants[0], 'name': 'Головной убор на выбор'}
+    assert list(expand_headwear_templates([legacy_data])) == variants
+    assert canonical_catalog_templates([legacy_data]) == []
+    legacy = ItemTemplate(**legacy_data)
+    custom = ItemTemplate(**{**variants[1], 'price': 999})
+    db.session.add_all([legacy, custom])
+    db.session.flush()
+    legacy_id, custom_id = legacy.id, custom.id
+    file = Path(__file__).resolve().parents[1] / 'migrations/versions/e3c9a741db28_add_headwear_variants.py'
+    spec = importlib.util.spec_from_file_location('headwear_migration', file)
+    migration = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(migration)
+    monkeypatch.setattr(migration.op, 'get_bind', lambda: db.session.connection())
+    migration.upgrade()
+    migration.upgrade()
+    assert db.session.get(ItemTemplate, legacy_id).name == legacy_data['name']
+    assert db.session.get(ItemTemplate, custom_id).price == 999
+    assert {item.name for item in canonical_catalog_templates(ItemTemplate.query.all())} == set(HEADWEAR_VARIANTS)
+    assert ItemTemplate.query.count() == 5
+
+
 def test_helmet_protection_zones_follow_rulebook_groups():
-    assert _helmet_protection_zones("Советский Котелок 68Г") == ["crown", "back"]
-    assert _helmet_protection_zones("Шлем Ударник-М") == ["crown", "back", "ears"]
+    from app.services.character_appearance import public_character_appearance
+    from app.services.equipment_catalog import load_catalog
+
+    cases = {
+        'Советский Котелок 68Г': ('helmet_68g', ['crown', 'back']),
+        'Шлем Витязь 4В76': ('helmet_vityaz', ['crown', 'back', 'ears']),
+        'Шлем Ударник': ('helmet_udarnik', ['crown', 'back']),
+        'Шлем Ударник-М': ('helmet_udarnik_m', ['crown', 'back', 'ears']),
+        'Шлем Первопроходец': ('helmet_pervoprohodets', ['crown', 'back', 'ears']),
+    }
+    catalog = {row['name']: row for row in load_catalog() if row['name'] in cases}
+    for name, (gear, zones) in cases.items():
+        assert _helmet_protection_zones(name) == zones
+        assert catalog[name]['attributes']['protection_zones'] == zones
+        assert public_character_appearance({'equipment': {'helmet': {'name': name, 'templateId': 1}}}) == {'gear': [gear]}
     assert _helmet_protection_zones("Шлем КыСа-2") == ["crown", "back", "ears", "face"]
+
+
+def test_balaclava_migration_keeps_template_and_item_ids(app, monkeypatch):
+    import importlib.util
+    from pathlib import Path
+
+    from app.extensions import db
+    from app.models import Lobby, LobbyCharacter, User
+    from app.models.templates import ItemTemplate
+    from app.services.equipment_catalog import load_catalog
+
+    assert {item['name'] for item in load_catalog() if item['category'] == 'mask'} == {
+        'Балаклава', 'Балаклава Призрак',
+    }
+    user = User(username='mask-owner', email='mask@example.test', password_hash='unused')
+    template = ItemTemplate(name='Балаклава Призрак', category='helmet', price=900)
+    db.session.add_all([user, template])
+    db.session.flush()
+    lobby = Lobby(name='Маски', gm_id=user.id, invite_code='MASKS')
+    db.session.add(lobby)
+    db.session.flush()
+    item = {'id': 'ghost-item', 'name': 'Моя маска', 'templateId': template.id, 'durability': 1}
+    character = LobbyCharacter(lobby_id=lobby.id, owner_id=user.id, name='Полевой',
+                               revision=3, data={'equipment': {'helmet': item}})
+    db.session.add(character)
+    db.session.flush()
+    previous_revision = character.revision
+
+    path = Path(__file__).resolve().parents[1] / 'migrations/versions/f25c80a61d39_move_balaclavas_to_mask.py'
+    spec = importlib.util.spec_from_file_location('balaclava_migration', path)
+    migration = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(migration)
+    monkeypatch.setattr(migration.op, 'get_bind', lambda: db.session.connection())
+    migration.upgrade()
+    migration.upgrade()
+    db.session.expire_all()
+    assert template.category == 'mask'
+    assert template.price == 900
+    assert character.revision == previous_revision + 1
+    assert character.data['equipment'] == {
+        'mask': {**item, 'category': 'mask', 'attributes': {'catalog_name': 'Балаклава Призрак'}},
+    }
+
+
+def test_open_helmet_migration_clears_only_legacy_visor_flags(app, monkeypatch):
+    import importlib.util
+    from pathlib import Path
+
+    from app.extensions import db
+    from app.models import Lobby, LobbyCharacter, User
+    from app.models.lobby_templates import LobbyItemTemplate
+    from app.models.templates import ItemTemplate
+    from app.services.item_template_lookup import LOCAL_TEMPLATE_ID_OFFSET
+
+    attrs = {'integrated_visor': True, 'custom_note': 'Сохранить'}
+    user = User(username='visor-owner', email='visor@example.test', password_hash='unused')
+    helmet = ItemTemplate(name='Шлем Ударник', category='helmet', attributes=attrs.copy())
+    closed = ItemTemplate(name='Шлем КыСа-2', category='helmet', attributes=attrs.copy())
+    db.session.add_all([user, helmet, closed])
+    db.session.flush()
+    lobby = Lobby(name='Шлемы', gm_id=user.id, invite_code='VISOR')
+    db.session.add(lobby)
+    db.session.flush()
+    local = LobbyItemTemplate(lobby_id=lobby.id, created_by=user.id, category='helmet',
+                              name='Шлем Первопроходец', attributes=attrs.copy())
+    db.session.add(local)
+    db.session.flush()
+    character = LobbyCharacter(lobby_id=lobby.id, owner_id=user.id, name='Полевой', data={
+        'equipment': {'helmet': {'name': 'Полевой шлем', 'templateId': local.id + LOCAL_TEMPLATE_ID_OFFSET,
+                                 'attributes': attrs.copy(), 'installedModules': [{'slotType': 'visor'}]}},
+        'inventory': {'pockets': [{'name': 'Шлем Ударник', 'templateId': closed.id, 'attributes': attrs.copy()}]},
+    })
+    db.session.add(character)
+    db.session.flush()
+    revision = character.revision
+
+    path = Path(__file__).resolve().parents[1] / 'migrations/versions/a683e2d415c9_clear_open_helmet_visor_flags.py'
+    spec = importlib.util.spec_from_file_location('open_helmet_migration', path)
+    migration = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(migration)
+    monkeypatch.setattr(migration.op, 'get_bind', lambda: db.session.connection())
+    migration.upgrade()
+    migration.upgrade()
+    db.session.expire_all()
+    corrected = {**attrs, 'integrated_visor': False}
+    assert helmet.attributes == local.attributes == corrected
+    assert closed.attributes == attrs
+    assert character.data['equipment']['helmet']['attributes'] == corrected
+    assert character.data['equipment']['helmet']['installedModules'] == [{'slotType': 'visor'}]
+    assert character.data['inventory']['pockets'][0]['attributes'] == attrs
+    assert character.revision == revision + 1

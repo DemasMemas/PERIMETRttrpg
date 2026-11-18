@@ -101,3 +101,44 @@ test('dead characters are not offered for combat initiative', () => {
     assert.match(sceneSource, /selectableCharacters\.forEach\(\(character\) => \{/);
     assert.match(sceneSource, /const absentCombatCharacters = [\s\S]*?character\.condition\?\.state !== 'dead'/);
 });
+
+test('неподвижный участник блокирует старт, а ошибка сервера разблокирует кнопку', async () => {
+    const code = fs.readFileSync(path.join(__dirname, '../app/static/js/locationScene.js'), 'utf8');
+    const begin = code.indexOf('async function showCombatParticipantSelection(');
+    const end = code.indexOf('\nconst COMBAT_STATUS_LABELS', begin);
+    const condition = { state: 'pain_shock', label: 'Болевой шок', can_act: false, can_recover: false };
+    const button = { disabled: false, isConnected: true };
+    const other = {};
+    const list = { appendChild() {}, querySelectorAll: () => [{ value: '7' }] };
+    const menu = { style: {}, addEventListener() {}, querySelector: selector => ({
+        '.combat-participant-start': button, '.combat-participant-list': list,
+    })[selector] || other };
+    let attempts = 0;
+    let rejectStart;
+    const messages = [];
+    const context = vm.createContext({
+        window: { isGM: true }, combatState: null, combatParticipantMenu: null, getCurrentLocationId: () => 1,
+        closeCombatParticipantMenu() {}, showNotification: message => messages.push(message),
+        document: { body: { appendChild() {} }, createElement: tag => tag === 'div' ? menu : { style: {}, querySelector: () => ({}) } },
+        Server: {
+            getLocationCombatState: async () => ({ characters: [{ location_character_id: 7, condition }] }),
+            startLocationCombat() { attempts++; return new Promise((_, reject) => { rejectStart = reject; }); },
+        },
+    });
+    vm.runInContext(code.slice(begin, end), context);
+    await context.showCombatParticipantSelection();
+    await button.onclick({ currentTarget: button });
+    assert.equal(attempts, 0);
+    assert.match(messages.pop(), /не может сделать ход/);
+
+    condition.can_recover = true;
+    const event = { currentTarget: button };
+    const request = button.onclick(event);
+    assert.equal(button.disabled, true);
+    event.currentTarget = null;
+    rejectStart(new Error('Состояние изменилось'));
+    await request;
+    assert.equal(attempts, 1);
+    assert.equal(button.disabled, false);
+    assert.deepEqual(messages, ['Состояние изменилось']);
+});

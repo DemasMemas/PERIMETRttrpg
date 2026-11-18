@@ -53,9 +53,6 @@ module.exports=async({page,request,token,lobby,base,connect,debugPort,safeSessio
     await set(`${root} [name=backgroundId]`,penaltyBackground.id);
     assert.equal(await page.evaluate(`document.querySelector('${root} [data-points-remaining]').textContent`),String(penaltyPoints));
     assert.ok((await page.evaluate(`document.querySelector('${root} [data-background-positive]').textContent`)).includes('Очки навыков -'));
-    const punctuationTrait=rules.traits.find(item=>item.limitText&&!/[.!?…]$/.test(item.effect.trim()));
-    const punctuation=await page.evaluate(`(async()=>{const {traitDescription}=await import('/static/js/characterCreation.js');return traitDescription(${JSON.stringify(punctuationTrait)})})()`);
-    assert.ok(punctuation.includes('. '+punctuationTrait.limitText));
     await page.call('Emulation.setDeviceMetricsOverride',{width:1280,height:720,deviceScaleFactor:1,mobile:false});
     try {
         const bonusBackground=rules.backgrounds.find(item=>item.available&&item.entries.some(entry=>entry.type==='points'&&entry.amount>0));
@@ -90,8 +87,17 @@ module.exports=async({page,request,token,lobby,base,connect,debugPort,safeSessio
     await screenshot('creation-background');
     await step(1);
     const preferred=['physical.agility','physical.awareness','physical.melee','social.barter','social.persuasion','social.deception','social.intimidation','other.engineering','other.stealth','other.tactics'];
+    const firstSpec=`${root} [data-specialization="${preferred[0]}"]`;
+    const firstCard=`${root} .creation-skill-card--specialization:has([data-specialization="${preferred[0]}"])`;
+    await click(`${firstCard} strong`);
+    assert.equal(await page.evaluate(`document.querySelector(${JSON.stringify(firstSpec)}).checked`),true);
+    await click(`${firstCard} .creation-skill-value`);
+    assert.equal(await page.evaluate(`document.querySelector(${JSON.stringify(firstSpec)}).checked`),false);
     for(const skill of preferred)await click(`${root} [data-specialization="${skill}"]`);
     await page.until(`document.querySelector('${root} [data-specs-remaining]').textContent.startsWith('0 осталось')`,'живой счётчик специализаций');
+    const disabledSpec=`${root} .creation-skill-card--specialization:has([data-specialization]:disabled)`;
+    await click(`${disabledSpec} strong`);
+    assert.equal(await page.evaluate(`document.querySelectorAll('${root} [data-specialization]:checked').length`),preferred.length);
     await step(2);
     await set(`${root} [data-stage=raises][data-skill="physical.agility"]`,2);
     await reset(2,false);assert.equal(await value(`${root} [data-stage=raises][data-skill="physical.agility"]`),'2');
@@ -120,6 +126,21 @@ module.exports=async({page,request,token,lobby,base,connect,debugPort,safeSessio
     await set(`${root} [data-stage=lowers][data-skill="physical.melee"]`,1);await reset(3);
     assert.equal(await value(`${root} [data-stage=raises][data-skill="physical.agility"]`),'2');
     await step(4);await step(5);
+    const punctuationTrait=rules.traits.find(item=>item.limitText&&!/[.!?…]$/.test(item.effect.trim()));
+    const traitSelect=`${root} [data-trait="0"]`;
+    const checkTraitDescription=()=>page.until(`(() => {
+        const description=document.querySelector('${root} [data-trait-description="0"]');
+        return description?.checkVisibility()&&description.innerText.includes(${JSON.stringify('. '+punctuationTrait.limitText)});
+    })()`,'в описании выбранной черты перед ограничением стоит точка');
+    await set(traitSelect,punctuationTrait.id);
+    await checkTraitDescription();
+    await page.call('Emulation.setDeviceMetricsOverride',{width:1280,height:720,deviceScaleFactor:1,mobile:false});
+    try {
+        await checkTraitDescription();
+    } finally {
+        await page.call('Emulation.clearDeviceMetricsOverride');
+        await set(traitSelect,'');
+    }
     assert.equal(await page.evaluate(`document.querySelectorAll('${root} [data-trait="0"] option').length`),91);
     await set(`${root} [data-trait="0"]`,trait('Быстрые руки'));
     await set(`${root} [data-trait="1"]`,trait('Быстрые руки'));

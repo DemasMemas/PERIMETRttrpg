@@ -44,6 +44,11 @@ export async function showSocialCheck({characterId,lobbyId,skillPath,skillLabel,
             if(check.rules?.length)resultBox.textContent+='\n'+check.rules.join('\n');
             if(check.brigadier_order)resultBox.textContent+='\nУказание Бригадира: +3'+(check.brigadier_order.advantage?' и Преимущество':'');
             if(check.will_check)resultBox.textContent+=`\nЗаставить себя солгать: Воля ${check.will_check.total} против СЛ 12 — ${check.will_check.success?'успех':'провал'}`;
+            if (retry && check.stress) {
+                const increase = check.stress.after - check.stress.before;
+                const stressText = increase > 0 ? `Стресс +${increase}` : 'Стресс не вырос';
+                resultBox.textContent += `\n${stressText} · Социальные проверки −2 до снижения стресса`;
+            }
             retryButton.hidden=!result.diplomat_retry_available;
             await onSaved?.(result.data);
         } catch(error){showNotification(error.message||'Не удалось выполнить проверку','system');}

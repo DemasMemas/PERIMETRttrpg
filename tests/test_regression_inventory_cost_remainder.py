@@ -83,6 +83,11 @@ def unchanged_items(pair, original):
 
 
 def pay_next(client, pair, auth_headers):
+    current = client.get(combat_url(pair), headers=auth_headers(pair['actor_user'])).get_json()
+    if current['current_location_character_id'] == pair['actor_location'].id:
+        ended = client.post(combat_url(pair) + '/end_turn', headers=auth_headers(pair['actor_user']),
+                            json={'location_character_id': pair['actor_location'].id})
+        assert ended.status_code == 200, ended.get_json()
     response = client.post(combat_url(pair) + '/end_turn',
         headers=auth_headers(pair['target_user']),
         json={'location_character_id': pair['target_location'].id})
@@ -533,8 +538,9 @@ def test_http_armor_and_gas_mask_equip_and_remove_pay_real_costs(
     assert response.get_json()['equipment_change']['slot'] == slot
     result = data(pair)
     assert slot not in result['equipment']
-    assert len(result['inventory']['backpack']) == 1
-    returned = result['inventory']['backpack'][0]
+    assert result['inventory']['backpack'] == []
+    assert len(result['inventory']['pockets']) == 1
+    returned = result['inventory']['pockets'][0]
     assert (returned['id'], returned['durability'], returned['customNote']) == (
         'cost-equipment', 27, 'Метка экипировки')
     assert pair['actor_location'].action_points_current == remove_ap

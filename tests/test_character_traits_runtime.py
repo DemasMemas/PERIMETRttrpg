@@ -531,6 +531,50 @@ def test_torturer_checks_victim_after_damage(grenade_game,monkeypatch,condition)
     assert ('torturer_scream' in outcome)==(condition in {'active','pain_shock'})
 
 
+def test_torturer_shot_synchronizes_a_distant_listeners_sheet(client, grenade_game, auth_headers, monkeypatch):
+    from app.models import LobbyCharacter, LocationCharacter
+    from app.services.health import apply_health_maximums
+
+    game = grenade_game
+    actor, target = game['actor_location'], game['target_location']
+    target.pos_x, target.pos_y = 6, 5
+    target_data = deepcopy(target.character.data)
+    target_data['health'] = {'current': 700, 'max': 700, 'effects': []}
+    apply_health_maximums(target_data)['zones']['leftArm']['current'] = 5
+    target.character.data = target_data
+    data = deepcopy(actor.character.data)
+    data['features'] = {'specialTraits': [{'name': 'Чернобыльский пыточник'}]}
+    data['weapons'] = [{'id': 'shotgun', 'name': 'Дробовик', 'subcategory': 'Дробовики', 'range': 20,
+        'ergonomics': 100, 'durability': 100, 'maxDurability': 100, 'fixedMagazine': True, 'ammo': 3,
+        'fixedAmmo': [{'name': '12×70', 'quantity': 3, 'attributes': {'damage': 20, 'caliber': '12x70'}}],
+        'attributes': {'noise': 0, 'fire_rate': 5, 'magazine_size': 3}}]
+    actor.character.data = data
+    actor.drawn_weapon_index = 0
+    listener = LobbyCharacter(lobby_id=game['lobby'].id, owner_id=game['target_user']['id'],
+        name='Слушатель', data={'health': {'current': 700, 'max': 700, 'effects': [], 'stress': 0}})
+    db.session.add(listener)
+    db.session.flush()
+    db.session.add(LocationCharacter(location_id=actor.location_id, character_id=listener.id, pos_x=28, pos_y=28))
+    db.session.commit()
+
+    updates = []
+    monkeypatch.setattr('app.lobbies.emit_character_update', lambda update: updates.append(update))
+    monkeypatch.setattr('app.services.combat.random.randint', lambda a, b: 20 if (a, b) == (1, 20) else b)
+    monkeypatch.setattr(CombatService, '_random_hit_zone', lambda *args: 'left_arm')
+    monkeypatch.setattr(CombatService, '_narrative_skill_check', lambda *args, **kwargs: {'roll': 1, 'total': 1})
+    response = client.post(f"/lobbies/{game['lobby'].id}/locations/{actor.location_id}/combat/action",
+        headers=auth_headers(game['actor_user']), json={'location_character_id': actor.id,
+        'action_key': 'attack', 'weapon_index': 0, 'fire_mode': 'unaimed', 'shot_count': 1,
+        'action_points': 2, 'target_character_id': target.character_id})
+    assert response.status_code == 200, response.json
+    attack = response.json['attack']
+    assert listener.id not in {entry['character_id'] for entry in attack.get('noise_targets', [])}
+    check = next(check for check in attack['results'][0]['torturer_scream'] if check['character_id'] == listener.id)
+    assert check['difficulty'] == 15 and not check['success']
+    assert listener.data['health']['stress'] == 2
+    assert any(update['character_id'] == listener.id and update['source'] == 'combat' for update in updates)
+
+
 def sniper_position_case(case):
     from app.models import LocationObject
     from app.services.character_rules import meta
@@ -545,19 +589,23 @@ def sniper_position_case(case):
     return actor,state,cover
 
 
-def test_sniper_blocks_fire_without_charging_and_accepts_new_cover(grenade_game):
-    from app.services.sniper_position import status,require_reposition
-    actor,state,cover=sniper_position_case(grenade_game)
-    hint=status(actor,state)
-    assert hint['blocked'] and hint['cover']['object_id']==cover.id and hint['expires_after_round']==5
-    before=deepcopy(actor.character.data);ap=actor.action_points_current
-    with pytest.raises(ValidationError,match='перед выстрелом'):
-        CombatService.perform_action(actor.location_id,grenade_game['lobby'].gm_id,actor.id,'attack',fire_mode='unaimed',action_points=2)
-    assert actor.action_points_current==ap
-    assert_same_game_state(actor.character.data,before)
-    actor.cover_object_id=cover.id
-    require_reposition(actor,state)
-    assert 'sniperOldCover' not in actor.character.data['health']['combatMeta']
+def test_sniper_blocks_fire_without_charging_and_accepts_full_straight_move(grenade_game):
+    from app.services.sniper_position import record_move, status, require_reposition
+    actor, state, cover = sniper_position_case(grenade_game)
+    assert status(actor, state) == {'blocked': True, 'expires_after_round': 5}
+    before = deepcopy(actor.character.data)
+    ap = actor.action_points_current
+    with pytest.raises(ValidationError):
+        CombatService.perform_action(actor.location_id, grenade_game['lobby'].gm_id, actor.id,
+                                     'attack', fire_mode='unaimed', action_points=2)
+    assert actor.action_points_current == ap
+    assert_same_game_state(actor.character.data, before)
+    actor.cover_object_id = cover.id
+    actor.movement_points_max = 5
+    record_move(actor, state, {'path': [(0, 0), (2, 0)]}, 'walk', 2)
+    assert status(actor, state)['blocked']
+    record_move(actor, state, {'path': [(2, 0), (5, 0)]}, 'walk', 3)
+    require_reposition(actor, state)
 
 
 def test_sniper_expiry_is_end_of_next_round_or_combat_end(grenade_game):
@@ -573,16 +621,29 @@ def test_sniper_expiry_is_end_of_next_round_or_combat_end(grenade_game):
     assert 'sniperOldCover' not in meta(actor)
 
 
-def test_sniper_uses_full_run_or_breathless_walk_distance(grenade_game):
+def test_sniper_full_movement_clears_requirement_through_movement_service(grenade_game):
     from app.services.sniper_position import status
-    actor,state,cover=sniper_position_case(grenade_game)
-    cover.tile_x=17;actor.movement_points_current=0;actor.movement_distance_this_turn=20
+
+    actor, state, _ = sniper_position_case(grenade_game)
+    actor.pos_x, actor.pos_y = 2, 5
+    actor.facing_x, actor.facing_y = 1, 0
+    actor.movement_points_current = actor.movement_points_max = 2
     db.session.commit()
-    assert status(actor,state)['blocked']
-    actor.strenuous_movement_blocked_until_round=4
-    assert not status(actor,state)['blocked'] and status(actor,state)['mode']=='walk'
-    actor.cover_object_id=cover.id;actor.character.data['health']['combatMeta']['sniperOldCover']['id']=cover.id
-    assert not status(actor,state)['blocked']
+    CombatService.move_character(actor.location_id, grenade_game['lobby'].gm_id, actor.character_id,
+                                 4, 5, movement_mode='walk')
+    assert actor.movement_points_current == 0
+    assert status(actor, state) is None
+
+
+@pytest.mark.parametrize('end,mode', [((0, 0), 'walk'), ((4, 0), 'run'), ((2, 2), 'walk')])
+def test_sniper_rejects_reverse_turn_or_mode_change(grenade_game, end, mode):
+    from app.services.sniper_position import record_move, status
+
+    actor, state, _ = sniper_position_case(grenade_game)
+    actor.movement_points_max = 4
+    record_move(actor, state, {'path': [(0, 0), (2, 0)]}, 'walk', 2)
+    record_move(actor, state, {'path': [(2, 0), end]}, mode, 2)
+    assert status(actor, state)['blocked']
 
 
 def test_sniper_expiry_follows_real_turn_order(grenade_game):
@@ -627,21 +688,93 @@ def test_firefighter_straight_radius_requires_two_actual_allies(grenade_game,sou
     assert CombatService._skill_value(actor.character.data,'skills.physical.strength')==10
 
 
-def test_pacifist_failure_spends_ap_without_ammo_then_allows_retry(grenade_game,monkeypatch):
+@pytest.mark.parametrize('background,difficulty', [('Истинный пацифист', 15), ('Контрактник', 8)])
+@pytest.mark.parametrize('fire_mode,cost', [('unaimed', 2), ('rapid', 1)])
+def test_failed_will_spends_ap_without_ammo_then_allows_retry(grenade_game, monkeypatch, background, difficulty, fire_mode, cost):
+    from app.services.action_journal import entries
+
     actor,target=grenade_game['actor_location'],grenade_game['target_location']
     target.pos_x,target.pos_y=actor.pos_x+3,actor.pos_y
-    actor.character.data={**deepcopy(actor.character.data),'basic':{'background':{'name':'Истинный пацифист'}},
+    target.character.data = {**deepcopy(target.character.data), 'basic': {'tags': ['Военный']}}
+    actor.character.data={**deepcopy(actor.character.data),'basic':{'background':{'name':background}},
         'weapons':[{'id':'rifle','category':'weapon','subcategory':'Винтовки','accuracy':100,'ergonomics':100,'damage':1,'range':20,'ammo':10,'attributes':{'damage':1,'range':20,'min_strength':0}}]}
     actor.drawn_weapon_index=0;db.session.commit()
     monkeypatch.setattr('app.services.combat.random.randint',lambda low,high:1)
-    def attack():return CombatService.perform_action(actor.location_id,grenade_game['lobby'].gm_id,actor.id,'attack',weapon_index=0,fire_mode='unaimed',shot_count=1,action_points=2,target_character_id=target.character_id)
+    def attack(mode=fire_mode, price=cost):
+        return CombatService.perform_action(actor.location_id, grenade_game['lobby'].gm_id, actor.id, 'attack',
+            weapon_index=0, fire_mode=mode, shot_count=1, action_points=price, target_character_id=target.character_id)
     before=actor.action_points_current;failed=attack()
-    assert failed['narrative_action']['blocked_by_will'] and actor.action_points_current<before
+    assert failed['narrative_action']['blocked_by_will']
+    assert failed['narrative_action']['checks'][0]['difficulty'] == difficulty
+    assert failed['narrative_action']['action_points'] == cost
+    assert actor.action_points_current == before - cost
     assert actor.character.data['weapons'][0]['ammo']==10
+    assert actor.rapid_fire_round is None
+    entry = entries(actor.character)[-1]
+    assert f'против СЛ {difficulty}' in entry['outcome']
+    assert entry['status_label'] == 'Сорвано'
+    assert entry['action_points'] == cost
     monkeypatch.setattr('app.services.combat.random.randint',lambda low,high:20)
     success=attack();assert success['attack']['hits']==1
     assert actor.character.data['weapons'][0]['ammo']==9
     assert target.character_id in actor.character.data['health']['combatMeta']['harmAllowedTargets']
+    if fire_mode == 'rapid':
+        assert actor.rapid_fire_round == 1
+    def no_more_will_checks(*args, **kwargs):
+        pytest.fail('Успешная проверка Воли уже сохранена для этой цели')
+    monkeypatch.setattr(CombatService, '_narrative_skill_check', no_more_will_checks)
+    assert attack('unaimed', 2)['attack']
+    assert actor.character.data['weapons'][0]['ammo'] == 8
+
+
+@pytest.mark.parametrize('background,will_bonus', [(None, 2), ('Контрактник', 4)])
+def test_contractor_military_slang_and_pain_shock_checks(grenade_game, monkeypatch, background, will_bonus):
+    from app.services.character_rules import harm_check
+    from app.services.character_traits import passive_profile
+
+    actor, target = grenade_game['actor_location'], grenade_game['target_location']
+    data = deepcopy(actor.character.data)
+    data['skills']['physical']['will'] = {'base': 14}
+    data['skills']['physical']['shooting'] = {'base': 10}
+    if background:
+        data['basic'] = {'background': {'name': background}}
+    actor.character.data = data
+    assert passive_profile(data)['knows_military_slang'] is bool(background)
+    assert harm_check(actor, target, True) is None
+    for pain, expected in ((3, 0 if background else -3), (4, -1 if background else -4)):
+        data['health']['painLevel'] = pain
+        assert CombatService._health_roll_modifier(data, 'skills.physical.shooting') == expected
+    data['health']['painLevel'] = 6
+    monkeypatch.setattr('app.services.combat.random.randint', lambda a, b: 8)
+    check = CombatService._resolve_pain_shock_check(actor, 1)
+    assert check['will_bonus'] == will_bonus and check['difficulty'] == 12 - will_bonus
+    assert check['success'] is bool(background)
+    assert CombatService._pain_shock_recovery_difficulty(data, medicine_bonus=2) == (10 - will_bonus, will_bonus)
+
+
+def test_pacifist_fails_will_before_throwing_an_item_at_a_human(grenade_game, monkeypatch):
+    from app.models import LocationObject
+
+    actor, target = grenade_game['actor_location'], grenade_game['target_location']
+    target.pos_x, target.pos_y = 5.2, 4.9
+    data = deepcopy(actor.character.data)
+    data['basic'] = {'background': {'name': 'Истинный пацифист'}}
+    stone = {'id': 'throw-stone', 'name': 'Камень', 'category': 'misc', 'quantity': 1, 'weight': .4}
+    data['inventory'] = {'pockets': [stone]}
+    actor.character.data = data
+    db.session.commit()
+    monkeypatch.setattr(CombatService, '_narrative_skill_check', lambda *args, **kwargs: {'roll': 14, 'total': 14})
+    def fail_throw(*args, **kwargs):
+        pytest.fail('Предмет не должен вылететь после провала Воли')
+    monkeypatch.setattr('app.services.brigadier_order.boost_roll', fail_throw)
+    result = CombatService.perform_action(actor.location_id, grenade_game['actor_user']['id'], actor.id,
+        'throw_item', item_path=['inventory', 'pockets', 0], item_id=stone['id'], target_x=5, target_y=5)
+    assert result['narrative_action']['blocked_by_will']
+    # Два ОД за бросок и один за извлечение из кармана.
+    assert result['narrative_action']['action_points'] == 3
+    assert actor.action_points_current == 17
+    assert actor.character.data['inventory']['pockets'] == [stone]
+    assert not LocationObject.query.filter_by(location_id=actor.location_id, type='ground_item').first()
 
 
 @pytest.mark.parametrize('background,traits,target_trait,expected', [
@@ -808,19 +941,40 @@ def test_explicit_opposing_teams_override_old_world_group(grenade_game):
     assert target.character_id not in allied_ids(actor)
 
 
-def test_hunter_completed_butchering_removes_all_debt_not_other_stress(grenade_game,monkeypatch):
+@pytest.mark.parametrize('charges, skip_toolkits, expected_bonus', [(0, False, 3), (1, False, 6), (1, True, 3)])
+def test_hunter_completed_butchering_removes_debt_and_spends_tool_charge(
+        grenade_game, monkeypatch, charges, skip_toolkits, expected_bonus):
     actor,target=grenade_game['actor_location'],grenade_game['target_location']
     state=LocationCombatState.query.filter_by(location_id=actor.location_id).one();state.status='idle'
     data=deepcopy(actor.character.data);data['basic']={'background':{'name':'Охотник'}}
     data['weapons']=[{'id':'knife','name':'Охотничий нож','category':'melee_weapon','attributes':{'damage':20,'armor_piercing':100,'allowed_attacks':['Колющий']}}]
     data['health']['stress']=6;data['health']['combatMeta']={'hunterStressDebt':4}
+    data.setdefault('inventory', {})['pockets'] = [
+        {'name': 'Набор инструментов Охотника 50/50', 'category': 'tool', 'uses': charges, 'maxUses': 50},
+    ]
     actor.character.data=data;actor.drawn_weapon_index=0
     target.character.data={**deepcopy(target.character.data),'is_mutant':True,'basic':{'mutant_type':'Кабан'},'health':{'current':0,'max':700,'effects':[{'type':'death'}]}}
     target.pos_x,target.pos_y=actor.pos_x+1,actor.pos_y;db.session.commit()
-    monkeypatch.setattr('app.services.combat.random.randint',lambda a,b:20)
-    CombatService.butcher_mutant(actor.location_id,grenade_game['lobby'].gm_id,actor.id,target.character_id)
+    args = actor.location_id, grenade_game['lobby'].gm_id, actor.id, target.character_id
+    monkeypatch.setattr('app.services.combat.random.randint', lambda *_: pytest.fail('Предпросмотр бросил кубик'))
+    before_roll = CombatService.butcher_mutant(*args, preview=True, skip_toolkits=skip_toolkits)
+    assert before_roll['roll_already_made'] is False
+    assert before_roll['weapon_bonus_without_toolkit'] == 3
+    assert before_roll['weapon_bonus'] == expected_bonus
+    assert bool(before_roll['toolkit']) == (expected_bonus == 6)
+    assert not target.character.data['health'].get('combatMeta', {}).get('butcheringRoll')
+    assert actor.character.data['inventory']['pockets'][0]['uses'] == charges
+    monkeypatch.setattr('app.services.combat.random.randint', lambda a, b: 20)
+    preview = CombatService.butcher_mutant(*args, confirmed_preview=before_roll, skip_toolkits=skip_toolkits)
+    assert preview['roll']['weapon_bonus'] == expected_bonus
+    assert bool(preview['roll'].get('toolkit')) == (expected_bonus == 6)
+    assert CombatService.butcher_mutant(*args)['roll'] == preview['roll']
+    assert actor.character.data['inventory']['pockets'][0]['uses'] == charges
     assert actor.character.data['health']['stress']==6
-    result=CombatService.butcher_mutant(actor.location_id,grenade_game['lobby'].gm_id,actor.id,target.character_id,allocation={})
+    result = CombatService.butcher_mutant(*args, allocation={})
+    assert actor.character.data['inventory']['pockets'][0]['uses'] == (charges if skip_toolkits else 0)
+    if expected_bonus == 6:
+        assert result['roll']['toolkit']['charges_remaining'] == 0
     assert result['completed'] and actor.character.data['health']['stress']==2
     assert not actor.character.data['health']['combatMeta'].get('hunterStressDebt')
 
@@ -885,6 +1039,97 @@ def test_polished_machine_gun_in_nested_backpack_restores_half_actual_loss(grena
     assert saved['durability']==88 and '_combatDurabilityLoss' not in saved
 
 
+def test_polished_catalog_machine_gun_restores_wear_from_actual_jam_in_nested_backpack(grenade_game, monkeypatch):
+    from app.models.templates import ItemTemplate
+    from app.services.character_starting_purchase import item_from_template
+    from app.services.equipment_catalog import load_catalog
+
+    names = ('Ручной пулемет Марьянова-39', 'Магазин Автоматный Марьянова 5.45x39', '5.45x39', 'Большой рюкзак')
+    templates = {row['name']: ItemTemplate(**row) for row in load_catalog() if row['name'] in names}
+    db.session.add_all(templates.values())
+    db.session.flush()
+    gun, magazine, ammo, backpack = (item_from_template(templates[name]) for name in names)
+    ammo['quantity'] = 5
+    magazine['ammo'] = [ammo]
+    gun.update(durability=75, installedMagazine=magazine)
+    actor, target = grenade_game['actor_location'], grenade_game['target_location']
+    data = deepcopy(actor.character.data)
+    data['features'] = {'specialTraits': [{'name': 'Протёрт до блеска'}]}
+    data['skills']['physical']['strength']['base'] = gun['attributes']['min_strength']
+    data['weapons'] = [gun]
+    actor.character.data = data
+    actor.drawn_weapon_index = 0
+    target.pos_x, target.pos_y = 6, 5
+    db.session.commit()
+
+    def roll(low, high):
+        if high == 20:
+            return 1
+        if high == 6:
+            return 3
+        return high
+
+    monkeypatch.setattr('app.services.combat.random.randint', roll)
+    CombatService.perform_action(
+        actor.location_id, grenade_game['lobby'].gm_id, actor.id, 'attack',
+        weapon_index=0, fire_mode='unaimed', shot_count=1, action_points=2,
+        target_character_id=target.character_id,
+    )
+    data = deepcopy(actor.character.data)
+    fired_gun = data['weapons'].pop()
+    jam, = CombatService._weapon_jams(fired_gun)
+    assert jam['result'] == 3 and jam['durability_loss_applied'] == 3
+    assert fired_gun['durability'] == 70 and fired_gun['_combatDurabilityLoss'] == 5
+    backpack['contents'] = [fired_gun]
+    data['inventory']['backpack'] = [backpack]
+    actor.character.data = data
+    actor.drawn_weapon_index = None
+    db.session.commit()
+
+    CombatService.end_combat(actor.location_id, grenade_game['lobby'].gm_id)
+    saved = actor.character.data['inventory']['backpack'][0]['contents'][0]
+    assert saved['id'] == gun['id'] and saved['durability'] == 72
+    assert '_combatDurabilityLoss' not in saved
+    assert CombatService._weapon_jams(saved)[0]['id'] == jam['id']
+
+
+@pytest.mark.parametrize('trait_owner, expected', [('giver', 74), ('recipient', 87)])
+def test_polished_machine_gun_follows_current_holder_and_includes_combat_drop(grenade_game, trait_owner, expected):
+    from app.services.container_transfer import ContainerTransferService
+
+    giver, recipient = grenade_game['actor_location'], grenade_game['target_location']
+    giver.pos_x, giver.pos_y = 2.1, 5.2
+    recipient.pos_x, recipient.pos_y = 3, 5
+    gun = {'id': 'passed-machine-gun', 'category': 'weapon', 'subcategory': 'Пулеметы',
+           'quantity': 1, 'durability': 100, 'maxDurability': 100}
+    CombatService._apply_weapon_wear(gun, 23)
+    for label, actor in (('giver', giver), ('recipient', recipient)):
+        data = deepcopy(actor.character.data)
+        data['inventory']['backpack'] = [gun] if actor == giver else []
+        if label == trait_owner:
+            data['features'] = {'specialTraits': [{'name': 'Протёрт до блеска'}]}
+        actor.character.data = data
+    db.session.commit()
+
+    _, ground, _ = ContainerTransferService.drop(grenade_game['lobby'].id, giver.location_id,
+        grenade_game['actor_user']['id'], {'character_id': giver.character_id,
+            'character_revision': giver.character.revision, 'item_path': ['inventory', 'backpack', 0],
+            'amount': 1, 'expected_item': gun})
+    assert (ground.tile_x, ground.tile_y) == (2, 5)
+    assert ground.properties['contents'][0]['durability'] == 74
+    CombatService.end_turn(giver.location_id, grenade_game['actor_user']['id'], giver.id)
+    received = deepcopy(ground.properties['contents'][0])
+    ContainerTransferService.transfer(grenade_game['lobby'].id, ground.id, grenade_game['target_user']['id'], {
+        'character_id': recipient.character_id, 'character_revision': recipient.character.revision,
+        'direction': 'to_character', 'item_path': ['contents', 0], 'amount': 1,
+        'object_revision': ground.revision, 'expected_item': received,
+    })
+    CombatService.end_combat(giver.location_id, grenade_game['lobby'].gm_id)
+    saved = recipient.character.data['inventory']['backpack'][0]
+    assert saved['id'] == gun['id'] and saved['durability'] == expected
+    assert '_combatDurabilityLoss' not in saved
+
+
 def test_fast_hands_reduces_fixed_weapon_loading_but_not_inventory_magazines(app):
     from app.services.ammo_loading import load_ammunition
     data={'features':{'specialTraits':[{'name':'Быстрые руки'}]},'inventory':{'pockets':[
@@ -900,26 +1145,56 @@ def test_fast_hands_reduces_fixed_weapon_loading_but_not_inventory_magazines(app
     with pytest.raises(ValidationError,match='оплачена'):load_ammunition(data,request,combat=True)
 
 
-def test_fast_hands_reduces_underbarrel_reload_without_discounting_retrieval(grenade_game):
+@pytest.mark.parametrize('launcher,ammunition,wrong', [
+    ('ВОГ-25', 'Подствольная граната Вог-25', 'Подствольная граната N-101-2'),
+    ('N-101-2', 'Подствольная граната N-101-2', 'Подствольная граната Вог-25'),
+    ('ВОГ-25', 'Подствольный дымовой', 'Граната РГД-5'),
+])
+def test_fast_hands_reduces_underbarrel_reload_without_discounting_retrieval(grenade_game, launcher, ammunition, wrong):
     actor=grenade_game['actor_location'];data=deepcopy(actor.character.data)
     data['features']={'specialTraits':[{'name':'Быстрые руки'}]}
-    data['weapons']=[{'id':'rifle','installedModules':[{'attributes':{'type':'grenade_launcher','caliber':'ВОГ-25'}}]}]
-    data['inventory']['pockets']=[{'id':'round','name':'ВОГ-25','category':'grenade','quantity':1,'attributes':{'caliber':'ВОГ-25'}}]
+    data['weapons']=[{'id':'rifle','installedModules':[{'attributes':{'type':'grenade_launcher','caliber':launcher}}]}]
+    data['inventory']['pockets']=[{'id':'round','name':ammunition,'category':'grenade','quantity':1},
+                                  {'id':'wrong-round','name':wrong,'category':'grenade','quantity':1}]
     actor.character.data=data;db.session.commit()
+    before = actor.action_points_current
+    with pytest.raises(ValidationError, match='Калибр гранаты не подходит'):
+        CombatService.perform_action(actor.location_id,grenade_game['lobby'].gm_id,actor.id,'reload_underbarrel',
+            weapon_index=0,item_path=['inventory','pockets',1])
+    assert actor.action_points_current == before
     result=CombatService.perform_action(actor.location_id,grenade_game['lobby'].gm_id,actor.id,'reload_underbarrel',
         weapon_index=0,item_path=['inventory','pockets',0])
     assert result['reload_underbarrel']['action_points']==5
     assert result['reload_underbarrel']['inventory_retrieval_action_points']==1
+    assert actor.character.data['weapons'][0]['installedModules'][0]['loadedGrenade']['name'] == ammunition
 
 
 @pytest.mark.parametrize('posture,mode,cost,limit',[
-    ('sitting','walk',4,10),('sitting','run',2,20),('prone','walk',8,5),
+    ('sitting','walk',4,10),('sitting','run',2,20),('prone','walk',8,5),('prone','backward_sideways',16,5),
 ])
-def test_goose_changes_both_route_cost_and_distance_limit(posture,mode,cost,limit):
-    data={'features':{'specialTraits':[{'name':'Гусь и гусеничка'}]}}
+@pytest.mark.parametrize('saved_trait', [
+    {'name': 'Гусь и гусеничка'}, {'ruleId': 'trait-f22'}, {'templateId': -20030}, {'templateId': '-20030'},
+])
+def test_goose_changes_both_route_cost_and_distance_limit(posture,mode,cost,limit,saved_trait):
+    data={'features':{'specialTraits':[saved_trait]}}
     CombatService._validate_posture_movement(posture,mode,data)
     assert CombatService._movement_route_cost({'distance':4,'cost':4},mode,posture,data)['movement_points']==cost
     assert CombatService._movement_distance_limit(mode,posture,False,0,data)==limit
+
+
+def test_legacy_goose_from_seeded_template_respects_activity_and_trait_limit(grenade_game):
+    from app.models.templates import ItemTemplate
+    from app.services.character_creation import validate_trait_selection
+    from app.services.character_traits import trait_count
+
+    template = ItemTemplate(name='Гусь и гусеничка', category='special_trait', attributes={'ruleId': 'trait-f22'})
+    db.session.add(template)
+    db.session.flush()
+    legacy = {'templateId': template.id}
+    data = {'features': {'specialTraits': [legacy, {'templateId': -20030, 'active': False}]}}
+    assert trait_count(data, 'Гусь и гусеничка') == 1
+    with pytest.raises(ValidationError, match='Превышен лимит'):
+        validate_trait_selection({}, {'features': {'specialTraits': [legacy, {'ruleId': 'trait-f22'}]}})
 
 
 @pytest.mark.parametrize('mode',['walk','run'])
@@ -1050,7 +1325,7 @@ def test_surgeon_deferred_executes_once_after_payment(grenade_game):
 
 @pytest.mark.parametrize('background,rest_type,healing,alcohol,pain,cooldown',[
     ('Атлет','rest',52,80,0,True),('Атлет','sleep',525,5,0,False),
-    ('Дядя Толик','sleep',350,55,1,False),
+    ('Дядя Толик','sleep',350,55,0,False),
 ])
 def test_rest_applies_traits_and_patient_surgeon_reset(client,grenade_game,auth_headers,background,rest_type,healing,alcohol,pain,cooldown):
     actor=grenade_game['actor_location'];data=deepcopy(actor.character.data)
@@ -1154,6 +1429,59 @@ def test_post_bonus_one_per_volley_even_all_missed_without_extra_bullets(grenade
     results=CombatService._resolve_shot_sequence([target],actor,details)
     assert len(results)==6 and sum(bool(item['hit']) for item in results)==expected
     assert sum(bool(item.get('post_bonus_hit')) for item in results)==(volley_count if roll==2 else 0)
+
+
+def test_post_area_fire_uses_ten_catalog_rounds_with_bipod(grenade_game, monkeypatch):
+    from app.models.templates import ItemTemplate
+    from app.services.character_starting_purchase import item_from_template
+    from app.services.equipment_catalog import load_catalog
+
+    actor, target = grenade_game['actor_location'], grenade_game['target_location']
+    actor.action_points_current = 5
+    actor.posture = 'prone'
+    actor.drawn_weapon_index = 0
+    target.pos_x, target.pos_y = 8, 5
+    names = ('Ручной пулемет Марьянова-39', 'Магазин Автоматный Марьянова 5.45x39', '5.45x39', 'Сошки')
+    templates = {row['name']: ItemTemplate(**row) for row in load_catalog() if row['name'] in names}
+    db.session.add_all(templates.values())
+    db.session.flush()
+    weapon, magazine, ammo, bipod = (item_from_template(templates[name]) for name in names)
+    assert weapon['attributes']['fire_rate'] == 12
+    ammo['quantity'] = magazine['capacity']
+    magazine['ammo'] = [ammo]
+    weapon['installedMagazine'] = magazine
+    bipod['slotType'] = bipod['attributes']['slot_type']
+    weapon['installedModules'] = [bipod]
+    actor.character.data = {
+        **deepcopy(actor.character.data), 'basic': {'background': {'name': 'Пост принял'}},
+        'weapons': [weapon],
+    }
+    actor.character.data['skills']['physical']['strength']['base'] = weapon['attributes']['min_strength']
+    db.session.commit()
+    monkeypatch.setattr('app.services.combat.random.randint', lambda low, high: 2 if high == 20 else high)
+
+    def attack(shots):
+        return CombatService.perform_action(
+            actor.location_id, grenade_game['lobby'].gm_id, actor.id, 'attack',
+            weapon_index=0, fire_mode='area', shot_count=shots, volley_count=2, action_points=5,
+            target_character_ids=[target.character_id], area_center_x=8, area_center_y=5,
+        )
+
+    def remaining_ammo():
+        installed = actor.character.data['weapons'][0]['installedMagazine']
+        return sum(stack['quantity'] for stack in installed['ammo'])
+
+    with pytest.raises(ValidationError, match='всего 10 выстрелов'):
+        attack(20)
+    assert actor.action_points_current == 5
+    assert remaining_ammo() == 30
+    result = attack(10)['attack']
+    assert result['area_hit_count'] == result['post_bonus_hits'] == 2
+    assert sum(hit['hit'] for hit in result['results']) == 2
+    assert result['brace_ergonomics_bonus'] == 50
+    assert result['posture_ergonomics_bonus'] == 0
+    assert actor.action_points_current == 0
+    assert remaining_ammo() == 20
 
 
 def test_fencer_optional_discount_once_per_turn_and_heavy_accuracy(grenade_game,monkeypatch):
@@ -1433,11 +1761,18 @@ def test_true_sight_private_visible_family_and_no_hidden_original_id(client,gren
 
 def test_gm_reviving_and_killing_again_resets_observed_death_once_per_death(grenade_game,monkeypatch):
     from app.services.character import CharacterService
+    from app.extensions import socketio
     actor,target=grenade_game['actor_location'],grenade_game['target_location']
     data=deepcopy(actor.character.data);data['basic']={'background':{'name':'Математик'}};actor.character.data=data;db.session.commit()
     monkeypatch.setattr(CombatService,'_can_see_location_character',lambda *a:True)
     original=CombatService.apply_stress_trigger
     monkeypatch.setattr(CombatService,'apply_stress_trigger',lambda target,amount,**kw:original(target,amount,check_manifestation=False,**kw))
+    emitted = []
+    def record(event, payload, **options):
+        if event == 'character_data_updated' and payload.get('source') == 'witness_human_death':
+            emitted.append((options['room'], payload['updates']['data']['health']['stress'],
+                            payload['updates']['data']['_revision']))
+    monkeypatch.setattr(socketio, 'emit', record)
     def save(effects):
         data=target.character.data_snapshot();data['health']['effects']=effects
         CharacterService.update_character(target.character_id,grenade_game['lobby'].gm_id,{'data':data})
@@ -1445,6 +1780,9 @@ def test_gm_reviving_and_killing_again_resets_observed_death_once_per_death(gren
     save([]);assert not target.character.data['health']['combatMeta'].get('observedDeathNotified')
     save([{'type':'death'}]);assert actor.character.data['health']['stress']==2
     save([{'type':'death'}]);assert actor.character.data['health']['stress']==2
+    assert [(room, stress) for room, stress, _ in emitted] == [(f'character_{actor.character_id}', 1),
+                                                              (f'character_{actor.character_id}', 2)]
+    assert emitted[0][2] < emitted[1][2] == actor.character.revision
 
 
 def test_sprinter_does_not_bypass_exoskeleton_running_restriction(app):
@@ -1497,3 +1835,56 @@ def test_trauma_choice_does_not_lock_battle_if_gm_removed_target(grenade_game):
     result=decide(actor,grenade_game['lobby'].gm_id,{'id':choice['id'],'index':1})
     assert result['trauma'] is None and choices(actor.character.data)==[]
     require_resolved(LocationCombatState.query.filter_by(location_id=actor.location_id).one())
+
+
+@pytest.mark.parametrize('copies,weapon,bonus,success', [
+    (0, True, 0, False), (1, True, 3, True), (2, True, 6, True), (2, False, 0, False),
+])
+def test_weapon_thrower_bonus_applies_to_the_paid_weapon_throw(grenade_game, monkeypatch, copies, weapon, bonus, success):
+    from math import ceil
+    from app.services.thrown_items import prepare
+    actor = grenade_game['actor_location']
+    location = grenade_game['location']
+    data = deepcopy(actor.character.data)
+    data['features'] = {'specialTraits': [{'name': 'Метатель оружия'} for _ in range(copies)]}
+    item = {'id': 'throw-item', 'name': 'Предмет для броска', 'quantity': 1, 'weight': 2}
+    if weapon:
+        data['weapons'] = [{**item, 'category': 'melee_weapon', 'attributes': {'allowed_attacks': ['Колющий']}}]
+        actor.drawn_weapon_index = 0
+        path, attack_type = ['weapons', 0], 'Колющий'
+    else:
+        data['inventory']['pockets'] = [{**item, 'category': 'misc'}]
+        path, attack_type = ['inventory', 'pockets', 0], None
+    actor.character.data = data
+    db.session.commit()
+    difficulty = prepare(location, actor, data, path, item['id'], 7, 5, attack_type=attack_type)['difficulty']
+    roll = ceil(difficulty) - 3
+    assert roll > 0
+    monkeypatch.setattr('app.services.brigadier_order.boost_roll', lambda *args, **kwargs: ([roll], roll, 0))
+    result = CombatService.perform_action(location.id, grenade_game['lobby'].gm_id, actor.id, 'throw_item',
+        item_path=path, item_id=item['id'], target_x=7, target_y=5, attack_type=attack_type)['thrown_item']
+    assert result['weapon_throw_bonus'] == bonus
+    assert result['total'] == roll + bonus
+    assert result['success'] is success
+    assert result['ground_object_id']
+    assert actor.action_points_current == 20 - result['action_points']
+
+
+@pytest.mark.parametrize('copies,total,sharp', [(0, 7, False), (1, 10, True), (2, 13, True)])
+def test_weapon_thrower_bonus_also_applies_to_the_blade_check(grenade_game, monkeypatch, copies, total, sharp):
+    actor, target = grenade_game['actor_location'], grenade_game['target_location']
+    target.pos_x, target.pos_y = 5, 5
+    data = deepcopy(actor.character.data)
+    data['features'] = {'specialTraits': [{'name': 'Метатель оружия'} for _ in range(copies)]}
+    data['weapons'] = [{'id': 'knife-edge', 'name': 'Нож', 'category': 'melee_weapon', 'weight': .4,
+        'attributes': {'allowed_attacks': ['Колющий'], 'damage': 30}}]
+    actor.character.data = data
+    actor.drawn_weapon_index = 0
+    db.session.commit()
+    monkeypatch.setattr('app.services.brigadier_order.boost_roll', lambda *args, **kwargs: ([20], 20, 0))
+    monkeypatch.setattr('app.services.thrown_items.random.randint', lambda low, high: 5 if high == 6 else 7)
+    result = CombatService.perform_action(actor.location_id, grenade_game['lobby'].gm_id, actor.id,
+        'throw_item', item_path=['weapons', 0], item_id='knife-edge', target_x=5, target_y=5,
+        attack_type='Колющий')['thrown_item']
+    assert result['weapon_edge_check'] == {'roll': 7, 'total': total, 'difficulty': 10, 'success': sharp}
+    assert result['damage']['target_character_id'] == target.character_id

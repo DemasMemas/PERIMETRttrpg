@@ -23,3 +23,29 @@ def height(location,objects,x,y,level):
 def distance(location,objects,x,y,level,target):
     return math.sqrt((target.pos_x-x)**2+(target.pos_y-y)**2+
         (height(location,objects,target.pos_x,target.pos_y,target.floor_level or 0)-height(location,objects,x,y,level))**2)
+
+
+def stop_at_wall(location, objects, x, y, end_x, end_y, level):
+    from app.services.combat import CombatService
+
+    geometry = CombatService._movement_wall_geometry(location, objects)
+    start, end = (x + .5, y + .5), (end_x + .5, end_y + .5)
+    dx, dy = end_x - x, end_y - y
+    length = math.hypot(dx, dy)
+    if not length:
+        return end_x, end_y
+    first = None
+    for box in [*geometry.boxes, *(box for box, _, _ in geometry.climb_boxes)]:
+        if box.level != level:
+            continue
+        entry = box.segment_entry(start, end)
+        if entry is None or (first is not None and entry >= first):
+            continue
+        elevation = height(location, objects, x + dx * entry, y + dy * entry, level)
+        if box.bottom - 1e-9 <= elevation <= box.top + 1e-9:
+            first = entry
+    if first is None:
+        return end_x, end_y
+    # Оставляем гранату снаружи коллизии, чтобы следующий пинок от стены был возможен.
+    fraction = max(0, first - .01 / length)
+    return x + dx * fraction, y + dy * fraction

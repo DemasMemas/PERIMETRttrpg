@@ -248,6 +248,24 @@ def test_closed_and_suppressed_bleeding_do_not_raise_difficulty():
     assert len(bleeding["effects"]) == 1
 
 
+def test_tourniquets_suppress_new_wounds_and_restore_legacy_wounds_on_removal():
+    from app.services.combat import CombatService
+
+    old_wound = {"type": "bleeding_external_medium", "area": "rightLeg", "suppressed": True}
+    new_wound = {"type": "bleeding_external_light", "area": "right_leg"}
+    leg = {"type": "tourniquet", "area": "rightLeg"}
+    arm = {"type": "tourniquet", "area": "leftArm"}
+    health = {"effects": [old_wound, new_wound, leg, dict(leg), arm]}
+    data = {"health": health}
+    assert get_bleeding_state(health)["totalSeverity"] == 0
+    assert CombatService._movement_penalty_breakdown(data)["total"] == 2
+    assert CombatService._has_roll_disadvantage(data, "skills.physical.shooting")
+    health["effects"] = [old_wound, new_wound, {**leg, "remaining": 0}, {**arm, "active": False}]
+    assert get_bleeding_state(health)["totalSeverity"] == 4
+    assert CombatService._movement_penalty_breakdown(data)["total"] == 0
+    assert not CombatService._has_roll_disadvantage(data, "skills.physical.shooting")
+
+
 def test_periodic_adjustment_respects_bounds():
     health = {"stress": 1, "exhaustion": 9}
     effects = [{

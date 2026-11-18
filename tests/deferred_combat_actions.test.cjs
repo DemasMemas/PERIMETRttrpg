@@ -7,6 +7,36 @@ const load = () => import('data:text/javascript;base64,' + Buffer.from(source).t
 const state = () => ({ status: 'active', current_character: { location_character_id: 7,
     deferred_action: { id: 'saved', action_key: 'attack', status: 'ready', server_executable: true } } });
 
+test('после оплаты атаки уведомление показывает попадание, промах, урон и последствия', async () => {
+    const { createDeferredActionResumer } = await load();
+    const notices = [];
+    const resume = createDeferredActionResumer({
+        send: async () => ({ attack: { damage_total: 12, results: [
+            { roll: 18, difficulty: 12, hit: true, bleedings: [{ stage: 'severe' }], additional_traumas: [{ roll: 13 }] },
+            { roll: 6, difficulty: 12, hit: false },
+        ] } }),
+        canResume: () => true,
+        notify: (text, type) => notices.push([text, type]),
+    });
+    await resume(state());
+    assert.deepEqual(notices, [['1: d20 18, СЛ 12 — попадание · 2: d20 6, СЛ 12 — промах. Итоговый урон: 12. Кровотечения: 1. Доп. травмы: 1.', 'success']]);
+});
+
+test('провал Воли после оплаты показывает результат и не сообщает об успешной атаке', async () => {
+    const { createDeferredActionResumer } = await load();
+    const notices = [];
+    const fresh = { status: 'active', current_character: { deferred_action: null } };
+    const resume = createDeferredActionResumer({
+        send: async () => ({ state: fresh, narrative_action: { blocked_by_will: true, action_points: 2,
+            checks: [{ success: true, total: 16, difficulty: 15 }, { success: false, total: 9, difficulty: 15 }] } }),
+        cancel: async () => assert.fail('Оплаченная попытка уже завершена'),
+        applyState: value => assert.equal(value, fresh), canResume: () => true,
+        notify: (message, type) => notices.push([message, type]),
+    });
+    await resume(state());
+    assert.deepEqual(notices, [['Проверка Воли провалена (9 против СЛ 15). Атака сорвалась. Потрачено 2 ОД.', 'error']]);
+});
+
 test('fresh client resumes by saved ID without a local map, target or weapon parameters', async () => {
     const { createDeferredActionResumer } = await load();
     const sent = [];
@@ -112,8 +142,53 @@ test('неудачное завершение лечения автоматич�
     assert.equal(calls, 1);
     await resume(medical, { force: true });
     assert.equal(calls, 1);
-    assert.equal(cancelled,3);
+    assert.equal(cancelled,1);
     assert.deepEqual(notices, ['Длительное действие отменено: Changed injury']);
+});
+
+test('оплаченный расходник сохраняется при сбое сети и завершается при следующем обновлении боя', async () => {
+    const { createDeferredActionResumer } = await load();
+    const ready = state();
+    Object.assign(ready.current_character.deferred_action, {
+        action_key: 'consumable_use', server_executable: false, client_executable: true,
+    });
+    let calls = 0;
+    const resume = createDeferredActionResumer({
+        canResume: () => true,
+        cancel: async () => assert.fail('Оплаченное действие нельзя отменять при сбое сети'),
+        async resumeConsumable() {
+            if (++calls === 1) throw new TypeError('Failed to fetch');
+            return null;
+        },
+        notify() {},
+    });
+    await resume(ready);
+    await resume(ready);
+    await resume(ready);
+    assert.equal(calls, 2);
+});
+
+test('освобождение инвентаря обрабатывается, пока предыдущая попытка сообщает о блокировке', async () => {
+    const { createDeferredActionResumer } = await load();
+    const ready = state();
+    Object.assign(ready.current_character.deferred_action, {
+        action_key: 'consumable_use', server_executable: false, client_executable: true,
+    });
+    let calls = 0, release;
+    const busy = new Promise(resolve => { release = resolve; });
+    const resume = createDeferredActionResumer({
+        canResume: () => true,
+        async resumeConsumable() {
+            if (++calls === 1) return busy;
+            return null;
+        },
+        notify() {},
+    });
+    const first = resume(ready);
+    await resume(ready);
+    release(false);
+    await first;
+    assert.equal(calls, 2);
 });
 
 test('гонка завершения в двух клиентах очищает строку без повторного эффекта и ложной ошибки',async()=>{

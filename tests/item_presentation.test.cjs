@@ -127,14 +127,14 @@ test('Дедупликация сохраняет условия из описа
         attributes:{consumable:{direct:{exhaustion_delta:-.5},effects:[{type:'exhaustion',value:-.5,remaining:2,tick:'turn_end'}]}}});
     assert.ok(result.rules.some(text=>text.includes('только после отдыха')));
     assert.equal(result.rules.filter(text=>text==='Истощение: -0.5').length,0);
-    assert.ok(result.rules.some(text=>text.includes('2 ходов')));
+    assert.ok(result.rules.some(text=>text.includes('2 хода')));
 });
 test('Отредактированный профиль и предмет без описания показывают действующие правила',async()=>{
     const {itemTooltipModel}=await load('itemPresentation.js');
     const result=itemTooltipModel({name:'Препарат',attributes:{notes:'Описание проверочного предмета',consumable:{editor_version:2,direct:{pain_delta:-1,stress_delta:-2},effects:[{type:'regeneration',value:5,remaining:3,tick:'turn_end'},{type:'pain',value:-1,source:'direct'}]}}});
     assert.ok(result.rules.includes('Боль: -1'));
     assert.ok(result.rules.includes('Стресс: -2'));
-    assert.ok(result.rules.includes('Регенерация · +5 · осталось 3 ходов'));
+    assert.ok(result.rules.includes('Регенерация · +5 · осталось 3 хода'));
     assert.ok(result.rules.includes('Описание проверочного предмета'));
     assert.equal(result.rules.filter(t=>t.includes('Боль')).length,1);
 });
@@ -164,7 +164,7 @@ test('Подсказка выбирает сторону или простран
 });
 test('Сроки и отрицательные значения имеют русские единицы, просмотр не бросает смерть',async()=>{
     const {effectSummary,syncHealthDerivedStatuses}=await load('effects.js');
-    assert.equal(effectSummary({type:'pain',name:'pain',value:-.25,remaining:3,tick:'round_end'}),'Боль · -0.25 · осталось 3 раундов');
+    assert.equal(effectSummary({type:'pain',name:'pain',value:-.25,remaining:3,tick:'round_end'}),'Боль · -0.25 · осталось 3 раунда');
     assert.ok(effectSummary({type:'regeneration',value:5,remaining:24,time_unit:'hour',remaining_seconds:82800}).includes('23 ч'));
     const health={intoxication:150,effects:[]};syncHealthDerivedStatuses(health);syncHealthDerivedStatuses(health);
     assert.equal(health.combatMeta.intoxicationDeathRoll,undefined);

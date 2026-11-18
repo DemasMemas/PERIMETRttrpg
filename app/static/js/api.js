@@ -14,6 +14,8 @@ async function requestJson(url, options = {}) {
         const data = await response.json().catch(() => ({}));
         const error = new Error(getErrorMessage(data) || `HTTP error ${response.status}`);
         error.status = response.status;
+        error.code = data.code;
+        if (data.code === 'world_group_bleeding') error.bloodLossRisks = data.blood_loss_risks;
         throw error;
     }
     if (response.status === 204) return null;
@@ -137,7 +139,7 @@ export const Server = {
         return apiFetch(`/lobbies/${lobbyId}/water-level`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
     },
     async prepareDeferredConsumable(lobbyId, locationId, actionId) {
-        return apiFetch(`/lobbies/${lobbyId}/locations/${locationId}/combat/deferred-consumable/${encodeURIComponent(actionId)}`);
+        return apiFetch(`/lobbies/${lobbyId}/locations/${locationId}/combat/deferred-consumable/${encodeURIComponent(actionId)}?background=1`);
     },
     async loadAmmunition(characterId, payload) {
         return apiFetch(`/lobbies/characters/${characterId}/ammunition`, {
@@ -204,6 +206,11 @@ export const Server = {
     },
     async finishConsumableUse(characterId, payload) {
         return apiFetch(`/lobbies/characters/${characterId}/consumable`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+        });
+    },
+    async previewMedicalProcedure(characterId, payload) {
+        return apiFetch(`/lobbies/characters/${characterId}/medical-procedure/preview`, {
             method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
         });
     },
@@ -327,17 +334,19 @@ export const Server = {
         });
     },
 
-    async moveWorldGroup(lobbyId, groupId, tileX, tileY) {
+    async moveWorldGroup(lobbyId, groupId, tileX, tileY, confirmBleeding = null) {
         return apiFetch(`/lobbies/${lobbyId}/world-groups/${groupId}/move`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ tile_x: tileX, tile_y: tileY }),
+            body: JSON.stringify({ tile_x: tileX, tile_y: tileY, confirm_bleeding: confirmBleeding }),
         });
     },
 
-    async waitWorldGroup(lobbyId, groupId) {
+    async waitWorldGroup(lobbyId, groupId, confirmBleeding = null) {
         return apiFetch(`/lobbies/${lobbyId}/world-groups/${groupId}/wait`, {
             method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ confirm_bleeding: confirmBleeding }),
         });
     },
 
@@ -770,6 +779,12 @@ export const Server = {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload),
+        });
+    },
+
+    async negotiateMerchantPrice(lobbyId, locationId, payload) {
+        return apiFetch(`/lobbies/${lobbyId}/locations/${locationId}/merchant-haggle`, {
+            method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload),
         });
     },
 

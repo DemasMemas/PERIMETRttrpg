@@ -40,6 +40,7 @@ function frameHarness(local) {
         updateAnomalyRenderLights: mark('anomalyLights'), locationProfiler: null,
         updateLampRenderLights: mark('lampLights'), updateLampPreviewLights: mark('lampPreviewLights'), lampEditTrace: null,
         locationShadowPass: null, locationRenderBatches: null, locationShadowCache: null,
+        locationStoreyFade: { restore: mark('storeyRestore') }, prepareLocationStoreyFade: mark('storeyPrepare'),
         anomalyRenderBatches: { prepare: mark('anomalyPrepare'), restore: mark('anomalyRestore') },
         locationLoadTrace: null, staticFieldFirstFrame: null,
         locationFrameWorkMs: 0, locationSampleFrames: 0,
@@ -138,6 +139,8 @@ for (const local of [false, true]) {
         assert.ok(calls.some(call => call[0] === 'render'));
         assert.ok(calls.some(call => call[0] === 'fps'));
         if (local) {
+            assert.deepEqual(calls.map(call => call[0]).filter(name => ['storeyPrepare', 'render', 'storeyRestore'].includes(name)),
+                ['storeyPrepare', 'render', 'storeyRestore']);
             assert.deepEqual(calls.map(call => call[0]).filter(name => ['anomalyPrepare', 'render', 'anomalyRestore'].includes(name)),
                 ['anomalyPrepare', 'render', 'anomalyRestore']);
             assert.ok(calls.findIndex(call => call[0] === 'labelDistance')

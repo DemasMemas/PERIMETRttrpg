@@ -115,11 +115,16 @@ def _template_for_item(item):
     return db.session.get(ItemTemplate, template_id) if template_id else None
 
 
-def _available_uses(item, template=None):
+def _maximum_uses(item, template=None):
     attributes = (template.attributes or {}) if template else {}
-    maximum = max(1, int(_number(
-        item.get("maxUses") or (item.get("attributes") or {}).get("uses") or attributes.get("uses"), 1,
+    default = 10 if str(item.get("name") or "").strip().casefold() == "спички (10 штук)" else 1
+    return max(1, int(_number(
+        item.get("maxUses") or (item.get("attributes") or {}).get("uses") or attributes.get("uses"), default,
     )))
+
+
+def _available_uses(item, template=None):
+    maximum = _maximum_uses(item, template)
     quantity = max(0, int(_number(item.get("quantity"), 1)))
     raw_uses=item.get('uses')
     if raw_uses is None:raw_uses=(item.get('attributes') or {}).get('uses_remaining')
@@ -129,13 +134,7 @@ def _available_uses(item, template=None):
 
 def _consume_entry(parent, index, amount):
     item = parent[index]
-    template = _template_for_item(item)
-    maximum = max(1, int(_number(
-        item.get("maxUses")
-        or (item.get("attributes") or {}).get("uses")
-        or ((template.attributes or {}).get("uses") if template else None),
-        1,
-    )))
+    maximum = _maximum_uses(item, _template_for_item(item))
     quantity = max(0, int(_number(item.get("quantity"), 1)))
     raw_uses=item.get('uses')
     if raw_uses is None:raw_uses=(item.get('attributes') or {}).get('uses_remaining')
@@ -254,12 +253,15 @@ def _consume_requirements(data, direct, health, lobby_id=None):
             and any(name in str(entry[2].get("name") or "").casefold() for name in ("зажигал", "спич"))
         ]
         lighter = next((entry for entry in fire_sources if "зажигал" in str(entry[2].get("name") or "").casefold()), None)
-        matches = next((entry for entry in fire_sources if "спич" in str(entry[2].get("name") or "").casefold()), None)
+        matches = next((entry for entry in fire_sources
+                        if "спич" in str(entry[2].get("name") or "").casefold()
+                        and _available_uses(entry[2], _template_for_item(entry[2])) > 0), None)
         if not lighter and not matches:
             raise ValidationError("Для курения нужна зажигалка или спичка")
         if matches and not lighter:
             result["fire_source"] = matches[2].get("name") or "Спички"
-            _consume_entry(matches[0], matches[1], 1)
+            if not _consume_entry(matches[0], matches[1], 1):
+                raise ValidationError("Для курения нужна зажигалка или спичка")
         else:
             result["fire_source"] = lighter[2].get("name") or "Зажигалка"
     return result
@@ -719,6 +721,43 @@ def _apply_profile(health, profile, direct, item, *, in_combat,character_data=No
     return changed
 
 
+def _prepare_general_inputs(data, source, application, lobby_id):
+    parent, index = inventory_slot(data, source.get('path'))
+    item = parent[index]
+    if item != source['snapshot']:
+        raise ConflictError('Расходник изменился. Выберите его заново.')
+    template, direct = _profile(item, lobby_id)
+    profile = with_darkness_modifiers(
+        (template.attributes or {}).get('consumable') or {}, template.description or '',
+    )
+    from app.services.cooked_meat import portion_profile
+    from app.services.character_medicine import prepare_profile
+    profile, direct = portion_profile(template, item, profile, deepcopy(direct))
+    profile, direct = prepare_profile(profile, direct, item, data, template)
+    _validate_general_profile(direct, application)
+
+    health = data.setdefault('health', {})
+    usage_key = str(direct.get('exclusive_group') or item.get('templateId') or item.get('name'))
+    if direct.get('use_limit'):
+        usage = health.setdefault('combatMeta', {}).setdefault('consumableUsage', {})
+        if _number(usage.get(usage_key)) >= _number(direct.get('use_limit'), 1):
+            raise ConflictError('Лимит использования этого препарата исчерпан')
+
+    # Remove the selected item first so it cannot satisfy its own requirements.
+    if not direct.get('not_consumed'):
+        before_quantity = item.get('quantity', 1)
+        _consume_uses(parent, index, 1, template, actor_data=data)
+        if index >= len(parent) or parent[index] is not item or item.get('quantity', 1) < before_quantity:
+            from app.services.liquid_containers import return_empty_bottle
+            return_empty_bottle(data, (template.attributes or {}).get('catalog_name') or template.name)
+    requirements = _consume_requirements(data, direct, health, lobby_id)
+    return item, template, profile, direct, usage_key, requirements
+
+
+def validate_general_inputs(actor_data, selection, lobby_id):
+    _prepare_general_inputs(deepcopy(actor_data), selection['source'], selection['application'], lobby_id)
+
+
 class GeneralConsumableService:
     @staticmethod
     @journaled(kind='consumable_use')
@@ -748,48 +787,31 @@ class GeneralConsumableService:
         completion = claim_completion(character, character, user_id, envelope)
         validate_consumable_use(character, envelope)
 
-        data = deepcopy(character.data or {})
-        parent, index = inventory_slot(data, source.get("path"))
-        item = parent[index]
-        if item != source["snapshot"]:
-            raise ConflictError("Расходник изменился. Выберите его заново.")
-        template, direct = _profile(item, character.lobby_id)
-        direct = deepcopy(direct)
-        profile = with_darkness_modifiers(
-            (template.attributes or {}).get("consumable") or {}, template.description or "",
-        )
-        from app.services.cooked_meat import portion_profile
-        profile, direct = portion_profile(template, item, profile, direct)
-        from app.services.character_medicine import prepare_profile
-        profile,direct=prepare_profile(profile,direct,item,data,template)
+        actor_data = character.data or {}
+        data = deepcopy(actor_data)
         application = payload.get("application")
-        _validate_general_profile(direct, application)
         if completion and completion.payload["selection"].get("application") != application:
             raise ConflictError("Выбранное применение не совпадает с оплаченным")
 
-        payment = minimum_consumable_payment(data, data, {
+        payment = minimum_consumable_payment(actor_data, actor_data, {
             "source": source, "application": application,
             "server_authoritative": True, "server_operation": "general",
         }, character.lobby_id)
-        if completion and completion.payload.get("paid_action_points", -1) < payment["total_action_points"]:
-            raise ConflictError("Применение предмета оплачено неверно. Отмените его и начните заново.")
+        if completion:
+            required_points = payment['total_action_points']
+            quoted_cost = (completion.payload.get('payment_details') or {}).get('treatment_action_points')
+            if type(quoted_cost) is int:
+                # Цена применения фиксируется при начале оплаты. Доступ к предмету проверяется заново.
+                required_points = payment['retrieval_action_points'] + max(
+                    0, quoted_cost - payment['access']['use_action_discount'],
+                )
+            if completion.payload.get('paid_action_points', -1) < required_points:
+                raise ConflictError("Применение предмета оплачено неверно. Отмените его и начните заново.")
 
-        health = data.setdefault("health", {})
-        usage_key = str(direct.get("exclusive_group") or item.get("templateId") or item.get("name"))
-        if direct.get("use_limit"):
-            usage = health.setdefault("combatMeta", {}).setdefault("consumableUsage", {})
-            if _number(usage.get(usage_key)) >= _number(direct.get("use_limit"), 1):
-                raise ConflictError("Лимит использования этого препарата исчерпан")
-
-        # Spend the selected item first: a prerequisite can live earlier in the
-        # same list and removing it would otherwise invalidate the saved index.
-        if not direct.get("not_consumed"):
-            before_quantity = item.get('quantity', 1)
-            _consume_uses(parent, index, 1, template,actor_data=data)
-            if index >= len(parent) or parent[index] is not item or item.get('quantity', 1) < before_quantity:
-                from app.services.liquid_containers import return_empty_bottle
-                return_empty_bottle(data, (template.attributes or {}).get('catalog_name') or template.name)
-        requirements = _consume_requirements(data, direct, health, character.lobby_id)
+        item, template, profile, direct, usage_key, requirements = _prepare_general_inputs(
+            data, source, application, character.lobby_id,
+        )
+        health = data['health']
         intoxication_before=_number(health.get('intoxication'))
         if not _apply_profile(health, profile, direct, item, in_combat=state is not None,character_data=data):
             raise ValidationError("Предмет не имеет применимых эффектов")

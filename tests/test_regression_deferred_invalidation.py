@@ -39,6 +39,11 @@ def action(client, case, auth_headers, payload):
 
 
 def pay_next_turn(client, case, auth_headers):
+    state = CombatService.get_state(case['location_id'], case['user']['id'])
+    if state['current_location_character_id'] == case['actor_id']:
+        ended = client.post(combat_url(case) + '/end_turn', headers=auth_headers(case['user']),
+                            json={'location_character_id': case['actor_id']})
+        assert ended.status_code == 200, ended.get_json()
     response = client.post(combat_url(case) + '/end_turn',
         headers=auth_headers(case['other_user']),
         json={'location_character_id': case['other_id']})

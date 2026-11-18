@@ -29,6 +29,7 @@ export function getErrorMessage(data) {
 export function showNotification(message, type = 'error', position = 'top-right') {
     const notification = document.createElement('div');
     notification.className = `notification ${type}`;
+    notification.setAttribute('role', type === 'error' ? 'alert' : 'status');
     notification.textContent = message;
 
     let bgColor;

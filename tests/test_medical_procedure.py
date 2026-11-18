@@ -107,6 +107,65 @@ def apply(client, pair, auth_headers, body, user=None):
     )
 
 
+@pytest.mark.parametrize('name,route,group', [
+    ('Настойка подорожника', 'general', None),
+    ('Борщевик', 'medical', 'borshevik'),
+    ('Регенеративный стимулятор Альфа', 'medical', 'regenerative_stimulants'),
+    ('Регенеративный стимулятор Бета', 'medical', 'regenerative_stimulants'),
+    ('Регенеративный стимулятор Звезда', 'medical', 'regenerative_stimulants'),
+    ('Самопальный стимпак', 'medical', 'stimpaks'),
+    ('Военный стимпак', 'medical', 'stimpaks'),
+    ('Научный стимпак', 'medical', 'stimpaks'),
+    ('Антирад. Препарат "Йод-Плюс" (Таблетка)', 'general', None),
+    ('Антирад-А', 'medical', None),
+    ('Антирад-Б', 'medical', None),
+    ('Антирад-Г', 'medical', None),
+    ('"Химера"', 'chimera', None),
+    ('"Вторая жизнь"', 'second_life', None),
+])
+def test_catalog_medicines_addiction_after_use(client, pair, auth_headers, monkeypatch, name, route, group):
+    from app.services.character_starting_purchase import item_from_template
+    from app.services.equipment_catalog import load_catalog
+    from test_general_consumable import apply_general
+
+    template = ItemTemplate(**next(entry for entry in load_catalog() if entry['name'] == name))
+    db.session.add(template)
+    db.session.flush()
+    item = item_from_template(template)
+    data = deepcopy(pair['actor_character'].data)
+    data['inventory']['backpack'] = [item]
+    data.setdefault('skills', {}).setdefault('other', {})['medicine'] = {'base': 20, 'bonus': 0}
+    data['health'].update(radiation=100, exhaustion=3)
+    application = {'kind': 'self', 'actionPoints': 0}
+    if route in {'chimera', 'second_life'}:
+        data['health']['effects'] = [{'id': 'fracture-1', 'type': 'fracture', 'area': 'leftLeg'}]
+        data['health']['zones'] = {'leftLeg': {'current': 20, 'max': 50}}
+        application = {
+            'kind': 'injury', 'effect': {'type': 'body_zone', 'area': 'leftLeg'},
+            'treatmentMode': route, 'actionPoints': 1,
+        }
+    pair['actor_character'].data = data
+    LocationCombatState.query.one().status = 'idle'
+    db.session.commit()
+    monkeypatch.setattr('app.services.addictions.random.random', lambda: 0)
+    monkeypatch.setattr('app.services.medical_procedure.random.randint', lambda *_: 20)
+
+    if route == 'general':
+        response = apply_general(client, pair, auth_headers, item)
+        data_key, result_key = 'data', 'consumable_result'
+    else:
+        response = apply(client, pair, auth_headers, payload(pair, item, application))
+        data_key, result_key = 'actor_data', 'medical_result'
+    assert response.status_code == 200, response.json
+    result = response.json[result_key]
+    if result_key == 'medical_result':
+        assert result['success'] is True, result
+    addiction = result.get('consumable', {}).get('addiction', {})
+    assert addiction.get('applicable', False) is (group is not None)
+    records = response.json[data_key]['health'].get('addictions', {}).get('records', {})
+    assert set(records) == ({group} if group else set())
+
+
 def test_bandage_closes_light_bleeding_and_creates_untreated_wound(client, pair, auth_headers, monkeypatch):
     effect = {'id': 'bleed-1', 'type': 'bleeding_external_light', 'area': 'leftArm', 'source': 'cut'}
     _, profile, item = install_item(pair, 'Бинт', 'Останавливает Слабое кровотечение.', effects=[effect])
@@ -121,6 +180,62 @@ def test_bandage_closes_light_bleeding_and_creates_untreated_wound(client, pair,
     assert any(entry['type'] == 'untreated_wound' and entry['area'] == 'leftArm' for entry in effects)
     assert response.json['actor_data']['inventory']['backpack'][0]['quantity'] == 1
     assert ConsumableUse.query.count() == 1
+
+
+@pytest.mark.parametrize('roll,coin,grade,mode,bleeding_type', [
+    (6, None, 'failure', None, 'bleeding_external_medium'),
+    (7, .499, 'chance', 'weaken', 'bleeding_external_light'),
+    (7, .5, 'chance', None, 'bleeding_external_medium'),
+    (9, .1, 'chance', 'weaken', 'bleeding_external_light'),
+    (9, .9, 'chance', None, 'bleeding_external_medium'),
+    (10, None, 'normal', 'weaken', 'bleeding_external_light'),
+    (14, None, 'normal', 'weaken', 'bleeding_external_light'),
+    (15, None, 'improved', 'close', None),
+])
+def test_bandage_treatment_grades(client, pair, auth_headers, monkeypatch, roll, coin, grade, mode, bleeding_type):
+    effect = {'id': 'bleed-1', 'type': 'bleeding_external_medium', 'area': 'leftArm', 'source': 'cut'}
+    _, profile, item = install_item(pair, 'Бинт', 'Останавливает Слабое кровотечение.', medicine=10, effects=[effect])
+    monkeypatch.setattr('app.services.medical_procedure.random.randint', lambda *_: roll)
+    coin_checks = []
+
+    def flip():
+        coin_checks.append(coin)
+        assert coin is not None
+        return coin
+
+    monkeypatch.setattr('app.services.medical_procedure.random.random', flip)
+    response = apply(client, pair, auth_headers, payload(pair, item, selected_bleeding(profile, effect)))
+    assert response.status_code == 200, response.json
+    result = response.json['medical_result']
+    assert result['difficulty'] == 10
+    assert result['bleeding_grade'] == grade
+    assert result['success'] == (mode is not None)
+    assert (result['outcome'] or {}).get('mode') == mode
+    assert coin_checks == ([] if coin is None else [coin])
+    data = response.json['actor_data']
+    bleeding = [entry['type'] for entry in data['health']['effects'] if entry['type'].startswith('bleeding_')]
+    assert bleeding == ([bleeding_type] if bleeding_type else [])
+    assert data['inventory']['backpack'][0]['quantity'] == 1
+    assert ConsumableUse.query.count() == 1
+
+
+@pytest.mark.parametrize('name,description,stage', [
+    ('Жгут', 'Останавливает Среднее внешнее кровотечение.', 'severe'),
+    ('Антисептический тампон', 'Останавливает Слабое внешнее кровотечение.', 'medium'),
+    ('Губка коллагеновая', 'Останавливает Слабое внешнее кровотечение.', 'medium'),
+    ('Пластырь с гемостатиком', 'Останавливает Среднее внешнее кровотечение.', 'severe'),
+])
+def test_hemostatic_items_stop_one_stage_higher_on_improved_success(
+        client, pair, auth_headers, monkeypatch, name, description, stage):
+    effect = {'id': 'bleed-1', 'type': f'bleeding_external_{stage}', 'area': 'leftArm', 'source': 'cut'}
+    _, profile, item = install_item(pair, name, description, effects=[effect])
+    monkeypatch.setattr('app.services.medical_procedure.random.randint', lambda *_: 20)
+    response = apply(client, pair, auth_headers, payload(pair, item, selected_bleeding(profile, effect)))
+    assert response.status_code == 200, response.json
+    result = response.json['medical_result']
+    assert result['bleeding_grade'] == 'improved'
+    assert result['outcome']['mode'] == 'close'
+    assert not any(entry['id'] == effect['id'] for entry in response.json['actor_data']['health']['effects'])
 
 
 @pytest.mark.parametrize('name,description,stage',[
@@ -148,26 +263,53 @@ def test_real_scissors_add_two_to_bandage_and_tourniquet_medicine(
 
 
 def test_doctor_tools_help_non_injection_only_when_charged_and_genuine(client,pair,auth_headers,monkeypatch):
-    from app.services.medical_procedure import _doctor_tools_medicine_bonus, _medicine_skill
+    from app.services.medical_procedure import _doctor_tools, _medicine_skill
     effect={'id':'bleed-doctor-tools','type':'bleeding_external_light','area':'leftArm','source':'cut'}
     _,profile,item=install_item(pair,'Бинт','Останавливает Слабое кровотечение.',effects=[effect],medicine=5)
     doctor_tools=ItemTemplate(name='Набор инструментов Врача 50/50',category='tool',price=100,attributes={'uses':50})
     db.session.add(doctor_tools);db.session.flush()
     data=deepcopy(pair['actor_character'].data)
     data['inventory']['pockets']=[{'name':'Поддельный набор','category':'tool','templateId':doctor_tools.id,'uses':50}]
-    assert _doctor_tools_medicine_bonus(data,pair['lobby'].id,profile.get('direct') or {})==0
+    assert _doctor_tools(data,pair['lobby'].id,profile.get('direct') or {}) is None
     data['inventory']['pockets'][0]['name']=doctor_tools.name
     data['inventory']['pockets'][0]['uses']=0
-    assert _doctor_tools_medicine_bonus(data,pair['lobby'].id,profile.get('direct') or {})==0
+    assert _doctor_tools(data,pair['lobby'].id,profile.get('direct') or {}) is None
     data['inventory']['pockets'][0]['uses']=20
-    assert _doctor_tools_medicine_bonus(data,pair['lobby'].id,profile.get('direct') or {})==2
-    assert _doctor_tools_medicine_bonus(data,pair['lobby'].id,{'application_form':'injectable'})==0
-    assert _doctor_tools_medicine_bonus(data,pair['lobby'].id,{'medical_difficulty':4})==0
+    assert _doctor_tools(data,pair['lobby'].id,profile.get('direct') or {})[1] == 20
+    assert _doctor_tools(data,pair['lobby'].id,{'application_form':'injectable'}) is None
+    assert _doctor_tools(data,pair['lobby'].id,{'medical_difficulty':4})[1] == 20
+    assert _doctor_tools(data,pair['lobby'].id,{
+        'medical_difficulty':4, 'application_form':'injectable', 'requires_infusion_tool':True,
+    })[1] == 20
     pair['actor_character'].data=data;flag_modified(pair['actor_character'],'data');db.session.commit()
+    body = payload(pair, item, selected_bleeding(profile, effect))
+    monkeypatch.setattr('app.services.medical_procedure.random.randint', lambda *_: pytest.fail('Предпросмотр бросил кубик'))
+    preview = client.post(
+        f"/lobbies/characters/{pair['actor_character'].id}/medical-procedure/preview",
+        headers=auth_headers(pair['actor_user']), json=body,
+    )
+    assert preview.status_code == 200, preview.json
+    assert preview.json['difficulty_without_toolkits'] - preview.json['difficulty'] == 2
+    assert preview.json['toolkits'] == [{'name': doctor_tools.name, 'bonus': 2, 'charges_spent': 1}]
+    db.session.refresh(pair['actor_character'])
+    assert pair['actor_character'].data['inventory']['pockets'][0]['uses'] == 20
+    assert ConsumableUse.query.count() == 0
+    stale = apply(client, pair, auth_headers, {
+        **body, 'confirmed_preview': {**preview.json, 'toolkits': []},
+    })
+    assert stale.status_code == 409, stale.json
+    assert ConsumableUse.query.count() == 0
     monkeypatch.setattr('app.services.medical_procedure.random.randint',lambda *_:20)
-    response=apply(client,pair,auth_headers,payload(pair,item,selected_bleeding(profile,effect)))
+    response = apply(client, pair, auth_headers, {**body, 'confirmed_preview': preview.json})
     assert response.status_code==200,response.json
-    assert response.json['medical_result']['medicine_bonus']==_medicine_skill(data)+2
+    result = response.json['medical_result']
+    assert result['difficulty'] == preview.json['difficulty']
+    assert result['medicine_bonus'] == _medicine_skill(data) + 2
+    assert result['difficulty_without_toolkits'] - result['difficulty'] == 2
+    assert result['toolkits'] == [{
+        'name': doctor_tools.name, 'bonus': 2, 'charges_spent': 1, 'charges_remaining': 19,
+    }]
+    assert response.json['actor_data']['inventory']['pockets'][0]['uses'] == 19
 
 
 def test_local_clone_of_bandage_can_treat_without_matching_name(client, pair, auth_headers, monkeypatch):
@@ -207,9 +349,50 @@ def test_stronger_bleeding_is_weakened_one_stage(client, pair, auth_headers, mon
     monkeypatch.setattr('app.services.medical_procedure.random.randint', lambda *_: 20)
     response = apply(client, pair, auth_headers, payload(pair, item, selected_bleeding(profile, effect)))
     assert response.status_code == 200, response.json
+    assert response.json['medical_result']['roll'] - response.json['medical_result']['difficulty'] >= 5
+    assert 'bleeding_grade' not in response.json['medical_result']
     assert response.json['medical_result']['outcome']['mode'] == 'weaken'
     assert response.json['medical_result']['outcome']['result_stage'] == 'severe'
     assert response.json['actor_data']['health']['effects'][0]['type'] == 'bleeding_internal_severe'
+
+
+def test_hemostatic_ampoule_has_no_chance_to_succeed_below_difficulty(client, pair, auth_headers, monkeypatch):
+    effect = {'id': 'bleed-1', 'type': 'bleeding_internal_severe', 'area': 'chest', 'source': 'organ'}
+    _, profile, item = install_item(
+        pair, 'Гемостатик "Шов"',
+        'Ампула. Останавливает Сильное внутреннее кровотечение. Бонус медикамента -8.',
+        effects=[effect], medicine=10,
+    )
+    request = payload(pair, item, selected_bleeding(profile, effect))
+    preview = client.post(
+        f"/lobbies/characters/{pair['actor_character'].id}/medical-procedure/preview",
+        headers=auth_headers(pair['actor_user']), json=request,
+    )
+    assert preview.status_code == 200, preview.json
+    roll = int(preview.json['difficulty']) - 1
+    assert 1 <= roll <= 20
+    monkeypatch.setattr('app.services.medical_procedure.random.randint', lambda *_: roll)
+    response = apply(client, pair, auth_headers, request)
+    assert response.status_code == 200, response.json
+    result = response.json['medical_result']
+    assert result['roll'] == result['difficulty'] - 1
+    assert not result['success']
+    assert 'bleeding_grade' not in result
+
+
+def test_closed_internal_bleeding_does_not_leave_untreated_wound(client, pair, auth_headers, monkeypatch):
+    effect = {'id': 'bleed-1', 'type': 'bleeding_internal_severe', 'area': 'chest', 'source': 'organ'}
+    _, profile, item = install_item(
+        pair, 'Гемостатик "Шов"',
+        'Ампула. Останавливает Сильное внутреннее кровотечение. Не пригодно для внешних кровотечений. Бонус медикамента -8.',
+        effects=[effect], medicine=20,
+    )
+    monkeypatch.setattr('app.services.medical_procedure.random.randint', lambda *_: 20)
+    response = apply(client, pair, auth_headers, payload(pair, item, selected_bleeding(profile, effect)))
+    assert response.status_code == 200, response.json
+    assert response.json['medical_result']['outcome']['mode'] == 'close'
+    effects = response.json['actor_data']['health']['effects']
+    assert not any(entry['type'] in {'bleeding_internal_severe', 'untreated_wound'} for entry in effects)
 
 
 def test_external_hemostatic_cannot_treat_internal_bleeding(client, pair, auth_headers):
@@ -227,6 +410,7 @@ def test_medium_bleeding_uses_two_bandages(client, pair, auth_headers, monkeypat
     monkeypatch.setattr('app.services.medical_procedure.random.randint', lambda *_: 20)
     response = apply(client, pair, auth_headers, payload(pair, item, selected_bleeding(profile, effect, 1)))
     assert response.status_code == 200, response.json
+    assert response.json['medical_result']['medication_bonus'] == 2
     assert response.json['actor_data']['inventory']['backpack'] == []
 
 
@@ -1152,8 +1336,9 @@ def test_limb_surgery_without_preexisting_pain_does_not_cause_maximum_pain_shock
     assert not any(e['type']=='shock' for e in health['effects'])
 
 
-def test_charged_surgeon_tools_improve_surgery_and_halve_patient_pain(client,pair,auth_headers,monkeypatch):
-    from app.services.medical_procedure import _medicine_skill, _surgeon_tools_available
+@pytest.mark.parametrize('with_doctor_tools, skip_toolkits', [(False, False), (True, False), (True, True)])
+def test_surgery_toolkits_are_optional(client, pair, auth_headers, monkeypatch, with_doctor_tools, skip_toolkits):
+    from app.services.medical_procedure import _medicine_skill, _surgeon_tools
     _, _, item = install_item(pair, 'Хирургический набор "Крест"',
         'Восстанавливает часть тела. Она имеет 10 здоровья. Усиливает боль на 5 уровней.',
         quantity=10, pain=0, zones={'leftArm': {'current':0,'max':50}})
@@ -1161,20 +1346,46 @@ def test_charged_surgeon_tools_improve_surgery_and_halve_patient_pain(client,pai
     db.session.add(tool);db.session.flush()
     data=deepcopy(pair['actor_character'].data)
     data['inventory']['pockets']=[{'name':'Поддельный набор','category':'tool','templateId':tool.id,'uses':30}]
-    assert not _surgeon_tools_available(data,pair['lobby'].id)
+    assert _surgeon_tools(data,pair['lobby'].id) is None
     data['inventory']['pockets'][0]['name']=tool.name
     data['inventory']['pockets'][0]['uses']=0
-    assert not _surgeon_tools_available(data,pair['lobby'].id)
+    assert _surgeon_tools(data,pair['lobby'].id) is None
     data['inventory']['pockets'][0]['uses']=10
-    assert _surgeon_tools_available(data,pair['lobby'].id)
+    assert _surgeon_tools(data,pair['lobby'].id)[1] == 10
+    if with_doctor_tools:
+        doctor = ItemTemplate(name='Набор инструментов Врача 50/50', category='tool', price=100, attributes={'uses':50})
+        db.session.add(doctor)
+        db.session.flush()
+        data['inventory']['pockets'].append({
+            'name': doctor.name, 'category': 'tool', 'templateId': doctor.id, 'uses': 1,
+        })
     pair['actor_character'].data=data;flag_modified(pair['actor_character'],'data');db.session.commit()
     monkeypatch.setattr('app.services.medical_procedure.random.randint',lambda *_:20)
     application={'kind':'injury','effect':{'type':'damaged_zone','area':'leftArm'},
         'treatmentMode':'restore_disabled_limb','actionPoints':6}
-    response=apply(client,pair,auth_headers,payload(pair,item,application))
+    body = {**payload(pair, item, application), 'skip_toolkits': skip_toolkits}
+    preview = client.post(
+        f"/lobbies/characters/{pair['actor_character'].id}/medical-procedure/preview",
+        headers=auth_headers(pair['actor_user']), json=body,
+    )
+    assert preview.status_code == 200, preview.json
+    body['confirmed_preview'] = preview.json
+    response = apply(client, pair, auth_headers, body)
     assert response.status_code==200,response.json
-    assert response.json['medical_result']['medicine_bonus']==_medicine_skill(data)+5
-    assert response.json['actor_data']['health']['painLevel']==2
+    result = response.json['medical_result']
+    pockets = response.json['actor_data']['inventory']['pockets']
+    assert result['success']
+    if skip_toolkits:
+        assert result['medicine_bonus'] == _medicine_skill(data)
+        assert result['difficulty'] == result['difficulty_without_toolkits']
+        assert result['toolkits'] == []
+        assert [tool['uses'] for tool in pockets] == [10, 1]
+        assert response.json['actor_data']['health']['painLevel'] == 5
+    else:
+        assert result['medicine_bonus'] == _medicine_skill(data) + (7 if with_doctor_tools else 5)
+        assert [tool['bonus'] for tool in result['toolkits']] == ([2, 5] if with_doctor_tools else [5])
+        assert [tool['uses'] for tool in pockets] == ([9, 0] if with_doctor_tools else [9])
+        assert response.json['actor_data']['health']['painLevel'] == 2
 
 
 def test_splint_fix_and_restore_are_separate_procedures(client, pair, auth_headers, monkeypatch):
@@ -1212,10 +1423,21 @@ def test_splint_fix_and_restore_are_separate_procedures(client, pair, auth_heade
 
 
 @pytest.mark.parametrize('detailed_order', [False, True])
-def test_deferred_treatment_uses_saved_roll_and_completes_once(client, pair, auth_headers, monkeypatch, detailed_order):
+@pytest.mark.parametrize('with_preview', [False, True])
+def test_deferred_treatment_uses_one_confirmed_roll(
+        client, pair, auth_headers, monkeypatch, detailed_order, with_preview):
     effect = {'id': 'bleed-1', 'type': 'bleeding_external_light', 'area': 'leftArm', 'source': 'cut'}
-    _, profile, item = install_item(pair, 'Бинт', 'Останавливает Слабое кровотечение.', effects=[effect])
+    _, profile, item = install_item(pair, 'Бинт', 'Останавливает Слабое кровотечение.', medicine=16, effects=[effect])
+    if with_preview:
+        tool = ItemTemplate(name='Набор инструментов Врача 50/50', category='tool', price=100, attributes={'uses':50})
+        db.session.add(tool)
+        db.session.flush()
+        data = deepcopy(pair['actor_character'].data)
+        data['inventory']['pockets'] = [{'name': tool.name, 'category': 'tool', 'templateId': tool.id, 'uses': 1}]
+        pair['actor_character'].data = data
+        flag_modified(pair['actor_character'], 'data')
     pair['actor_location'].action_points_current = 1
+    pair['actor_location'].free_actions_current = 0
     db.session.commit()
     application = selected_bleeding(profile, effect)
     selection = {
@@ -1223,6 +1445,12 @@ def test_deferred_treatment_uses_saved_roll_and_completes_once(client, pair, aut
         'application': deepcopy(application), 'target_character_id': pair['actor_character'].id,
         'treatment_request_id': None,
     }
+    preview_url = f"/lobbies/characters/{pair['actor_character'].id}/medical-procedure/preview"
+    body = payload(pair, item, application, operation='medical-deferred', combat=True)
+    if with_preview:
+        preview = client.post(preview_url, headers=auth_headers(pair['actor_user']), json={**body, 'skip_toolkits': True})
+        assert preview.status_code == 200, preview.json
+        selection.update(server_authoritative=True, server_operation='medical', confirmed_preview=preview.json, skip_toolkits=True)
     start = client.post(
         f"/lobbies/{pair['lobby'].id}/locations/{pair['location'].id}/combat/spend",
         headers=auth_headers(pair['actor_user']), json={
@@ -1241,7 +1469,7 @@ def test_deferred_treatment_uses_saved_roll_and_completes_once(client, pair, aut
     assert other_end.status_code == 200, other_end.json
     row = db.session.get(DeferredCombatAction, 'medical-deferred')
     assert row.status == 'ready'
-    assert row.payload['medicine_roll'] == 4
+    assert row.payload.get('medicine_roll') == (None if with_preview else 4)
     if detailed_order:
         from app.models import CharacterInteractionRequest
         from app.services.brigadier_order import create, respond
@@ -1250,17 +1478,38 @@ def test_deferred_treatment_uses_saved_roll_and_completes_once(client, pair, aut
             'detailed': True, 'text': 'Останови кровотечение', 'advantage': True, 'roll_bonus': 3,
         })
         respond(db.session.get(CharacterInteractionRequest, order['id']), pair['actor_user']['id'], 'accept')
-    body = payload(pair, item, application, operation='medical-deferred', combat=True)
     body['deferred_action_id'] = 'medical-deferred'
+    if with_preview:
+        preview = client.post(preview_url, headers=auth_headers(pair['actor_user']), json={**body, 'skip_toolkits': True})
+        assert preview.status_code == 200, preview.json
+        body['confirmed_preview'] = preview.json
     extra_rolls = []
-    monkeypatch.setattr('app.services.medical_procedure.random.randint', lambda low, high: extra_rolls.append((low, high)) or 20)
+
+    def roll(low, high):
+        extra_rolls.append((low, high))
+        return 4 if with_preview and extra_rolls.count((1, 20)) == 1 else 20
+
+    chance_checks = []
+
+    def flip():
+        chance_checks.append(True)
+        return 0.1
+
+    monkeypatch.setattr('app.services.medical_procedure.random.randint', roll)
+    monkeypatch.setattr('app.services.medical_procedure.random.random', flip)
     response = apply(client, pair, auth_headers, body)
     assert response.status_code == 200, response.json
+    if with_preview:
+        assert response.json['medical_result']['toolkits'] == []
+        assert response.json['actor_data']['inventory']['pockets'][0]['uses'] == 1
     assert response.json['medical_result']['roll'] == (20 if detailed_order else 4)
+    assert response.json['medical_result']['bleeding_grade'] == ('improved' if detailed_order else 'chance')
+    assert response.json['medical_result']['success'] is True
     assert 'brigadierOrder' not in response.json['actor_data']['health']['combatMeta']
     assert db.session.get(DeferredCombatAction, 'medical-deferred').status == 'completed'
     assert apply(client, pair, auth_headers, body).status_code == 409
-    assert extra_rolls.count((1, 20)) == int(detailed_order)
+    assert extra_rolls.count((1, 20)) == int(detailed_order) + int(with_preview)
+    assert len(chance_checks) == int(not detailed_order)
 
 
 def test_treating_conscious_other_character_requires_and_completes_consent(client, pair, auth_headers, monkeypatch):
@@ -1278,17 +1527,26 @@ def test_treating_conscious_other_character_requires_and_completes_consent(clien
     selection = {
         'source': {'path': ['inventory', 'backpack', 0], 'snapshot': deepcopy(item)},
         'application': deepcopy(application), 'target_character_id': pair['target_character'].id,
-        'treatment_request_id': consent.id, 'server_authoritative': True,
+        'treatment_request_id': consent.id, 'server_authoritative': True, 'server_operation': 'medical',
     }
+    combat_url = f"/lobbies/{pair['lobby'].id}/locations/{pair['location'].id}/combat"
+    prepare_url = combat_url + '/deferred-consumable/other-treatment?background=1'
+    actor_headers = auth_headers(pair['actor_user'])
     paid = client.post(
-        f"/lobbies/{pair['lobby'].id}/locations/{pair['location'].id}/combat/spend",
-        headers=auth_headers(pair['actor_user']), json={
+        combat_url + '/spend', headers=actor_headers, json={
             'location_character_id': pair['actor_location'].id, 'action_points': 5,
             'allow_deferred': True, 'pending_action_id': 'other-treatment',
             'pending_action_label': 'Бинт', 'consumable_selection': selection,
         },
     )
     assert paid.status_code == 200, paid.json
+    ready = paid.json['combat_state']['current_character']['deferred_action']
+    assert (ready['id'], ready['status'], ready['client_executable']) == ('other-treatment', 'ready', True)
+    assert client.get(prepare_url, headers=auth_headers(pair['target_user'])).status_code == 403
+    saved = client.get(prepare_url, headers=actor_headers)
+    assert saved.status_code == 200, saved.json
+    assert saved.json['selection'] == selection
+    assert 'target_data' not in saved.json
     body = payload(
         pair, item, application, operation='other-treatment', target=pair['target_character'],
         combat=True, consent=consent,
@@ -1298,6 +1556,10 @@ def test_treating_conscious_other_character_requires_and_completes_consent(clien
     assert response.status_code == 200, response.json
     assert consent.status == 'completed'
     assert response.json['target_data']['health']['effects'][0]['type'] == 'untreated_wound'
+    repeated = client.get(prepare_url, headers=actor_headers)
+    assert repeated.status_code == 200
+    assert repeated.json == {'status': 'completed'}
+    assert pair['actor_character'].data['inventory']['backpack'][0]['quantity'] == 1
 
 
 def test_combat_endpoint_cannot_bypass_action_point_payment(client, pair, auth_headers):

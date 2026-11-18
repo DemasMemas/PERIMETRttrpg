@@ -17,8 +17,11 @@ test('Ожидаемая цена использует серверный diviso
     assert.equal(movement.expectedMovementCost({cost:1.3,climb_cost:0},{divisor:2},1),.65);
     assert.throws(()=>movement.expectedMovementCost({cost:5},{divisor:0},1));
 });
-test('Кандидаты #96 берутся из неизменённой Припяти и остаются NEEDS_REPRO',()=>{
-    const fixture=JSON.parse(fs.readFileSync(path.join(__dirname,'../tmp/pripyat-regression.json'),'utf8').replace(/^\uFEFF/,''));
+const pripyatFixture = path.join(__dirname, '../tmp/pripyat-regression.json');
+test('Кандидаты #96 берутся из неизменённой Припяти и остаются NEEDS_REPRO', {
+    skip: !fs.existsSync(pripyatFixture) && 'Нужна локальная копия Припяти',
+}, () => {
+    const fixture=JSON.parse(fs.readFileSync(pripyatFixture,'utf8').replace(/^\uFEFF/,''));
     const cases=movement.navigationCandidates(fixture);
     assert.equal(cases.status,'NEEDS_REPRO');assert.equal(cases.stairs.length,7);
     assert.equal(cases.selectedStair.dimensions.width,.9);assert.deepEqual(cases.selectedStair.from,[7,6,0]);assert.deepEqual(cases.selectedStair.to,[7,11,1]);

@@ -15,6 +15,7 @@ from test_character_interactions import _setup_pair
 def case(client, create_user, auth_headers):
     pair = _setup_pair(client, create_user, auth_headers)
     pair['actor_location'].action_points_current = 2
+    pair['actor_location'].free_actions_current = 0
     db.session.commit()
     return {
         'lobby': pair['lobby'].id, 'location': pair['location'].id,
@@ -52,6 +53,47 @@ def resume(client, case, auth_headers, *, other=False, **extra):
         'location_character_id': case['actor'], 'action_key': 'narrative_action',
         'resume_pending_action_id': 'durable-test', **extra,
     }, other=other)
+
+
+@pytest.mark.parametrize(('free_actions', 'movement_points'), [(1, 0), (0, .5), (1, .5)])
+def test_starting_a_deferred_action_preserves_the_turn_and_unspent_resources(
+        client, case, auth_headers, free_actions, movement_points):
+    actor = db.session.get(LocationCharacter, case['actor'])
+    actor.free_actions_current = free_actions
+    actor.movement_points_current = movement_points
+    actor.facing_x, actor.facing_y = 0, 1
+    actor.location.grid_width = actor.location.grid_height = 4
+    actor.location.tiles_data = [[{'terrain': 'grass', 'height': 0} for _ in range(4)] for _ in range(4)]
+    db.session.commit()
+    combat = f"/lobbies/{case['lobby']}/locations/{case['location']}/combat"
+    headers = auth_headers(case['user'])
+
+    started = start(client, case, auth_headers)
+    assert started['state']['current_location_character_id'] == actor.id
+    assert started['character']['action_points_current'] == 0
+    assert started['character']['free_actions_current'] == free_actions
+    assert started['character']['movement_points_current'] == movement_points
+    assert resume(client, case, auth_headers).status_code == 409
+
+    if movement_points:
+        CombatService.move_character(case['location'], case['user']['id'], actor.character_id,
+                                     actor.pos_x, actor.pos_y + movement_points, movement_mode='walk')
+        assert actor.pos_y == 1 + movement_points
+        assert actor.movement_points_current == 0
+    if free_actions:
+        turned = action(client, case, auth_headers, {
+            'location_character_id': actor.id, 'action_key': 'change_facing',
+            'facing_x': 1, 'facing_y': 0, 'payment': 'free',
+        })
+        assert turned.status_code == 200, turned.json
+        assert actor.free_actions_current == 0
+    assert db.session.get(DeferredCombatAction, 'durable-test').remaining_action_points == 4
+
+    ended = client.post(combat + '/end_turn', headers=headers, json={'location_character_id': actor.id})
+    assert ended.status_code == 200, ended.json
+    assert ended.json['current_location_character_id'] == case['other']
+    assert pay(client, case, auth_headers)['current_character']['deferred_action']['status'] == 'ready'
+    assert resume(client, case, auth_headers).status_code == 200
 
 
 def test_reconnect_resumes_saved_arguments_once_without_repaying(client, case, auth_headers):
@@ -110,6 +152,11 @@ def test_drawing_weapon_waits_for_full_payment(client, case, auth_headers):
 
 
 def test_large_cost_spans_several_turns_before_becoming_ready(client, case, auth_headers):
+    actor = db.session.get(LocationCharacter, case['actor'])
+    data = deepcopy(actor.character.data)
+    data.setdefault('combat', {})['free_actions'] = 0
+    actor.character.data = data
+    db.session.commit()
     start(client, case, auth_headers, cost=13)
     for remaining in (6, 1):
         state = pay(client, case, auth_headers)

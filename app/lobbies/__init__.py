@@ -28,6 +28,7 @@ from app.services.exceptions import ConflictError, PermissionDenied, ValidationE
 from app.services.character_events import emit_character_update, publish_character_appearance, publish_character_save
 from app.services.character_appearance import public_character_appearance
 from app.services.combat import CombatService
+from app.services.world_blood_loss import blood_loss_plan, resolve_world_blood_loss
 from app.services.world_travel_events import anomaly_check_details, roll_travel_event, travel_scenario
 from app.services.character_interaction import CharacterInteractionService
 from app.services.health import apply_health_maximums, heal_character_fully, health_zones_to_location
@@ -109,11 +110,14 @@ lobbies_bp = Blueprint('lobbies', __name__)
 @jwt_required()
 @requires_participant
 def get_world_rule_catalogs(lobby_id, lobby, participant):
+    from app.services.cooked_meat import catalog_choices
+
     return jsonify({
         'anomalies': anomaly_catalog(),
         'anomaly_fields': anomaly_field_catalog(),
         'artifacts': artifact_catalog(),
         'mutants': mutant_catalog(),
+        'cooked_meat': catalog_choices(),
     }), 200
 
 
@@ -334,7 +338,7 @@ def _serialize_world_group(group):
                     if isinstance(characters_by_id[character_id].data, dict) else {}
                 ),
                 **({'appearance': appearance} if (appearance := public_character_appearance(
-                    characters_by_id[character_id].data
+                    characters_by_id[character_id].data, include_belt=False
                 )) else {}),
                 'movement_penalty': member_penalties[character_id],
                 'condition': carry_profiles[character_id]['condition'],
@@ -467,12 +471,23 @@ def _world_group_speed(maximum_penalty):
     return 1, 'Вдвое медленнее'
 
 
+def _world_weather_change_text(change):
+    label = {'sun': 'Ясность неба', 'rain': 'Дождь', 'fog': 'Туман'}[change['parameter']]
+    return f" {label}: {change['before']:.1f} → {change['after']:.1f}."
+
+
 def _serialize_world_event(event, *, reveal_description):
+    description = event.description if reveal_description else None
+    if reveal_description and event.weather_shift and event.status == 'pending':
+        from app.services.weather_rules import preview_change
+
+        lobby = db.session.get(Lobby, event.lobby_id)
+        description += _world_weather_change_text(preview_change(lobby.weather_settings, event.weather_shift))
     return {
         'id': event.id,
         'group_id': event.group_id,
         'group_name': event.group.name,
-        'description': event.description if reveal_description else None,
+        'description': description,
         'status': event.status,
         'from_tile_x': event.from_tile_x,
         'from_tile_y': event.from_tile_y,
@@ -505,6 +520,41 @@ def _world_route_tiles(from_x, from_y, to_x, to_y):
         )
         for step in range(1, steps + 1)
     ]
+
+
+def _apply_world_group_radiation(group, characters, *, moving):
+    tile = MapService.get_tile_data(group.lobby_id, group.tile_x, group.tile_y)
+    dose = max(0.0, CombatService._coerce_float(tile.get('radiation'), 0))
+    results = {'filter_updates': [], 'radiation_updates': [], 'radiation_consequences': []}
+    updated = []
+    if not moving and not dose:
+        return results, updated
+
+    for character in characters:
+        data = deepcopy(character.data or {})
+        consequences = CombatService._apply_world_radiation_consequences(data)
+        filters = consume_equipped_filter_charges(data, 1)
+        exposure = CombatService._apply_incoming_radiation(
+            data, dose, binary=True, lobby=group.lobby, character=character,
+        )
+        identity = {'character_id': character.id, 'character_name': character.name}
+        results['radiation_consequences'].append({**identity, **consequences})
+        radiation = {**identity, **exposure}
+        pain_changed = False
+        if moving:
+            pain = CombatService._recover_world_travel_pain(data)
+            pain_changed = pain['changed']
+            radiation['pain_recovery'] = pain
+            # Свойства артефактов срабатывают при продвижении общего времени.
+            radiation['artifact_effects'] = {'changed': False, 'interval_seconds': 600}
+        results['radiation_updates'].append(radiation)
+        if filters['changed']:
+            results['filter_updates'].append({'character_id': character.id, **filters})
+        if consequences['applied'] or filters['changed'] or exposure['changed'] or pain_changed:
+            character.data = data
+            flag_modified(character, 'data')
+            updated.append(character)
+    return results, updated
 
 
 def _advance_world_time(lobby, minutes):
@@ -572,6 +622,29 @@ def _submit_world_group_turn(group, lobby):
     group.turn_submitted_minutes = lobby.game_time_minutes or 0
 
 
+def _world_blood_loss_candidates(characters):
+    characters = sorted(characters, key=lambda character: character.id)
+    fighting = {placed.character_id for placed, _ in CombatService.active_combat_placements(
+        [character.id for character in characters],
+    )}
+    return [character for character in characters if character.id not in fighting]
+
+
+def _world_blood_loss_confirmation(characters, confirmation):
+    risks = [
+        {'character_id': character.id, 'character_name': character.name, **risk}
+        for character in _world_blood_loss_candidates(characters)
+        if (risk := blood_loss_plan(character.data or {}))
+    ]
+    if risks and risks != confirmation:
+        return jsonify({
+            'code': 'world_group_bleeding',
+            'error': 'Подтвердите риск кровопотери за мировой ход.',
+            'blood_loss_risks': risks,
+        }), 409
+    return None
+
+
 def _complete_world_turn_if_ready(lobby):
     active_groups = WorldGroup.query.filter_by(
         lobby_id=lobby.id,
@@ -581,8 +654,20 @@ def _complete_world_turn_if_ready(lobby):
         _world_group_submitted_for_current_turn(group, lobby)
         for group in active_groups
     ):
-        return False, []
-    return True, _advance_world_time(lobby, 10)
+        return False, [], []
+
+    members = {character.id: character for group in active_groups
+               for character in _eligible_world_group_characters(group)[1].values()}
+    blood_loss = []
+    for character in _world_blood_loss_candidates(members.values()):
+        data = deepcopy(character.data or {})
+        result = resolve_world_blood_loss(data)
+        if result is None:
+            continue
+        character.data = data
+        flag_modified(character, 'data')
+        blood_loss.append({'character_id': character.id, 'character_name': character.name, **result})
+    return True, _advance_world_time(lobby, 10), blood_loss
 
 
 def _serialize_world_turn(lobby):
@@ -603,7 +688,7 @@ def _serialize_world_turn(lobby):
     }
 
 
-def _emit_world_time_updates(lobby, characters):
+def _emit_world_time_updates(lobby, characters, *, blood_loss=()):
     from app.services.weather_rules import emit as emit_weather
     emit_weather(lobby)
     payload = {
@@ -611,7 +696,12 @@ def _emit_world_time_updates(lobby, characters):
         'game_time_minutes': lobby.game_time_minutes,
     }
     socketio.emit('lobby_time_updated', payload, room=f"lobby_{lobby.id}")
+    results = {result['character_id']: result for result in blood_loss}
     for character in characters:
+        if result := results.get(character.id):
+            recipients = {lobby.gm_id, character.owner_id, *(character.visible_to or []), *(character.editable_to or [])}
+            for user_id in recipients - {None}:
+                socketio.emit('world_blood_loss_resolved', result, room=f"user_{user_id}")
         emit_character_update(
             {
                 'character_id': character.id,
@@ -620,6 +710,19 @@ def _emit_world_time_updates(lobby, characters):
             },
         )
     return payload
+
+
+def _finish_world_group_action(lobby, user_id, time_advanced, time_characters, action_characters, blood_loss):
+    if time_advanced:
+        updated = {character.id: character for character in [*time_characters, *action_characters]}
+        return _emit_world_time_updates(lobby, updated.values(), blood_loss=blood_loss)
+    for character in action_characters:
+        emit_character_update({
+            'character_id': character.id,
+            'updates': {'data': character.data_snapshot()},
+            'updated_by': user_id,
+        })
+    return None
 
 
 @lobbies_bp.route('/<int:lobby_id>/world-groups', methods=['GET'])
@@ -775,6 +878,7 @@ def update_world_group_members(lobby_id, group_id, lobby):
 @jwt_required()
 @requires_gm
 def update_world_group_turn_activity(lobby_id, group_id, lobby):
+    db.session.refresh(lobby, with_for_update=True)
     group = WorldGroup.query.filter_by(id=group_id, lobby_id=lobby_id).first()
     if not group:
         return jsonify({'error': 'World group not found'}), 404
@@ -784,12 +888,12 @@ def update_world_group_turn_activity(lobby_id, group_id, lobby):
     group.turn_active = data['active']
     group.turn_submitted_day = None
     group.turn_submitted_minutes = None
-    time_advanced, updated_characters = _complete_world_turn_if_ready(lobby)
+    time_advanced, updated_characters, blood_loss = _complete_world_turn_if_ready(lobby)
     db.session.commit()
     payload = _serialize_world_group(group)
     socketio.emit('world_group_updated', payload, room=f"lobby_{lobby_id}")
     time_payload = (
-        _emit_world_time_updates(lobby, updated_characters)
+        _emit_world_time_updates(lobby, updated_characters, blood_loss=blood_loss)
         if time_advanced else None
     )
     return jsonify({
@@ -804,6 +908,7 @@ def update_world_group_turn_activity(lobby_id, group_id, lobby):
 @jwt_required()
 @requires_participant
 def wait_world_group(lobby_id, group_id, lobby, participant):
+    db.session.refresh(lobby, with_for_update=True)
     group = WorldGroup.query.filter_by(id=group_id, lobby_id=lobby_id).first()
     if not group:
         return jsonify({'error': 'World group not found'}), 404
@@ -814,20 +919,26 @@ def wait_world_group(lobby_id, group_id, lobby, participant):
     pending = WorldTravelEvent.query.filter_by(group_id=group.id, status='pending').first()
     if pending:
         return jsonify({'error': 'The GM must resolve the pending travel event first'}), 409
+    _, members = _eligible_world_group_characters(group)
+    confirmation = (request.get_json(silent=True) or {}).get('confirm_bleeding')
+    warning = _world_blood_loss_confirmation(members.values(), confirmation)
+    if warning:
+        return warning
+    radiation, exposed_characters = _apply_world_group_radiation(group, members.values(), moving=False)
     _submit_world_group_turn(group, lobby)
-    time_advanced, updated_characters = _complete_world_turn_if_ready(lobby)
+    time_advanced, updated_characters, blood_loss = _complete_world_turn_if_ready(lobby)
     db.session.commit()
     group_payload = _serialize_world_group(group)
     socketio.emit('world_group_updated', group_payload, room=f"lobby_{lobby_id}")
-    time_payload = (
-        _emit_world_time_updates(lobby, updated_characters)
-        if time_advanced else None
-    )
+    time_payload = _finish_world_group_action(lobby, participant.user_id, time_advanced,
+                                             updated_characters, exposed_characters, blood_loss)
     return jsonify({
         'group': group_payload,
         'world_turn': _serialize_world_turn(lobby),
         'time_advanced': time_advanced,
         'time': time_payload,
+        'blood_loss': [result for result in blood_loss if result['character_id'] in members],
+        **radiation,
     }), 200
 
 
@@ -1016,6 +1127,7 @@ def delete_world_group(lobby_id, group_id, lobby):
 @jwt_required()
 @requires_participant
 def move_world_group(lobby_id, group_id, lobby, participant):
+    db.session.refresh(lobby, with_for_update=True)
     group = WorldGroup.query.filter_by(id=group_id, lobby_id=lobby_id).first()
     if not group:
         return jsonify({'error': 'World group not found'}), 404
@@ -1045,6 +1157,12 @@ def move_world_group(lobby_id, group_id, lobby, participant):
             'error': f'A world movement can reach no more than {movement_distance} tiles',
         }), 400
 
+    _, members = _eligible_world_group_characters(group)
+    group_characters = members.values()
+    warning = _world_blood_loss_confirmation(group_characters, data.get('confirm_bleeding'))
+    if warning:
+        return warning
+
     from_x, from_y = group.tile_x, group.tile_y
     route_tiles = _world_route_tiles(from_x, from_y, tile_x, tile_y)
     route_index = {position: index for index, position in enumerate(route_tiles)}
@@ -1061,68 +1179,7 @@ def move_world_group(lobby_id, group_id, lobby, participant):
     actual_tile_x = placed_event.tile_x if placed_event else tile_x
     actual_tile_y = placed_event.tile_y if placed_event else tile_y
     group.tile_x, group.tile_y = actual_tile_x, actual_tile_y
-    destination_tile = MapService.get_tile_data(
-        lobby_id,
-        actual_tile_x,
-        actual_tile_y,
-    )
-    destination_radiation = max(
-        0.0,
-        CombatService._coerce_float(destination_tile.get('radiation'), 0),
-    )
-    filter_updates = []
-    radiation_updates = []
-    radiation_consequences = []
-    member_ids, _ = _eligible_world_group_characters(group)
-    group_characters = (
-        LobbyCharacter.query.filter(
-            LobbyCharacter.lobby_id == lobby_id,
-            LobbyCharacter.id.in_(member_ids),
-        ).all()
-        if member_ids else []
-    )
-    travel_updated_characters = []
-    for character in group_characters:
-        character_data = deepcopy(character.data or {})
-        consequence_result = CombatService._apply_world_radiation_consequences(
-            character_data,
-        )
-        filter_result = consume_equipped_filter_charges(character_data, 1)
-        radiation_result = CombatService._apply_incoming_radiation(
-            character_data,
-            destination_radiation,
-            binary=True,
-            lobby=lobby,
-            character=character,
-        )
-        pain_recovery = CombatService._recover_world_travel_pain(character_data)
-        # Переход не вызывает свойства артефактов: они тикают с общим игровым временем.
-        artifact_result = {'changed':False,'interval_seconds':600}
-        radiation_consequences.append({
-            "character_id": character.id,
-            "character_name": character.name,
-            **consequence_result,
-        })
-        radiation_updates.append({
-            "character_id": character.id,
-            "character_name": character.name,
-            "pain_recovery": pain_recovery,
-            "artifact_effects": artifact_result,
-            **radiation_result,
-        })
-        if (
-            not consequence_result['applied']
-            and not filter_result["changed"]
-            and not radiation_result['changed']
-            and not pain_recovery['changed']
-            and not artifact_result['changed']
-        ):
-            continue
-        character.data = character_data
-        flag_modified(character, 'data')
-        travel_updated_characters.append(character)
-        if filter_result["changed"]:
-            filter_updates.append({"character_id": character.id, **filter_result})
+    radiation, travel_updated_characters = _apply_world_group_radiation(group, group_characters, moving=True)
     _submit_world_group_turn(group, lobby)
     event = None
     if placed_event:
@@ -1142,47 +1199,26 @@ def move_world_group(lobby_id, group_id, lobby, participant):
     else:
         outcome = roll_travel_event(travel_scenario(lobby_id, actual_tile_x, actual_tile_y))
         if outcome:
-            weather_change=None
-            outcome_key=getattr(outcome,'key',None)
-            if outcome_key in {'weather','weather_decrease'}:
-                from app.services.weather_rules import change as change_weather
-                weather_change=change_weather(lobby,.5)
-                weather_label={'sun':'Ясность неба','rain':'Дождь','fog':'Туман'}[weather_change['parameter']]
+            from app.services.weather_rules import roll_change
+
+            outcome_key = getattr(outcome, 'key', None)
             event = WorldTravelEvent(
                 lobby_id=lobby_id,
                 group_id=group.id,
-                description=(f'{outcome.name}: {outcome.prompt}' + anomaly_check_details(outcome_key, group_characters) +
-                    (f" {weather_label}: {weather_change['before']:.1f} → {weather_change['after']:.1f}." if weather_change else '')),
+                description=f'{outcome.name}: {outcome.prompt}' + anomaly_check_details(outcome_key, group_characters),
+                weather_shift=roll_change(.5) if outcome_key in {'weather', 'weather_decrease'} else None,
                 from_tile_x=from_x,
                 from_tile_y=from_y,
                 to_tile_x=actual_tile_x,
                 to_tile_y=actual_tile_y,
             )
             db.session.add(event)
-    time_advanced, updated_characters = _complete_world_turn_if_ready(lobby)
+    time_advanced, updated_characters, blood_loss = _complete_world_turn_if_ready(lobby)
     db.session.commit()
 
     group_payload = _serialize_world_group(group)
-    all_updated_characters = {
-        character.id: character
-        for character in [*updated_characters, *travel_updated_characters]
-    }
-    time_payload = (
-        _emit_world_time_updates(lobby, all_updated_characters.values())
-        if time_advanced else None
-    )
-    if not time_advanced:
-        if event and not placed_event and outcome and outcome_key in {'weather','weather_decrease'}:
-            from app.services.weather_rules import emit as emit_weather
-            emit_weather(lobby)
-        for character in travel_updated_characters:
-            emit_character_update(
-                {
-                    'character_id': character.id,
-                    'updates': {'data': character.data_snapshot()},
-                    'updated_by': participant.user_id,
-                },
-            )
+    time_payload = _finish_world_group_action(lobby, participant.user_id, time_advanced,
+                                             updated_characters, travel_updated_characters, blood_loss)
     socketio.emit('world_group_moved', group_payload, room=f"lobby_{lobby_id}")
     if event:
         socketio.emit(
@@ -1201,9 +1237,8 @@ def move_world_group(lobby_id, group_id, lobby, participant):
         'world_turn': _serialize_world_turn(lobby),
         'time_advanced': time_advanced,
         'time': time_payload,
-        'filter_updates': filter_updates,
-        'radiation_updates': radiation_updates,
-        'radiation_consequences': radiation_consequences,
+        'blood_loss': [result for result in blood_loss if result['character_id'] in members],
+        **radiation,
         'event_pending': event is not None,
         'placed_event_triggered': placed_event is not None,
     }), 200
@@ -1213,11 +1248,13 @@ def move_world_group(lobby_id, group_id, lobby, participant):
 @jwt_required()
 @requires_gm
 def resolve_world_travel_event(lobby_id, event_id, lobby):
+    from app.services.weather_rules import apply_change, emit as emit_weather
+
     event = WorldTravelEvent.query.filter_by(
         id=event_id,
         lobby_id=lobby_id,
         status='pending',
-    ).first()
+    ).with_for_update().first()
     if not event:
         return jsonify({'error': 'Pending world event not found'}), 404
     decision = str((request.get_json(silent=True) or {}).get('decision') or '').strip().lower()
@@ -1228,12 +1265,17 @@ def resolve_world_travel_event(lobby_id, event_id, lobby):
     event.resolved_at = datetime.now(timezone.utc)
     event.resolved_by = lobby.gm_id
     if decision == 'approve':
+        if event.weather_shift:
+            db.session.refresh(lobby, with_for_update=True)
+            event.description += _world_weather_change_text(apply_change(lobby, event.weather_shift))
         _emit_lobby_chat_message(
             lobby_id,
             lobby.gm_id,
             f"{event.group.name}: {event.description}",
             username='Событие',
         )
+        if event.weather_shift:
+            emit_weather(lobby)
     else:
         db.session.commit()
     payload = {
@@ -1592,7 +1634,6 @@ def start_lobby_rest(lobby_id, lobby):
             if rest_type == 'sleep':
                 if not was_intoxication_coma:
                     health['intoxication'] = max(0, float(health.get('intoxication') or 0) - (25 if background_is(character_data,'Дядя Толик') else 75))
-                if background_is(character_data,'Дядя Толик'):health['painLevel']=min(10,max(0,float(health.get('painLevel') or 0))+1)
                 health.setdefault('combatMeta',{}).pop('surgeonReductions',None)
                 effects = _resolve_character_day(health, effects, slept=True,character_data=character_data)
                 _advance_exoskeleton_battery_day(character_data)
@@ -1882,18 +1923,10 @@ def change_character_equipment_outside_combat(character_id):
         return jsonify({'error': 'Character not found'}), 404
     if not _character_edit_allowed(character, user_id):
         return jsonify({'error': 'You do not control this character'}), 403
-    active_combat = (
-        db.session.query(LocationCharacter, LocationCombatState)
-        .join(LocationCombatState, LocationCombatState.location_id == LocationCharacter.location_id)
-        .filter(
-            LocationCharacter.character_id == character_id,
-            LocationCombatState.status == 'active',
-        )
-        .limit(2)
-        .all()
-    )
+    active_combat = CombatService.active_combat_placements({character_id})
     if len(active_combat) > 1:
-        return jsonify({'error': 'Персонаж участвует в нескольких боях. Сначала завершите лишний бой.'}), 409
+        battles = '; '.join(CombatService.combat_location_label(placed.location, state) for placed, state in active_combat)
+        return jsonify({'error': f'Персонаж участвует в нескольких боях ({battles}). Сначала завершите лишний бой.'}), 409
     if request.method == 'GET':
         if not active_combat:
             return jsonify({'combat': None}), 200
@@ -1901,11 +1934,15 @@ def change_character_equipment_outside_combat(character_id):
         return jsonify({'combat': {
             'lobby_id': character.lobby_id,
             'location_id': placed.location_id,
+            'location_name': placed.location.name,
+            'round_number': state.round_number,
             'location_character_id': placed.id,
             'is_current_turn': state.current_location_character_id == placed.id,
         }}), 200
     if active_combat:
-        return jsonify({'error': 'Бой начался. Повторите действие с экипировкой.'}), 409
+        placed, state = active_combat[0]
+        battle = CombatService.combat_location_label(placed.location, state)
+        return jsonify({'error': f'Бой начался на подлокации {battle}. Повторите действие с экипировкой.'}), 409
 
     payload = request.get_json(silent=True) or {}
     previous_appearance = public_character_appearance(character.data)
@@ -1960,6 +1997,8 @@ def change_character_weapon_grip(character_id):
     if actor:
         state = LocationCombatState.query.filter_by(location_id=actor.location_id).first()
         socketio.emit('combat_state_updated', CombatService._serialize_state(actor.location,state), room=f'location_{actor.location_id}')
+    elif (request.get_json(silent=True) or {}).get('draw') and (character.data.get('equipment') or {}).get('belt'):
+        publish_character_appearance(character)
     return jsonify({'grip_change':result,'data':character.data_snapshot()}), 200
 
 
@@ -1979,6 +2018,13 @@ def change_character_equipment_module(character_id):
         'updates': {'data': character.data_snapshot()},
         'source': 'equipment_module',
     })
+    if result.get('target_character_id') is not None:
+        recipient = db.session.get(LobbyCharacter, result['target_character_id'])
+        emit_character_update({
+            'character_id': recipient.id,
+            'updates': {'data': recipient.data_snapshot()},
+            'source': 'equipment_module',
+        })
     return jsonify({
         'module_change': result,
         'data': character.data_snapshot(),
@@ -2483,10 +2529,12 @@ def get_lobby_templates(lobby_id, lobby, participant):
     local_schema = LobbyItemTemplateSchema(many=True)
 
     serialized_global=global_schema.dump(global_templates)
+    from app.services.character_creation import builtin_templates, normalize_background_description
     for template in serialized_global:
         if (template.get('attributes') or {}).get('book_kind'):
             template['volume']=0
-    from app.services.character_creation import builtin_templates
+        if template.get('category') == 'background':
+            normalize_background_description(template.get('attributes'), name=template.get('name'))
     known={str((t.get('attributes') or {}).get('ruleId')) for t in serialized_global}
     serialized_global.extend(t for t in builtin_templates(category) if t['attributes']['ruleId'] not in known and not subcategory)
     if category in (None,'weapon_module'):
@@ -2700,6 +2748,8 @@ def get_locations(lobby_id, lobby, participant):
 @jwt_required()
 @requires_participant
 def get_location_detail(lobby_id, location_id, lobby, participant):
+    from app.utils.defaults import CHARACTER_SIGHT_RANGE
+
     location = Location.query.get_or_404(location_id)
     if location.lobby_id != lobby_id:
         return jsonify({'error': 'Access denied'}), 403
@@ -2723,6 +2773,7 @@ def get_location_detail(lobby_id, location_id, lobby, participant):
         'world_tile_z': location.world_tile_z,
         'grid_width': location.grid_width,
         'grid_height': location.grid_height,
+        'sight_range': CHARACTER_SIGHT_RANGE,
         'tiles_data': location.tiles_data,
         'lighting': location.lighting,
         'spawn_points': location.spawn_points,
@@ -4050,7 +4101,17 @@ def operate_belt_attachment(character_id):
     emit_character_update({'character_id':character.id,'updates':{'data':character.data_snapshot()},'source':'belt_attachment'},
         snapshot_projector=_public_medical_character_snapshot)
     if actor:socketio.emit('combat_state_updated',CombatService.get_state(actor.location_id,user_id),room=f'location_{actor.location_id}')
+    else:publish_character_appearance(character)
     return jsonify({'data':_public_medical_character_snapshot(character.data_snapshot()),'operation':result}),200
+
+
+@lobbies_bp.route('/characters/<int:character_id>/medical-procedure/preview', methods=['POST'])
+@jwt_required()
+def preview_medical_procedure(character_id):
+    preview = MedicalProcedureService.preview(
+        int(get_jwt_identity()), character_id, request.get_json() or {},
+    )
+    return jsonify(preview), 200
 
 
 @lobbies_bp.route('/characters/<int:character_id>/medical-procedure', methods=['POST'])
@@ -4134,6 +4195,8 @@ def load_character_ammunition(character_id):
     from app.services.ammo_loading import load_outside_combat
     character, result = load_outside_combat(character_id, int(get_jwt_identity()), request.get_json() or {})
     emit_character_update({'character_id': character.id, 'updates': {'data': character.data}, 'source': 'reload'})
+    if (character.data.get('equipment') or {}).get('belt'):
+        publish_character_appearance(character)
     return jsonify({'data': character.data_snapshot(), 'loading': result}), 200
 
 
@@ -4257,6 +4320,9 @@ def butcher_location_mutant(
         actor_location_character_id,
         character_id,
         allocation=data.get('allocation') if data.get('confirm') else None,
+        preview=data.get('preview') is True,
+        confirmed_preview=data.get('confirmed_preview'),
+        skip_toolkits=data.get('skip_toolkits') is True,
     )
     if result.get('completed'):
         emit_character_update(
@@ -4437,6 +4503,18 @@ def professional_modification(lobby_id, location_id, lobby, participant):
     else:
         result = quote(location_id, participant.user_id, payload)
     return jsonify(result)
+
+
+@lobbies_bp.route(
+    '/<int:lobby_id>/locations/<int:location_id>/merchant-haggle', methods=['POST'],
+)
+@jwt_required()
+@requires_participant
+def negotiate_merchant_price(lobby_id, location_id, lobby, participant):
+    if not Location.query.filter_by(id=location_id, lobby_id=lobby_id).first():
+        return jsonify({'error': 'Локация не найдена в этой комнате'}), 404
+    from app.services.merchant_haggle import negotiate
+    return jsonify(negotiate(location_id, participant.user_id, request.get_json() or {}))
 
 
 @lobbies_bp.route(
@@ -5314,6 +5392,11 @@ def spend_location_combat_resources(lobby_id, location_id, lobby, participant):
     state = updated_character.pop('state', None) or CombatService.get_state(location_id, participant.user_id)
     socketio.emit('combat_character_updated', updated_character, room=f"location_{location_id}")
     socketio.emit('combat_state_updated', state, room=f"location_{location_id}")
+    if (isinstance(data.get('consumable_selection'), dict)
+            and data['consumable_selection'].get('server_authoritative') is True
+            and updated_character.get('payment_complete')):
+        # The initiating browser can resume even if the room event has not arrived yet.
+        updated_character = {**updated_character, 'combat_state': state}
     return jsonify(updated_character), 200
 
 
@@ -5324,7 +5407,10 @@ def prepare_deferred_consumable(lobby_id, location_id, action_id, lobby, partici
     from app.services.deferred_consumable import preparation
     if not Location.query.filter_by(id=location_id, lobby_id=lobby_id).first():
         return jsonify({'error': 'Location not found'}), 404
-    return jsonify(preparation(action_id, participant.user_id, location_id)), 200
+    return jsonify(preparation(
+        action_id, participant.user_id, location_id,
+        background=request.args.get('background') == '1',
+    )), 200
 
 
 @lobbies_bp.route('/<int:lobby_id>/locations/<int:location_id>/combat/adjust', methods=['POST'])
@@ -5542,15 +5628,19 @@ def character_crafting(character_id):
             emit_character_update({'character_id':character.id,
                 'updates':{'data':character.data_snapshot()},'source':'crafting'})
         return jsonify(snapshot(character,user_id)),200
-    character,result=operate(character_id,user_id,request.get_json() or {})
+    payload=request.get_json() or {}
+    previous_appearance=public_character_appearance(character.data)
+    character,result=operate(character_id,user_id,payload)
     station_usage=result.get('station_usage')
     if station_usage and not result.get('replayed'):
         station=db.session.get(LocationObject,station_usage['object_id'])
         if station:
             socketio.emit('location_object_updated',{'location_id':station.location_id,
                 'object':LocationObjectSchema().dump(station)},room=f'location_{station.location_id}')
-    if (request.get_json() or {}).get('operation') not in {'quote','quote_modification','quote_salvage'}:
+    if payload.get('operation') not in {'quote','quote_modification','quote_salvage'}:
         emit_character_update({'character_id':character.id,'updates':{'data':character.data_snapshot()},'source':'crafting'})
+    if previous_appearance != public_character_appearance(character.data):
+        publish_character_appearance(character)
     return jsonify({'result':result,'data':character.data_snapshot()}),200
 
 
@@ -5871,7 +5961,7 @@ def perform_location_combat_action(lobby_id, location_id, lobby, participant):
                 'source': 'combat',
             },
         )
-        if (result.get('equipment_change') or {}).get('slot') == 'gasMask':
+        if (result.get('equipment_change') or {}).get('slot') in {'helmet', 'gasMask', 'mask'}:
             publish_character_appearance(actor)
     medical_retry_result = (result.get('must_do_it') or {}).get('medical_result')
     reduction=result.get('narrative_action') or {}
@@ -6123,6 +6213,7 @@ def perform_location_combat_action(lobby_id, location_id, lobby, participant):
         character_id
         for character_id in (
             [data.get('target_character_id')]
+            + [(result.get('module_change') or {}).get('target_character_id')]
             + list(data.get('target_character_ids') or [])
         )
         if character_id
@@ -6133,6 +6224,9 @@ def perform_location_combat_action(lobby_id, location_id, lobby, participant):
     affected_character_ids.update(person['character_id']
         for hit in (result.get('attack') or {}).get('results', [])
         for person in hit.get('flash_targets', []) if person.get('character_id'))
+    affected_character_ids.update(listener['character_id']
+        for hit in (result.get('attack') or {}).get('results', [])
+        for listener in hit.get('torturer_scream', []) if 'stress' in listener)
     affected_character_ids.update(entry['character_id'] for entry in (result.get('explosive') or {}).get('noise_targets',[]))
     affected_character_ids.update(
         entry.get('character_id')

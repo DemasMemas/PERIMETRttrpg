@@ -5,7 +5,7 @@ from uuid import uuid4
 from sqlalchemy.orm.attributes import flag_modified
 
 from app.extensions import db
-from app.models import LobbyCharacter, LocationCharacter, LocationCombatState
+from app.models import LobbyCharacter, LocationCharacter
 from app.services.exceptions import ValidationError, PermissionDenied, NotFoundError, ConflictError
 from app.services.transaction import atomic_operation
 from app.services.action_journal import journaled
@@ -230,13 +230,12 @@ def prepare_pair(character_id,user_id,payload):
     if not character:raise NotFoundError('Персонаж не найден')
     CharacterService.check_access(character,user_id,edit=True)
     if type(payload.get('character_revision')) is not int or payload['character_revision']!=character.revision:raise ConflictError()
-    active=LocationCharacter.query.join(LocationCombatState,LocationCombatState.location_id==LocationCharacter.location_id).filter(
-            LocationCharacter.character_id==character_id,LocationCombatState.status=='active').all()
+    active=CombatService.active_combat_placements({character_id})
     if active and payload.get('operation')!='stow':
         raise ValidationError('В бою второе оружие нужно доставать отдельным действием')
     if len(active)>1:raise ValidationError('Персонаж участвует в нескольких боях')
     if active:
-        actor=active[0];state=LocationCombatState.query.filter_by(location_id=actor.location_id,status='active').one()
+        actor,state=active[0]
         if state.current_location_character_id!=actor.id:raise PermissionDenied('Убрать оружие можно только в свой ход')
         CombatService.ensure_character_can_act(actor)
     data=character.data or {}
@@ -299,15 +298,11 @@ def change(character_id, user_id, payload):
     weapon = weapons[index]
     if not payload.get('draw') and (weapon.get('naturalWeapon') or CombatService._template_attributes(weapon).get('natural_weapon')):
         raise ValidationError('У врождённой атаки нет оружейного хвата')
-    active = (LocationCharacter.query.join(LocationCombatState,
-        LocationCombatState.location_id == LocationCharacter.location_id).filter(
-        LocationCharacter.character_id == character_id, LocationCombatState.status == 'active')
-        .with_for_update().populate_existing().all())
-    actor = active[0] if active else None
+    active = CombatService.active_combat_placements({character_id}, for_update=True)
+    actor, state = active[0] if active else (None, None)
     if len(active) > 1:
         raise ValidationError('Персонаж участвует в нескольких боях; сначала завершите лишний бой')
     if actor:
-        state = LocationCombatState.query.filter_by(location_id=actor.location_id, status='active').one()
         is_gm = CombatService._ensure_access(actor.location, user_id)
         if not CombatService._can_end_turn_for_character(actor, user_id, is_gm=is_gm) or state.current_location_character_id != actor.id:
             raise PermissionDenied('Сменить хват можно только в свой ход')

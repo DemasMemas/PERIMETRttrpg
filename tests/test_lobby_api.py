@@ -1047,25 +1047,29 @@ def test_world_group_exposes_only_allowed_optional_member_appearance(
     stored.data = {
         'appearance': {'bottom': 'tactical', 'tacticalColor': 'khaki',
                        'top': 'leather_coat', 'leatherCoatColor': 'brown'},
-        'equipment': {'gasMask': {'templateId': 1001, 'name': 'Противогаз МП‑50', 'durability': 12}},
+        'equipment': {'gasMask': {'templateId': 1001, 'name': 'Противогаз МП‑50', 'durability': 12},
+                      'helmet': {'templateId': 1003, 'name': 'Советский Котелок 68Г'}},
     }
     db.session.commit()
     listed = client.get(f"/lobbies/{lobby['id']}/world-groups", headers=auth_headers(gm)).get_json()
     assert listed['groups'][0]['members'][0]['appearance'] == {
-        'bottom': 'tactical', 'tacticalColor': 'khaki', 'gear': ['mp50'],
+        'bottom': 'tactical', 'tacticalColor': 'khaki', 'gear': ['mp50', 'helmet_68g'],
         'top': 'leather_coat', 'leatherCoatColor': 'brown',
     }
 
     stored.data = {
         'appearance': {'bottom': 'hunting', 'huntingColor': 'brown',
-                       'top': 'trench_coat', 'trenchCoatColor': 'navy', 'leatherCoatColor': 'navy'},
+                       'top': 'trench_coat', 'trenchCoatColor': 'navy', 'leatherCoatColor': 'navy',
+                       'gp7Color': 'white'},
         'equipment': {'gasMask': {'templateId': 1002, 'name': 'Противогаз ГП-7'}},
-        'inventory': {'pockets': [{'templateId': 1001, 'name': 'Противогаз МП-50'}]},
+        'inventory': {'pockets': [{'templateId': 1001, 'name': 'Противогаз МП-50'},
+                                 {'templateId': 1003, 'name': 'Советский Котелок 68Г'}]},
     }
     db.session.commit()
     listed = client.get(f"/lobbies/{lobby['id']}/world-groups", headers=auth_headers(gm)).get_json()
     assert listed['groups'][0]['members'][0]['appearance'] == {
         'bottom': 'hunting', 'huntingColor': 'brown', 'top': 'trench_coat', 'trenchCoatColor': 'navy',
+        'gp7Color': 'white', 'gear': ['gasmask_gp7'],
     }
 
 
@@ -1270,11 +1274,23 @@ def test_world_movement_spends_and_auto_replaces_equipped_gas_mask_filter(
     assert stored["inventory"]["backpack"][0]["quantity"] == 1
 
 
-def test_world_movement_applies_binary_radiation_per_group_member(
-    client, create_user, auth_headers, monkeypatch
+@pytest.mark.parametrize('action', ['move', 'wait'])
+@pytest.mark.parametrize(('rain_enabled', 'intensity', 'dose', 'protected_dose'), [
+    (False, 0.8, 5, 0),
+    (True, 0.5, 7.5, 7.5),
+    (True, 0.8, 10, 10),
+], ids=['rain-off', 'rain', 'storm'])
+def test_world_group_applies_binary_radiation_with_active_weather(
+    client, create_user, auth_headers, monkeypatch, action, rain_enabled, intensity, dose, protected_dose,
 ):
     gm = create_user("world-radiation-gm")
     lobby = create_lobby(client, gm, auth_headers)
+    weather = client.patch(
+        f"/lobbies/{lobby['id']}/weather",
+        headers=auth_headers(gm),
+        json={'rain': {'enabled': rain_enabled, 'intensity': intensity}},
+    )
+    assert weather.status_code == 200, weather.get_json()
     protected = create_character(client, lobby, gm, auth_headers, data={
         "health": {"radiation": 1},
         "equipment": {
@@ -1307,29 +1323,33 @@ def test_world_movement_applies_binary_radiation_per_group_member(
         },
     )
     client.patch(
-        f"/lobbies/{lobby['id']}/chunks/0/0/tile/3/2",
+        f"/lobbies/{lobby['id']}/chunks/0/0/tile/{3 if action == 'move' else 2}/2",
         headers=auth_headers(gm),
         json={"radiation": 5},
     )
     monkeypatch.setattr("app.lobbies.random.random", lambda: 1.0)
 
-    moved = client.post(
-        f"/lobbies/{lobby['id']}/world-groups/{group['id']}/move",
+    response = client.post(
+        f"/lobbies/{lobby['id']}/world-groups/{group['id']}/{action}",
         headers=auth_headers(gm),
-        json={"tile_x": 3, "tile_y": 2},
+        json={"tile_x": 3, "tile_y": 2} if action == 'move' else {},
     )
 
-    assert moved.status_code == 200
+    assert response.status_code == 200, response.get_json()
     updates = {
         item["character_id"]: item
-        for item in moved.get_json()["radiation_updates"]
+        for item in response.get_json()["radiation_updates"]
     }
+    for exposure in updates.values():
+        assert exposure['original_incoming'] == 5
+        assert exposure['incoming'] == dose
+        assert exposure['required_protection'] == dose * 10
     assert updates[protected["id"]]["protection"] == 50
-    assert updates[protected["id"]]["received"] == 0
+    assert updates[protected["id"]]["received"] == protected_dose
     assert updates[exposed["id"]]["protection"] == 49
-    assert updates[exposed["id"]]["received"] == 5
-    assert db.session.get(LobbyCharacter, protected["id"]).data["health"]["radiation"] == 1
-    assert db.session.get(LobbyCharacter, exposed["id"]).data["health"]["radiation"] == 6
+    assert updates[exposed["id"]]["received"] == dose
+    assert db.session.get(LobbyCharacter, protected["id"]).data["health"]["radiation"] == 1 + protected_dose
+    assert db.session.get(LobbyCharacter, exposed["id"]).data["health"]["radiation"] == 1 + dose
 
 
 @pytest.mark.parametrize(
@@ -1569,6 +1589,70 @@ def test_location_end_turn_subtracts_radiation_protection(
 
 
 
+@pytest.mark.parametrize(('action', 'wound', 'stage', 'roll', 'after'), [
+    ('move', 'light', 'normal', 20, 'light'),
+    ('move', 'light', 'normal', 1, 'medium'),
+    ('wait', 'severe', 'normal', 1, 'severe'),
+    ('wait', 'severe', 'medium', 1, 'fatal'),
+    ('wait', 'light', 'critical', 20, 'fatal'),
+])
+def test_world_blood_loss_confirmation_and_outcomes(
+    client, create_user, auth_headers, monkeypatch, action, wound, stage, roll, after,
+):
+    gm = create_user('world-blood-loss-gm')
+    lobby = create_lobby(client, gm, auth_headers)
+    headers = auth_headers(gm)
+    character = create_character(client, lobby, gm, auth_headers, data={'health': {
+        'blood': stage,
+        'effects': [{'type': f'bleeding_external_{wound}', 'area': 'chest'},
+                    {'type': 'bleeding_internal_light', 'area': 'abdomen'}],
+    }})
+    groups_url = f"/lobbies/{lobby['id']}/world-groups"
+    group = client.post(groups_url, headers=headers, json={'name': 'Отряд', 'tile_x': 2, 'tile_y': 2}).get_json()
+    group_url = f"{groups_url}/{group['id']}"
+    assert client.patch(group_url + '/members', headers=headers,
+                        json={'character_ids': [character['id']]}).status_code == 200
+    monkeypatch.setattr('app.lobbies.roll_travel_event', lambda _: None)
+    draws = []
+
+    def draw(low, high):
+        draws.append((low, high))
+        return roll
+
+    monkeypatch.setattr('app.services.world_blood_loss.random', SimpleNamespace(randint=draw))
+    payload = {'tile_x': 3, 'tile_y': 2} if action == 'move' else {}
+    warning = client.post(f'{group_url}/{action}', headers=headers, json=payload)
+    assert warning.status_code == 409
+    risks = warning.get_json()['blood_loss_risks']
+    assert len(risks) == 1
+    risk = risks[0]
+    assert risk['severity'] == wound
+    assert risk['difficulty'] == 5 + {'light': 1, 'severe': 5}[wound] + 1 - ['normal', 'light', 'medium', 'severe', 'critical'].index(stage)
+    assert risk['before'] == stage
+    assert not draws
+    assert db.session.get(WorldGroup, group['id']).tile_x == 2
+    assert db.session.get(Lobby, lobby['id']).game_time_minutes == 480
+
+    stale = client.post(f'{group_url}/{action}', headers=headers,
+                        json={**payload, 'confirm_bleeding': [{**risk, 'difficulty': 99}]})
+    assert stale.status_code == 409
+    assert not draws
+
+    completed = client.post(f'{group_url}/{action}', headers=headers,
+                            json={**payload, 'confirm_bleeding': risks})
+    assert completed.status_code == 200, completed.get_json()
+    result = completed.get_json()['blood_loss'][0]
+    assert result['after'] == after
+    assert result['success'] is (roll == 20)
+    assert risk['on_success' if roll == 20 else 'on_failure'] == after
+    assert draws == [(1, 20)]
+    health = db.session.get(LobbyCharacter, character['id']).data['health']
+    assert health['blood'] == health['bloodStage'] == after
+    assert sum(effect['type'].startswith('bleeding_') for effect in health['effects']) == 2
+    assert any(effect['type'] == 'death' and effect['source'] == 'blood_loss'
+               for effect in health['effects']) is (after == 'fatal')
+
+
 def test_parallel_world_groups_advance_time_only_after_every_active_group_acts(
     client, create_user, auth_headers, monkeypatch
 ):
@@ -1586,13 +1670,24 @@ def test_parallel_world_groups_advance_time_only_after_every_active_group_acts(
         headers=auth_headers(gm),
         json={"name": "Second", "tile_x": 8, "tile_y": 8},
     ).get_json()
+    character = create_character(client, lobby, gm, auth_headers, data={'health': {
+        'blood': 'normal', 'effects': [{'type': 'bleeding_external_light', 'area': 'chest'}],
+    }})
+    group_url = f"/lobbies/{lobby['id']}/world-groups/{first['id']}"
+    assert client.patch(group_url + '/members', headers=auth_headers(gm),
+                        json={'character_ids': [character['id']]}).status_code == 200
+    rolls = iter([20])
+    monkeypatch.setattr('app.services.world_blood_loss.random', SimpleNamespace(randint=lambda *_: next(rolls)))
     monkeypatch.setattr("app.lobbies.random.random", lambda: 1.0)
 
+    warning = client.post(group_url + '/move', headers=auth_headers(player), json={'tile_x': 3, 'tile_y': 2})
+    assert warning.status_code == 409
     first_move = client.post(
         f"/lobbies/{lobby['id']}/world-groups/{first['id']}/move",
         headers=auth_headers(player),
-        json={"tile_x": 3, "tile_y": 2},
+        json={"tile_x": 3, "tile_y": 2, 'confirm_bleeding': warning.get_json()['blood_loss_risks']},
     )
+    assert db.session.get(LobbyCharacter, character['id']).data['health']['blood'] == 'normal'
     repeated = client.post(
         f"/lobbies/{lobby['id']}/world-groups/{first['id']}/move",
         headers=auth_headers(player),
@@ -1609,6 +1704,7 @@ def test_parallel_world_groups_advance_time_only_after_every_active_group_acts(
     assert repeated.status_code == 409
     assert second_wait.status_code == 200
     assert second_wait.get_json()["time_advanced"] is True
+    assert db.session.get(LobbyCharacter, character['id']).data['health']['blood'] == 'light'
     assert second_wait.get_json()["time"] == {
         "game_day": 1,
         "game_time_minutes": 490,
@@ -3754,6 +3850,8 @@ def test_reload_can_be_paid_across_combat_turns(
     # Reloading costs 6 AP plus 2 AP to retrieve the magazine from the backpack.
     assert pending["remaining_action_points"] == 6
 
+    end_turn_url = f"/lobbies/{lobby['id']}/locations/{location.id}/combat/end_turn"
+    assert client.post(end_turn_url, headers=auth_headers(actor), json={}).status_code == 200
     next_turn = client.post(
         f"/lobbies/{lobby['id']}/locations/{location.id}/combat/end_turn",
         headers=auth_headers(other),
@@ -3766,6 +3864,7 @@ def test_reload_can_be_paid_across_combat_turns(
         "pendingAction"
     ]["remaining_action_points"] == 1
 
+    assert client.post(end_turn_url, headers=auth_headers(actor), json={}).status_code == 200
     other_ends = client.post(
         f"/lobbies/{lobby['id']}/locations/{location.id}/combat/end_turn",
         headers=auth_headers(other),

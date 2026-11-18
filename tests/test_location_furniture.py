@@ -122,10 +122,12 @@ def test_furniture_scopes_manual_edits_atomicity_permissions_and_socket_roundtri
         assert client.patch(f"{api}/locations/objects/{filled['id']}", headers=headers,
                             json={'revision': filled['revision'], 'properties': {'contents': [{'name': 'Фонарь', 'quantity': 1, 'instance_id': 'furniture-keepsake'}]}}).status_code == 200
         manual = json.loads(json.dumps(generated[1]))
-        for k in ('id', 'revision'):
+        for k in ('id', 'revision', 'weapon_support'):
             manual.pop(k)
         manual['properties'].pop('furniture_generation')
-        manual = client.post(url+'/objects', headers=headers, json=manual).get_json()
+        response = client.post(url+'/objects', headers=headers, json=manual)
+        assert response.status_code == 201, response.get_json()
+        manual = response.get_json()
         for scope in ['room', 'floor', 'building']:
             floor_item = next(o for o in generated if o['properties']['level'] == 0)
             opts = {'scope': scope, 'level': 0, 'roomId': floor_item['properties']['furniture_generation']['room_id'], 'seed': scope}

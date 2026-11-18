@@ -97,6 +97,43 @@ def pay_procedure(client, pair, auth_headers, item, application, operation, *, c
     })
 
 
+def test_legacy_sterile_bandage_uses_current_treatment_cost(client, pair, auth_headers):
+    from app.schemas.templates import ItemTemplateSchema
+
+    effect = {'id': 'legacy-bandage', 'type': 'bleeding_external_light', 'area': 'head'}
+    name = 'Стерильный Бинт'
+    template, profile, item = install_item(
+        pair, name, 'Останавливает Слабое кровотечение.', medicine=21, effects=[effect],
+    )
+    legacy = deepcopy(profile)
+    legacy['direct'].pop('treatment_action_points')
+    legacy['direct'].pop('treatment_time_uses_medicine')
+    template.attributes = {
+        **template.attributes, 'catalog_name': name,
+        'raw_description': template.description + '\n', 'consumable': legacy,
+    }
+    data = saved(pair)
+    data['inventory']['pockets'] = [item]
+    data['inventory']['backpack'] = []
+    store_data(pair, data)
+
+    serialized = ItemTemplateSchema().dump(template)['attributes']['consumable']['direct']
+    assert serialized['treatment_action_points'] == 4
+    assert serialized['treatment_time_uses_medicine'] is True
+    application = selected_bleeding(legacy, effect)
+    selection = {
+        'source': {'path': ['inventory', 'pockets', 0], 'snapshot': item},
+        'application': application, 'target_character_id': pair['actor_character'].id,
+        'server_authoritative': True, 'server_operation': 'medical',
+    }
+    response = client.post(combat_url(pair) + '/spend', headers=auth_headers(pair['actor_user']), json={
+        'location_character_id': pair['actor_location'].id, 'action_points': 2,
+        'pending_action_id': 'legacy-bandage', 'consumable_selection': selection,
+    })
+    assert response.status_code == 400, response.get_json()
+    assert 'требуется 4' in str(response.get_json())
+
+
 def test_unconscious_patient_needs_no_consent_but_healer_cannot_edit_sheet(client, pair, auth_headers, monkeypatch):
     bleed = {'id': 'm-bleed', 'type': 'bleeding_external_light', 'area': 'leftArm', 'source': 'cut'}
     _, profile, item = install_item(pair, 'Бинт', 'Останавливает Слабое кровотечение.', medicine=20)
@@ -227,6 +264,8 @@ def test_same_medicine_has_exact_dc_and_paid_completion_never_rerolls(client, pa
 
         monkeypatch.setattr(combat_module, 'random', SimpleNamespace(randint=bleeding_draw))
         pair['actor_location'].action_points_current = 2
+        pair['actor_location'].free_actions_current = 0
+        pair['actor_location'].movement_points_current = 0
         db.session.commit()
         started = pay_procedure(client, pair, auth_headers, item, application, operation)
         assert started.status_code == 200, started.get_json()
@@ -304,7 +343,7 @@ def surgery_application(effect, mode, uses, cost):
             'application': {'item_uses': uses}, 'actionPoints': cost}
 
 
-@pytest.mark.parametrize('area,uses', [('nose', 3), ('leftEye', 5)])
+@pytest.mark.parametrize('area,uses', [('nose', 3), ('leftEye', 5), ('leftEar', 3), ('rightEar', 3)])
 def test_full_kit_restores_lost_organ_inside_window_with_three_or_five_uses(client, pair, auth_headers, monkeypatch, area, uses):
     organ = {'id': 'm-organ', 'type': 'organ_loss', 'area': area, 'source': 'damage',
              'treatment_window_seconds': 1, 'treatment_window_expired': False}
@@ -314,7 +353,16 @@ def test_full_kit_restores_lost_organ_inside_window_with_three_or_five_uses(clie
     store_data(pair, data)
     draws = one_roll(monkeypatch, 20)
     application = surgery_application(organ, 'restore_lost_part', uses, 15)
-    response = apply(client, pair, auth_headers, payload(pair, item, application, operation='m-organ'))
+    body = payload(pair, item, application, operation='m-organ')
+    preview = client.post(
+        f"/lobbies/characters/{pair['actor_character'].id}/medical-procedure/preview",
+        headers=auth_headers(pair['actor_user']), json=body,
+    )
+    assert preview.status_code == 200, preview.get_json()
+    assert preview.get_json()['difficulty'] == 11
+    assert draws == []
+    assert saved(pair)['health']['organs'][area]['current'] == 0
+    response = apply(client, pair, auth_headers, {**body, 'confirmed_preview': preview.get_json()})
     assert response.status_code == 200, response.get_json()
     result = response.get_json()['medical_result']
     assert result['success'] is True and result['outcome']['uses'] == uses

@@ -181,7 +181,7 @@ def run(character_id,user_id,payload):
                 'modifiers':{skill:2 for skill in CombatService.NARRATIVE_SKILLS if skill.startswith('skills.social.')},
                 'expires_on_stress_decrease':True,'tick':'manual','source':'Дипломат'})
     elif background_is(data,'Дипломат') and path=='skills.social.persuasion' and not check['success']:
-        meta['diplomatRetry']={key:payload.get(key) for key in ('target_character_id','skill_path','difficulty')}
+        meta['diplomatRetry']={key:payload.get(key) for key in ('target_character_id','skill_path','difficulty','location_id')}
         meta['diplomatRetry']['face_visible']=payload.get('face_visible',False)
     elif not quick:meta.pop('diplomatRetry',None)
     result={'check':check,'target_name':target.name if target else 'Обычная проверка','diplomat_retry_available':bool(meta.get('diplomatRetry'))}

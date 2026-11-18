@@ -83,8 +83,7 @@ export function storeyPlan({ buildingId, sourceLevel, targetLevel, mode = 'copy'
     return { objects: result };
 }
 
-export function floorSlabParts(floor, objects) {
-    const p = floorVisualPose(floor, objects);
+export function floorSlabParts(floor, objects, p = floorVisualPose(floor, objects)) {
     let parts = [{x:0,z:0,width:p.width,depth:p.depth}];
     for (const stair of objects || []) {
         if (!(['stairs','ladder'].includes(stair.type) && structureLevel(stair) + 1 === structureLevel(floor)

@@ -5,7 +5,10 @@ import re
 from functools import lru_cache
 from pathlib import Path
 
-from app.services.equipment_importer import parse_equipment_templates, _normalize_equipment_name
+from app.services.catalog_descriptions import describe_template, glove_name
+from app.services.equipment_importer import (
+    LEGACY_HEADWEAR_NAME, _normalize_equipment_name, expand_headwear_templates, parse_equipment_templates,
+)
 
 
 def _json_keys(value):
@@ -84,6 +87,7 @@ def retired_catalog_template(template):
     attributes = template.attributes if hasattr(template, 'attributes') else template.get('attributes')
     return (((attributes or {}).get('craft_workbench') is True)
             or category == 'helmet_module'
+            or (category == 'helmet' and _normalize_equipment_name(name) == LEGACY_HEADWEAR_NAME)
             or (category == 'gloves' and _normalize_equipment_name(name) in {
                 'спортивные', 'спортивные перчатки', 'перчатки спортивные'})
             or (category == 'misc' and (name or '').casefold().startswith(('лента на ', 'спидлоадер для ', 'подавач')))
@@ -132,6 +136,8 @@ def canonical_catalog_templates(templates):
             continue
         category = field(item, 'category')
         name = field(item, 'name')
+        if category == 'gloves':
+            name = glove_name(name)
         key = category, _normalize_equipment_name(name)
         attrs = field(item, 'attributes') or {}
         # Старые варианты подсумков остаются в сохранениях, но новые выдачи идут по каталогу.
@@ -143,9 +149,6 @@ def canonical_catalog_templates(templates):
             if category == 'grenade' and attrs.get('explosive_key') in canonical_grenades:
                 continue
             if category == 'container' and any(name == f'Контейнер для ношения {alias}' for alias in ('Блок-А', 'Барьер', 'Щит', 'Стена')):
-                continue
-            if category == 'gloves' and _normalize_equipment_name((name or '').removeprefix('Перчатки ').removesuffix(' перчатки')) in {
-                    canonical_name for canonical_category, canonical_name in by_key if canonical_category == 'gloves'}:
                 continue
         world_artifact = category == 'artifact' and attrs.get('import_source') == 'world_rules'
         if key[1] in known_names and key not in by_key and not world_artifact:
@@ -234,11 +237,13 @@ def prepare_catalog(entries):
     """Снимок содержит игровые данные, но не полные строки исходного документа."""
     result = []
     known = set()
-    for original in entries:
+    for original in expand_headwear_templates(entries):
         if retired_catalog_template(original):
             continue
         item = deepcopy(original)
         item.pop('id', None)
+        if item['category'] == 'gloves':
+            item['name'] = glove_name(item['name'])
         key = item['category'], _normalize_equipment_name(item['name'])
         if key in known:
             continue
@@ -264,7 +269,6 @@ def prepare_catalog(entries):
             missing.discard('weight')
         if missing:attrs['unspecified_fields']=sorted(missing)
         else:attrs.pop('unspecified_fields',None)
-        from app.services.catalog_descriptions import describe_template
         attrs.setdefault('source_description', item.get('description') or '')
         item['description'] = describe_template(item)
         result.append(item)

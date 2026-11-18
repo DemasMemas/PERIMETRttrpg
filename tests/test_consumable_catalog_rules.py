@@ -4,6 +4,28 @@ from app.services.consumable_catalog_rules import apply_catalog_rules
 from app.services.consumable_effects import parse_consumable_effects
 
 
+@pytest.mark.parametrize('name, description, base_cost', [
+    ('Тестовая ампула', 'Ампула. +5 ОЗ.', 2),
+    ('Бинт', 'Останавливает Слабое кровотечение.', 4),
+    ('Стерильный Бинт', 'Останавливает Слабое кровотечение.', 4),
+    ('Жгут', 'Останавливает Среднее кровотечение.', 4),
+    ('Антисептический тампон', 'Останавливает Слабое кровотечение.', 2),
+    ('Шина', 'Фиксирует перелом.', 6),
+    ('Шина Шарнирова', 'Фиксирует перелом.', 6),
+])
+def test_treatment_time_uses_medicine_thresholds(name, description, base_cost):
+    from app.services.consumable_effects import enrich_imported_consumable
+    from app.services.medical_procedure import _minimum_treatment_cost
+
+    profile = parse_consumable_effects(f'{name}. {description}')
+    attributes = {'catalog_name': name, 'raw_description': description, 'consumable': profile}
+    direct = enrich_imported_consumable(attributes, description)['direct']
+    assert direct['treatment_action_points'] == base_cost
+    for level, delta in ((5, 1), (6, 0), (14, 0), (15, -1)):
+        data = {'skills': {'other': {'medicine': {'base': level}}}}
+        assert _minimum_treatment_cost(data, direct) == base_cost + delta
+
+
 @pytest.mark.parametrize('duration_text', ['Длительность - 6 перемещений', 'Длительность — 6 перемещений',
     'Действует 6 перемещений', 'Длится 6 перемещений'])
 def test_movement_duration_never_grants_movement_bonus(duration_text):

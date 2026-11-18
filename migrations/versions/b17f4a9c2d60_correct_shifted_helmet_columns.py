@@ -13,7 +13,8 @@ def upgrade():
     from app.services.equipment_importer import _normalize_equipment_name
     table=sa.table('item_templates',sa.column('id',sa.Integer),sa.column('name',sa.String),sa.column('category',sa.String),
         sa.column('item_class',sa.String),sa.column('price',sa.Integer),sa.column('volume',sa.Float),sa.column('attributes',sa.JSON))
-    canonical={(r['category'],_normalize_equipment_name(r['name'])):r for r in load_catalog() if r['category'] in {'helmet','gas_mask'}}
+    canonical={('helmet' if r['category']=='mask' else r['category'],_normalize_equipment_name(r['name'])):r
+        for r in load_catalog() if r['category'] in {'helmet','gas_mask','mask'}}
     bind=op.get_bind()
     for row in bind.execute(sa.select(table).where(table.c.category.in_(['helmet','gas_mask']))).mappings():
         target=canonical.get((row['category'],_normalize_equipment_name(row['name'])))

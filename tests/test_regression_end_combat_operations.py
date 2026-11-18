@@ -13,7 +13,7 @@ import app.services.deferred_consumable as deferred_module
 import app.services.medical_procedure as medical_module
 from app.extensions import db
 from app.models import (CharacterInteractionRequest, ChatMessage, ConsumableUse,
-                        DeferredCombatAction, LobbyCharacter, LocationCharacter,
+                        DeferredCombatAction, LobbyCharacter, Location, LocationCharacter,
                         LocationCombatState)
 from app.services.character_interaction import CharacterInteractionService
 from app.services.combat import CombatService
@@ -21,6 +21,7 @@ from app.services.health import apply_health_maximums
 from test_ammo_loading import loading_case, request as loading_request
 from test_magazine_installation import case
 from test_consumable_use import pair
+from test_grenade_rules import grenade_game
 from test_medical_procedure import install_item, selected_bleeding, payload, apply
 
 
@@ -102,6 +103,11 @@ def row_state(pair, identity, phase):
 
 
 def pay(client, pair, auth_headers):
+    current = CombatService.get_state(pair['location'].id, pair['actor_user']['id'])
+    if current['current_location_character_id'] == pair['actor_location'].id:
+        ended = client.post(combat_url(pair) + '/end_turn', headers=auth_headers(pair['actor_user']),
+                            json={'location_character_id': pair['actor_location'].id})
+        assert ended.status_code == 200, ended.get_json()
     response = client.post(combat_url(pair) + '/end_turn',
         headers=auth_headers(pair['target_user']),
         json={'location_character_id': pair['target_location'].id})
@@ -264,6 +270,137 @@ def test_end_combat_cancels_actual_ammo_loading_without_transfer_or_old_resume(
     assert pair['actor_character'].data['inventory'] == original['inventory']
     assert pair['actor_character'].data['equipment'] == original['equipment']
     assert ConsumableUse.query.count() == 0
+
+
+def second_location_with_same_character(game):
+    actor = game['actor_location']
+    other = Location(lobby_id=game['lobby'].id, name='Другая сцена', world_tile_x=1, world_tile_z=0)
+    participant = LobbyCharacter(lobby_id=game['lobby'].id, owner_id=game['actor_user']['id'], name='Местный')
+    db.session.add_all([other, participant])
+    db.session.flush()
+    copy = LocationCharacter(location_id=other.id, character_id=actor.character_id, pos_x=3, pos_y=4)
+    local = LocationCharacter(location_id=other.id, character_id=participant.id, pos_x=5, pos_y=4)
+    db.session.add_all([copy, local])
+    db.session.flush()
+    return other, copy, local
+
+
+def test_explosion_releases_grenadier_only_in_the_participating_battle(client, grenade_game, auth_headers):
+    from app.services.character_rules import explosion_occurred, meta
+
+    game = grenade_game
+    actor = game['actor_location']
+    other, _, local = second_location_with_same_character(game)
+    second = f"/lobbies/{game['lobby'].id}/locations/{other.id}/combat"
+    response = client.post(second + '/start', headers=auth_headers(game['actor_user']),
+                           json={'location_character_ids': [local.id]})
+    assert response.status_code == 200, response.get_json()
+    meta(actor)['grenadirMustExplode'] = True
+
+    explosion_occurred(other.id)
+    assert meta(local)['combatExplosionOccurred'] is True
+    assert 'combatExplosionOccurred' not in meta(actor)
+    assert meta(actor)['grenadirMustExplode'] is True
+
+    explosion_occurred(actor.location_id)
+    assert meta(actor)['combatExplosionOccurred'] is True
+    assert 'grenadirMustExplode' not in meta(actor)
+
+
+@pytest.mark.parametrize('phase', ['paying', 'ready'])
+def test_battles_in_two_locations_keep_placements_and_restore_saved_action(client, grenade_game, auth_headers, phase):
+    game = grenade_game
+    actor = game['actor_location']
+    sheet = actor.character
+    gm_headers = auth_headers(game['actor_user'])
+    other, copy, local = second_location_with_same_character(game)
+    actor.action_points_current = 2
+    db.session.commit()
+
+    identity = 'shared-sheet-action'
+    started = post_action(client, game, auth_headers, action_key='narrative_action', action_points=6,
+        narrative_action_name='Осмотреть механизм', narrative_roll_required=False, pending_action_id=identity)
+    assert started.status_code == 200, started.get_json()
+    assert started.get_json()['pending_action'] is True
+    if phase == 'ready':
+        pay(client, game, auth_headers)
+    # Состояние старого сохранения после второго боя. Запись оплаты сохранилась.
+    data = deepcopy(sheet.data)
+    data['health']['combatMeta'].pop('pendingAction', None)
+    data['health']['combatMeta'].pop('completedPendingActionId', None)
+    sheet.data = data
+    db.session.commit()
+
+    second = f"/lobbies/{game['lobby'].id}/locations/{other.id}/combat"
+    refused = client.post(second + '/start', headers=gm_headers, json={'location_character_ids': [copy.id, local.id]})
+    body_error(refused, 400)
+    assert game['location'].name in refused.json['error']['message']
+    started = client.post(second + '/start', headers=gm_headers, json={'location_character_ids': [local.id]})
+    assert started.status_code == 200, started.get_json()
+    body_error(client.post(second + f'/participants/{copy.id}', headers=gm_headers, json={}), 400)
+    equipment = f'/lobbies/characters/{sheet.id}/equipment-action'
+    assert client.get(equipment, headers=gm_headers).json['combat']['location_id'] == game['location'].id
+    snapshot = client.get(combat_url(game), headers=gm_headers).json
+    actual = next(person for person in snapshot['characters'] if person['location_character_id'] == actor.id)
+    assert actual['deferred_action']['status'] == phase
+    assert actual['deferred_action']['id'] == identity
+    if phase == 'ready':
+        blocked = post_action(client, game, auth_headers, action_key='narrative_action', action_points=6,
+            narrative_action_name='Другое действие', narrative_roll_required=False, pending_action_id='other-action')
+        body_error(blocked, 400)
+        reason = blocked.json['error']['message']
+        assert all(value in reason for value in (game['location'].name, 'раунд 2', 'Осмотреть механизм'))
+    ended = client.post(second + '/end', headers=gm_headers, json={})
+    assert ended.json['status'] == 'idle'
+    assert {person['location_character_id'] for person in ended.json['characters']} == {copy.id, local.id}
+    assert db.session.get(DeferredCombatAction, identity).status == phase
+
+    if phase == 'paying':
+        pay(client, game, auth_headers)
+    resumed = post_action(client, game, auth_headers, action_key='narrative_action', resume_pending_action_id=identity)
+    assert resumed.status_code == 200, resumed.get_json()
+    assert resumed.json['narrative_action']['action_points'] == 6
+    assert resumed.json['character']['action_points_current'] == 1
+    assert db.session.get(DeferredCombatAction, identity).status == 'completed'
+    assert client.post(combat_url(game) + '/end', headers=gm_headers, json={}).json['turn_order'] == []
+    assert client.get(equipment, headers=gm_headers).json == {'combat': None}
+    assert (copy.pos_x, copy.pos_y) == (3, 4)
+    assert (actor.pos_x, actor.pos_y) == (2.1, 5.2)
+    assert client.post(second + '/start', headers=gm_headers, json={'location_character_ids': [copy.id]}).status_code == 200
+
+
+@pytest.mark.parametrize('legacy', [False, True])
+def test_sniper_choice_and_cover_obligation_belong_to_their_battle(grenade_game, legacy):
+    from app.services.character_rules import meta
+    from app.services.exceptions import ConflictError
+    from app.services.sniper_trauma import choices, decide, enqueue
+
+    game = grenade_game
+    actor, target = game['actor_location'], game['target_location']
+    gm = game['lobby'].gm_id
+    other, copy, local = second_location_with_same_character(game)
+    enqueue(actor, target, {'area': 'chest', 'roll': 10, 'chance_roll': 100}, 20, 'chest', True, True)
+    meta(actor)['sniperOldCover'] = {'id': None, 'location_id': actor.location_id, 'pending': True, 'expires_after_round': 2}
+    if legacy:
+        meta(actor)['sniperTraumaChoices'][0].pop('location_id')
+        meta(actor)['sniperOldCover'].pop('location_id')
+    db.session.commit()
+
+    CombatService.start_combat(other.id, gm, [local.id])
+    snapshot = CombatService.get_state(other.id, gm)
+    observer = next(entry for entry in snapshot['characters'] if entry['location_character_id'] == copy.id)
+    assert observer['sniper_trauma_choices'] == [] and observer['sniper_position'] is None
+    choice = choices(actor.character.data)[0]
+    with pytest.raises(ConflictError, match=actor.location.name):
+        decide(copy, gm, {'id': choice['id'], 'index': 1})
+    assert CombatService.end_combat(other.id, gm)['status'] == 'idle'
+    assert meta(actor)['sniperOldCover']['pending']
+    assert choices(actor.character.data)[0]['id'] == choice['id']
+    with pytest.raises(ConflictError, match=actor.location.name):
+        CombatService.end_combat(actor.location_id, gm)
+    decide(actor, gm, {'id': choice['id'], 'index': 1})
+    assert CombatService.end_combat(actor.location_id, gm)['status'] == 'idle'
+    assert 'sniperOldCover' not in meta(actor)
 
 
 @pytest.mark.parametrize('phase', ['paying', 'ready'])

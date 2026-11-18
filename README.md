@@ -34,8 +34,8 @@
 ### 1. Клонирование и окружение
 
 ```bash
-git clone (https://github.com/DemasMemas/TTRPGSiteZone.git)
-cd TTRPGSiteZone
+git clone https://github.com/DemasMemas/PERIMETRttrpg.git
+cd PERIMETRttrpg
 python -m venv .venv
 ```
 

@@ -26,7 +26,13 @@ jobs:
           pip install -r requirements-dev.txt
 
       - name: Run Python tests with coverage
-        run: python -m pytest tests --cov=app --cov-report=term-missing --cov-fail-under=35
+        run: python -m pytest tests -n 2 --dist loadfile --durations=15 --cov=app --cov-report=term-missing --cov-fail-under=35
+
+  javascript:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
 
       - name: Check JavaScript syntax
         run: |

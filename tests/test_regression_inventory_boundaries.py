@@ -13,6 +13,33 @@ from test_equipment_actions import add_template, inventory_item
 from test_equipment_modules import templates as filter_templates, character_data as filter_data
 
 
+def test_balaclava_uses_cosmetic_slot_with_independent_helmet(app):
+    from app.services.character_appearance import public_character_appearance
+    from app.services.combat import CombatService
+
+    template = add_template('Балаклава Призрак', 'mask', attributes={'charisma_bonus': '1'})
+    legacy_mask = inventory_item(template, category='helmet', name='Походная маска', id='old-mask')
+    helmet = inventory_item(add_template('Советский Котелок 68Г', 'helmet'))
+    data = {'inventory': {'pockets': [legacy_mask]}, 'equipment': {'helmet': helmet},
+            'appearance': {'balaclavaColor': 'black', 'ghostMaskColor': 'dark_gray'}}
+    path = ['inventory', 'pockets', 0]
+
+    details = CombatService.equipment_action_details(data, 'equip', 'mask', item_path=path, in_combat=True)
+    assert details['action_points'] == 2 + details['inventory_access']['retrieval_action_points']
+    CombatService.apply_equipment_action(data, details)
+    assert data['equipment']['helmet'] is helmet
+    assert data['equipment']['mask']['charismaBonus'] == '1'
+    assert public_character_appearance(data) == {
+        'balaclavaColor': 'black', 'ghostMaskColor': 'dark_gray', 'gear': ['helmet_68g', 'mask_ghost'],
+    }
+    CombatService.apply_equipment_action(data, CombatService.equipment_action_details(data, 'unequip', 'mask'))
+    assert data['inventory']['pockets'][0]['id'] == 'old-mask'
+    assert data['inventory']['pockets'][0]['category'] == 'mask'
+    del data['equipment']['helmet']
+    with pytest.raises(ValidationError, match='does not fit'):
+        CombatService.equipment_action_details(data, 'equip', 'helmet', item_path=path)
+
+
 @pytest.fixture
 def pair(client, create_user, auth_headers):
     return _setup_pair(client, create_user, auth_headers)
@@ -51,7 +78,7 @@ def action(client, pair, auth_headers, body):
 
 
 def pay_to_ready(client, pair, auth_headers, action_id, unchanged):
-    for _ in range(4):
+    for _ in range(5):
         db.session.expire_all()
         row = db.session.get(DeferredCombatAction, action_id)
         assert row.status in {'paying', 'ready'}
@@ -61,8 +88,10 @@ def pay_to_ready(client, pair, auth_headers, action_id, unchanged):
         if row.status == 'ready':
             assert row.remaining_action_points == 0
             return
+        current_id = LocationCombatState.query.filter_by(location_id=pair['location'].id).one().current_location_character_id
+        current_user = pair['actor_user'] if current_id == pair['actor_location'].id else pair['target_user']
         response = client.post(f"/lobbies/{pair['lobby'].id}/locations/{pair['location'].id}/combat/end_turn",
-            headers=auth_headers(pair['target_user']), json={'location_character_id': pair['target_location'].id})
+            headers=auth_headers(current_user), json={'location_character_id': current_id})
         assert response.status_code == 200, response.get_json()
     pytest.fail('Оплата не завершилась за предусмотренные ходы')
 
@@ -273,8 +302,9 @@ def test_http_heavy_helmet_waits_for_payment_then_removes_without_retrieval(clie
     assert removed['equipment_change']['action_points'] == 3
     value = data(pair)
     assert 'helmet' not in value['equipment']
-    assert len(value['inventory']['backpack']) == 1
-    returned = value['inventory']['backpack'][0]
+    assert not value['inventory']['backpack']
+    assert len(value['inventory']['pockets']) == 1
+    returned = value['inventory']['pockets'][0]
     assert (returned['id'], returned['durability'], returned['customNote']) == ('i-helmet', 27, 'Метка шлема')
     assert pair['actor_location'].action_points_current == 3
     assert DeferredCombatAction.query.filter_by(status='completed').count() == 2

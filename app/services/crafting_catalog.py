@@ -132,6 +132,12 @@ def parse_recipes(rows):
         'recipe-aa39': 'Медицинские материалы (2)',
     }
     for item in result:
+        if item['id'] in {'recipe-aa15', 'recipe-aa16'}:
+            meat = item['components'][0]['source_text']
+            item['batch_max'] = max(int(count) for count in re.findall(r'\(1\s*[-–]\s*(\d+)\)', meat))
+            vessels = item['tools_text'].split(',')[-1].split('/')
+            if len(item['difficulty_options']) == 1 and len(vessels) > 1:
+                item['difficulty_options'] *= len(vessels)
         if item['id']=='recipe-aa12':
             item['components'][0].update(name='Загрязнённая вода',mixed_water=True,
                 source_text='Болотная, дождевая или радиоактивная вода: всего 10 порций')

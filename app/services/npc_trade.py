@@ -1,5 +1,7 @@
 """Торговец с явным прайсом ГМа, конечными товарами и конечным запасом денег."""
 from copy import deepcopy
+from fractions import Fraction
+from json import dumps
 from math import isfinite
 
 from sqlalchemy.orm.attributes import flag_modified
@@ -118,7 +120,26 @@ def tool_price(item, full_price):
     return money(price, label='Цена инструмента')
 
 
-def price_for(data, item, side):
+def _durability_price(item, price, half_loss):
+    from app.services.combat import CombatService
+    from app.services.gas_mask_filters import is_gas_mask_filter
+
+    current = item.get('durability')
+    if type(current) not in {int, float} or not -float('inf') < current < float('inf') or is_gas_mask_filter(item):
+        return price
+    maximum = item.get('maxDurability', item.get('max_durability'))
+    if maximum is None:
+        maximum = CombatService._template_attributes(item).get('max_durability')
+    if type(maximum) not in {int, float} or not 0 < maximum < float('inf') or current >= maximum:
+        return price
+    maximum = Fraction(str(maximum))
+    current = Fraction(str(max(0, current)))
+    if half_loss:
+        current = (current + maximum) / 2
+    return price * current // maximum
+
+
+def price_for(data, item, side, *, half_durability_loss=False):
     from app.services.equipment_catalog import retired_catalog_template
     if retired_catalog_template(item):
         raise ValidationError('Этот предмет выведен из каталога')
@@ -132,7 +153,25 @@ def price_for(data, item, side):
     price = (((data or {}).get('merchant') or {}).get('prices') or {}).get(key, {}).get(side)
     if price is None:
         raise ValidationError('Для этого предмета торговец не установил цену')
-    return tool_price(item, price)
+    price = tool_price(item, price)
+    return _durability_price(item, price, half_durability_loss) if side == 'buy' else price
+
+
+def sale_prices(merchant_data, seller_data):
+    from app.services.combat import CombatService
+
+    prices = (merchant_data.get('merchant') or {}).get('prices') or {}
+    half_loss = background_is(seller_data, 'Торгашня')
+    quotes = {}
+    for item, path in CombatService._iter_inventory_items_with_paths(seller_data):
+        if item.get('durability') is None or prices.get(str(item.get('templateId')), {}).get('buy') is None:
+            continue
+        try:
+            quotes[dumps(path, separators=(',', ':'))] = price_for(
+                merchant_data, item, 'buy', half_durability_loss=half_loss)
+        except ValidationError:
+            continue
+    return quotes
 
 
 def discounted_purchase_prices(merchant_data, buyer_data):
@@ -159,6 +198,8 @@ def discounted_purchase_prices(merchant_data, buyer_data):
 
 def totals(actor_data, target_data, actor_offer, target_offer):
     from app.services.combat import CombatService
+    half_loss = background_is(actor_data, 'Торгашня') if actor_offer else False
+
     def total(data, offer, side, purchase_prices):
         result = 0
         for entry in offer:
@@ -166,7 +207,7 @@ def totals(actor_data, target_data, actor_offer, target_offer):
             if side == 'sell' and path[:1] != ['inventory']:
                 raise ValidationError('Торговец продаёт товары из инвентаря, а не надетое снаряжение')
             item = CombatService._inventory_item_at_path(data, path)
-            price = price_for(target_data, item, side)
+            price = price_for(target_data, item, side, half_durability_loss=half_loss)
             result += purchase_prices.get(str(item.get('templateId')), price) * entry['amount']
         return money(result, label='Стоимость предложения')
     purchase_prices = discounted_purchase_prices(target_data, actor_data) if target_offer else {}

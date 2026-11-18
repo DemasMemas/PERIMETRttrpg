@@ -110,9 +110,11 @@ class CharacterInteractionService:
         )
         condition = CombatService._location_character_condition(target)
         snapshot = CombatService._incapacitated_character_snapshot(actor, target, condition)
-        from app.services.npc_trade import discounted_purchase_prices, enabled
+        from app.services.npc_trade import discounted_purchase_prices, enabled, sale_prices
         if enabled(target.character):
-            snapshot['merchant_purchase_prices'] = discounted_purchase_prices(snapshot['target_data'], actor.character.data or {})
+            actor_data = actor.character.data or {}
+            snapshot['merchant_purchase_prices'] = discounted_purchase_prices(snapshot['target_data'], actor_data)
+            snapshot['merchant_sale_prices'] = sale_prices(snapshot['target_data'], actor_data)
         return snapshot
 
     @staticmethod
@@ -139,7 +141,14 @@ class CharacterInteractionService:
         clean_payload = deepcopy(payload) if isinstance(payload, dict) else {}
         if kind == 'trade':
             from app.services.trade import prepare_payload
-            clean_payload = prepare_payload(actor.character, target.character, clean_payload)
+            draft_id = clean_payload.pop('haggle_id', None)
+            round_number = clean_payload.pop('haggle_round', None)
+            clean_payload = prepare_payload(actor.character, target.character, clean_payload, quote_only=draft_id is not None)
+            if clean_payload.get('_merchant'):
+                from app.services.merchant_haggle import resolve_trade
+                resolve_trade(actor, target, user_id, clean_payload, draft_id, round_number)
+            elif draft_id is not None or round_number is not None:
+                raise ValidationError('Цена после торга доступна только у торговца')
         clean_payload.pop('gm_decision_for_offline_target', None)
         automated_trade = kind == 'trade' and clean_payload.get('_merchant') is True
         delegated_to_gm = False
@@ -342,6 +351,9 @@ class CharacterInteractionService:
                 raise ConflictError('Торговец больше не принимает предложения')
             require_contact(actor, target)
             current = totals(actor_data, target_data, payload.get('actor_offer', []), payload.get('target_offer', []))
+            if '_haggle_steps' in payload:
+                from app.services.merchant_haggle import terms
+                current = terms(current['purchase_total'], current['sale_total'], payload['_haggle_steps'])
             if any(current[key] != payload.get(key) for key in current):
                 raise ConflictError('Стоимость товаров изменилась. Откройте торговлю заново.')
         prepare_offer(actor_data, payload.get('actor_offer', []))

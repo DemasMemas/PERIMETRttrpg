@@ -500,9 +500,10 @@ window.enterLocation = async function(locationId, { scoutView = null } = {}) {
                             <label id="loc-structure-roof-type-field" style="display:none;">Крыша <select id="loc-structure-roof-type" class="form-control" style="width:auto;"><option value="gable">Двускатная</option><option value="flat">Плоская</option><option value="none">Без автоматической крыши</option></select></label>
                             <label id="loc-structure-rotation-field">Поворот, ° <input id="loc-structure-rotation" class="form-control" type="number" min="0" max="359" step="15" value="0" style="width:72px;" title="Q / E: поворот на 15°"></label>
                             <label>Класс укрытия <select id="loc-structure-cover-class" class="form-control" style="width:auto;">
+                                <option value="" selected>По ассету</option>
                                 <option value="conditional">Условное</option>
                                 <option value="flimsy">Хлипкое</option>
-                                <option value="medium" selected>Средней прочности</option>
+                                <option value="medium">Средней прочности</option>
                                 <option value="strong">Прочное</option>
                                 <option value="very_strong">Очень прочное</option>
                                 <option value="titanium">Титановое</option>
@@ -1118,6 +1119,7 @@ window.enterLocation = async function(locationId, { scoutView = null } = {}) {
                 let lampInspectorSave = Promise.resolve();
                 const pendingInspectorSaves = new Map();
                 let colorDraft = null;
+                let copiedAssetColor = '';
                 const renderAssetSelection = () => {
                     const selection = getSelectedLocationEditorAsset();
                     if (selection && pendingInspectorSaves.has(selection.selectionKey)) return;
@@ -1242,8 +1244,15 @@ window.enterLocation = async function(locationId, { scoutView = null } = {}) {
                                 <label data-lamp-field>Яркость <input class="form-control" type="number" data-asset-field="intensity" min="0" max="10" step="any"></label>
                                 <label data-lamp-field>Радиус, м <input class="form-control" type="number" data-asset-field="distance" min="1" max="30" step="any"></label>
                                 ${Object.entries(selection.colorChannels || { color: 'Цвет' }).map(([field, label]) => `
-                                    <label>${label} <input class="form-control" type="color" data-asset-field="${field}"
-                                        ${field === 'color' ? '' : 'title="Белый сохраняет исходный оттенок материала"'}></label>
+                                    <div data-asset-color-control>
+                                        <label>${label} <input class="form-control" type="color" data-asset-field="${field}"
+                                            ${field === 'color' ? '' : 'title="Белый сохраняет исходный оттенок материала"'}></label>
+                                        <output data-asset-color-code></output>
+                                        <div class="location-asset-color-actions">
+                                            <button type="button" class="btn btn-secondary" data-asset-color-copy aria-label="Копировать ${label.toLowerCase()}">Копировать</button>
+                                            <button type="button" class="btn btn-secondary" data-asset-color-paste aria-label="Вставить ${label.toLowerCase()}">Вставить</button>
+                                        </div>
+                                    </div>
                                 `).join('')}
                             </div>
                             <button type="button" class="btn btn-secondary" data-asset-save>Сохранить параметры</button>
@@ -1425,11 +1434,36 @@ window.enterLocation = async function(locationId, { scoutView = null } = {}) {
                     for (const input of assetInspector.querySelectorAll('[data-asset-field]')) {
                         const field = input.dataset.assetField;
                         input.value = colorDraft?.values[field] ?? selection[field] ?? '';
-                        if (input.type === 'color' && selection.kind !== 'lamp') {
+                        if (input.type === 'color') {
+                            const colorControl = input.closest('[data-asset-color-control]');
+                            const code = colorControl.querySelector('[data-asset-color-code]');
+                            code.value = input.value.toUpperCase();
                             input.addEventListener('input', () => {
-                                colorDraft ??= { selectionKey: selection.selectionKey, values: {} };
-                                colorDraft.values[field] = input.value;
+                                code.value = input.value.toUpperCase();
+                                if (selection.kind !== 'lamp') {
+                                    colorDraft ??= { selectionKey: selection.selectionKey, values: {} };
+                                    colorDraft.values[field] = input.value;
+                                }
                             });
+                            colorControl.querySelector('[data-asset-color-copy]').onclick = async () => {
+                                const color = input.value.toUpperCase();
+                                copiedAssetColor = color;
+                                try { await navigator.clipboard?.writeText(color); } catch { /* Буфер редактора доступен без доступа к системному. */ }
+                                showNotification(`Цвет ${color} скопирован`, 'success');
+                            };
+                            colorControl.querySelector('[data-asset-color-paste]').onclick = async () => {
+                                let color = copiedAssetColor;
+                                if (!color) {
+                                    try { color = (await navigator.clipboard?.readText())?.trim(); } catch { /* Системный буфер может быть недоступен. */ }
+                                }
+                                if (!/^#[\da-f]{6}$/i.test(color || '')) {
+                                    showNotification('Скопируйте цвет в формате #RRGGBB');
+                                    return;
+                                }
+                                if (!input.isConnected) return;
+                                input.value = color;
+                                input.dispatchEvent(new Event('input', { bubbles: true }));
+                            };
                         }
                         if (['x', 'z'].includes(input.dataset.assetField)) {
                             input.min = '0';

@@ -63,6 +63,7 @@ export function createBasementCutaway(THREE) {
         material.needsUpdate = true;
     }
     return {
+        attachMaterial: attach,
         update(footprints) {
             const next = JSON.stringify(footprints.map(p => [p.x,p.z,p.width,p.depth,p.axis.x,p.axis.z]));
             if (next === signature) return false;

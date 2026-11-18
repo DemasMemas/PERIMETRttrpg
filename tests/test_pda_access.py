@@ -245,6 +245,7 @@ def test_hacking_can_continue_next_turn_without_charge_drain_invalidating_bound_
     payload=selection(pair,operation='start',operation_id='deferred-access',mode='remote',target_token=target_token(pair))
     result=CombatService.perform_action(actor.location_id,pair['actor_user']['id'],actor.id,'pda_access',attribute_choice=payload,pending_action_id='deferred-hacking-payment')
     assert result['pending_action'] and PdaAccessSession.query.count()==0
+    CombatService.end_turn(actor.location_id,pair['actor_user']['id'],actor.id)
     CombatService.end_turn(actor.location_id,pair['target_user']['id'],pair['target_location'].id)
     result=CombatService.perform_action(actor.location_id,pair['actor_user']['id'],actor.id,'pda_access',resume_pending_action_id='deferred-hacking-payment')
     assert result['narrative_action']['session']['status']=='working' and PdaAccessSession.query.count()==1

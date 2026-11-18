@@ -1,6 +1,6 @@
 // Display cutaways affect the main camera only. Original roots still own
 // interaction, fog and edits; temporarily restore their physical shadow form.
-export function createLocationShadowPass(renderer,roots,withOriginals=draw=>draw()) {
+export function createLocationShadowPass(renderer,roots,withOriginals=draw=>draw(),spotTerrain=()=>[]) {
     const original=renderer.shadowMap.render;
     function run(draw){
         const changes=[];
@@ -33,10 +33,15 @@ export function createLocationShadowPass(renderer,roots,withOriginals=draw=>draw
             for (const light of filtered) {
                 const owner = light.shadow.portableOwner;
                 const visible = owner.visible;
+                const terrain = light.isSpotLight ? spotTerrain().filter(mesh => mesh && !mesh.castShadow) : [];
                 owner.visible = false;
+                for (const mesh of terrain) mesh.castShadow = true;
                 this.needsUpdate = force;
                 try { original.call(this, [light], ...args); }
-                finally { owner.visible = visible; }
+                finally {
+                    owner.visible = visible;
+                    for (const mesh of terrain) mesh.castShadow = false;
+                }
             }
         }));
     };

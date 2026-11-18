@@ -4,6 +4,22 @@ const vm=require('node:vm');
 const fs=require('node:fs');
 const path=require('node:path');
 
+test('подпись горящего ХИСа показывает оставшиеся минуты и выбранный цвет', async () => {
+    const module = new vm.SourceTextModule(fs.readFileSync(path.join(__dirname, '../app/static/js/portableLights.js'), 'utf8'));
+    await module.link(specifier => {
+        const name = specifier === './api.js' ? 'Server' : 'rememberEquipmentChoice';
+        return new vm.SyntheticModule([name], function () { this.setExport(name, {}); });
+    });
+    await module.evaluate();
+    const { activeGlowLabel } = module.namespace;
+    assert.equal(activeGlowLabel({ activated: true, remaining_seconds: 126, color: '#68beff' }),
+        'Осталось гореть ещё 3 мин · цвет: голубой');
+    assert.equal(activeGlowLabel({ activated: true, remaining_seconds: 1 }),
+        'Осталось гореть ещё 1 мин · цвет: зелёный');
+    assert.equal(activeGlowLabel({ activated: true, remaining_seconds: 0, color: '#68beff' }), '');
+    assert.equal(activeGlowLabel({ activated: false, remaining_seconds: 126 }), '');
+});
+
 test('сцена использует радиус ХИС 8 м вместо радиуса палочки 5 м',async()=>{
     const module=new vm.SourceTextModule(fs.readFileSync(path.join(__dirname,'../app/static/js/portableLights.js'),'utf8'));
     await module.link(async specifier=>{
@@ -15,20 +31,23 @@ test('сцена использует радиус ХИС 8 м вместо ра
     await module.evaluate();
     const created=[];
     class PointLight {
-        constructor(color,intensity,distance){this.distance=distance;created.push(this);this.shadow={mapSize:{set(){}},camera:{}};
+        constructor(color,intensity,distance){this.isPointLight=true;this.distance=distance;created.push(this);this.shadow={mapSize:{set(){}},camera:{}};
             this.position={set(){}};}
     }
     const scene={add(){},remove(){}};
     const renderer=module.namespace.createPortableLightRenderer({PointLight},scene);
     renderer.update([],new Map(),[
-        {id:'his',radial:true,range:8,x:1,y:1,z:1},
-        {id:'stick',radial:true,range:5,x:2,y:1,z:2},
+        {id:'his',mount:'ground',radial:true,range:8,x:1,y:1,z:1},
+        {id:'stick',mount:'ground',radial:true,range:5,x:2,y:1,z:2},
+        {id:'aura',radial:true,ignition_aura:true,range:4,x:3,y:1,z:3},
     ]);
-    assert.deepEqual(created.map(light=>light.distance),[8,5]);
+    assert.deepEqual(created.map(light=>light.distance),[8,5,4]);
+    assert.deepEqual(created.map(light=>light.castShadow),[true,true,true]);
+    assert.ok(created.slice(0,2).every(light=>light.shadow.radius>1 && !light.shadow.autoUpdate));
 });
 
-test('ближний свет сохраняет горизонтальную ширину, камеру тени и прежний обработчик материала',async()=>{
-    const three=new vm.SourceTextModule(fs.readFileSync(path.join(__dirname,'../tmp/browser-vendor/three.module.js'),'utf8'));
+test('луч, прямой свет и камера тени используют один конус',async()=>{
+    const three=new vm.SourceTextModule(fs.readFileSync(path.join(__dirname,'../app/static/vendor/three-0.162.0/build/three.module.min.js'),'utf8'));
     await three.link(()=>{throw Error('Неожиданный импорт Three');});await three.evaluate();
     const module=new vm.SourceTextModule(fs.readFileSync(path.join(__dirname,'../app/static/js/portableLights.js'),'utf8'));
     await module.link(async specifier=>new vm.SyntheticModule(specifier==='./api.js'?['Server']:['rememberEquipmentChoice'],function(){
@@ -42,27 +61,22 @@ test('ближний свет сохраняет горизонтальную ш
         portable_lights:[{id:'lamp',mount:'head',range:35,end_width:5}]}],new Map([[1,{model}]]));
     const light=scene.children.find(child=>child.isSpotLight);assert.equal(light.distance,35);
     light.shadow.updateMatrices(light);
-    assert.ok(Math.abs(2*35*Math.tan(light.shadow.camera.fov*Math.PI/360)*light.shadow.camera.aspect-5)<1e-8);
-    assert.ok(Math.atan(1.4/1.5)<light.angle,'В ближнюю землю попадает вертикальная часть луча');
+    assert.ok(Math.abs(light.shadow.camera.fov * Math.PI / 360 - light.angle) < 1e-10);
+    assert.equal(light.shadow.camera.aspect, 1);
+    assert.equal(light.shadow.camera.far, light.distance);
+    assert.equal(light.shadow.portableOwner, model);
     const shader={uniforms:{},vertexShader:T.ShaderLib.standard.vertexShader,fragmentShader:T.ShaderLib.standard.fragmentShader};
     material.onBeforeCompile(shader);
     const camera=new T.PerspectiveCamera();camera.updateMatrixWorld();scene.onBeforeRender(null,scene,camera);
-    assert.equal(shader.previousHandler,true);assert.ok(shader.fragmentShader.includes('portableBeamMask'));
+    assert.equal(shader.previousHandler,true);
+    assert.match(shader.fragmentShader, /portableBeamSurfaceFalloff\(lightDistance \* angleCos \/ spotLight.distance\)/);
+    assert.doesNotMatch(shader.fragmentShader, /portableBeamForwards|portableBeamMask/);
     assert.match(shader.fragmentShader, /portableSpotShadow\( spotShadowMap\[/);
     assert.match(shader.fragmentShader, /getShadow\( directionalShadowMap\[/);
     material.onBeforeCompile(shader);
     assert.equal(shader.fragmentShader.match(/float portableSpotShadow\(/g).length, 1);
-    for (const position of [[0,0,0],[4,8,12],[-5,3,2]]) {
-        camera.position.set(...position);camera.lookAt(0,1,0);camera.updateMatrixWorld();
-        scene.onBeforeRender(null,scene,camera);
-        const expected=new T.Vector3().subVectors(light.position,light.target.position);
-        expected.y=0;expected.transformDirection(camera.matrixWorldInverse);
-        assert.ok(shader.uniforms.portableBeamForwards.value[0].distanceTo(expected)<1e-10,
-            'Направление луча сохраняется при движении и повороте камеры');
-    }
-    assert.equal(light.decay,-1,'Затухание задаёт профиль без перебора источников в пикселе');
-    assert.equal(shader.uniforms.portableBeamShapes.value[0].x,Math.cos(Math.atan(2.5/35)));
-    assert.equal(shader.uniforms.portableBeamShapes.value[0].z,35);
+    assert.equal(light.decay,-1);
+    assert.equal(light.angle, Math.atan(2.5/35));
     assert.equal(renderer.count,1,'Активен один источник');
     assert.equal(scene.children.filter(node=>node.isSpotLight).length,4,'Места подготовлены заранее');
     const version=material.version;
@@ -90,7 +104,9 @@ test('ближний свет сохраняет горизонтальную ш
     const models = new Map([[1,{model}]]);
     renderer.update(actors,models,[{id:'glow',radial:true,x:1,y:1,z:1}]);
     assert.equal(scene.children.filter(node=>node.isSpotLight&&node.visible).length,1,
-        'Радиальный источник получает свой слот тени');
+        'При радиальном источнике пустые прожекторы скрываются');
+    assert.ok(scene.children.filter(node=>node.isPointLight).every(node=>node.castShadow),
+        'Место для тени сохраняется у ХИСа рядом с фонарём');
     renderer.update(actors,models);
     assert.equal(scene.children.filter(node=>node.isSpotLight&&node.visible).length,4);
     renderer.useSeasonalTerrain();
@@ -101,6 +117,25 @@ test('ближний свет сохраняет горизонтальную ш
     renderer.updatePositions();
     assert.ok(light.position.distanceTo(new T.Vector3(4,2.32,6.8))<1e-8,'Начало луча у лба и следует за моделью');
     assert.equal(light.distance,35);
+    const rig = new T.Group(), emitter = new T.Mesh(new T.BoxGeometry(.02, .02, .02), new T.MeshBasicMaterial());
+    emitter.name = 'gear_device_headlamp';
+    emitter.material.name = 'device_headlamp_emitter';
+    emitter.position.set(0, .4, .8);
+    rig.add(emitter);
+    model.add(rig);
+    models.get(1).humanAppearanceModel = rig;
+    actors[0].portable_lights[0].visual_model = 'headlamp';
+    renderer.update(actors, models);
+    const beam = scene.getObjectByName('portable_flashlight_beam');
+    assert.ok(beam.visible);
+    assert.ok(beam.position.distanceTo(light.position) < 1e-10);
+    assert.ok(light.position.distanceTo(emitter.getWorldPosition(new T.Vector3())) < 1e-10);
+    const beamAxis = new T.Vector3(0, 1, 0).applyQuaternion(beam.quaternion);
+    assert.ok(beamAxis.distanceTo(light.target.position.clone().sub(light.position).normalize()) < 1e-10);
+    assert.equal(beam.scale.y, light.distance);
+    assert.ok(Math.abs(beam.scale.x - Math.tan(light.angle) * light.distance) < 1e-10);
+    assert.match(beam.material.fragmentShader, /portableBeamFalloff\(distanceAlong\)/);
+    assert.match(beam.material.fragmentShader, /normalize\(entryPoint - eyeInCone\)/);
     const patrol=Array.from({length:15},(_,i)=>({character_id:i+10,posture:'standing',facing_x:0,facing_y:1,
         portable_lights:[{id:'patrol-'+i,mount:'head',range:20,end_width:5}]}));
     for(const actor of patrol)models.set(actor.character_id,{model});
@@ -110,12 +145,95 @@ test('ближний свет сохраняет горизонтальную ш
     assert.match(shader.fragmentShader,/extraIndex<portableExtraCount/);
     scene.onBeforeRender(null,scene,camera);
     assert.equal(shader.uniforms.portableExtraPosition.value[10].w,20);
-    assert.equal(light.intensity,11.5);renderer.dispose();
+    assert.equal(shader.uniforms.portableExtraCone.value[10].x, Math.cos(Math.atan(2.5/20)));
+    assert.equal(light.intensity,11.5);
+
+    const glows = [0, 2, 4, 6, 12.4].map(x=>({id:`glow-${x}`,radial:true,range:1.5,x,y:1,z:1}));
+    const focus = new T.Vector3(0, 1, 1);
+    const sideView = new T.OrthographicCamera(-5, 5, 5, -5, .1, 20);
+    sideView.position.set(0, 1, 10);
+    renderer.update([],new Map(),glows,sideView,focus);
+    const shadowed = () => scene.children.filter(node=>node.isPointLight&&node.castShadow).map(node=>node.position.x).sort((a,b)=>a-b);
+    assert.deepEqual(shadowed(),[0,2,4,6]);
+    sideView.position.x=6.3;
+    focus.x=6.3;
+    renderer.updatePositions(sideView,focus);
+    assert.deepEqual(shadowed(),[0,2,4,6],'Тень остаётся, пока в кадре край освещённой области');
+    sideView.position.x=6.9;
+    renderer.updatePositions(sideView,focus);
+    assert.deepEqual(shadowed(),[2,4,6,12.4],'Перенос тени происходит сразу даже при малом движении камеры');
+    assert.equal(scene.children.find(node=>node.isPointLight&&node.position.x===12.4).shadow.needsUpdate,true);
+    renderer.dispose();
     assert.equal(material.onBeforeCompile,previous);assert.equal(renderer.count,0);
 });
 
+test('точка света следует за костью, перестановкой крепления и предметом на земле', async () => {
+    const three = new vm.SourceTextModule(fs.readFileSync(path.join(__dirname,
+        '../app/static/vendor/three-0.162.0/build/three.module.min.js'), 'utf8'));
+    await three.link(() => { throw Error('Неожиданный импорт Three'); });
+    await three.evaluate();
+    const module = new vm.SourceTextModule(fs.readFileSync(path.join(__dirname, '../app/static/js/portableLights.js'), 'utf8'));
+    await module.link(specifier => {
+        const symbol = specifier === './api.js' ? 'Server' : 'rememberEquipmentChoice';
+        return new vm.SyntheticModule([symbol], function () { this.setExport(symbol, {}); });
+    });
+    await module.evaluate();
+    const T = three.namespace, scene = new T.Scene(), model = new T.Group(), rig = new T.Group();
+    const bone = new T.Bone();
+    const geometry = new T.BoxGeometry(.02, .03, .12).translate(-.20, .05, .01);
+    const vertexCount = geometry.attributes.position.count;
+    geometry.setAttribute('skinIndex', new T.Uint16BufferAttribute(new Uint16Array(vertexCount * 4), 4));
+    const weights = new Float32Array(vertexCount * 4);
+    for (let i = 0; i < weights.length; i += 4) weights[i] = 1;
+    geometry.setAttribute('skinWeight', new T.Float32BufferAttribute(weights, 4));
+    const emitter = new T.SkinnedMesh(geometry, new T.MeshStandardMaterial());
+    emitter.material.name = 'device_his_hand_emitter';
+    emitter.name = 'gear_device_his_hand';
+    scene.add(model);
+    model.add(rig);
+    rig.add(bone, emitter);
+    emitter.bind(new T.Skeleton([bone]));
+    const renderer = module.namespace.createPortableLightRenderer(T, scene);
+    const models = new Map([[1, { model, humanAppearanceModel: rig }]]);
+    const source = { id: 'his', mount: 'hand', radial: true, range: 8, visual_model: 'his_hand' };
+    const characters = [{ character_id: 1, portable_lights: [source] }];
+    const point = () => scene.children.find(node => node.isPointLight);
+    const position = () => point().position;
+    renderer.update(characters, models);
+    assert.ok(position().distanceTo(new T.Vector3(-.20, .05, .01)) < 1e-6);
+    bone.position.set(.15, .55, -.1);
+    model.position.set(2, 1, 3);
+    renderer.updatePositions();
+    assert.ok(position().distanceTo(new T.Vector3(1.95, 1.60, 2.91)) < 1e-6);
+    point().shadow.needsUpdate = false;
+    renderer.updatePositions();
+    assert.equal(point().shadow.needsUpdate, false, 'Неподвижный источник использует готовую карту');
+    bone.position.x += .001;
+    renderer.updatePositions();
+    assert.equal(point().shadow.needsUpdate, true, 'Карта обновляется в кадре даже при мелком движении руки');
+    point().shadow.needsUpdate = false;
+    rig.userData.shadowPoseRevision = 1;
+    renderer.updatePositions();
+    assert.equal(point().shadow.needsUpdate, true, 'Изменение силуэта в движении обновляет карту и без сдвига источника');
+
+    const beltPart = new T.Mesh(geometry, new T.MeshStandardMaterial());
+    beltPart.material.name = 'device_his_belt_emitter';
+    beltPart.name = 'belt_gear_device_his_belt';
+    rig.add(beltPart);
+    beltPart.position.set(-.1, .8, .2);
+    renderer.update([{ character_id: 1, portable_lights: [{ ...source, mount: 'belt', visual_model: 'his_belt' }] }], models);
+    assert.ok(position().distanceTo(new T.Vector3(1.70, 1.85, 3.21)) < 1e-6);
+
+    beltPart.removeFromParent();
+    scene.add(beltPart);
+    beltPart.position.set(4, .1, 5);
+    renderer.update([], models, [{ ...source, mount: 'ground', groundEmitter: beltPart }]);
+    assert.ok(position().distanceTo(new T.Vector3(3.80, .15, 5.01)) < 1e-6);
+    renderer.dispose();
+});
+
 test('подготовка фонарей сохраняет объединение деталей и исключает неизвестные шейдеры',async()=>{
-    const three=new vm.SourceTextModule(fs.readFileSync(path.join(__dirname,'../tmp/browser-vendor/three.module.js'),'utf8'));
+    const three=new vm.SourceTextModule(fs.readFileSync(path.join(__dirname,'../app/static/vendor/three-0.162.0/build/three.module.min.js'),'utf8'));
     await three.link(()=>{throw Error('Неожиданный импорт');});await three.evaluate();
     const portable=new vm.SourceTextModule(fs.readFileSync(path.join(__dirname,'../app/static/js/portableLights.js'),'utf8'));
     await portable.link(async specifier=>new vm.SyntheticModule(specifier==='./api.js'?['Server']:['rememberEquipmentChoice'],function(){

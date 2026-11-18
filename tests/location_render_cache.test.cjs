@@ -16,18 +16,22 @@ function node(extra={}){return{position:{x:0,y:0,z:0},quaternion:{x:0,y:0,z:0,w:
 test('карта тени химического света исключает только своего носителя', async () => {
     const {createLocationShadowPass} = await load();
     const first = {visible: true}, second = {visible: true}, wall = {visible: true};
+    const terrain = {castShadow: false};
     const sun = {shadow: {needsUpdate: true}};
     const his = {shadow: {portableOwner: first, needsUpdate: true}};
     const stick = {shadow: {portableOwner: second, needsUpdate: true}};
+    const flashlight = {isSpotLight: true, shadow: {portableOwner: second, needsUpdate: true}};
     const draws = [];
     const renderer = {shadowMap: {enabled: true, autoUpdate: true, render(lights) {
-        for (const light of lights) draws.push([light, first.visible, second.visible, wall.visible]);
+        for (const light of lights) draws.push([light, first.visible, second.visible, wall.visible, terrain.castShadow]);
     }}};
-    createLocationShadowPass(renderer, () => [first, second, wall]);
-    renderer.shadowMap.render([sun, his, stick]);
-    assert.deepEqual(draws, [[sun, true, true, true], [his, false, true, true], [stick, true, false, true]]);
+    createLocationShadowPass(renderer, () => [first, second, wall], undefined, () => [terrain]);
+    renderer.shadowMap.render([sun, his, stick, flashlight]);
+    assert.deepEqual(draws, [[sun, true, true, true, false], [his, false, true, true, false],
+        [stick, true, false, true, false], [flashlight, true, false, true, true]]);
     assert.equal(first.visible, true);
     assert.equal(second.visible, true);
+    assert.equal(terrain.castShadow, false);
 });
 
 test('Скрытие этажа камерой сохраняет физическую тень досок вместе с перекрытием',async()=>{

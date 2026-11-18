@@ -506,6 +506,27 @@ def _bleeding_rule(effect_type: str) -> Optional[Dict[str, Any]]:
     return BLEEDING_EFFECT_RULES.get(effect_type) if effect_type in BLEEDING_EFFECT_RULES else None
 
 
+def tourniquet_area(effect):
+    return str(effect.get('area') or '').strip().lower().replace('_', '')
+
+
+def active_tourniquet_areas(effects):
+    return {
+        tourniquet_area(effect) for effect in normalize_effect_list(effects)
+        if effect['type'] == 'tourniquet' and effect.get('active', True)
+        and (effect.get('remaining') is None or _to_float(effect['remaining'], 0) > 0)
+        and tourniquet_area(effect)
+    }
+
+
+def bleeding_is_suppressed(effect, tourniquets):
+    area = tourniquet_area(effect)
+    # Older saves wrote suppressed=True to the wound itself when fitting a tourniquet.
+    if _bleeding_rule(effect.get('type')) and area in {'leftarm', 'rightarm', 'leftleg', 'rightleg'}:
+        return area in tourniquets
+    return bool(effect.get('suppressed'))
+
+
 def _bleeding_stage_value(stage: Any) -> int:
     try:
         return BLEEDING_STAGE_ORDER.index(str(stage or "normal").lower())
@@ -515,6 +536,7 @@ def _bleeding_stage_value(stage: Any) -> int:
 
 def get_bleeding_state(health: Dict[str, Any]) -> Dict[str, Any]:
     effects = normalize_effect_list((health or {}).get("effects") or [])
+    tourniquets = active_tourniquet_areas(effects)
     combat_meta = (health or {}).get("combatMeta") or {}
     breakdown = {
         "external": {"light": 0, "medium": 0, "severe": 0, "extreme": 0, "total": 0},
@@ -525,7 +547,7 @@ def get_bleeding_state(health: Dict[str, Any]) -> Dict[str, Any]:
 
     for effect in effects:
         rule = _bleeding_rule(effect["type"])
-        if not rule or not effect.get("active", True) or effect.get("closed") or effect.get("suppressed"):
+        if not rule or not effect.get("active", True) or effect.get("closed") or bleeding_is_suppressed(effect, tourniquets):
             continue
         stacks = max(1, _to_int(effect.get("stacks", 1), 1))
         base_severity = max(1, _to_int(effect.get("value", 0), rule.get("severity", 1)))
@@ -1488,6 +1510,14 @@ def minimum_pain(health, character_data=None):
     return min(5,max(0,_to_float(((health.get('combatMeta') or {}).get('toughNut') or {}).get('minimumPain'),0)))
 
 
+def _pain_starts_at_deadline(effect):
+    return str(effect.get('source') or '').startswith('artifact-ten-minute:') or any(
+        isinstance(adjustment, dict) and adjustment.get('field') == 'painLevel'
+        and _to_float(adjustment.get('delta'), 0) > 0
+        for adjustment in effect.get('adjustments') or []
+    )
+
+
 def _advance_medication_time(health, effects, elapsed_seconds, *, include_turn_effects=False, recover_pain=False, character_data=None,
                              simulate_medications=True,advance_event_modifiers=True):
     """Использует те же срабатывания и последствия, что боевые ходы, сохраняя дробный остаток."""
@@ -1520,17 +1550,17 @@ def _advance_medication_time(health, effects, elapsed_seconds, *, include_turn_e
                 interval = units.get(effect.get("time_unit"), periods[tick])
                 progress = max(0, _to_float(effect.get("world_tick_elapsed"), 0)) % interval
                 simulated.append((effect, interval, progress))
-                deadlines.append(interval - progress)
+                deadline = interval - progress
             else:
                 interval = units.get(effect.get("time_unit"), periods.get(tick) if tick not in {"turn_start", "turn_end", "round_end"} else None)
-                if interval:
-                    deadline = _to_float(effect.get("remaining_seconds"), _to_float(effect["remaining"], 0) * interval)
-                    if deadline > 0:
-                        deadlines.append(deadline)
-                        # Отделяем последнюю шестисекундную долю: новая боль в конце
-                        # десятиминутного интервала не лечится задним числом за весь интервал.
-                        if recover_pain and str(effect.get('source') or '').startswith('artifact-ten-minute:') and deadline>6:
-                            deadlines.append(deadline-6)
+                if not interval:
+                    continue
+                deadline = _to_float(effect.get("remaining_seconds"), _to_float(effect["remaining"], 0) * interval)
+            if deadline > 0:
+                deadlines.append(deadline)
+                # Боль в момент срабатывания сохраняется после восстановления за прошедшее время.
+                if recover_pain and deadline > 6 and _pain_starts_at_deadline(effect):
+                    deadlines.append(deadline - 6)
         step = min(deadlines)
         pain_before=_to_float(health.get('painLevel'),0)
         simulated_ids = {effect["id"] for effect, _, _ in simulated}

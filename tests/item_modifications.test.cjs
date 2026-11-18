@@ -131,7 +131,7 @@ test('пересчёт инвентаря использует общую мас
         getMovementPenaltyBreakdown:(_,weight)=>({total:0,weightPenalty:0,weightPerPenalty:5}),
         document:{getElementById:id=>{if(!elements.has(id))elements.set(id,{style:{}});return elements.get(id);}}});
     const begin=source.indexOf('function calculateCarriedWeight('),end=source.indexOf('function getMovementPenaltyBreakdown(',begin);
-    const recalc=source.indexOf('function recalculateInventoryTotals() {');
+    const recalc=source.indexOf('function recalculateInventoryTotals(');
     const backpackText = source.slice(source.indexOf('function backpackSectionText('), source.indexOf('async function renderInventoryTab('));
     vm.runInContext(backpackText + source.slice(begin,end)+source.slice(recalc,source.indexOf('window.selectPocketItem =',recalc)),context);
     context.recalculateInventoryTotals();assert.equal(elements.get('total-weight-display').textContent,'9.0');
@@ -145,13 +145,17 @@ test('дополнительное крепление пояса сохраня�
         modifications:[{ruleId:'armor-g25',rules:{nvg_mount:true}}]};
     const belt={templateId:5,maxPouches:2,pouches:[{},{}],storedItem:{name:'Противогаз'},
         modifications:[{ruleId:'armor-g57',rules:{extra_belt_pouches:2}}]};
-    const currentCharacterData={equipment:{belt},inventory:{backpack:[helmet]}};
+    const currentCharacterData={equipment:{belt,backpack:{name:'Рюкзак'}},inventory:{backpack:[helmet]}};
     const context=vm.createContext({window:{},currentCharacterData,modificationRule:api.modificationRule,structuredClone,
         getItemByPath:()=>currentCharacterData.inventory.backpack[0],removeItemByPath:()=>Boolean(currentCharacterData.inventory.backpack.splice(0,1).length),
         getInventoryItemTemplate:()=>({attributes:{max_pouches:2}}),restoreItemToPath:item=>{currentCharacterData.inventory.backpack.push(item);return true;},
         renderInventoryTab:()=>{},scheduleAutoSave:()=>{},forceSyncCharacter:()=>{},showNotification:()=>{}});
     let begin=source.indexOf('window.equipToBeltFromInventory ='),end=source.indexOf('window.equipHeadphonesFromInventory',begin);
     vm.runInContext(source.slice(begin,end),context);
+    begin=source.indexOf('function beltPouchLimit(');
+    vm.runInContext(source.slice(begin,source.indexOf('function availablePouchesForMount(',begin)),context);
+    begin=source.indexOf('function restoreBeltItem(');
+    vm.runInContext(source.slice(begin,source.indexOf('\n}',begin)+2),context);
     begin=source.indexOf('window.unequipFromBelt =');end=source.indexOf('window.unequipArmor',begin);
     vm.runInContext(source.slice(begin,end),context);
     await context.window.equipToBeltFromInventory(['inventory','backpack',0]);
@@ -169,6 +173,7 @@ test('система распределения веса экзоскелета 
     const context=vm.createContext({modificationRule:api.modificationRule,modificationStat:api.modificationStat,
         wornModificationStat:()=>0,getWeightPerMovementPenalty:()=>5,getConsumableStatValue:()=>0,
         passiveTraits:()=>({weightMultiplier:1,movementPenalty:0}),prostheticLimb:()=>null,
+        activeTourniquetAreas:()=>new Set(),
         getIntoxicationProfile:()=>({movement:0})});
     vm.runInContext(source.slice(begin,end),context);
     const armor={name:'Экзоскелет',movementPenalty:5,
@@ -193,6 +198,7 @@ test('фиксированный штраф экзоскелета равен т
     const context=vm.createContext({modificationRule:api.modificationRule,modificationStat:api.modificationStat,
         wornModificationStat:()=>0,getWeightPerMovementPenalty:()=>5,getConsumableStatValue:()=>0,
         passiveTraits:()=>({weightMultiplier:1,movementPenalty:0}),prostheticLimb:()=>null,
+        activeTourniquetAreas:()=>new Set(),
         getIntoxicationProfile:()=>({movement:0})});
     vm.runInContext(source.slice(begin,end),context);
     const armor={name:'Экзоскелет',movementPenalty:5,
@@ -204,6 +210,37 @@ test('фиксированный штраф экзоскелета равен т
     assert.equal(context.getMovementPenaltyBreakdown(data,0).armorPenalty,3);
     armor.modifications=[];
     assert.equal(context.getMovementPenaltyBreakdown(data,0).armorPenalty,5);
+});
+
+test('расходники отдельно показывают поправки к весу и перемещению и учитываются один раз', () => {
+    const source = fs.readFileSync(path.join(__dirname, '../app/static/js/characterSheet.js'), 'utf8');
+    const context = vm.createContext({
+        getWeightPerMovementPenalty: () => 5,
+        wornModificationStat: () => 0,
+        modificationStat: (_, __, value) => value,
+        passiveTraits: () => ({ weightMultiplier: 1, movementPenalty: 0 }),
+        prostheticLimb: () => null,
+        activeTourniquetAreas: () => new Set(),
+        getIntoxicationProfile: () => ({ movement: 0 }),
+    });
+    vm.runInContext(source.slice(source.indexOf('function getConsumableStatValue('),
+        source.indexOf('function getAwarenessModeChoices(')), context);
+    vm.runInContext(source.slice(source.indexOf('function getExoskeletonPowerProfile('),
+        source.indexOf('function applyModifier(')), context);
+    const modifiers = [
+        { stat: 'weight', value: -2, remaining: 3 },
+        { stat: 'movement_points', value: -1, remaining: 2 },
+        { stat: 'weight', value: -8, remaining: 0 },
+    ];
+    const data = { health: { combatMeta: { consumableModifiers: modifiers } } };
+    const penalty = context.getMovementPenaltyBreakdown(data, 20);
+    assert.equal(penalty.rawWeightPenalty, 4);
+    assert.equal(penalty.temporaryWeightPenalty, -2);
+    assert.equal(penalty.weightPenalty, 2);
+    assert.equal(penalty.temporary, -1);
+    assert.equal(penalty.total, 1);
+    modifiers[0].remaining = 0;
+    assert.equal(context.getMovementPenaltyBreakdown(data, 20).temporaryWeightPenalty, 0);
 });
 
 test('модификация брони добавляет реальный патрон при зарядке, ограничиваясь местом',async()=>{

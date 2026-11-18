@@ -51,6 +51,18 @@ def test_periodic_pain_prevents_recovery_in_same_interval_but_not_after_source_e
     assert health['painLevel']==7
 
 
+@pytest.mark.parametrize('effect_type,medication_clock', [('periodic_adjustment', True), ('delayed_adjustment', False)])
+def test_minute_advance_keeps_pain_that_starts_at_the_end(effect_type, medication_clock):
+    health = {'painLevel': 5, 'effects': [{'type': effect_type, 'remaining': 1, 'tick': 'time_elapsed',
+        'time_unit': 'minute', 'medication_clock': medication_clock,
+        'adjustments': [{'field': 'painLevel', 'delta': 4}]}]}
+    health['effects'] = advance_timed_effects(health, health['effects'], 60,
+        advance_medication_turns=True, recover_pain=True)
+    assert health['painLevel'] == 4
+    advance_timed_effects(health, health['effects'], 6, advance_medication_turns=True, recover_pain=True)
+    assert health['painLevel'] == 3
+
+
 def test_gm_clock_reduces_surgical_pain_without_changing_existing_shock_recovery(client,time_case,auth_headers):
     end_combat(client,time_case,auth_headers)
     character=time_case['actor_character']
@@ -211,7 +223,8 @@ def test_travel_weather_step_enables_one_parameter_and_clamps(time_case):
 
 
 @pytest.mark.parametrize('key',['weather','weather_decrease'])
-def test_actual_world_travel_event_changes_weather_instead_of_only_text(client,time_case,auth_headers,monkeypatch,key):
+@pytest.mark.parametrize('decision',['approve','reject'])
+def test_world_travel_weather_requires_gm_approval(client,time_case,auth_headers,monkeypatch,key,decision):
     from app.services.world_travel_events import OUTCOMES
     from app.models import WorldTravelEvent
     import app.services.weather_rules as weather
@@ -227,9 +240,21 @@ def test_actual_world_travel_event_changes_weather_instead_of_only_text(client,t
     response=client.post(f'/lobbies/{lobby.id}/world-groups/{group["id"]}/move',headers=headers,json={'tile_x':6,'tile_y':5})
     assert response.status_code==200,response.json
     db.session.refresh(lobby)
-    assert lobby.weather_settings['rain']=={'enabled':True,'intensity':.6}
+    assert lobby.weather_settings['rain']=={'enabled':False,'intensity':.1}
     event=WorldTravelEvent.query.filter_by(group_id=group['id']).one()
-    assert 'Дождь: 0.1 → 0.6' in event.description
+    assert event.status=='pending'
+    pending=client.get(f'/lobbies/{lobby.id}/world-groups',headers=headers).get_json()['pending_events']
+    assert 'Дождь: 0.1 → 0.6' in pending[0]['description']
+    url=f'/lobbies/{lobby.id}/world-events/{event.id}'
+    resolved=client.patch(url,headers=headers,json={'decision':decision})
+    assert resolved.status_code==200,resolved.json
+    db.session.refresh(lobby)
+    if decision=='approve':
+        assert lobby.weather_settings['rain']=={'enabled':True,'intensity':.6}
+        assert 'Дождь: 0.1 → 0.6' in event.description
+    else:
+        assert lobby.weather_settings['rain']=={'enabled':False,'intensity':.1}
+    assert client.patch(url,headers=headers,json={'decision':'approve'}).status_code==404
 
 
 def test_rest_crosses_every_hour_for_weather(client,time_case,auth_headers,monkeypatch):
@@ -243,6 +268,85 @@ def test_rest_crosses_every_hour_for_weather(client,time_case,auth_headers,monke
     assert response.status_code==200,response.json
     assert lobby.weather_settings['fog']=={'enabled':True,'intensity':.5}
     assert list(choices)==[]  # Все восемь часовых границ обработаны, не только последняя.
+
+
+@pytest.mark.parametrize('action,dose', [('move', 5), ('move', 10), ('wait', 5), ('wait', 10)])
+def test_world_group_tile_radiation_during_move_and_wait(client, time_case, auth_headers, monkeypatch, action, dose):
+    end_combat(client, time_case, auth_headers)
+    lobby = time_case['lobby']
+    actor = time_case['actor_character']
+    protected = time_case['target_character']
+    lobby.game_time_minutes = 480
+    lobby.weather_settings = {'rain': {'enabled': True, 'intensity': .4}}
+    for character, protection in ((actor, 0), (protected, .75)):
+        data = deepcopy(character.data)
+        data['health']['radiation'] = 0
+        data['equipment'] = {'armor': {'protection': {'radiation': protection}}}
+        character.data = data
+    db.session.commit()
+    headers = auth_headers(time_case['actor_user'])
+    base = f'/lobbies/{lobby.id}'
+    group = client.post(f'{base}/world-groups', headers=headers,
+        json={'name': 'Группа', 'tile_x': 5, 'tile_y': 5}).get_json()
+    other_group = client.post(f'{base}/world-groups', headers=headers,
+        json={'name': 'Вторая группа', 'tile_x': 4, 'tile_y': 5}).get_json()
+    group_url = f'{base}/world-groups/{group["id"]}'
+    members = client.patch(f'{group_url}/members', headers=headers,
+        json={'character_ids': [actor.id, protected.id]})
+    assert members.status_code == 200
+    client.get(f'{base}/chunks', headers=headers, query_string={
+        'min_chunk_x': 0, 'max_chunk_x': 0, 'min_chunk_y': 0, 'max_chunk_y': 0,
+    })
+    tile_x = 6 if action == 'move' else 5
+    tile = client.patch(f'{base}/chunks/0/0/tile/{tile_x}/5', headers=headers, json={'radiation': dose})
+    assert tile.status_code == 200
+    monkeypatch.setattr('app.lobbies.roll_travel_event', lambda _: None)
+
+    url = f'{group_url}/{action}'
+    coordinates = {'tile_x': tile_x, 'tile_y': 5} if action == 'move' else {}
+    result = client.post(url, headers=headers, json=coordinates)
+    assert result.status_code == 200, result.json
+    assert not result.json['time_advanced']
+    updates = {item['character_id']: item for item in result.json['radiation_updates']}
+    wet_dose = 1.5 * dose
+    assert updates[actor.id]['incoming'] == updates[actor.id]['received'] == wet_dose
+    assert updates[protected.id]['required_protection'] == 10 * wet_dose
+    expected_protected_dose = 0 if dose == 5 else wet_dose
+    assert updates[protected.id]['received'] == expected_protected_dose
+    assert client.post(url, headers=headers, json=coordinates).status_code == 409
+
+    finished = client.post(f'{base}/world-groups/{other_group["id"]}/wait', headers=headers)
+    assert finished.status_code == 200 and finished.json['time_advanced']
+    assert persisted_health(actor.id)['radiation'] == wet_dose
+    assert persisted_health(protected.id)['radiation'] == expected_protected_dose
+
+
+@pytest.mark.parametrize('closed', [False, True])
+def test_world_group_warns_about_active_bleeding(client, time_case, auth_headers, monkeypatch, closed):
+    end_combat(client, time_case, auth_headers)
+    lobby = time_case['lobby']
+    actor = time_case['actor_character']
+    seed_initial_health(actor, [{'type': 'bleeding_external_light', 'area': 'leftArm', 'closed': closed}])
+    headers = auth_headers(time_case['actor_user'])
+    base = f'/lobbies/{lobby.id}/world-groups'
+    group = client.post(base, headers=headers, json={'name': 'Группа', 'tile_x': 5, 'tile_y': 5}).get_json()
+    assert client.patch(f'{base}/{group["id"]}/members', headers=headers,
+        json={'character_ids': [actor.id]}).status_code == 200
+    monkeypatch.setattr('app.lobbies.roll_travel_event', lambda _: None)
+    url = f'{base}/{group["id"]}/move'
+    coords = {'tile_x': 6, 'tile_y': 5}
+    moved = client.post(url, headers=headers, json=coords)
+    if not closed:
+        assert moved.status_code == 409
+        assert moved.json['code'] == 'world_group_bleeding'
+        risks = moved.json['blood_loss_risks']
+        assert len(risks) == 1 and risks[0]['character_name'] == actor.name
+        listed = client.get(base, headers=headers).json['groups'][0]
+        assert listed['tile_x'] == 5 and not listed['turn_submitted']
+        moved = client.post(url, headers=headers, json={**coords, 'confirm_bleeding': risks})
+    assert moved.status_code == 200, moved.json
+    assert moved.json['group']['tile_x'] == 6
+    assert len(moved.json['blood_loss']) == (0 if closed else 1)
 
 
 def seed_initial_health(character, effects, *, stress=0, time_active=True):

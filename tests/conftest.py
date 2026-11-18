@@ -1,4 +1,5 @@
 import os
+from functools import lru_cache
 from pathlib import Path
 import sys
 
@@ -26,8 +27,19 @@ def client(app):
     return app.test_client()
 
 
+@lru_cache(maxsize=32)
+def _fixture_password_hash(password):
+    from werkzeug.security import generate_password_hash
+
+    return generate_password_hash(password)
+
+
 @pytest.fixture
-def create_user(client):
+def create_user(app):
+    from flask_jwt_extended import create_access_token
+    from app.extensions import db
+    from app.models import User
+
     sequence = 0
 
     def factory(username=None, password="secret-123"):
@@ -39,18 +51,13 @@ def create_user(client):
             "email": f"{username}@example.com",
             "password": password,
         }
-        response = client.post("/auth/register", json=payload)
-        assert response.status_code == 201
-
-        login = client.post(
-            "/auth/login",
-            json={"username": username, "password": password},
-        )
-        assert login.status_code == 200
-        result = login.get_json()
+        user = User(username=username, email=payload["email"],
+                    password_hash=_fixture_password_hash(password))
+        db.session.add(user)
+        db.session.commit()
         return {
-            "id": result["user_id"],
-            "token": result["access_token"],
+            "id": user.id,
+            "token": create_access_token(identity=str(user.id)),
             **payload,
         }
 

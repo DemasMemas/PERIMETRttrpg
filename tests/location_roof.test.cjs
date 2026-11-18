@@ -336,8 +336,10 @@ test('near roof cuts away while distant roof remains complete on any viewed floo
     const upperFloor = { visible: true, userData: { locationObject: {
         type: 'floor', properties: { level: 1, building_id: 'house-a' },
     } } };
-    const face = { visible: true, material: { opacity: 1, transparent: false, depthWrite: true, side: 2 } };
-    const gable = { visible: true, material: { opacity: 1, transparent: false, depthWrite: true, side: 2 } };
+    const material = () => ({ opacity: 1, transparent: false, depthWrite: true, side: 2, version: 0,
+        set needsUpdate(value) { if (value) this.version++; } });
+    const face = { visible: true, material: material() };
+    const gable = { visible: true, material: material() };
     const shadow = { visible: true, castShadow: true };
     const roof = { userData: { roofPlan: { x: 5, z: 5, angle: 0, width: 6, depth: 5,
         eaveY: 5, rise: 1 }, floorLevel: 1, visualMeshes: [face, gable], cutawayFloorMesh: upperFloor },
@@ -383,6 +385,15 @@ test('near roof cuts away while distant roof remains complete on any viewed floo
     assert.equal(gable.material.side, 2);
     assert.equal(gable.material.opacity, face.material.opacity);
     assert.equal(shadow.visible, false);
+    assert.equal(face.material.version, 1);
+    assert.equal(gable.material.version, 1);
+
+    const previousOpacity = face.material.opacity;
+    context.camera.position.y += 0.1;
+    context.updateRoofVisibility();
+    assert.ok(face.material.opacity > previousOpacity);
+    assert.equal(face.material.version, 1);
+    assert.equal(gable.material.version, 1);
 
     context.camera.position.x = 40;
     context.updateRoofVisibility();
@@ -391,6 +402,8 @@ test('near roof cuts away while distant roof remains complete on any viewed floo
     assert.equal(face.material.transparent, false);
     assert.equal(face.material.depthWrite, true);
     assert.equal(face.material.side, 2);
+    assert.equal(face.material.version, 2);
+    assert.equal(gable.material.version, 2);
     assert.equal(view.distant, true);
     assert.equal(visibilityUpdates, 1);
     assert.equal(shadow.visible, true);

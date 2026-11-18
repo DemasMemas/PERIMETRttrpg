@@ -48,6 +48,14 @@ def _bound_items(actor, payload):
     if payload.get('loading') is not None:
         from app.services.ammo_loading import loading_bindings
         result['loading'] = loading_bindings(data, payload['loading'])
+    if payload.get('action_key') == 'change_equipment_module' and payload.get('module_slot_type') == 'exoskeleton_battery':
+        from app.services.equipment_module import battery_operation_binding, battery_replacement_recipient
+
+        target_id = payload.get('target_character_id')
+        recipient = battery_replacement_recipient(actor, target_id) if target_id is not None else None
+        result['exoskeleton_battery'] = battery_operation_binding(
+            data, payload.get('module_target_path'), recipient_data=recipient.data if recipient else None,
+        )
     weapon_index = payload.get('weapon_index')
     if weapon_index is not None:
         try:
@@ -107,6 +115,10 @@ def durable_combat_action(operation):
                 if bindings != _bound_items(actor, saved_payload):
                     raise ValidationError('Оружие или предмет длительного действия изменились')
                 # Claim and apply in the same transaction. The version check rejects a racing resume.
+                meta = actor.character.data.setdefault('health', {}).setdefault('combatMeta', {})
+                if meta.get('completedPendingActionId') != row.id:
+                    meta['completedPendingActionId'] = row.id
+                    flag_modified(actor.character, 'data')
                 row.status = 'completed'
                 db.session.flush()
                 return operation(location_id=values['location_id'], user_id=values['user_id'],
@@ -170,7 +182,13 @@ def ensure_no_deferred_action(actor):
         DeferredCombatAction.status.in_(('paying', 'ready')),
     ).first()
     if unfinished:
-        raise ValidationError('Сначала завершите или отмените предыдущее длительное действие')
+        from app.services.combat import CombatService
+
+        battle = CombatService.combat_location_label(actor.location, actor.location.combat_state)
+        raise ValidationError(
+            f'Сначала завершите или отмените предыдущее длительное действие «{unfinished.label}». '
+            f'Оно относится к бою на подлокации {battle}.'
+        )
 
 
 def remember_action(actor, pending, payload):
@@ -200,6 +218,15 @@ def validate_deferred_conditions(actor, row):
     payload = row.payload or {}
     kind = payload.get('action_key')
     CombatService.ensure_character_can_act(actor, kind)
+    if kind == 'change_equipment_module' and payload.get('module_slot_type') == 'exoskeleton_battery':
+        from app.services.equipment_module import battery_replacement_recipient, module_action_details
+
+        target_id = payload.get('target_character_id')
+        recipient = battery_replacement_recipient(actor, target_id) if target_id is not None else None
+        module_action_details(actor.character.data, payload.get('module_operation'),
+                              payload.get('module_target_path'), 'exoskeleton_battery',
+                              item_path=payload.get('item_path'), selection=payload.get('module_selection'),
+                              in_combat=True, recipient_data=recipient.data if recipient else None)
     if kind=='place_cover':
         from app.services.crafted_covers import plan
         plan(actor,actor.character.data,payload.get('attribute_choice'))
@@ -291,18 +318,15 @@ def validate_deferred_conditions(actor, row):
         if not obj:
             raise ValidationError('Объект продолжительного действия больше недоступен')
         if kind == 'take_cover':
-            distance = min((max(abs(actor.pos_x-x),abs(actor.pos_y-y))
-                for x,y in CombatService._object_footprint_tiles(obj)),default=float('inf'))
-            if not CombatService._is_cover_object(obj) or distance > 1:
-                raise ValidationError('Укрытие продолжительного действия больше недоступно')
-            if CombatService._object_height(obj) <= 1.05 and CombatService._posture_key(actor) == 'standing':
-                raise ValidationError('Для низкого укрытия требуется сидячее положение')
+            raise ValidationError('Действие «Занять укрытие» удалено')
         if kind == 'attack' and not CombatService._is_in_facing_arc(actor,obj.tile_x,obj.tile_y):
             raise ValidationError('Объект продолжительного действия больше не находится в поле зрения')
 
 
 def cancel_unavailable_actions(actor):
     """Вызывается до оплаты нового хода; отмена окончательна и не возвращает ОД."""
+    from app.services.combat import CombatService
+
     if actor.id is None:
         return
     rows = DeferredCombatAction.query.filter_by(location_character_id=actor.id).filter(
@@ -317,28 +341,34 @@ def cancel_unavailable_actions(actor):
     # доказуемо проверить. Не оплачиваем его автоматически новым ходом.
     data = actor.character.data or {}
     meta = (data.get('health') or {}).get('combatMeta') or {}
-    known_ids = {row.id for row in rows}
-    orphan = (meta.get('pendingAction') or {}).get('id')
-    completed = meta.get('completedPendingActionId')
-    if (orphan and orphan not in known_ids) or (completed and completed not in known_ids):
-        data = deepcopy(data)
-        meta = data.setdefault('health',{}).setdefault('combatMeta',{})
-        if orphan and orphan not in known_ids:
-            meta.pop('pendingAction',None)
-        if completed and completed not in known_ids:
-            meta.pop('completedPendingActionId',None)
-        actor.character.data = data
-        flag_modified(actor.character,'data')
+    pending = meta.get('pendingAction') or {}
+    row = next((row for row in rows if row.status in {'paying', 'ready'}), None)
+    new_pending = None
+    if row is not None and row.status == 'paying':
+        total = pending.get('total_action_points') if pending.get('id') == row.id else None
+        new_pending = {'id': row.id, 'label': row.label,
+                       'total_action_points': max(row.remaining_action_points,
+                           CombatService._coerce_int(total or row.payload.get('paid_action_points') or row.payload.get('action_points'), 0)),
+                       'remaining_action_points': row.remaining_action_points}
+    ready_id = row.id if row is not None and row.status == 'ready' else None
+    if new_pending != meta.get('pendingAction') or ready_id != meta.get('completedPendingActionId'):
+        meta = data.setdefault('health', {}).setdefault('combatMeta', {})
+        for key, value in (('pendingAction', new_pending), ('completedPendingActionId', ready_id)):
+            if value is None:
+                meta.pop(key, None)
+            else:
+                meta[key] = value
+        flag_modified(actor.character, 'data')
 
 
-def serialize_deferred_action(actor, health):
+def serialize_deferred_action(actor, health, *, by_actor=None):
     if actor.id is None:
         return None
     meta = health.get('combatMeta') or {}
     action_id = meta.get('completedPendingActionId') or (meta.get('pendingAction') or {}).get('id')
-    if not action_id:
-        return None
-    row = db.session.get(DeferredCombatAction, str(action_id))
+    row = by_actor.get(actor.id) if by_actor is not None else (
+        db.session.get(DeferredCombatAction, str(action_id)) if action_id else None
+    )
     if not row or row.location_character_id != actor.id or row.status not in {'paying', 'ready'}:
         return None
     return {'id': row.id, 'label': row.label, 'status': row.status,

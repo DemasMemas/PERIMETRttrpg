@@ -64,11 +64,12 @@ def test_ordinary_item_can_be_thrown_on_empty_ground_without_combat(grenade_game
     assert LocationCombatState.query.one().status == 'idle'
 
 
-def test_throw_at_occupied_ground_requires_combat(grenade_game):
+@pytest.mark.parametrize('position', [(4, 5), (4.2, 4.8)])
+def test_throw_at_occupied_ground_requires_combat(grenade_game, position):
     actor = grenade_game['actor_location']
     target = grenade_game['target_location']
     LocationCombatState.query.one().status = 'idle'
-    target.pos_x, target.pos_y = 4, 5
+    target.pos_x, target.pos_y = position
     data = deepcopy(actor.character.data)
     data['inventory']['pockets'] = [{'id': 'stone', 'name': 'Камень',
         'category': 'misc', 'weight': .4, 'quantity': 1}]
@@ -111,7 +112,7 @@ def test_throw_uses_shared_worn_modifier(grenade_game):
 
 def test_throw_hit_uses_random_d6_zone_and_armor_damage(grenade_game, monkeypatch):
     actor=grenade_game['actor_location'];target=grenade_game['target_location']
-    target.pos_x,target.pos_y=4,5
+    target.pos_x,target.pos_y=4.2,4.8
     data=deepcopy(actor.character.data)
     data['inventory']['pockets']=[{'id':'throw-rock','name':'Камень','category':'misc',
         'weight':2,'quantity':1}]

@@ -69,3 +69,13 @@ test('ответ сервера и сетевое событие показыв�
     assert.equal(tradeResultNotice(result),null);
     assert.equal(tradeResultNotice({...result,status:'pending'}),null);
 });
+
+test('оценка износа применяется к конкретному экземпляру, включая нулевую цену', async () => {
+    const {merchantTotals, tradeEntryKey} = await load();
+    const actor = [0, 1, 2].map(index => ({item: {id: `item-${index}`, templateId: 42},
+        path: ['inventory', 'pockets', index]}));
+    const selected = {actor: new Map(actor.map(entry => [tradeEntryKey(entry), 1])), target: new Map()};
+    const quotes = {[JSON.stringify(actor[0].path)]: 0, [JSON.stringify(actor[1].path)]: 700};
+    assert.deepEqual(merchantTotals({actor, target: []}, selected, {42: {buy: 1000}}, {}, quotes),
+        {sale: 1700, purchase: 0, actorMoney: 0, targetMoney: 1700});
+});

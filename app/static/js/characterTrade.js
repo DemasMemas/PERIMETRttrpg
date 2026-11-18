@@ -17,7 +17,7 @@ export function tradeResultNotice(result) {
     return {message:messages[result.status],type:result.status==='completed'?'success':'system'};
 }
 export const categoryNames = {weapon:'Оружие',melee_weapon:'Ближний бой',armor:'Броня',helmet:'Шлемы',
-    gas_mask:'Противогазы',ammo:'Патроны',magazine:'Магазины',grenade:'Гранаты',
+    gas_mask:'Противогазы',mask:'Маски',ammo:'Патроны',magazine:'Магазины',grenade:'Гранаты',
     consumable:'Расходники',tool:'Инструменты',crafting_material:'Материалы',
     container:'Контейнеры',backpack:'Рюкзаки',vest:'Разгрузки',pouch:'Подсумки',
     weapon_module:'Оружейные модули',headphones:'Наушники',glasses:'Очки',gloves:'Перчатки',
@@ -35,11 +35,16 @@ export function tradeOffer(entries, selected) {
     }));
 }
 
-export function merchantTotals(entries, selected, prices, purchasePrices = {}) {
+export function merchantTotals(entries, selected, prices, purchasePrices = {}, salePrices = {}) {
     const total = (side, field) => entries[side].reduce((sum, entry) => sum
-        + (selected[side].get(tradeEntryKey(entry)) || 0) * merchantUnitPrice(entry.item, prices, field, purchasePrices), 0);
+        + (selected[side].get(tradeEntryKey(entry)) || 0) * merchantEntryPrice(entry, prices, field, purchasePrices, salePrices), 0);
     const sale = total('actor', 'buy'), purchase = total('target', 'sell');
     return {sale, purchase, actorMoney:Math.max(0, purchase-sale), targetMoney:Math.max(0, sale-purchase)};
+}
+
+function merchantEntryPrice(entry, prices, side, purchasePrices, salePrices) {
+    const quoted = side === 'buy' ? salePrices[JSON.stringify(entry.path)] : undefined;
+    return quoted ?? merchantUnitPrice(entry.item, prices, side, purchasePrices);
 }
 
 export function merchantUnitPrice(item, prices, side, purchasePrices = {}) {
@@ -76,7 +81,8 @@ export function validateTrade({actorOffer, targetOffer, actorMoney, targetMoney,
 }
 
 export function renderTradeEditor(modal, {actor, target, actorEntries, targetEntries, quantity, onSubmit, onClose,
-                                        merchant=null, merchantPurchasePrices={}, onConfigure=null, onRepair=null, onModification=null}) {
+                                        merchant=null, merchantPurchasePrices={}, merchantSalePrices={}, onConfigure=null, onRepair=null,
+                                        onModification=null, onHaggle=null}) {
     const shop = merchant?.enabled === true;
     const prices = merchant?.prices || {};
     const selected = {actor: new Map(), target: new Map()};
@@ -100,18 +106,30 @@ export function renderTradeEditor(modal, {actor, target, actorEntries, targetEnt
                 <div class="trade-item-list"></div>
             </section>`).join('')}</div>
         <div class="trade-summary" aria-live="polite"></div><div class="trade-error" role="status"></div>
+        ${shop && onHaggle ? `<div class="trade-haggle-status" aria-live="polite" hidden></div>` : ''}
         <div class="form-actions">${onConfigure ? '<button type="button" class="btn btn-secondary trade-configure">Настроить услуги НПС</button>' : ''}
             ${onRepair ? '<button type="button" class="btn btn-secondary trade-repair">Ремонт у механика</button>' : ''}
             ${onModification ? '<button type="button" class="btn btn-secondary trade-modification">Установить модификацию</button>' : ''}
             ${target.data?.merchant?.enabled ? `<button type="button" class="btn btn-secondary trade-mode">${shop ? 'Обычный обмен' : 'Торговля по прайсу'}</button>` : ''}
             <button type="button" class="btn btn-secondary trade-reset">Очистить выбор</button>
+            ${shop && onHaggle ? `<select class="form-control trade-haggle-skill" aria-label="Навык для торга">
+                <option value="barter">Бартер</option><option value="persuasion">Убеждение</option>
+                <option value="deception">Обман</option><option value="intimidation">Устрашение</option></select>
+                <button type="button" class="btn btn-secondary trade-haggle">Торговаться</button>` : ''}
             <button type="button" class="btn btn-primary trade-confirm">${shop ? 'Заключить сделку' : 'Предложить обмен'}</button></div></div>`;
     const sides = Object.fromEntries(['actor','target'].map(side => [side, modal.querySelector(`[data-trade-side="${side}"]`)]));
     const money = side => Number(sides[side].querySelector('.trade-money').value);
     const offer = side => tradeOffer(entries[side], selected[side]);
+    const haggleButton = modal.querySelector('.trade-haggle');
+    let negotiation = null;
     let submitting = false;
+    const payload = () => ({actor_offer:offer('actor'), target_offer:offer('target'),
+        actor_money:money('actor'), target_money:money('target'), merchant_mode:shop,
+        actor_revision:actor.data?._revision ?? actor.revision, target_revision:target.data?._revision ?? target.revision});
     const update = () => {
-        const quote = shop ? merchantTotals(entries, selected, prices, merchantPurchasePrices) : null;
+        const quote = negotiation ? {sale:negotiation.sale_total, purchase:negotiation.purchase_total,
+            actorMoney:negotiation.actor_money, targetMoney:negotiation.target_money}
+            : shop ? merchantTotals(entries, selected, prices, merchantPurchasePrices, merchantSalePrices) : null;
         if (quote) {
             sides.actor.querySelector('.trade-money').value = quote.actorMoney;
             sides.target.querySelector('.trade-money').value = quote.targetMoney;
@@ -125,13 +143,31 @@ export function renderTradeEditor(modal, {actor, target, actorEntries, targetEnt
             const count = offer(side).reduce((sum, entry) => sum + entry.amount, 0);
             return `${count} шт. · ${rubles(money(side))}`;
         };
+        const settlement = actorMoney ? `Доплачиваете ${rubles(actorMoney)}` : `Получаете ${rubles(targetMoney)}`;
         modal.querySelector('.trade-summary').textContent = quote
-            ? `Продаёте: ${rubles(quote.sale)}     Покупаете: ${rubles(quote.purchase)}`
+            ? `Продаёте: ${rubles(quote.sale)}     Покупаете: ${rubles(quote.purchase)}${negotiation ? ` · После торга: ${settlement}` : ''}`
             : `Отдаёте: ${summary('actor')}     Получаете: ${summary('target')}`;
         const error = validateTrade({actorOffer:offer('actor'),targetOffer:offer('target'),actorMoney,targetMoney,
             actorBalance:balances.actor,targetBalance:balances.target});
         modal.querySelector('.trade-error').textContent = error;
         modal.querySelector('.trade-confirm').disabled = submitting || Boolean(error);
+        if (haggleButton) {
+            const rounds = negotiation?.rounds.length || 0;
+            const items = [...offer('actor'), ...offer('target')];
+            haggleButton.disabled = submitting || rounds >= (negotiation?.max_rounds ?? 3)
+                || (!rounds && !actorMoney && !targetMoney)
+                || !items.length || items.some(item => !Number.isSafeInteger(item.amount) || item.amount < 1);
+            haggleButton.textContent = rounds ? 'Следующий раунд' : 'Торговаться';
+            const status = modal.querySelector('.trade-haggle-status');
+            status.hidden = !rounds;
+            if (rounds) {
+                const round = negotiation.rounds.at(-1);
+                const outcome = round.change > 0 ? 'Цена стала выгоднее' : round.change < 0 ? 'Цена стала хуже' : 'Цена прежняя';
+                const advantage = round.actor.advantage
+                    ? ` · «Оптовик»: ${round.actor.rolls.join(' и ')}, взято ${round.actor.roll}` : '';
+                status.textContent = `Раунд ${rounds} из ${negotiation.max_rounds} · Вы ${round.actor.total}, торговец ${round.target.total}${advantage} · ${outcome}`;
+            }
+        }
     };
     const renderList = side => {
         const panel = sides[side], container = panel.querySelector('.trade-item-list');
@@ -144,9 +180,9 @@ export function renderTradeEditor(modal, {actor, target, actorEntries, targetEnt
             const key = tradeEntryKey(entry), available = quantity(entry.item);
             const row = document.createElement('div');
             row.className = 'trade-item-row';
-            row.innerHTML = `<label><input type="checkbox" ${selected[side].has(key) ? 'checked' : ''}><span><strong>${escape(entry.item?.name || 'Предмет')}</strong>
-                <small>${escape(entry.rootLabel || '')} · доступно ${available}${shop ? ` · ${rubles(merchantUnitPrice(entry.item, prices, side==='actor'?'buy':'sell', merchantPurchasePrices))}/шт.` : ''}</small></span></label>
-                <input type="number" class="form-control trade-quantity" value="${selected[side].get(key) ?? 1}" min="1" max="${available}" step="1" aria-label="Количество: ${escape(entry.item?.name)}" ${selected[side].has(key) ? '' : 'disabled'}>`;
+            row.innerHTML = `<label><input type="checkbox" ${selected[side].has(key) ? 'checked' : ''} ${negotiation ? 'disabled' : ''}><span><strong>${escape(entry.item?.name || 'Предмет')}</strong>
+                <small>${escape(entry.rootLabel || '')} · доступно ${available}${shop ? ` · ${rubles(merchantEntryPrice(entry, prices, side==='actor'?'buy':'sell', merchantPurchasePrices, merchantSalePrices))}/шт.` : ''}</small></span></label>
+                <input type="number" class="form-control trade-quantity" value="${selected[side].get(key) ?? 1}" min="1" max="${available}" step="1" aria-label="Количество: ${escape(entry.item?.name)}" ${selected[side].has(key) && !negotiation ? '' : 'disabled'}>`;
             const checkbox = row.querySelector('[type="checkbox"]'), input = row.querySelector('.trade-quantity');
             checkbox.onchange = () => {
                 input.disabled = !checkbox.checked;
@@ -178,11 +214,12 @@ export function renderTradeEditor(modal, {actor, target, actorEntries, targetEnt
     if (modification) modification.onclick=()=>{if(!submitting)onModification();};
     const mode = modal.querySelector('.trade-mode');
     if (mode) mode.onclick = () => { if (!submitting) renderTradeEditor(modal, {
-        actor,target,actorEntries,targetEntries,quantity,onSubmit,onClose,onConfigure,onRepair,onModification,
+        actor,target,actorEntries,targetEntries,quantity,onSubmit,onClose,onConfigure,onRepair,onModification,onHaggle,
         merchant:shop ? null : target.data.merchant,merchantPurchasePrices,
     }); };
     modal.querySelector('.trade-reset').onclick = () => {
         if (submitting) return;
+        negotiation = null;
         for (const side of ['actor','target']) {
             selected[side].clear();
             sides[side].querySelector('.trade-money').value = 0;
@@ -190,14 +227,29 @@ export function renderTradeEditor(modal, {actor, target, actorEntries, targetEnt
         }
         update();
     };
+    if (haggleButton) haggleButton.onclick = async () => {
+        if (submitting || haggleButton.disabled) return;
+        submitting = true;
+        modal.querySelectorAll('input,select,button').forEach(input => { input.disabled = true; });
+        let error;
+        try {
+            negotiation = await onHaggle(payload(), modal.querySelector('.trade-haggle-skill').value, negotiation?.rounds.length || 0);
+        } catch (failure) {
+            error = failure;
+        } finally {
+            submitting = false;
+            modal.querySelectorAll('input,select,button').forEach(input => { input.disabled = false; });
+            for (const side of ['actor','target']) renderList(side);
+            update();
+            if (error) modal.querySelector('.trade-error').textContent = error.message || 'Не удалось провести раунд торга.';
+        }
+    };
     modal.querySelector('.trade-confirm').onclick = async () => {
         if (submitting || modal.querySelector('.trade-confirm').disabled) return;
         submitting = true;
         modal.querySelectorAll('input,select,button').forEach(input => { input.disabled = true; });
         try {
-            await onSubmit({actor_offer:offer('actor'),target_offer:offer('target'),actor_money:money('actor'),target_money:money('target'),
-                merchant_mode:shop,
-                actor_revision:actor.data?._revision ?? actor.revision,target_revision:target.data?._revision ?? target.revision});
+            await onSubmit({...payload(), ...(negotiation ? {haggle_id:negotiation.id, haggle_round:negotiation.rounds.length} : {})});
         } catch (error) {
             submitting = false;
             modal.querySelectorAll('input,select,button').forEach(input => { input.disabled = false; });
